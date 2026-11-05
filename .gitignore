@@ -1,0 +1,7 @@
+.secrets/
+build/
+firmware/build-*/
+sdkconfig
+sdkconfig.old
+managed_components/
+firmware/sdkconfig.wifi

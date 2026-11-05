@@ -1,0 +1,40 @@
+menu "flightctl-mcu"
+
+config FC_WIFI_SSID
+    string "WiFi SSID"
+    default ""
+    help
+        Set it in sdkconfig.wifi (git-ignored), not in sdkconfig.defaults.
+
+config FC_WIFI_PASSWORD
+    string "WiFi password"
+    default ""
+
+config FC_SERVER_HOST
+    string "Flight Control agent endpoint host"
+    default "agent-api.192.168.1.22.nip.io"
+
+config FC_SERVER_PORT
+    int "Flight Control agent endpoint port"
+    default 8443
+
+config FC_LABELS
+    string "Enrollment labels (k=v,k=v)"
+    default "site=lab,app=alarm"
+
+config FC_STATUS_INTERVAL
+    int "Status update interval (s)"
+    default 60
+
+config FC_LED_GPIO
+    int "Default LED GPIO (overridable from config)"
+    default 48
+    help
+        ESP32-S3-DevKitC-1 v1.0: 48, v1.1: 38. The fleet config field
+        led_gpio overrides it at runtime.
+
+config FC_LED_WS2812
+    bool "LED is a WS2812 (addressable RGB)"
+    default y
+
+endmenu

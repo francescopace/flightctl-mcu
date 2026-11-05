@@ -1,0 +1,5 @@
+# Sostituto arm64 di quay.io/openshift/origin-cli (pubblicata solo per amd64),
+# usato dai job Helm di Flight Control: servono bash, openssl, base64 e oc/kubectl.
+FROM docker.io/alpine/k8s:1.34.1
+RUN apk add --no-cache bash openssl coreutils \
+ && ln -s "$(command -v kubectl)" /usr/local/bin/oc

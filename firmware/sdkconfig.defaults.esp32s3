@@ -1,0 +1,2 @@
+# ESP32-S3-DevKitC-1 v1.0 (v1.1: 38). PSRAM stays off so one image fits N8R8 and N4R2.
+CONFIG_FC_LED_GPIO=48
