@@ -5,9 +5,10 @@ idf_component_register(
          ${ROOT}/core/src/fc_http.c
          ${ROOT}/core/src/fc_identity.c
          ${ROOT}/core/src/fc_oci.c
+         ${ROOT}/core/src/fc_apps.c
          ${ROOT}/core/third_party/cjson/cJSON.c
          ${ROOT}/port/espidf/fc_port_espidf.c
     INCLUDE_DIRS ${ROOT}/core/include ${ROOT}/core/third_party/cjson
     PRIV_INCLUDE_DIRS ${ROOT}/core/src
-    REQUIRES mbedtls pthread
+    REQUIRES mbedtls pthread wamr
     PRIV_REQUIRES nvs_flash esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update)

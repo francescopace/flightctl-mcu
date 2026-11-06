@@ -15,3 +15,12 @@ CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 # Console on USB-Serial/JTAG (native USB port of the devkit).
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# WASM apps: WAMR fast interpreter only (no AOT/JIT, no WASI or libc, no
+# wasm threads) to keep RAM low on C3/C5.
+CONFIG_WAMR_ENABLE_INTERP=y
+CONFIG_WAMR_INTERP_FAST=y
+# CONFIG_WAMR_ENABLE_AOT is not set
+# CONFIG_WAMR_ENABLE_LIBC_WASI is not set
+# CONFIG_WAMR_ENABLE_LIBC_BUILTIN is not set
+# CONFIG_WAMR_ENABLE_LIB_PTHREAD is not set

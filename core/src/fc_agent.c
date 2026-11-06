@@ -5,6 +5,8 @@
  */
 #include "fc_agent.h"
 
+#include "fc_apps.h"
+
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -161,9 +163,8 @@ static cJSON *build_status(agent_t *a)
         a->cfg->custom_info(custom, a->cfg->app_ctx);
     }
 
-    cJSON_AddArrayToObject(st, "applications");
-    cJSON *apps = cJSON_AddObjectToObject(st, "applicationsSummary");
-    cJSON_AddStringToObject(apps, "status", "NoApplications");
+    fc_apps_status(cJSON_AddArrayToObject(st, "applications"), cJSON_AddObjectToObject(st, "applicationsSummary"),
+                   custom);
 
     const char *mem = "Healthy";
     if (si.mem_total > 0 && si.mem_free * 10 < si.mem_total) {
@@ -358,9 +359,16 @@ static void apply_rendered(agent_t *a, const char *json)
         }
     }
 
+    /* WASM apps: replaced without reboot; a failed download keeps the old one. */
+    char aerr[160] = "";
+    int aretry = 0;
+    if (fc_apps_apply(cJSON_GetObjectItem(spec, "applications"), aerr, sizeof(aerr), &aretry) != 0 && !err[0]) {
+        snprintf(err, sizeof(err), "%s", aerr);
+    }
+
     const char *image = cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(spec, "os"), "image"));
     char prev_rendered[32], new_digest[80] = "";
-    int reboot = 0, retry = 0;
+    int reboot = 0, retry = aretry;
     pthread_mutex_lock(&a->lock);
     /* "0" never matches a server version, so even a first update is not
      * reported as done before the new image is confirmed. */
@@ -589,6 +597,11 @@ static void resume_firmware_update(agent_t *a)
     fc_port_kv_del(KV_PREV_RENDERED);
 }
 
+int fc_agent_apps_start(const fc_agent_config_t *cfg)
+{
+    return fc_apps_init(cfg->wasm_natives, cfg->wasm_natives_count);
+}
+
 int fc_agent_run(const fc_agent_config_t *cfg)
 {
     static agent_t a;
@@ -601,6 +614,9 @@ int fc_agent_run(const fc_agent_config_t *cfg)
         return -1;
     }
     make_boot_id(a.boot_id);
+    if (fc_agent_apps_start(cfg) != 0) {
+        fc_port_log(FC_LOG_WARN, "WASM runtime unavailable: applications will be rejected");
+    }
     kv_load_str(KV_RENDERED, a.rendered_version, sizeof(a.rendered_version));
     kv_load_str(KV_OS_IMAGE, a.os_image, sizeof(a.os_image));
     kv_load_str(KV_OS_DIGEST, a.os_digest, sizeof(a.os_digest));

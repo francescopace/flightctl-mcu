@@ -5,3 +5,5 @@ sdkconfig
 sdkconfig.old
 managed_components/
 firmware/sdkconfig.wifi
+third_party/wamr/
+wasm-apps/build/

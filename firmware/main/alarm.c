@@ -26,6 +26,8 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "led.h"
+#include "esp_timer.h"
+#include "wasm_export.h"
 #include "sdkconfig.h"
 
 #define CONFIG_PATH "/etc/fc-app/alarm.json"
@@ -44,6 +46,9 @@ typedef struct {
 
 static const char *TAG = "alarm";
 static SemaphoreHandle_t s_lock;
+static SemaphoreHandle_t s_led_lock; /* LED driver: alarm task and WASM app */
+static volatile int64_t s_app_led_us; /* last LED write by a WASM app */
+#define APP_LED_HOLD_US 1000000      /* the app owns the LED while it writes it */
 static TaskHandle_t s_task;
 static alarm_cfg_t s_cfg;
 static char s_source[12] = "default"; /* "default" or "fleet" */
@@ -193,8 +198,10 @@ static void alarm_task(void *arg)
         bool alarm = s_alarm;
         xSemaphoreGive(s_lock);
 
+        xSemaphoreTake(s_led_lock, portMAX_DELAY);
         led_setup(c.led_gpio, c.led_ws2812, c.led_active_low);
         led_set_order(c.led_order);
+        xSemaphoreGive(s_led_lock);
         float t;
         if (fc_port_temperature(&t) == 0) {
             bool next = alarm ? t >= c.threshold_c - c.hysteresis_c : t >= c.threshold_c;
@@ -213,10 +220,11 @@ static void alarm_task(void *arg)
             }
             alarm = next;
         }
-        if (alarm) {
-            led_set(40, 0, 0);
-        } else {
-            led_set(0, 0, 0);
+        /* Without a WASM app driving the LED, the built-in logic does. */
+        if (esp_timer_get_time() - s_app_led_us > APP_LED_HOLD_US) {
+            xSemaphoreTake(s_led_lock, portMAX_DELAY);
+            led_set(alarm ? 40 : 0, 0, 0);
+            xSemaphoreGive(s_led_lock);
         }
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(c.sample_ms));
     }
@@ -225,6 +233,7 @@ static void alarm_task(void *arg)
 void alarm_start(void)
 {
     s_lock = xSemaphoreCreateMutex();
+    s_led_lock = xSemaphoreCreateMutex();
     alarm_cfg_t c = defaults();
     const char *source = "default";
     char *saved = NULL;
@@ -239,4 +248,40 @@ void alarm_start(void)
     }
     set_config(&c, source);
     xTaskCreate(alarm_task, "alarm", 4096, NULL, 5, &s_task);
+}
+
+/* ---- host functions for WASM apps (module "env") ------------------------ */
+
+static int32_t native_temp_mc(wasm_exec_env_t env)
+{
+    float t;
+    return fc_port_temperature(&t) == 0 ? (int32_t)(t * 1000) : -273000;
+}
+
+static int32_t native_threshold_mc(wasm_exec_env_t env)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int32_t v = (int32_t)(s_cfg.threshold_c * 1000);
+    xSemaphoreGive(s_lock);
+    return v;
+}
+
+static void native_led(wasm_exec_env_t env, int32_t r, int32_t g, int32_t b)
+{
+    s_app_led_us = esp_timer_get_time();
+    xSemaphoreTake(s_led_lock, portMAX_DELAY);
+    led_set((uint8_t)r, (uint8_t)g, (uint8_t)b);
+    xSemaphoreGive(s_led_lock);
+}
+
+static NativeSymbol s_natives[] = {
+    {"temp_mc", (void *)native_temp_mc, "()i", NULL},
+    {"threshold_mc", (void *)native_threshold_mc, "()i", NULL},
+    {"led", (void *)native_led, "(iii)", NULL},
+};
+
+const void *alarm_wasm_natives(int *count)
+{
+    *count = sizeof(s_natives) / sizeof(s_natives[0]);
+    return s_natives;
 }

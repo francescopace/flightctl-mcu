@@ -38,11 +38,21 @@ typedef struct {
     int (*on_config_file)(const char *path, const char *data, size_t len, void *app_ctx);
     void (*custom_info)(void *cjson_obj, void *app_ctx);
     void *app_ctx;
+
+    /* Host functions for WASM apps: a WAMR NativeSymbol array registered
+     * under module "env" (may be NULL). */
+    const void *wasm_natives;
+    int wasm_natives_count;
 } fc_agent_config_t;
 
 /* Runs the agent: enrolls if needed, then loops forever. Returns only on a
  * fatal configuration error. */
 int fc_agent_run(const fc_agent_config_t *cfg);
+
+/* Starts the WASM runtime and the apps saved by a previous run. Optional:
+ * call it before the network is up so apps run offline; fc_agent_run calls
+ * it too (idempotent). */
+int fc_agent_apps_start(const fc_agent_config_t *cfg);
 
 /* Asks the running agent to send a status update now (e.g. an alarm changed).
  * Safe to call from any task; a no-op before fc_agent_run starts. */

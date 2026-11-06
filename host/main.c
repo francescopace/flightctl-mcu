@@ -8,10 +8,41 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "fc_agent.h"
+#include "wasm_export.h"
 
 void fc_port_host_init(const char *data_dir, int debug);
+
+/* Simulated hardware for WASM apps: a temperature that swings 30..46 C over
+ * two minutes, a fixed 40 C threshold and an LED printed on change. */
+static int32_t host_temp_mc(wasm_exec_env_t env)
+{
+    long t = time(NULL) % 120;
+    return 30000 + (int32_t)(t < 60 ? t : 120 - t) * 266;
+}
+
+static int32_t host_threshold_mc(wasm_exec_env_t env)
+{
+    return 40000;
+}
+
+static void host_led(wasm_exec_env_t env, int32_t r, int32_t g, int32_t b)
+{
+    static int32_t last = -1;
+    int32_t v = (r << 16) | (g << 8) | b;
+    if (v != last) {
+        fprintf(stderr, "LED r=%d g=%d b=%d\n", r, g, b);
+        last = v;
+    }
+}
+
+static NativeSymbol s_natives[] = {
+    {"temp_mc", (void *)host_temp_mc, "()i", NULL},
+    {"threshold_mc", (void *)host_threshold_mc, "()i", NULL},
+    {"led", (void *)host_led, "(iii)", NULL},
+};
 
 static char *read_file(const char *path)
 {
@@ -92,6 +123,8 @@ int main(int argc, char **argv)
         .labels = labels,
         .agent_version = "flightctl-mcu/0.1.0",
         .status_interval_s = 60,
+        .wasm_natives = s_natives,
+        .wasm_natives_count = sizeof(s_natives) / sizeof(s_natives[0]),
     };
     return fc_agent_run(&cfg) == 0 ? 0 : 1;
 }

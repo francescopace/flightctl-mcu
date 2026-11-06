@@ -135,14 +135,8 @@ void app_main(void)
     ESP_LOGI(TAG, "flightctl-mcu firmware %s", esp_app_get_description()->version);
     alarm_start(); /* runs offline too, with the last stored config */
 
-    if (strlen(CONFIG_FC_WIFI_SSID) == 0) {
-        ESP_LOGE(TAG, "WiFi not configured: create firmware/sdkconfig.wifi (see README)");
-        return;
-    }
-    wifi_start();
-    time_sync();
-
-
+    int n_natives = 0;
+    const void *natives = alarm_wasm_natives(&n_natives);
     fc_agent_config_t cfg = {
         .server_host = CONFIG_FC_SERVER_HOST,
         .server_port = CONFIG_FC_SERVER_PORT,
@@ -154,6 +148,18 @@ void app_main(void)
         .status_interval_s = CONFIG_FC_STATUS_INTERVAL,
         .on_config_file = alarm_on_config_file,
         .custom_info = alarm_custom_info,
+        .wasm_natives = natives,
+        .wasm_natives_count = n_natives,
     };
+    fc_agent_apps_start(&cfg); /* WASM apps saved by a previous run, before the network */
+
+    if (strlen(CONFIG_FC_WIFI_SSID) == 0) {
+        ESP_LOGE(TAG, "WiFi not configured: create firmware/sdkconfig.wifi (see README)");
+        return;
+    }
+    wifi_start();
+    time_sync();
+
+
     fc_agent_run(&cfg);
 }
