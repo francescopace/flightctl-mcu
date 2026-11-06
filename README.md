@@ -161,7 +161,7 @@ deploy/kind/     Flight Control on kind
 deploy/registry/ local OCI registry
 deploy/fleet/    example fleet
 third_party/     WAMR fetch script (WAMR itself is not vendored)
-docs/            PoC plan and results (in Italian)
+docs/            PoC plan and results
 ```
 
 ## Try it
@@ -285,7 +285,7 @@ Some of what we ran into points at gaps in Flight Control for this class of devi
 - `matchExpressions` in fleet selectors is silently ignored;
 - rollout success is judged on `renderedVersion` only.
 
-These are written up, with measurements, in [docs/RISULTATI-POC.md](docs/RISULTATI-POC.md). The original plan is in [docs/PIANO-POC.md](docs/PIANO-POC.md). Both are in Italian.
+These are written up, with measurements, in [docs/POC-RESULTS.md](docs/POC-RESULTS.md). The original plan is in [docs/POC-PLAN.md](docs/POC-PLAN.md).
 
 ## Third-party code
 
