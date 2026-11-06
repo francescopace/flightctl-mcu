@@ -38,3 +38,6 @@ void fc_http_free(fc_http_response_t *resp);
 typedef int (*fc_http_data_cb)(const void *data, size_t len, void *ctx);
 int fc_http_get_stream(const fc_http_target_t *t, const char *path, fc_http_data_cb on_data,
                        void *ctx, int *status, long *total);
+
+/* Bytes sent/received on the wire since boot (TLS and HTTP overhead included). */
+void fc_http_traffic(unsigned long long *tx, unsigned long long *rx);

@@ -39,6 +39,9 @@
 /* A new firmware must reach Flight Control (one accepted status update)
  * within this time, or it is rolled back to the previous image. */
 #define OTA_VERIFY_TIMEOUT_S 150
+/* Liveness: no accepted status update for this long means the agent is
+ * stuck (network stack, TLS, a hung connection): restart the device. */
+#define STATUS_STALL_REBOOT_S 600
 
 mbedtls_ctr_drbg_context *fc_http_drbg(void);
 
@@ -158,6 +161,12 @@ static cJSON *build_status(agent_t *a)
     char num[32];
     snprintf(num, sizeof(num), "%llu", (unsigned long long)si.mem_free);
     cJSON_AddStringToObject(custom, "memFreeBytes", num);
+    unsigned long long tx, rx;
+    fc_http_traffic(&tx, &rx);
+    snprintf(num, sizeof(num), "%llu", tx);
+    cJSON_AddStringToObject(custom, "netTxBytes", num);
+    snprintf(num, sizeof(num), "%llu", rx);
+    cJSON_AddStringToObject(custom, "netRxBytes", num);
     fc_port_custom_info(custom);
     if (a->cfg->custom_info != NULL) {
         a->cfg->custom_info(custom, a->cfg->app_ctx);
@@ -270,12 +279,21 @@ static void *status_thread(void *arg)
 {
     agent_t *a = arg;
     int interval = a->cfg->status_interval_s > 0 ? a->cfg->status_interval_s : 60;
+    time_t last_ok = time(NULL);
     for (;;) {
+        if (time(NULL) - last_ok > STATUS_STALL_REBOOT_S) {
+            fc_port_log(FC_LOG_ERROR, "no status update accepted for %d s: restarting", STATUS_STALL_REBOOT_S);
+            fc_port_reboot();
+        }
         if (a->verifying && time(NULL) > a->verify_deadline) {
             fc_port_log(FC_LOG_ERROR, "firmware %s could not reach Flight Control: rolling back", a->os_image);
             fc_port_ota_rollback();
         }
-        put_status(a);
+        if (put_status(a) == 0) {
+            last_ok = time(NULL);
+        } else {
+            fc_port_log(FC_LOG_WARN, "status update failed, retrying");
+        }
         pthread_mutex_lock(&a->lock);
         if (!a->status_dirty) {
             struct timespec until;
@@ -636,7 +654,11 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     /* TLS handshakes (ECDSA, X.509 parsing) need a generous stack on MCUs. */
+#ifdef ESP_PLATFORM
     pthread_attr_setstacksize(&attr, 24 * 1024);
+#else
+    pthread_attr_setstacksize(&attr, 256 * 1024); /* 64-bit hosts need more */
+#endif
     s_running = &a;
     pthread_create(&status, &attr, status_thread, &a);
     pthread_create(&spec, &attr, spec_thread, &a);

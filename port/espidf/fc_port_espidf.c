@@ -8,7 +8,12 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "soc/soc_caps.h"
+#if SOC_TEMP_SENSOR_SUPPORTED
 #include "driver/temperature_sensor.h"
+#else
+#include <math.h>
+#endif
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
 #include "esp_heap_caps.h"
@@ -28,7 +33,9 @@
 #define NS   "fc"
 
 static const char *TAG = "fc";
+#if SOC_TEMP_SENSOR_SUPPORTED
 static temperature_sensor_handle_t s_tsens;
+#endif
 
 int fc_port_espidf_init(void)
 {
@@ -37,16 +44,26 @@ int fc_port_espidf_init(void)
         nvs_flash_erase_partition(PART);
         err = nvs_flash_init_partition(PART);
     }
+#if SOC_TEMP_SENSOR_SUPPORTED
     temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
     if (temperature_sensor_install(&cfg, &s_tsens) == ESP_OK) {
         temperature_sensor_enable(s_tsens);
     }
+#endif
     return err == ESP_OK ? 0 : -1;
 }
 
 int fc_port_temperature(float *celsius)
 {
+#if SOC_TEMP_SENSOR_SUPPORTED
     return s_tsens && temperature_sensor_get_celsius(s_tsens, celsius) == ESP_OK ? 0 : -1;
+#else
+    /* No usable internal sensor (classic ESP32): a simulated 34-46 C swing
+     * over 10 minutes, so the alarm logic still has something to act on. */
+    double t = (double)(esp_timer_get_time() / 1000000) / 600.0;
+    *celsius = (float)(40.0 + 6.0 * sin(2 * M_PI * t));
+    return 0;
+#endif
 }
 
 /* NVS keys are limited to 15 characters. */
@@ -167,6 +184,11 @@ void fc_port_custom_info(void *obj)
     if (fc_port_temperature(&t) == 0) {
         snprintf(buf, sizeof(buf), "%.1f", t);
         cJSON_AddStringToObject(o, "temperatureC", buf);
+#if SOC_TEMP_SENSOR_SUPPORTED
+        cJSON_AddStringToObject(o, "temperatureSource", "internal");
+#else
+        cJSON_AddStringToObject(o, "temperatureSource", "simulated");
+#endif
     }
 }
 

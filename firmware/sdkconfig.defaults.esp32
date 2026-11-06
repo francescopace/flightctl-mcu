@@ -1,0 +1,3 @@
+# ESP32 DevKit (classic): plain LED on GPIO 2, no RGB LED.
+CONFIG_FC_LED_GPIO=2
+# CONFIG_FC_LED_WS2812 is not set

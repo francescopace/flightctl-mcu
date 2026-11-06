@@ -26,6 +26,33 @@
 #define FC_HTTP_MAX_RESPONSE (512 * 1024)
 #define FC_HTTP_MAX_HEADER   4096
 
+/* Raw bytes on the wire (TCP payload, TLS included), for traffic figures. */
+static volatile unsigned long long s_tx_bytes, s_rx_bytes;
+
+void fc_http_traffic(unsigned long long *tx, unsigned long long *rx)
+{
+    *tx = s_tx_bytes;
+    *rx = s_rx_bytes;
+}
+
+static int count_send(void *ctx, const unsigned char *buf, size_t len)
+{
+    int rc = mbedtls_net_send(ctx, buf, len);
+    if (rc > 0) {
+        s_tx_bytes += (unsigned long long)rc;
+    }
+    return rc;
+}
+
+static int count_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_t timeout)
+{
+    int rc = mbedtls_net_recv_timeout(ctx, buf, len, timeout);
+    if (rc > 0) {
+        s_rx_bytes += (unsigned long long)rc;
+    }
+    return rc;
+}
+
 static mbedtls_entropy_context s_entropy;
 static mbedtls_ctr_drbg_context s_drbg;
 static int s_inited;
@@ -155,7 +182,7 @@ static int conn_open(conn_t *c, const fc_http_target_t *t)
     if (c->plain) {
         return 0;
     }
-    mbedtls_ssl_set_bio(&c->ssl, &c->net, mbedtls_net_send, NULL, mbedtls_net_recv_timeout);
+    mbedtls_ssl_set_bio(&c->ssl, &c->net, count_send, NULL, count_recv_timeout);
     while ((rc = mbedtls_ssl_handshake(&c->ssl)) != 0) {
         if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) {
             log_mbedtls("handshake", rc);
@@ -176,7 +203,7 @@ static int conn_write_all(conn_t *c, const void *data, size_t len)
     const unsigned char *p = data;
     size_t off = 0;
     while (off < len) {
-        int rc = c->plain ? mbedtls_net_send(&c->net, p + off, len - off)
+        int rc = c->plain ? count_send(&c->net, p + off, len - off)
                           : mbedtls_ssl_write(&c->ssl, p + off, len - off);
         if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
             continue;
@@ -194,7 +221,7 @@ static int conn_write_all(conn_t *c, const void *data, size_t len)
 static int conn_read(conn_t *c, void *buf, size_t len, int timeout_s)
 {
     for (;;) {
-        int rc = c->plain ? mbedtls_net_recv_timeout(&c->net, buf, len, (uint32_t)timeout_s * 1000)
+        int rc = c->plain ? count_recv_timeout(&c->net, buf, len, (uint32_t)timeout_s * 1000)
                           : mbedtls_ssl_read(&c->ssl, buf, len);
         if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE ||
             rc == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {

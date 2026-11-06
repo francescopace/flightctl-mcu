@@ -11,4 +11,4 @@ idf_component_register(
     INCLUDE_DIRS ${ROOT}/core/include ${ROOT}/core/third_party/cjson
     PRIV_INCLUDE_DIRS ${ROOT}/core/src
     REQUIRES mbedtls pthread wamr
-    PRIV_REQUIRES nvs_flash esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update)
+    PRIV_REQUIRES soc nvs_flash esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update)
