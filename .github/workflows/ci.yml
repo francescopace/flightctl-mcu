@@ -14,20 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: third_party/fetch-wamr.sh
-      - name: mbedTLS 3.6 from ESP-IDF
-        run: |
-          M=$IDF_PATH/components/mbedtls/mbedtls
-          cmake -S $M -B /tmp/mbedtls -G Ninja -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
-            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/mbedtls-install
-          cmake --build /tmp/mbedtls --target install
-      - name: build
-        run: |
-          cmake -S . -B build/host -G Ninja -DMbedTLS_DIR=/tmp/mbedtls-install/lib/cmake/MbedTLS
-          cmake --build build/host
-      - name: smoke test
-        run: |
-          set +e
-          build/host/fc-host-agent; test $? -eq 2
+      - shell: bash
+        run: ci/build-host.sh
 
   firmware:
     name: firmware (${{ matrix.target }})
