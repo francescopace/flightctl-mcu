@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Crea un cluster kind con Flight Control raggiungibile dalla LAN.
-# Uso: deploy/kind/up.sh [IP_HOST]   (default: IP di en0)
+# Creates a kind cluster running Flight Control, reachable from the LAN.
+# Usage: deploy/kind/up.sh [HOST_IP]   (default: this machine's LAN IP)
 set -euo pipefail
 cd "$(dirname "$0")"
+source ../local-ip.sh
 
-HOST_IP="${1:-$(ipconfig getifaddr en0)}"
+HOST_IP="${1:-$(local_ip)}"
 FC_VERSION="${FC_VERSION:-1.3.1}"
 FC_NAMESPACE=flightctl
 FC_BASE_DOMAIN="${HOST_IP}.nip.io"
@@ -12,7 +13,7 @@ FC_BASE_DOMAIN="${HOST_IP}.nip.io"
 kind get clusters | grep -qx flightctl || kind create cluster --name flightctl --config kind-flightctl.yaml
 kubectl config use-context kind-flightctl
 
-# Su arm64 (es. Mac Apple Silicon) origin-cli non esiste: usiamo un'immagine locale.
+# origin-cli has no arm64 image (e.g. Apple Silicon): build a local replacement.
 CLUSTER_CLI_ARGS=()
 if [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]]; then
   docker build -q -f cluster-cli/Containerfile -t localhost/flightctl-cluster-cli:local cluster-cli
@@ -22,8 +23,8 @@ if [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]]; then
                     --set clusterCli.image.pullPolicy=IfNotPresent)
 fi
 
-# Le CRD Gateway API arrivano dal chart di Envoy Gateway: applicarle anche con kubectl
-# crea conflitti di server-side apply con Helm 4.
+# The Gateway API CRDs come with the Envoy Gateway chart: applying them with
+# kubectl as well causes server-side apply conflicts with Helm 4.
 helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm --version v1.2.5 \
   -n envoy-gateway-system --create-namespace
 kubectl wait --timeout=5m -n envoy-gateway-system deployment/envoy-gateway --for=condition=Available

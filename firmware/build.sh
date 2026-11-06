@@ -15,7 +15,12 @@ TARGET="${TARGET:-esp32s3}"
 VARIANT="${VARIANT:-}"
 BUILD_DIR="build-$TARGET${VARIANT:+-$VARIANT}"
 DEFAULTS="sdkconfig.defaults"
+# Local, git-ignored settings: WiFi credentials and your server endpoint.
 [[ -f "$ROOT/firmware/sdkconfig.wifi" ]] && DEFAULTS="$DEFAULTS;sdkconfig.wifi"
+[[ -f "$ROOT/firmware/sdkconfig.local" ]] && DEFAULTS="$DEFAULTS;sdkconfig.local"
+if [[ "${1:-build}" == build && ! -f "$ROOT/firmware/sdkconfig.local" ]]; then
+  echo "note: no firmware/sdkconfig.local, the firmware will not know its Flight Control endpoint" >&2
+fi
 [[ -n "$VARIANT" ]] && DEFAULTS="$DEFAULTS;sdkconfig.$VARIANT"
 docker run --rm \
   -e SDKCONFIG_DEFAULTS="$DEFAULTS" \

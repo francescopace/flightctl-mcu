@@ -3,8 +3,8 @@ apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
   extraPortMappings:
-  # Envoy Gateway NodePorts (vedi docs Flight Control "Installing a kind cluster").
-  # listenAddress 0.0.0.0 rende le porte raggiungibili dagli ESP32 in LAN.
+  # Envoy Gateway NodePorts (see the Flight Control docs, "Installing a kind cluster").
+  # listenAddress 0.0.0.0 makes the ports reachable by the ESP32 boards on the LAN.
   - containerPort: 30080
     hostPort: 8080
     listenAddress: "0.0.0.0"

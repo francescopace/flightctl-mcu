@@ -12,7 +12,11 @@ config FC_WIFI_PASSWORD
 
 config FC_SERVER_HOST
     string "Flight Control agent endpoint host"
-    default "agent-api.192.168.1.22.nip.io"
+    default ""
+    help
+        Set it in sdkconfig.local (git-ignored), e.g.
+        CONFIG_FC_SERVER_HOST="agent-api.<your-ip>.nip.io".
+        deploy/enrollment.sh prints the endpoint of your server.
 
 config FC_SERVER_PORT
     int "Flight Control agent endpoint port"

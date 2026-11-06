@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pushes the firmware builds as one multi-chip OCI artifact.
 
-    firmware/fw-push.py [--variant NAME] 192.168.1.22:5001/flightctl-mcu/fw:v2 [esp32s3 esp32c3 ...]
+    firmware/fw-push.py [--variant NAME] <registry>/flightctl-mcu/fw:v2 [esp32s3 esp32c3 ...]
 
 Layout (OCI 1.1, plain HTTP registry, stdlib only):
   index (tag)      artifactType application/vnd.flightctl-mcu.firmware.v1

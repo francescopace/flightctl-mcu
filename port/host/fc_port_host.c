@@ -89,15 +89,15 @@ void fc_port_sysinfo(fc_sysinfo_t *si)
 {
     struct utsname u;
     uname(&u);
-    snprintf(si->architecture, sizeof(si->architecture), "%s", u.machine);
-    snprintf(si->operating_system, sizeof(si->operating_system), "%s", u.sysname);
-    snprintf(si->os_version, sizeof(si->os_version), "%s", u.release);
+    snprintf(si->architecture, sizeof(si->architecture), "%.31s", u.machine);
+    snprintf(si->operating_system, sizeof(si->operating_system), "%.31s", u.sysname);
+    snprintf(si->os_version, sizeof(si->os_version), "%.31s", u.release);
     for (char *c = si->operating_system; *c; c++) {
         if (*c >= 'A' && *c <= 'Z') {
             *c += 'a' - 'A';
         }
     }
-    snprintf(si->hostname, sizeof(si->hostname), "host-%s", u.nodename);
+    snprintf(si->hostname, sizeof(si->hostname), "host-%.58s", u.nodename);
     for (char *c = si->hostname; *c; c++) {
         if (*c == '.') {
             *c = '\0';

@@ -1,7 +1,7 @@
 /*
  * Host "fake device": runs the same agent core as the firmware.
  *
- *   fc-host-agent --server agent-api.192.168.1.22.nip.io:8443 \
+ *   fc-host-agent --server agent-api.192.0.2.10.nip.io:8443 \
  *       --ca .secrets/ca.crt --enroll-cert .secrets/enroll.crt \
  *       --enroll-key .secrets/enroll.key [--data-dir DIR] [--label k=v]... [-v]
  */

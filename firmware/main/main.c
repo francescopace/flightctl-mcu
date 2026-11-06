@@ -157,6 +157,10 @@ void app_main(void)
         ESP_LOGE(TAG, "WiFi not configured: create firmware/sdkconfig.wifi (see README)");
         return;
     }
+    if (strlen(CONFIG_FC_SERVER_HOST) == 0) {
+        ESP_LOGE(TAG, "Flight Control endpoint not configured: create firmware/sdkconfig.local (see README)");
+        return;
+    }
     wifi_start();
     time_sync();
 

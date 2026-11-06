@@ -36,6 +36,9 @@ set(WAMR_BUILD_REF_TYPES 0)
 include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 add_library(vmlib STATIC ${WAMR_RUNTIME_LIB_SOURCE})
 target_compile_options(vmlib PRIVATE -w)
+if(NOT APPLE)
+    target_link_libraries(vmlib PUBLIC m dl Threads::Threads)
+endif()
 
 add_library(fc_core STATIC
     core/src/fc_agent.c

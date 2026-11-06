@@ -1,5 +1,7 @@
 # flightctl-mcu
 
+[![ci](https://github.com/francescopace/flightctl-mcu/actions/workflows/ci.yml/badge.svg)](https://github.com/francescopace/flightctl-mcu/actions/workflows/ci.yml)
+
 A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers. ESP32 boards enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. The devices don't run Linux, and Flight Control runs unmodified.
 
 This is a proof of concept. It works end to end on real hardware, but it is not hardened (see [Limitations](#limitations)).
@@ -161,6 +163,7 @@ deploy/kind/     Flight Control on kind
 deploy/registry/ local OCI registry
 deploy/fleet/    example fleet
 third_party/     WAMR fetch script (WAMR itself is not vendored)
+ci/              helpers for the GitHub Actions workflow
 docs/            PoC plan and results
 ```
 
@@ -168,7 +171,7 @@ docs/            PoC plan and results
 
 You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), esptool, oras, Python 3 with PyYAML, and for WASM apps clang plus `wasm-ld` (`brew install lld`). The ESP-IDF toolchain runs in the `espressif/idf:v5.5.6` container, so you don't install it.
 
-The scripts were written on macOS (Apple Silicon); on Linux some details may need adjusting, for example how `deploy/kind/up.sh` finds the LAN IP.
+The scripts were written on macOS (Apple Silicon). The host agent and the firmware build are also tested on Linux in CI; the kind setup has only been run on macOS.
 
 **1. Control plane.** Flight Control on kind, reachable from your LAN at `<your-ip>.nip.io`, and a plain-HTTP OCI registry on port 5001:
 
@@ -200,7 +203,11 @@ third_party/fetch-wamr.sh
 cp firmware/sdkconfig.wifi.example firmware/sdkconfig.wifi
 ```
 
-Then edit `firmware/sdkconfig.wifi` with your WiFi credentials and the agent endpoint. It is git-ignored too.
+```bash
+cp firmware/sdkconfig.local.example firmware/sdkconfig.local
+```
+
+Put your WiFi credentials in `sdkconfig.wifi`. Put the agent endpoint that `deploy/enrollment.sh` printed in `sdkconfig.local`. Both files are git-ignored.
 
 **3. Build and flash a board.** `flash.sh` detects the chip on the port:
 
@@ -222,18 +229,18 @@ flightctl get enrollmentrequests
 flightctl approve -l stage=canary enrollmentrequest/<name>
 ```
 
-**5. Give it firmware, config and an app.** Replace `192.168.1.22` with your IP in `deploy/fleet/alarm-lab.yaml`, then:
+**5. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/alarm-lab.yaml`, or edit them there.
 
 ```bash
-firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v2
+firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v2.6
 ```
 
 ```bash
-wasm-apps/build.sh alarm v2
+wasm-apps/build.sh alarm v2.1
 ```
 
 ```bash
-flightctl apply -f deploy/fleet/alarm-lab.yaml
+deploy/fleet/apply.sh
 ```
 
 The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest.
@@ -286,6 +293,14 @@ Some of what we ran into points at gaps in Flight Control for this class of devi
 - rollout success is judged on `renderedVersion` only.
 
 These are written up, with measurements, in [docs/POC-RESULTS.md](docs/POC-RESULTS.md). The original plan is in [docs/POC-PLAN.md](docs/POC-PLAN.md).
+
+## CI
+
+GitHub Actions builds the simulated device on Linux, the firmware for every supported chip, and the example WASM app, on every push. The firmware jobs use throwaway credentials (`ci/dummy-secrets.sh`). Nothing talks to a Flight Control server yet; an end-to-end test against Flight Control on kind is still to do.
+
+## License
+
+Apache 2.0, see [LICENSE](LICENSE).
 
 ## Third-party code
 

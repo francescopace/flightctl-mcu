@@ -13,7 +13,7 @@ extern "C" {
 #endif
 
 typedef struct {
-    /* Agent endpoint, e.g. host "agent-api.192.168.1.22.nip.io", port 8443.
+    /* Agent endpoint, e.g. host "agent-api.192.0.2.10.nip.io", port 8443.
      * The host is also used for SNI and certificate hostname checks. */
     const char *server_host;
     int server_port;

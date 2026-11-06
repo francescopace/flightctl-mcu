@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host:
+    name: host agent (Linux)
+    runs-on: ubuntu-latest
+    # The IDF image has cmake, ninja, gcc and the same mbedTLS 3.6 the firmware uses.
+    container: espressif/idf:v5.5.6
+    steps:
+      - uses: actions/checkout@v4
+      - run: third_party/fetch-wamr.sh
+      - name: mbedTLS 3.6 from ESP-IDF
+        run: |
+          M=$IDF_PATH/components/mbedtls/mbedtls
+          cmake -S $M -B /tmp/mbedtls -G Ninja -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/mbedtls-install
+          cmake --build /tmp/mbedtls --target install
+      - name: build
+        run: |
+          cmake -S . -B build/host -G Ninja -DMbedTLS_DIR=/tmp/mbedtls-install/lib/cmake/MbedTLS
+          cmake --build build/host
+      - name: smoke test
+        run: |
+          set +e
+          build/host/fc-host-agent; test $? -eq 2
+
+  firmware:
+    name: firmware (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.6
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [esp32, esp32s3, esp32c3, esp32c5, esp32c6]
+    steps:
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory '*'
+      - run: third_party/fetch-wamr.sh
+      - run: ci/dummy-secrets.sh
+      - shell: bash
+        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.target }}
+          path: firmware/build-${{ matrix.target }}/flightctl_mcu_fw.bin
+
+  wasm:
+    name: WASM apps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang lld
+      - name: build alarm v1 and v2
+        run: |
+          export PATH="$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)"):$PATH"
+          NO_PUSH=1 wasm-apps/build.sh alarm v1
+          NO_PUSH=1 wasm-apps/build.sh alarm v2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-apps
+          path: wasm-apps/build/*/*.wasm
