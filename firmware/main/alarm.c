@@ -223,7 +223,7 @@ static void alarm_task(void *arg)
         /* Without a WASM app driving the LED, the built-in logic does. */
         if (esp_timer_get_time() - s_app_led_us > APP_LED_HOLD_US) {
             xSemaphoreTake(s_led_lock, portMAX_DELAY);
-            led_set(alarm ? 40 : 0, 0, 0);
+            led_set(0, 0, alarm ? 40 : 0); /* blue, like the WASM app */
             xSemaphoreGive(s_led_lock);
         }
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(c.sample_ms));

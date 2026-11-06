@@ -5,8 +5,10 @@
  *
  * The firmware calls tick(now_ms) every TICK_MS (app env var, default 100).
  * Hardware and config come through host functions (module "env").
- *   v1: LED solid red at or above the fleet threshold.
- *   v2: 1 C hysteresis, amber pre-alarm 2 C below, blinking red alarm.
+ *   v1: LED solid blue at or above the fleet threshold.
+ *   v2: 1 C hysteresis, dim solid blue pre-alarm 2 C below, blinking blue alarm.
+ * Blue only, so boards with a single-colour LED (most are blue) and RGB
+ * boards look the same in a demo: solid or blinking is what matters.
  */
 #include <stdint.h>
 
@@ -39,9 +41,9 @@ EXPORT("tick") void tick(int32_t now_ms)
     int32_t t = temp_mc(), thr = threshold_mc();
 #if ALARM_VERSION == 1
     alarm_on = t >= thr;
-    led(alarm_on ? 40 : 0, 0, 0);
+    led(0, 0, alarm_on ? 40 : 0);
     if (alarm_on) {
-        STATE("v1 alarm (solid red)", 1);
+        STATE("v1 alarm (solid blue)", 1);
     } else {
         STATE("v1 ok", 0);
     }
@@ -49,11 +51,11 @@ EXPORT("tick") void tick(int32_t now_ms)
     alarm_on = alarm_on ? t >= thr - 1000 : t >= thr;
     if (alarm_on) {
         int on = (now_ms / 250) & 1; /* 2 Hz blink */
-        led(on ? 40 : 0, 0, 0);
-        STATE("v2 alarm (blinking red)", 2);
+        led(0, 0, on ? 40 : 0);
+        STATE("v2 alarm (blinking blue)", 2);
     } else if (t >= thr - 2000) {
-        led(20, 8, 0);
-        STATE("v2 pre-alarm (amber)", 1);
+        led(0, 0, 8);
+        STATE("v2 pre-alarm (dim blue)", 1);
     } else {
         led(0, 0, 0);
         STATE("v2 ok", 0);

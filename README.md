@@ -106,7 +106,7 @@ Tested on real boards with ESP-IDF 5.5.6:
 | ESP32-C3 | RISC-V | everything works | ~87 KB |
 | ESP32-C5 | RISC-V | everything works | ~68 KB |
 | ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~88 KB |
-| ESP32-C6 | RISC-V | builds, not tested on hardware | |
+| ESP32-C6 | RISC-V | everything except rollback, which was not exercised; on the DevKitC flash over the native USB port with the board powered up holding BOOT, then replug it | ~177 KB |
 | ESP32-S2 | Xtensa LX7 | not tried yet | |
 
 "Everything" means enrollment, monitoring, config, firmware OTA with rollback and WASM apps. PSRAM is not used, so a single image runs on every board variant of a chip. The same `.wasm` file runs on Xtensa and RISC-V.
@@ -232,11 +232,11 @@ flightctl approve -l stage=canary enrollmentrequest/<name>
 **5. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/alarm-lab.yaml`, or edit them there.
 
 ```bash
-firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v2.6
+firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v2.7
 ```
 
 ```bash
-wasm-apps/build.sh alarm v2.1
+wasm-apps/build.sh alarm v2.2
 ```
 
 ```bash
@@ -270,7 +270,7 @@ The agent adds:
 - `set_state(ptr, len)`: shown in `status.customInfo["app.<name>"]`;
 - `log(ptr, len)`: writes to the device log.
 
-See [wasm-apps/alarm/alarm.c](wasm-apps/alarm/alarm.c). Compiled, it is a few hundred bytes. Keep the link flags in [wasm-apps/build.sh](wasm-apps/build.sh): exporting `__heap_base` and `__data_end` lets WAMR shrink the 64 KB WebAssembly memory page to what the module actually uses. Without that, the module does not fit on a C3.
+See [wasm-apps/alarm/alarm.c](wasm-apps/alarm/alarm.c). It uses only blue: dim and steady for the pre-alarm, blinking for the alarm. Most boards with a single-colour LED have a blue one, so RGB and single-colour boards look the same in a demo. Compiled, it is a few hundred bytes. Keep the link flags in [wasm-apps/build.sh](wasm-apps/build.sh): exporting `__heap_base` and `__data_end` lets WAMR shrink the 64 KB WebAssembly memory page to what the module actually uses. Without that, the module does not fit on a C3.
 
 ## Limitations
 

@@ -38,7 +38,7 @@ spec:
       applications:
         - name: alarm
           appType: container
-          image: ${REGISTRY}/flightctl-mcu/alarm:v2.1
+          image: ${REGISTRY}/flightctl-mcu/alarm:v2.2
           envVars:
             TICK_MS: "100"
       config:

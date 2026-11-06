@@ -6,13 +6,13 @@ Espressif microcontrollers managed by **Flight Control 1.3.1** (upstream of Red 
 
 | Capability | How | Result |
 |---|---|---|
-| Enrollment and identity | P-256 key generated on the device, CSR, approval with `flightctl approve`, mTLS with TLS 1.3 | 5 MCU devices enrolled, plus a fake device on the host |
+| Enrollment and identity | P-256 key generated on the device, CSR, approval with `flightctl approve`, mTLS with TLS 1.3 | 6 MCU devices enrolled, plus a fake device on the host |
 | Monitoring | Full agent API status: resources, `customInfo` (heap, RSSI, temperature, traffic), and `Unknown` after 5 minutes offline | Works |
 | Config without reboot | Inline `spec.config`, validated by the application before it is stored | Applied in 1–6 s. An invalid config is rejected and reported as OutOfDate with the error message |
 | Firmware OTA | `spec.os.image` points to an OCI index with one firmware per chip. The download goes straight into the A/B slot and is checked with sha256 | Staged rollout (canary first, then the rest) across 3 devices in 50–80 s |
 | Automatic rollback | The new firmware is confirmed only after the server accepts a status from it; otherwise the device goes back to the previous one | A broken firmware rolls itself back in about 3.5 minutes. The rollout stops at the canary and the other devices never receive it |
 | WASM apps without reboot | `spec.applications` of type `container` with a WASM OCI image, run by WAMR | Update from v1 to v2 on Xtensa and RISC-V with the same `.wasm` file, no reboot |
-| Heterogeneous fleet | One fleet and one firmware reference, with per-device settings through labels and the template | S3, C3, C5 and classic ESP32 in the same fleet |
+| Heterogeneous fleet | One fleet and one firmware reference, with per-device settings through labels and the template | S3, C3, C5, C6 and classic ESP32 in the same fleet |
 
 ## Fleet tested
 
@@ -22,7 +22,7 @@ Espressif microcontrollers managed by **Flight Control 1.3.1** (upstream of Red 
 | ESP32-C3 | RISC-V | SuperMini | internal | blue, active low, GPIO 8 (label) | F2–F5 |
 | ESP32-C5 | RISC-V | DevKitC | internal (about 15 °C below the others) | WS2812 on GPIO 27 | F2–F5 |
 | Classic ESP32 | Xtensa LX6 | DevKit | **simulated** (no supported sensor) | GPIO 2 | F2–F5 |
-| ESP32-C6 | RISC-V | DevKitC | internal | WS2812 on GPIO 8 | built only: flashing this board fails (stub checksum error) |
+| ESP32-C6 | RISC-V | DevKitC | internal | WS2812 on GPIO 8, RGB order (label) | F2–F5 (rollback not exercised). Flashing works only over the native USB port, with the board powered up holding BOOT; after flashing it needs a replug |
 | ESP32-S2 | Xtensa LX7 | — | — | — | not tested (board not connected) |
 | macOS host | arm64 | fake device | simulated | printed to the terminal | F1, F3, F5 (testing without hardware) |
 
@@ -55,6 +55,7 @@ The agent itself is small. Almost all the space goes to the network stack and to
 |---|---|---|
 | ESP32-S3 | about 150 KB | 26 KB (during the OTA download) |
 | ESP32-C3 | about 87 KB | 39 KB |
+| ESP32-C6 | about 177 KB | 140 KB |
 | ESP32-C5 | about 68 KB | 29 KB |
 | Classic ESP32 | about 88 KB | 60 KB |
 
@@ -103,7 +104,7 @@ Traffic goes down mostly with keep-alive connections or TLS session resumption, 
      - a watchdog restarts the device if no status has been accepted for 10 minutes.
 5. **App state reached Flight Control up to 60 s late.**
    - Changes of app state are now sent right away, at most one status every 3 s.
-   - The end-to-end test sees an app update reflected in about 2 s.
+   - The end-to-end test sees an app update reflected in about 2 s. On the C3 (firmware v2.7) the alarm state reached Flight Control 2 s after the new threshold was applied.
 
 ## Flight Control limitations found (upstream proposals)
 
@@ -141,7 +142,7 @@ Traffic goes down mostly with keep-alive connections or TLS session resumption, 
 - **One TLS connection per request**, without keep-alive. It is simple, but it increases traffic and power use.
 - **App formats**: only the WASM OCI artifact. Podman "compat" images (with the `.wasm` in a tar.gz layer) are not supported.
 - **Debug build** (`-Og`). With `-Os` the images would be smaller.
-- **Hardware coverage**: the ESP32-S2 was not tested, and the C6 was only built.
+- **Hardware coverage**: the ESP32-S2 was not tested, and automatic rollback was not exercised on the C6.
 
 ## Suggested next steps
 
