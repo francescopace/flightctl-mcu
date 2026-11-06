@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   host:
@@ -52,3 +53,41 @@ jobs:
         with:
           name: wasm-apps
           path: wasm-apps/build/*/*.wasm
+
+  e2e:
+    name: end-to-end (simulated device vs Flight Control on kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FLIGHTCTL_VERSION: v1.3.1
+      MBEDTLS_VERSION: v3.6.7
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: |
+          kind version && helm version --short && kubectl version --client
+          sudo curl -fsSL -o /usr/local/bin/flightctl \
+            https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
+          sudo chmod +x /usr/local/bin/flightctl
+          sudo apt-get update && sudo apt-get install -y clang lld ninja-build python3-yaml
+          echo "$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)")" >> "$GITHUB_PATH"
+      - uses: oras-project/setup-oras@v1
+      - name: mbedTLS 3.6
+        run: |
+          git clone --depth 1 --branch $MBEDTLS_VERSION --recurse-submodules --shallow-submodules \
+            https://github.com/Mbed-TLS/mbedtls /tmp/mbedtls-src
+          cmake -S /tmp/mbedtls-src -B /tmp/mbedtls -G Ninja -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/mbedtls-install
+          cmake --build /tmp/mbedtls --target install
+      - name: host agent
+        run: |
+          third_party/fetch-wamr.sh
+          cmake -S . -B build/host -G Ninja -DMbedTLS_DIR=/tmp/mbedtls-install/lib/cmake/MbedTLS
+          cmake --build build/host
+      - name: e2e
+        run: ci/e2e.sh
+      - name: cluster state on failure
+        if: failure()
+        run: |
+          kubectl get pods -A || true
+          kubectl get events -n flightctl --sort-by=.lastTimestamp | tail -40 || true

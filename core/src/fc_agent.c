@@ -42,6 +42,9 @@
 /* Liveness: no accepted status update for this long means the agent is
  * stuck (network stack, TLS, a hung connection): restart the device. */
 #define STATUS_STALL_REBOOT_S 600
+/* Changes (app state, alarms) trigger an immediate status update, but never
+ * more than one every few seconds, whatever an app does. */
+#define STATUS_MIN_GAP_S 3
 
 mbedtls_ctr_drbg_context *fc_http_drbg(void);
 
@@ -279,8 +282,12 @@ static void *status_thread(void *arg)
 {
     agent_t *a = arg;
     int interval = a->cfg->status_interval_s > 0 ? a->cfg->status_interval_s : 60;
-    time_t last_ok = time(NULL);
+    time_t last_ok = time(NULL), last_put = 0;
     for (;;) {
+        time_t since = time(NULL) - last_put;
+        if (last_put != 0 && since < STATUS_MIN_GAP_S) {
+            sleep((unsigned)(STATUS_MIN_GAP_S - since));
+        }
         if (time(NULL) - last_ok > STATUS_STALL_REBOOT_S) {
             fc_port_log(FC_LOG_ERROR, "no status update accepted for %d s: restarting", STATUS_STALL_REBOOT_S);
             fc_port_reboot();
@@ -289,8 +296,10 @@ static void *status_thread(void *arg)
             fc_port_log(FC_LOG_ERROR, "firmware %s could not reach Flight Control: rolling back", a->os_image);
             fc_port_ota_rollback();
         }
-        if (put_status(a) == 0) {
-            last_ok = time(NULL);
+        int ok = put_status(a) == 0;
+        last_put = time(NULL);
+        if (ok) {
+            last_ok = last_put;
         } else {
             fc_port_log(FC_LOG_WARN, "status update failed, retrying");
         }

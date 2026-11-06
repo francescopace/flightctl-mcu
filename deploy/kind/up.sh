@@ -36,9 +36,9 @@ helm upgrade --install flightctl "oci://quay.io/flightctl/charts/flightctl:${FC_
   --set global.gateway.gatewayClassName=envoy-gateway \
   --set global.gateway.ports.http=80 \
   --set global.gateway.ports.tls=443 \
-  "${CLUSTER_CLI_ARGS[@]}"
+  ${CLUSTER_CLI_ARGS[@]+"${CLUSTER_CLI_ARGS[@]}"}
 
 echo "Base domain: ${FC_BASE_DOMAIN}"
-echo "UI:          https://ui.${FC_BASE_DOMAIN}:8443"
+echo "UI:          http://ui.${FC_BASE_DOMAIN}:8080"
 echo "API:         https://api.${FC_BASE_DOMAIN}:8443"
 echo "Agent API:   https://agent-api.${FC_BASE_DOMAIN}:8443"

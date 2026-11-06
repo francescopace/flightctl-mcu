@@ -22,6 +22,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "fc_agent.h"
 #include "fc_oci.h"
 #include "fc_port.h"
 #include "wasm_export.h"
@@ -61,9 +62,13 @@ static int s_inited;
 static void set_status(app_t *a, const char *status, const char *error)
 {
     pthread_mutex_lock(&s_lock);
+    int changed = strcmp(a->status, status) != 0 || strcmp(a->error, error ? error : "") != 0;
     snprintf(a->status, sizeof(a->status), "%s", status);
     snprintf(a->error, sizeof(a->error), "%s", error ? error : "");
     pthread_mutex_unlock(&s_lock);
+    if (changed) {
+        fc_agent_notify_status();
+    }
 }
 
 /* ---- host functions provided by the core -------------------------------- */
@@ -71,10 +76,16 @@ static void set_status(app_t *a, const char *status, const char *error)
 static void native_set_state(wasm_exec_env_t env, const char *s, int32_t len)
 {
     app_t *a = wasm_runtime_get_user_data(env);
+    char next[sizeof(a->state)];
+    snprintf(next, sizeof(next), "%.*s", (int)len, s);
     pthread_mutex_lock(&s_lock);
-    snprintf(a->state, sizeof(a->state), "%.*s", (int)len, s);
+    int changed = strcmp(a->state, next) != 0;
+    memcpy(a->state, next, sizeof(next));
     pthread_mutex_unlock(&s_lock);
-    fc_port_log(FC_LOG_INFO, "app %s: %.*s", a->name, (int)len, s);
+    if (changed) {
+        fc_port_log(FC_LOG_INFO, "app %s: %s", a->name, next);
+        fc_agent_notify_status(); /* rate-limited by the status thread */
+    }
 }
 
 static void native_log(wasm_exec_env_t env, const char *s, int32_t len)

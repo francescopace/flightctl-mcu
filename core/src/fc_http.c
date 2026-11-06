@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 
 #include "fc_port.h"
 #include "mbedtls/ctr_drbg.h"
@@ -25,6 +27,9 @@
 
 #define FC_HTTP_MAX_RESPONSE (512 * 1024)
 #define FC_HTTP_MAX_HEADER   4096
+/* Writes never block longer than this: on a half-open connection (WiFi lost)
+ * send() would otherwise wait for TCP to give up, minutes on lwIP. */
+#define FC_HTTP_SEND_TIMEOUT_S 30
 
 /* Raw bytes on the wire (TCP payload, TLS included), for traffic figures. */
 static volatile unsigned long long s_tx_bytes, s_rx_bytes;
@@ -179,6 +184,8 @@ static int conn_open(conn_t *c, const fc_http_target_t *t)
         log_mbedtls("connect", rc);
         return -1;
     }
+    struct timeval tv = {.tv_sec = FC_HTTP_SEND_TIMEOUT_S};
+    setsockopt(c->net.fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     if (c->plain) {
         return 0;
     }

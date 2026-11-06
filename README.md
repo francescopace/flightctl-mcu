@@ -296,7 +296,23 @@ These are written up, with measurements, in [docs/POC-RESULTS.md](docs/POC-RESUL
 
 ## CI
 
-GitHub Actions builds the simulated device on Linux, the firmware for every supported chip, and the example WASM app, on every push. The firmware jobs use throwaway credentials (`ci/dummy-secrets.sh`). Nothing talks to a Flight Control server yet; an end-to-end test against Flight Control on kind is still to do.
+GitHub Actions runs on every push:
+
+- **Builds**: the simulated device on Linux, the firmware for every supported chip, and the example WASM app. The firmware jobs use throwaway credentials (`ci/dummy-secrets.sh`).
+- **End-to-end test** ([ci/e2e.sh](ci/e2e.sh)): the job deploys Flight Control 1.3.1 on kind and a registry on the runner. The simulated device then goes through:
+  - enrollment and approval;
+  - Online status;
+  - inline config;
+  - a WASM app install;
+  - an in-place update from v1 to v2;
+  - a config change;
+  - the app's removal.
+
+You can run the same test against a cluster you already have:
+
+```bash
+SKIP_DEPLOY=1 ci/e2e.sh
+```
 
 ## License
 

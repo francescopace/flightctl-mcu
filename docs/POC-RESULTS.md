@@ -96,8 +96,14 @@ Traffic goes down mostly with keep-alive connections or TLS session resumption, 
    - The version was advanced even when the config was rejected.
    - Fix: it now stays at the previous version, and the error appears in `updated.info`.
 4. **Classic ESP32: status stuck for about 6 minutes** after an OTA.
-   - The cause was not found. Later, a TLS handshake failed once with "generic error".
-   - I added a watchdog: if no status is accepted for 10 minutes, the device restarts.
+   - It did not happen again, so the cause is not proven. Later, a TLS handshake failed once with "generic error".
+   - The likely cause is a socket write with no timeout. On a half-open connection, for example after a WiFi drop, `send()` waits until TCP gives up, which can take minutes on lwIP.
+   - Fixes:
+     - writes now time out after 30 s (`SO_SNDTIMEO`);
+     - a watchdog restarts the device if no status has been accepted for 10 minutes.
+5. **App state reached Flight Control up to 60 s late.**
+   - Changes of app state are now sent right away, at most one status every 3 s.
+   - The end-to-end test sees an app update reflected in about 2 s.
 
 ## Flight Control limitations found (upstream proposals)
 
