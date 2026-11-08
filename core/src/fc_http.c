@@ -344,6 +344,9 @@ static long chunk_header(const char *body, size_t len, size_t pos, size_t *size)
     while (i < len && body[i] != '\r' && body[i] != '\n') {
         i++; /* chunk extensions */
     }
+    if (i < len && body[i] == '\n') {
+        return -2; /* bare LF: never valid, do not wait for more */
+    }
     if (i + 1 >= len) {
         return -1;
     }

@@ -52,12 +52,21 @@ def mac_of(er):
     return ((info.get("customInfo") or {}).get("mac") or "").lower()
 
 
-def run_once(allow, dry_run, seen):
+def labels_for(er, allow):
+    """The labels to approve this request with, or None if it is not listed."""
     by_name, by_mac = allow
+    name = er["metadata"]["name"]
+    if name in by_name:
+        return by_name[name]
+    mac = mac_of(er)
+    return by_mac.get(mac) if mac else None
+
+
+def run_once(allow, dry_run, seen):
     for er in pending():
         name = er["metadata"]["name"]
         mac = mac_of(er)
-        labels = by_name.get(name) if name in by_name else by_mac.get(mac) if mac else None
+        labels = labels_for(er, allow)
         if labels is None:
             if name not in seen:
                 print(f"not in the allow list: {name} (mac {mac or '-'})")

@@ -25,7 +25,7 @@ env:
 
 jobs:
   build:
-    name: host agent, WASM apps, quick fuzzing
+    name: host agent, WASM apps, unit tests, quick fuzzing
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +34,7 @@ jobs:
         with:
           version: ${{ env.MBEDTLS_VERSION }}
       # clang + lld: WASM apps and the fuzzers; ninja: host agent and fuzzers.
-      - run: sudo apt-get update && sudo apt-get install -y clang lld ninja-build
+      - run: sudo apt-get update && sudo apt-get install -y clang lld ninja-build python3-yaml
       - run: third_party/fetch-wamr.sh
       - name: WASM apps (alarm v1 and v2, trend v1)
         run: |
@@ -52,6 +52,8 @@ jobs:
         with:
           name: host-agent
           path: build/host/fc-host-agent
+      - name: unit tests (C with sanitizers, Python)
+        run: CC=clang ci/unit.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
       # Last, so a finding does not stop the artifacts above. Starts from the
       # corpus of the nightly runs (read only here).
       - uses: actions/cache/restore@v4

@@ -79,11 +79,9 @@ def resolve(base, repo, target):
     return digest
 
 
-def sign(ref, key):
-    host, repo, target = split_ref(ref)
-    base = f"http://{host}"
-    digest = resolve(base, repo, target)
-    payload = json.dumps({
+def payload_for(host, repo, digest):
+    """The simplesigning payload cosign signs: it names the image digest."""
+    return json.dumps({
         "critical": {
             "identity": {"docker-reference": f"{host}/{repo}"},
             "image": {"docker-manifest-digest": digest},
@@ -91,28 +89,51 @@ def sign(ref, key):
         },
         "optional": None,
     }, separators=(",", ":")).encode()
+
+
+def der_signature(payload, key):
+    """ECDSA over the payload's SHA-256, DER encoded, as cosign stores it."""
     with tempfile.NamedTemporaryFile() as f:
         f.write(payload)
         f.flush()
-        der = subprocess.run(["openssl", "dgst", "-sha256", "-sign", key, f.name],
-                             check=True, capture_output=True).stdout
-    payload_digest = push_blob(base, repo, payload)
-    config = json.dumps({
+        return subprocess.run(["openssl", "dgst", "-sha256", "-sign", key, f.name],
+                              check=True, capture_output=True).stdout
+
+
+def config_for(payload_digest):
+    return json.dumps({
         "architecture": "", "created": "0001-01-01T00:00:00Z",
         "history": [{"created": "0001-01-01T00:00:00Z"}], "os": "",
         "rootfs": {"type": "layers", "diff_ids": [payload_digest]}, "config": {},
     }, separators=(",", ":")).encode()
-    config_digest = push_blob(base, repo, config)
-    manifest = {
+
+
+def signature_manifest(payload, der, config):
+    return {
         "schemaVersion": 2,
         "mediaType": MANIFEST_TYPE,
-        "config": {"mediaType": CONFIG_TYPE, "size": len(config), "digest": config_digest},
+        "config": {"mediaType": CONFIG_TYPE, "size": len(config), "digest": sha(config)},
         "layers": [{
-            "mediaType": PAYLOAD_TYPE, "size": len(payload), "digest": payload_digest,
+            "mediaType": PAYLOAD_TYPE, "size": len(payload), "digest": sha(payload),
             "annotations": {SIG_ANNOTATION: base64.b64encode(der).decode()},
         }],
     }
-    tag = digest.replace(":", "-") + ".sig"
+
+
+def signature_tag(digest):
+    return digest.replace(":", "-") + ".sig"
+
+
+def sign(ref, key):
+    host, repo, target = split_ref(ref)
+    base = f"http://{host}"
+    digest = resolve(base, repo, target)
+    payload = payload_for(host, repo, digest)
+    der = der_signature(payload, key)
+    config = config_for(push_blob(base, repo, payload))
+    push_blob(base, repo, config)
+    manifest = signature_manifest(payload, der, config)
+    tag = signature_tag(digest)
     request("PUT", f"{base}/v2/{repo}/manifests/{tag}",
             json.dumps(manifest, separators=(",", ":")).encode(), {"Content-Type": MANIFEST_TYPE})
     print(f"signed {host}/{repo}@{digest}")

@@ -286,7 +286,7 @@ static int resolve_layer(const char *image, const char *arch, const char *layer_
     }
     cJSON_Delete(top);
     if (blob_digest[0] == '\0' || *blob_size <= 0) {
-        snprintf(err, err_len, "%s: no %s layer", image, layer_type ? layer_type : "");
+        snprintf(err, err_len, "%s: no %s%slayer", image, layer_type ? layer_type : "", layer_type ? " " : "");
         return -1;
     }
     return 0;

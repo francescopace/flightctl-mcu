@@ -33,9 +33,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 IDF_IMAGE = os.environ.get("IDF_IMAGE", "espressif/idf:v5.5.6")
 
 
-def partition():
+def partition(path=os.path.join(ROOT, "firmware", "partitions.csv")):
     """Offset and size of fc_creds in firmware/partitions.csv."""
-    with open(os.path.join(ROOT, "firmware", "partitions.csv")) as f:
+    with open(path) as f:
         for line in f:
             cols = [c.strip() for c in line.split("#")[0].split(",")]
             if cols[0] == "fc_creds":
@@ -43,8 +43,7 @@ def partition():
     sys.exit("no fc_creds partition in firmware/partitions.csv")
 
 
-def sdkconfig_local(key):
-    path = os.path.join(ROOT, "firmware", "sdkconfig.local")
+def sdkconfig_local(key, path=os.path.join(ROOT, "firmware", "sdkconfig.local")):
     if not os.path.exists(path):
         return None
     with open(path) as f:
@@ -59,6 +58,15 @@ def local_ip():
     out = subprocess.run(["bash", "-c", f"source '{ROOT}/deploy/local-ip.sh'; local_ip"],
                          capture_output=True, text=True)
     return out.stdout.strip()
+
+
+def csv_rows(keys, port, base):
+    """nvs_partition_gen CSV: namespace fc, one string entry per file in
+    `base` (named after its key), and the port as an integer."""
+    rows = ["key,type,encoding,value", "fc,namespace,,"]
+    rows += [f"{key},file,string,{base}/{key}" for key in keys]
+    rows.append(f"server_port,data,i32,{int(port)}")
+    return rows
 
 
 def build_partition(args, size):
@@ -88,13 +96,10 @@ def build_partition(args, size):
         for key, value in values.items():
             with open(os.path.join(work, key), "w") as f:
                 f.write(value)
-        rows = ["key,type,encoding,value", "fc,namespace,,"]
         local = subprocess.run([sys.executable, "-c", "import esp_idf_nvs_partition_gen"],
                                capture_output=True).returncode == 0
-        base = work if local else "/w"
-        rows += [f"{key},file,string,{base}/{key}" for key, _ in entries]
-        rows += [f"{key},file,string,{base}/{key}" for key in values if values[key] != ""]  # no password: open AP
-        rows.append(f"server_port,data,i32,{int(port)}")
+        keys = [key for key, _ in entries] + [key for key in values if values[key] != ""]  # no password: open AP
+        rows = csv_rows(keys, port, work if local else "/w")
         with open(os.path.join(work, "creds.csv"), "w") as f:
             f.write("\n".join(rows) + "\n")
         if local:

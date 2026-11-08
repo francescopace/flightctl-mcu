@@ -170,6 +170,8 @@ deploy/fleet/    example fleet
 deploy/provision.py  writes a device's credentials partition (fc_creds)
 deploy/signing/  signing key and signer for firmware and apps (cosign format)
 deploy/auto-approve/ enrollment approval from an allow list
+tests/unit/      unit tests of the C core (in-memory port)
+tests/python/    tests of the deploy scripts
 tests/fuzz/      libFuzzer targets and seed inputs
 third_party/     WAMR fetch script (WAMR itself is not vendored)
 ci/              helpers for the GitHub Actions workflow
@@ -322,6 +324,7 @@ These are written up, with measurements, in [docs/RESULTS.md](docs/RESULTS.md). 
 GitHub Actions runs on every push that touches code. It builds once and tests what it built: the end-to-end jobs take the host agent, the firmware images and the WASM apps from the build jobs.
 
 - **Builds**: the simulated device on Linux, the firmware for every supported chip in debug and release profiles (with `ccache`), and the example WASM apps. The firmware has no credentials in it.
+- **Unit tests** ([ci/unit.sh](ci/unit.sh), under a second): the C core on an in-memory port, with AddressSanitizer and UBSan (HTTP framing, OCI references, index and signatures, device identity against an independently computed name, rendered specs, certificate renewal answers, re-enrollment), and the deploy scripts' logic in Python (cosign payloads and signatures, the provisioning partition, the allow list).
 - **Fuzzing** ([ci/fuzz.sh](ci/fuzz.sh)): the HTTP response reader, the OCI manifest and signature handling, and the agent's handling of rendered specs and certificates. 30 seconds per target on every push, 20 minutes per target every night ([fuzz-nightly.yml](.github/workflows/fuzz-nightly.yml)), with the corpus kept from one night to the next. Crashes found so far are kept as seed inputs in `tests/fuzz/corpus`.
 - **End-to-end test** ([ci/e2e.sh](ci/e2e.sh)): the job deploys Flight Control 1.3.1 on kind and a registry on the runner. The simulated device then goes through:
   - enrollment, approved by the allow-list script;
