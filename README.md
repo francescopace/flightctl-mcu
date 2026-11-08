@@ -8,7 +8,9 @@ This is a proof of concept. It works end to end on real hardware, but it is not 
 
 ## Why
 
-Flight Control (upstream of Red Hat Edge Manager, [video overview](https://www.youtube.com/watch?v=BrLQr61dTik)) manages fleets of Linux edge devices from OpenShift: enrollment, monitoring, declarative config, OS images and container apps, with staged rollouts. Its agent is written in Go and expects a full Linux system with bootc, systemd and Podman.
+Flight Control (upstream of Red Hat Edge Manager, [video overview](https://www.youtube.com/watch?v=BrLQr61dTik)) manages fleets of Linux edge devices: enrollment, monitoring, declarative config, OS images and container apps, with staged rollouts. Its agent is written in Go and expects a full Linux system with bootc, systemd and Podman.
+
+The service itself is not tied to OpenShift. It installs with Helm on any Kubernetes cluster that supports the Gateway API (OpenShift and MicroShift included), or without Kubernetes on a single Fedora or RHEL host, as Podman quadlets. This repo uses kind on a laptop.
 
 Plenty of devices in the field are not like that. A sensor node or a small controller on a production line is usually a microcontroller with a few hundred KB of RAM and an RTOS. These devices end up managed by something else: a vendor cloud, a custom MQTT backend, or nothing at all. So the gateway that collects their data shows up in Flight Control, and the devices behind it don't.
 
@@ -35,7 +37,7 @@ A C client for it, with mbedTLS for TLS 1.3, fits in about 21 KB of flash. Once 
 
 ```mermaid
 flowchart LR
-  subgraph cp["Control plane (OpenShift or kind)"]
+  subgraph cp["Control plane (any Kubernetes, or Podman on a Linux host)"]
     FC["Flight Control<br/>fleets, rollouts, UI"]
     REG["OCI registry<br/>firmware index, .wasm apps"]
   end
@@ -171,9 +173,9 @@ docs/            PoC plan and results
 
 You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), esptool, oras, Python 3 with PyYAML, and for WASM apps clang plus `wasm-ld` (`brew install lld`). The ESP-IDF toolchain runs in the `espressif/idf:v5.5.6` container, so you don't install it.
 
-The scripts were written on macOS (Apple Silicon). The host agent and the firmware build are also tested on Linux in CI; the kind setup has only been run on macOS.
+The scripts were written on macOS (Apple Silicon). CI runs the host agent, the firmware build and the kind setup on Linux too.
 
-**1. Control plane.** Flight Control on kind, reachable from your LAN at `<your-ip>.nip.io`, and a plain-HTTP OCI registry on port 5001:
+**1. Control plane.** Flight Control on kind, reachable from your LAN at `<your-ip>.nip.io`, and a plain-HTTP OCI registry on port 5001. If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and set its agent endpoint in `firmware/sdkconfig.local` (step 2).
 
 ```bash
 deploy/kind/up.sh
