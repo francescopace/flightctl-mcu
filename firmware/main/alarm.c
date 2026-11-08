@@ -1,6 +1,6 @@
 /*
- * PoC application "line temperature alarm": samples the internal temperature
- * sensor and lights the LED red above a threshold. Its settings come from the
+ * Example application "line temperature alarm": samples the internal
+ * temperature sensor and lights the LED (blue) above a threshold. Its settings come from the
  * Flight Control inline config file /etc/fc-app/alarm.json:
  *
  *   {"threshold_c": 40, "hysteresis_c": 1, "sample_ms": 2000,

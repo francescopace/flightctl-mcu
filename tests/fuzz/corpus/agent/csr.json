@@ -1,0 +1,1 @@
+{"apiVersion":"v1beta1","kind":"CertificateSigningRequest","metadata":{"name":"fuzzdevice-0000"},"status":{"conditions":[{"type":"Approved","status":"True"}],"certificate":"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUIKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo="}}

@@ -21,6 +21,7 @@
 #include "fc_port.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/ctr_drbg.h"
+#include "mbedtls/x509_crt.h"
 
 #define KV_MGMT_CERT "mgmt.crt"
 #define KV_RENDERED  "rendered.ver"
@@ -45,13 +46,28 @@
 /* Changes (app state, alarms) trigger an immediate status update, but never
  * more than one every few seconds, whatever an app does. */
 #define STATUS_MIN_GAP_S 3
+/* Management certificate renewal, as the Linux agent does it: once a quarter
+ * of the lifetime has passed (75% left), ask for a new certificate for the
+ * same key. The server approves renewal requests on its own when they come
+ * with the current management certificate. Failures back off up to an hour. */
+#define CERT_RENEW_AT_PERCENT 25
+#define CERT_RETRY_MIN_S 60
+#define CERT_RETRY_MAX_S 3600
+#define RENEWAL_SIGNER "flightctl.io/device-management-renewal"
 
 mbedtls_ctr_drbg_context *fc_http_drbg(void);
 
 typedef struct {
     const fc_agent_config_t *cfg;
     fc_identity_t id;
-    char *mgmt_cert_pem;
+    char *mgmt_cert_pem;   /* guarded by lock: requests use a copy (mgmt_request) */
+    time_t cert_renew_at;  /* when renewal is due */
+    time_t cert_not_after;
+    time_t cert_next_try;
+    int cert_backoff_s;
+    char csr_name[96];     /* renewal request waiting for its certificate */
+    /* Kept connections, one per thread. */
+    fc_http_session_t *spec_sess, *status_sess;
     char boot_id[40];
 
     pthread_mutex_t lock;
@@ -121,12 +137,27 @@ static fc_http_target_t enrollment_target(const agent_t *a, int timeout_s)
     return t;
 }
 
-static fc_http_target_t management_target(const agent_t *a, int timeout_s)
+/* A request with the management certificate, on the calling thread's kept
+ * connection. The certificate is copied: a renewal on the status thread may
+ * replace and free it while a long-poll is still running. */
+static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, const char *method, const char *path,
+                        const char *content_type, const char *body, size_t body_len, fc_http_response_t *r)
 {
     fc_http_target_t t = enrollment_target(a, timeout_s);
-    t.cert_pem = a->mgmt_cert_pem;
+    pthread_mutex_lock(&a->lock);
+    char *cert = strdup(a->mgmt_cert_pem);
+    pthread_mutex_unlock(&a->lock);
+    if (cert == NULL) {
+        memset(r, 0, sizeof(*r));
+        r->status = -1;
+        return -1;
+    }
+    t.cert_pem = cert;
     t.key_pem = a->id.key_pem;
-    return t;
+    t.session = sess;
+    int rc = fc_http_request(&t, method, path, content_type, body, body_len, r);
+    free(cert);
+    return rc;
 }
 
 /* ---- status ------------------------------------------------------------ */
@@ -170,6 +201,15 @@ static cJSON *build_status(agent_t *a)
     cJSON_AddStringToObject(custom, "netTxBytes", num);
     snprintf(num, sizeof(num), "%llu", rx);
     cJSON_AddStringToObject(custom, "netRxBytes", num);
+    snprintf(num, sizeof(num), "%lu", fc_http_handshakes());
+    cJSON_AddStringToObject(custom, "tlsHandshakes", num);
+    if (a->cert_not_after > 0) {
+        char exp[32];
+        struct tm tm;
+        gmtime_r(&a->cert_not_after, &tm);
+        strftime(exp, sizeof(exp), "%Y-%m-%dT%H:%M:%SZ", &tm);
+        cJSON_AddStringToObject(custom, "mgmtCertNotAfter", exp);
+    }
     fc_port_custom_info(custom);
     if (a->cfg->custom_info != NULL) {
         a->cfg->custom_info(custom, a->cfg->app_ctx);
@@ -229,9 +269,8 @@ static int put_status(agent_t *a)
 
     char path[128];
     snprintf(path, sizeof(path), API "/devices/%s/status", a->id.name);
-    fc_http_target_t t = management_target(a, 60);
     fc_http_response_t r;
-    int rc = fc_http_request(&t, "PUT", path, "application/json", body, strlen(body), &r);
+    int rc = mgmt_request(a, a->status_sess, 60, "PUT", path, "application/json", body, strlen(body), &r);
     free(body);
     if (rc != 0) {
         return -1;
@@ -278,6 +317,192 @@ void fc_agent_notify_status(void)
     }
 }
 
+/* ---- management certificate renewal ------------------------------------ */
+
+/* UTC broken-down time to epoch, without timegm() (not in every libc). */
+static time_t x509_epoch(const mbedtls_x509_time *t)
+{
+    int y = t->year - (t->mon <= 2);
+    long era = (y >= 0 ? y : y - 399) / 400;
+    long yoe = y - era * 400;
+    long doy = (153L * (t->mon + (t->mon > 2 ? -3 : 9)) + 2) / 5 + t->day - 1;
+    long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    long days = era * 146097 + doe - 719468;
+    return (time_t)days * 86400 + t->hour * 3600 + t->min * 60 + t->sec;
+}
+
+/* Checks that a PEM certificate is for this device's key, and returns when
+ * its renewal is due and when it expires. */
+static int cert_info(const agent_t *a, const char *pem, time_t *renew_at, time_t *not_after)
+{
+    mbedtls_x509_crt crt;
+    mbedtls_x509_crt_init(&crt);
+    char name[64];
+    int rc = -1;
+    if (mbedtls_x509_crt_parse(&crt, (const unsigned char *)pem, strlen(pem) + 1) == 0 &&
+        fc_identity_name_of(&crt.pk, name, sizeof(name)) == 0 && strcmp(name, a->id.name) == 0) {
+        time_t nb = x509_epoch(&crt.valid_from), na = x509_epoch(&crt.valid_to);
+        *not_after = na;
+        *renew_at = nb + (na - nb) * CERT_RENEW_AT_PERCENT / 100;
+        rc = 0;
+    }
+    mbedtls_x509_crt_free(&crt);
+    return rc;
+}
+
+static void log_cert(const char *what, time_t renew_at, time_t not_after)
+{
+    char na[32], ra[32];
+    struct tm tm;
+    gmtime_r(&not_after, &tm);
+    strftime(na, sizeof(na), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    gmtime_r(&renew_at, &tm);
+    strftime(ra, sizeof(ra), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    fc_port_log(FC_LOG_INFO, "%s: valid until %s, renewal from %s", what, na, ra);
+}
+
+/* Reads a CertificateSigningRequest answer. Returns 1 if a new certificate
+ * was installed, 0 if still pending, -1 if the request failed. */
+static int handle_csr(agent_t *a, const char *json)
+{
+    cJSON *csr = cJSON_Parse(json);
+    const cJSON *status = cJSON_GetObjectItem(csr, "status");
+    const cJSON *cond;
+    int result = 0;
+    cJSON_ArrayForEach(cond, cJSON_GetObjectItem(status, "conditions")) {
+        const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(cond, "type"));
+        const char *st = cJSON_GetStringValue(cJSON_GetObjectItem(cond, "status"));
+        if (type && st && strcmp(st, "True") == 0 && (strcmp(type, "Denied") == 0 || strcmp(type, "Failed") == 0)) {
+            fc_port_log(FC_LOG_WARN, "certificate renewal %s %s: %s", a->csr_name, type,
+                        cJSON_GetStringValue(cJSON_GetObjectItem(cond, "message")));
+            result = -1;
+        }
+    }
+    const char *b64 = cJSON_GetStringValue(cJSON_GetObjectItem(status, "certificate"));
+    if (result == 0 && b64 != NULL && b64[0]) {
+        size_t len = strlen(b64), olen = 0;
+        unsigned char *pem = malloc(len + 1);
+        time_t renew_at, not_after;
+        if (pem == NULL ||
+            mbedtls_base64_decode(pem, len, &olen, (const unsigned char *)b64, len) != 0) {
+            result = -1;
+        } else {
+            pem[olen] = '\0';
+            if (cert_info(a, (char *)pem, &renew_at, &not_after) != 0) {
+                fc_port_log(FC_LOG_WARN, "certificate renewal %s: certificate is not for this device", a->csr_name);
+                result = -1;
+            } else {
+                /* Stored first: after a reboot the device starts with it. */
+                if (fc_port_kv_set(KV_MGMT_CERT, (char *)pem, olen) != 0) {
+                    fc_port_log(FC_LOG_WARN, "could not store the renewed certificate");
+                }
+                pthread_mutex_lock(&a->lock);
+                free(a->mgmt_cert_pem);
+                a->mgmt_cert_pem = (char *)pem;
+                pem = NULL;
+                a->cert_renew_at = renew_at;
+                a->cert_not_after = not_after;
+                pthread_mutex_unlock(&a->lock);
+                log_cert("management certificate renewed", renew_at, not_after);
+                result = 1;
+            }
+        }
+        free(pem);
+    }
+    cJSON_Delete(csr);
+    return result;
+}
+
+/* Creates the renewal request, or polls the one already created. */
+static int request_renewal(agent_t *a)
+{
+    fc_http_response_t r; /* requests on the status thread's connection */
+    int rc;
+    if (a->csr_name[0] == '\0') {
+        unsigned char rnd[4];
+        mbedtls_ctr_drbg_random(fc_http_drbg(), rnd, sizeof(rnd));
+        snprintf(a->csr_name, sizeof(a->csr_name), "%s-%02x%02x%02x%02x", a->id.name, rnd[0], rnd[1], rnd[2],
+                 rnd[3]);
+        size_t plen = strlen(a->id.csr_pem), blen = 0;
+        mbedtls_base64_encode(NULL, 0, &blen, (const unsigned char *)a->id.csr_pem, plen);
+        char *b64 = malloc(blen);
+        if (b64 == NULL ||
+            mbedtls_base64_encode((unsigned char *)b64, blen, &blen, (const unsigned char *)a->id.csr_pem, plen) != 0) {
+            free(b64);
+            a->csr_name[0] = '\0';
+            return -1;
+        }
+        cJSON *csr = cJSON_CreateObject();
+        cJSON_AddStringToObject(csr, "apiVersion", "v1beta1");
+        cJSON_AddStringToObject(csr, "kind", "CertificateSigningRequest");
+        cJSON_AddStringToObject(cJSON_AddObjectToObject(csr, "metadata"), "name", a->csr_name);
+        cJSON *spec = cJSON_AddObjectToObject(csr, "spec");
+        cJSON_AddStringToObject(spec, "request", b64);
+        cJSON_AddStringToObject(spec, "signerName", RENEWAL_SIGNER);
+        cJSON *usages = cJSON_AddArrayToObject(spec, "usages");
+        cJSON_AddItemToArray(usages, cJSON_CreateString("clientAuth"));
+        cJSON_AddItemToArray(usages, cJSON_CreateString("CA:false"));
+        char *body = cJSON_PrintUnformatted(csr);
+        cJSON_Delete(csr);
+        free(b64);
+        fc_port_log(FC_LOG_INFO, "renewing the management certificate (%s)", a->csr_name);
+        rc = mgmt_request(a, a->status_sess, 60, "POST", API "/certificatesigningrequests", "application/json", body,
+                          strlen(body), &r);
+        free(body);
+        if (rc != 0) {
+            a->csr_name[0] = '\0';
+            return -1;
+        }
+        if (r.status != 200 && r.status != 201) {
+            fc_port_log(FC_LOG_WARN, "certificate renewal: HTTP %d %s", r.status, r.body);
+            fc_http_free(&r);
+            a->csr_name[0] = '\0';
+            return -1;
+        }
+    } else {
+        char path[160];
+        snprintf(path, sizeof(path), API "/certificatesigningrequests/%s", a->csr_name);
+        if (mgmt_request(a, a->status_sess, 60, "GET", path, NULL, NULL, 0, &r) != 0) {
+            return 0; /* network trouble: poll again */
+        }
+        if (r.status != 200) {
+            fc_port_log(FC_LOG_WARN, "certificate renewal %s: HTTP %d", a->csr_name, r.status);
+            fc_http_free(&r);
+            a->csr_name[0] = '\0';
+            return -1;
+        }
+    }
+    rc = handle_csr(a, r.body);
+    fc_http_free(&r);
+    if (rc != 0) {
+        a->csr_name[0] = '\0';
+    }
+    return rc;
+}
+
+/* Called from the status thread on every round. */
+static void renew_cert_if_due(agent_t *a)
+{
+    time_t now = time(NULL);
+    if (a->cert_renew_at == 0 || now < a->cert_renew_at || now < a->cert_next_try) {
+        return;
+    }
+    int rc = request_renewal(a);
+    if (rc == 0) {
+        a->cert_next_try = now + RETRY_DELAY_S;
+    } else if (rc < 0) {
+        a->cert_backoff_s = a->cert_backoff_s ? a->cert_backoff_s * 2 : CERT_RETRY_MIN_S;
+        if (a->cert_backoff_s > CERT_RETRY_MAX_S) {
+            a->cert_backoff_s = CERT_RETRY_MAX_S;
+        }
+        a->cert_next_try = now + a->cert_backoff_s;
+        fc_port_log(FC_LOG_WARN, "certificate renewal failed, next attempt in %d s", a->cert_backoff_s);
+    } else {
+        a->cert_backoff_s = 0;
+        a->cert_next_try = 0;
+    }
+}
+
 static void *status_thread(void *arg)
 {
     agent_t *a = arg;
@@ -296,6 +521,7 @@ static void *status_thread(void *arg)
             fc_port_log(FC_LOG_ERROR, "firmware %s could not reach Flight Control: rolling back", a->os_image);
             fc_port_ota_rollback();
         }
+        renew_cert_if_due(a);
         int ok = put_status(a) == 0;
         last_put = time(NULL);
         if (ok) {
@@ -307,7 +533,13 @@ static void *status_thread(void *arg)
         if (!a->status_dirty) {
             struct timespec until;
             clock_gettime(CLOCK_REALTIME, &until);
-            until.tv_sec += a->verifying ? RETRY_DELAY_S : interval;
+            time_t wait = a->verifying ? RETRY_DELAY_S : interval;
+            /* Wake up for a certificate renewal that is due, or pending. */
+            time_t now = time(NULL), renew = a->cert_next_try > a->cert_renew_at ? a->cert_next_try : a->cert_renew_at;
+            if (renew > 0 && renew - now < wait) {
+                wait = renew > now ? renew - now : 1;
+            }
+            until.tv_sec += wait;
             pthread_cond_timedwait(&a->status_wake, &a->lock, &until);
         }
         a->status_dirty = 0;
@@ -482,9 +714,8 @@ static void *spec_thread(void *arg)
         } else {
             snprintf(path, sizeof(path), API "/devices/%s/rendered", a->id.name);
         }
-        fc_http_target_t t = management_target(a, SPEC_POLL_TIMEOUT_S);
         fc_http_response_t r;
-        if (fc_http_request(&t, "GET", path, NULL, NULL, 0, &r) != 0) {
+        if (mgmt_request(a, a->spec_sess, SPEC_POLL_TIMEOUT_S, "GET", path, NULL, NULL, 0, &r) != 0) {
             sleep(RETRY_DELAY_S);
             continue;
         }
@@ -641,6 +872,12 @@ int fc_agent_run(const fc_agent_config_t *cfg)
         return -1;
     }
     make_boot_id(a.boot_id);
+    fc_oci_set_signing_key(cfg->signing_pub_pem);
+    if (cfg->signing_pub_pem == NULL) {
+        fc_port_log(FC_LOG_WARN, "no signing key: firmware and app signatures are not checked");
+    }
+    a.spec_sess = fc_http_session_new();
+    a.status_sess = fc_http_session_new();
     if (fc_agent_apps_start(cfg) != 0) {
         fc_port_log(FC_LOG_WARN, "WASM runtime unavailable: applications will be rejected");
     }
@@ -656,6 +893,11 @@ int fc_agent_run(const fc_agent_config_t *cfg)
         if (enroll(&a) != 0) {
             return -1;
         }
+    }
+    if (cert_info(&a, a.mgmt_cert_pem, &a.cert_renew_at, &a.cert_not_after) == 0) {
+        log_cert("management certificate", a.cert_renew_at, a.cert_not_after);
+    } else {
+        fc_port_log(FC_LOG_WARN, "cannot read the management certificate: it will not be renewed");
     }
     fc_port_log(FC_LOG_INFO, "enrolled, starting management loop");
 

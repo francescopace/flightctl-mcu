@@ -2,12 +2,17 @@
  * Pulls artifacts from an OCI registry: firmware (streamed into the inactive
  * OTA slot) and small layers such as WASM modules (into RAM).
  *
- *   ref = host[:port]/repo[:tag|@sha256:...]   (plain HTTP registry, PoC)
+ *   ref = host[:port]/repo[:tag|@sha256:...]   (plain HTTP registry)
  *
  * The reference may name an image index (one manifest per chip, selected by
  * platform.architecture == fc_port_fw_platform()) or a single manifest. The
  * firmware is the manifest's first layer; it is streamed to the OTA slot and
  * its sha256 checked against the layer digest before the slot is committed.
+ *
+ * With a signing key set, the digest the reference resolves to must carry a
+ * cosign signature by that key (tag sha256-<hex>.sig, simplesigning payload
+ * naming the digest). Manifests below it are fetched by digest and checked,
+ * and so is every blob, so the signature covers the whole image.
  */
 #include "fc_oci.h"
 
@@ -18,11 +23,23 @@
 #include "cJSON.h"
 #include "fc_http.h"
 #include "fc_port.h"
+#include "mbedtls/base64.h"
+#include "mbedtls/pk.h"
 #include "mbedtls/sha256.h"
 
 #define ACCEPT_MANIFESTS "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json"
 #define INDEX_TYPE       "application/vnd.oci.image.index.v1+json"
 #define TIMEOUT_S        30
+#define SIG_ANNOTATION   "dev.cosignproject.cosign/signature"
+#define MAX_SIG_PAYLOAD  4096
+#define MAX_BLOB_SIZE    (64.0 * 1024 * 1024)
+
+static const char *s_signing_key;
+
+void fc_oci_set_signing_key(const char *pub_pem)
+{
+    s_signing_key = pub_pem && pub_pem[0] ? pub_pem : NULL;
+}
 
 typedef struct {
     char host[128];
@@ -106,6 +123,100 @@ static cJSON *get_manifest(const oci_ref_t *r, const char *ref, char digest[72],
     return m;
 }
 
+/* Small blob into RAM, sha256 checked. Caller frees. */
+static char *get_small_blob(const oci_ref_t *r, const char *digest, size_t *len)
+{
+    char path[320];
+    snprintf(path, sizeof(path), "/v2/%s/blobs/%s", r->repo, digest);
+    fc_http_target_t t = target(r, "application/octet-stream");
+    fc_http_response_t resp;
+    char got[72];
+    if (fc_http_request(&t, "GET", path, NULL, NULL, 0, &resp) != 0 || resp.status != 200 ||
+        resp.body_len > MAX_SIG_PAYLOAD) {
+        fc_http_free(&resp);
+        return NULL;
+    }
+    digest_of(resp.body, resp.body_len, got);
+    if (strcmp(got, digest) != 0) {
+        fc_http_free(&resp);
+        return NULL;
+    }
+    *len = resp.body_len;
+    return resp.body;
+}
+
+/* One cosign signature layer: the payload must name `digest` and the
+ * signature over it must verify with the key. */
+static int check_signature_layer(const oci_ref_t *r, mbedtls_pk_context *pk, const cJSON *layer, const char *digest)
+{
+    const char *pdigest = cJSON_GetStringValue(cJSON_GetObjectItem(layer, "digest"));
+    const char *sig_b64 =
+        cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(layer, "annotations"), SIG_ANNOTATION));
+    if (pdigest == NULL || sig_b64 == NULL) {
+        return -1;
+    }
+    unsigned char sig[160];
+    size_t sig_len = 0;
+    if (mbedtls_base64_decode(sig, sizeof(sig), &sig_len, (const unsigned char *)sig_b64, strlen(sig_b64)) != 0) {
+        return -1;
+    }
+    size_t len = 0;
+    char *payload = get_small_blob(r, pdigest, &len);
+    if (payload == NULL) {
+        return -1;
+    }
+    unsigned char hash[32];
+    mbedtls_sha256((const unsigned char *)payload, len, hash, 0);
+    int rc = mbedtls_pk_verify(pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sig_len);
+    cJSON *p = rc == 0 ? cJSON_Parse(payload) : NULL;
+    const char *named = cJSON_GetStringValue(cJSON_GetObjectItem(
+        cJSON_GetObjectItem(cJSON_GetObjectItem(p, "critical"), "image"), "docker-manifest-digest"));
+    rc = rc == 0 && named != NULL && strcmp(named, digest) == 0 ? 0 : -1;
+    cJSON_Delete(p);
+    free(payload);
+    return rc;
+}
+
+/* Is the manifest or index with this digest signed with the signing key? */
+static int verify_signature(const oci_ref_t *r, const char *image, const char *digest, char *err, size_t err_len)
+{
+    if (s_signing_key == NULL) {
+        return 0;
+    }
+    char tag[80], sdigest[72];
+    snprintf(tag, sizeof(tag), "sha256-%s.sig", digest + 7);
+    cJSON *sigs = get_manifest(r, tag, sdigest, err, err_len);
+    if (sigs == NULL) {
+        snprintf(err, err_len, "%s is not signed", image);
+        return -1;
+    }
+    mbedtls_pk_context pk;
+    mbedtls_pk_init(&pk);
+    int ok = 0;
+    if (mbedtls_pk_parse_public_key(&pk, (const unsigned char *)s_signing_key, strlen(s_signing_key) + 1) == 0) {
+        const cJSON *l;
+        int tried = 0;
+        cJSON_ArrayForEach(l, cJSON_GetObjectItem(sigs, "layers")) {
+            if (++tried > 8) {
+                break; /* a few signatures at most, whatever the registry lists */
+            }
+            if (check_signature_layer(r, &pk, l, digest) == 0) {
+                ok = 1;
+                break;
+            }
+        }
+    } else {
+        fc_port_log(FC_LOG_ERROR, "the signing key in the firmware cannot be parsed");
+    }
+    mbedtls_pk_free(&pk);
+    cJSON_Delete(sigs);
+    if (!ok) {
+        snprintf(err, err_len, "%s: no valid signature from the fleet key", image);
+        return -1;
+    }
+    return 0;
+}
+
 /* Resolves `image` to one layer: through an index (picking the manifest whose
  * platform.architecture is `arch`) or a plain manifest, then the first layer
  * whose mediaType is `layer_type` (NULL: the first layer). */
@@ -123,6 +234,10 @@ static int resolve_layer(const char *image, const char *arch, const char *layer_
         return -1;
     }
     snprintf(digest, digest_len, "%s", top_digest);
+    if (verify_signature(r, image, top_digest, err, err_len) != 0) {
+        cJSON_Delete(top);
+        return -1;
+    }
 
     cJSON *manifest = top;
     const char *mt = cJSON_GetStringValue(cJSON_GetObjectItem(top, "mediaType"));
@@ -159,7 +274,10 @@ static int resolve_layer(const char *image, const char *arch, const char *layer_
     const char *blob = cJSON_GetStringValue(cJSON_GetObjectItem(layer, "digest"));
     const cJSON *size = cJSON_GetObjectItem(layer, "size");
     blob_digest[0] = '\0';
-    *blob_size = cJSON_IsNumber(size) ? (long)size->valuedouble : -1;
+    /* Any size the device could hold; also keeps the cast to long defined
+     * whatever number the manifest has (NaN, inf, 1e300). */
+    double sz = cJSON_IsNumber(size) ? size->valuedouble : -1;
+    *blob_size = sz >= 1 && sz <= MAX_BLOB_SIZE ? (long)sz : -1;
     if (blob != NULL) {
         snprintf(blob_digest, 72, "%s", blob);
     }

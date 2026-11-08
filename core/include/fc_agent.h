@@ -22,6 +22,9 @@ typedef struct {
     const char *ca_pem;
     const char *enrollment_cert_pem;
     const char *enrollment_key_pem;
+    /* Public key (ECDSA P-256) that firmware and WASM apps must be signed
+     * with (cosign format). NULL: signatures are not checked. */
+    const char *signing_pub_pem;
 
     /* Labels requested at enrollment (approver may override). May be NULL. */
     const char *const *labels; /* { "k1", "v1", "k2", "v2", NULL } */

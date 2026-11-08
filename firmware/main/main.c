@@ -24,6 +24,11 @@ int fc_port_espidf_init(void);
 extern const char ca_pem[] asm("_binary_ca_crt_start");
 extern const char enroll_crt_pem[] asm("_binary_enroll_crt_start");
 extern const char enroll_key_pem[] asm("_binary_enroll_key_start");
+#ifdef FC_SIGNING_KEY
+extern const char signing_pub_pem[] asm("_binary_signing_pub_start");
+#else
+static const char *const signing_pub_pem = NULL;
+#endif
 
 static const char *TAG = "main";
 static EventGroupHandle_t s_wifi;
@@ -143,6 +148,7 @@ void app_main(void)
         .ca_pem = ca_pem,
         .enrollment_cert_pem = enroll_crt_pem,
         .enrollment_key_pem = enroll_key_pem,
+        .signing_pub_pem = signing_pub_pem,
         .labels = parse_labels("chip=" CONFIG_IDF_TARGET "," CONFIG_FC_LABELS),
         .agent_version = "flightctl-mcu/0.1.0",
         .status_interval_s = CONFIG_FC_STATUS_INTERVAL,

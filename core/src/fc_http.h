@@ -2,6 +2,10 @@
 
 #include <stddef.h>
 
+/* A connection kept open across requests (HTTP keep-alive). One per thread:
+ * requests on the same session must not overlap. */
+typedef struct fc_http_session fc_http_session_t;
+
 typedef struct {
     const char *host;
     int port;
@@ -11,6 +15,7 @@ typedef struct {
     const char *key_pem;  /* client private key, NUL terminated */
     const char *accept;   /* Accept header; NULL: application/json */
     int timeout_s;        /* read timeout (no data for this long) */
+    fc_http_session_t *session; /* NULL: one connection per request */
 } fc_http_target_t;
 
 typedef struct {
@@ -21,8 +26,14 @@ typedef struct {
 
 int fc_http_global_init(void);
 
-/* Performs one request on a fresh connection (Connection: close) and buffers
- * the response (max 512 KB). `content_type` and `body` may be NULL.
+fc_http_session_t *fc_http_session_new(void);
+/* Closes the connection, if open; the session can still be used. */
+void fc_http_session_close(fc_http_session_t *s);
+
+/* Performs one request and buffers the response (max 512 KB). With
+ * t->session the connection is reused when possible (a request on a
+ * connection the server dropped meanwhile is retried once on a new one);
+ * without, it is closed afterwards. `content_type` and `body` may be NULL.
  * Returns 0 if a response was read. */
 int fc_http_request(const fc_http_target_t *t, const char *method,
                     const char *path, const char *content_type,
@@ -41,3 +52,6 @@ int fc_http_get_stream(const fc_http_target_t *t, const char *path, fc_http_data
 
 /* Bytes sent/received on the wire since boot (TLS and HTTP overhead included). */
 void fc_http_traffic(unsigned long long *tx, unsigned long long *rx);
+
+/* TLS handshakes since boot. */
+unsigned long fc_http_handshakes(void);

@@ -11,11 +11,15 @@ Layout (OCI 1.1, plain HTTP registry, stdlib only):
 The device picks the manifest whose platform.architecture is its chip, streams
 the layer into the inactive OTA slot and checks its sha256.
 Default chips: every firmware/build-<chip>[-<variant>]/ with a built image.
+
+The index is then signed with deploy/signing/sign.py when a signing key is
+there ($SIGNING_KEY or .secrets/signing.key); NO_SIGN=1 skips it.
 """
 import glob
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import urllib.request
 
@@ -108,6 +112,12 @@ def main():
              "manifests": entries, "annotations": {"org.opencontainers.image.version": tag}}
     idigest, _ = push_manifest(base, repo, tag, INDEX_TYPE, index)
     print(f"{ref}@{idigest}")
+    root = os.path.dirname(fw_dir)
+    key = os.environ.get("SIGNING_KEY") or f"{root}/.secrets/signing.key"
+    if not os.environ.get("NO_SIGN") and os.path.exists(key):
+        subprocess.run([f"{root}/deploy/signing/sign.py", "--key", key, f"{host}/{repo}@{idigest}"], check=True)
+    else:
+        print("not signed (no signing key)")
 
 
 if __name__ == "__main__":

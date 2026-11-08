@@ -1,5 +1,5 @@
 # Apply with deploy/fleet/apply.sh, which fills in ${REGISTRY}.
-# PoC fleet: every MCU with the "line temperature alarm" app (S3, C3, C5, C6).
+# Example fleet: every MCU with the "line temperature alarm" app.
 # Change threshold_c and re-apply: devices pick it up on the next long-poll,
 # without reboot. Fields: threshold_c, hysteresis_c, sample_ms, led_gpio, led_ws2812.
 # Per-device LED: label the device led-gpio=<n> (default -1 = board default)

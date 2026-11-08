@@ -1,8 +1,10 @@
-# flightctl-mcu PoC: results
+# Results
 
-Espressif microcontrollers managed by **Flight Control 1.3.1** (upstream of Red Hat Edge Manager), with no Linux on the device and **no changes to the server**. The server ran on kind on a Mac. The PoC was carried out on 5–6 November 2026.
+What has been built and measured so far: Espressif microcontrollers managed by **Flight Control 1.3.1** (upstream of Red Hat Edge Manager), with no Linux on the device and **no changes to the server**. The server ran on kind on a Mac.
 
-## What was demonstrated
+The work is split in milestones (see the [roadmap](ROADMAP.md)): the proof of concept (milestone 0, 5–6 November 2026) and the production foundations (milestone 1, 8 November 2026). Figures are from milestone 0 unless a section says otherwise.
+
+## What works
 
 | Capability | How | Result |
 |---|---|---|
@@ -13,6 +15,9 @@ Espressif microcontrollers managed by **Flight Control 1.3.1** (upstream of Red 
 | Automatic rollback | The new firmware is confirmed only after the server accepts a status from it; otherwise the device goes back to the previous one | A broken firmware rolls itself back in about 3.5 minutes. The rollout stops at the canary and the other devices never receive it |
 | WASM apps without reboot | `spec.applications` of type `container` with a WASM OCI image, run by WAMR | Update from v1 to v2 on Xtensa and RISC-V with the same `.wasm` file, no reboot |
 | Heterogeneous fleet | One fleet and one firmware reference, with per-device settings through labels and the template | S2, S3, C3, C5, C6 and classic ESP32 in the same fleet |
+| Certificate renewal (milestone 1) | The device renews its management certificate for the same key, through the renewal signer the server approves on its own | Tested with 2-minute certificates: the device keeps reporting after the first one expires |
+| Signed images (milestone 1) | Firmware and apps signed in cosign's format; the device checks the signature against a key in its firmware | Unsigned images and images signed with another key are refused; `cosign verify` accepts our signatures |
+| Automatic approval (milestone 1) | An allow list of device names or MACs with their labels | Used by the end-to-end test |
 
 ## Fleet tested
 
@@ -81,11 +86,21 @@ Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on
 | Classic ESP32 (with WASM app) | 236 KB/h | 493 KB/h | **about 730 KB/h, about 17 MB per day** |
 | Fake device on the host (no app) | 183 KB/h | 380 KB/h | about 560 KB/h |
 
-Each request costs about 10 KB, and most of that is the TLS 1.3 handshake with mTLS, because the PoC opens a new connection for every request. The status JSON is 2–3 KB.
+Each request cost about 10 KB, and most of that was the TLS 1.3 handshake with mTLS, because the agent opened a new connection for every request. The status JSON is 2–3 KB. The 25 minutes of ESP32 serial log showed no errors and no hangs.
 
-Traffic goes down mostly with keep-alive connections or TLS session resumption, and with less frequent or differential status updates. The current level is fine on WiFi but needs optimizing for NB-IoT or LTE-M. The 25 minutes of ESP32 serial log showed no errors and no hangs.
+**Milestone 1, with kept connections** (HTTP keep-alive, one connection per agent thread), measured over 10 minutes on the fake device:
 
-## Problems found and fixed during the PoC
+| Device | Sent | Received | Total | TLS handshakes |
+|---|---|---|---|---|
+| Fake device on the host (no app) | 87 KB/h | 130 KB/h | **about 220 KB/h** (was 560) | 0 |
+
+What is left is the full status sent every minute and the server's answer to it. Going lower needs less frequent or differential status updates (limitation 6 below). TLS session resumption was also tried: Flight Control 1.3.1 issues session tickets but did not resume a session with them, so a reconnection costs a full handshake (about 1.5 KB received).
+
+### Release build (milestone 1)
+
+The release profile (`VARIANT=release`: `-Os`, quieter logs) makes the C3 image 984 KB instead of 1,159 KB, about 15% smaller, with 41% of the OTA slot free.
+
+## Problems found and fixed
 
 1. **The rollout moved on while the canary was rebooting.**
    - The device reported the new `renderedVersion` right after the download.
@@ -114,6 +129,15 @@ Traffic goes down mostly with keep-alive connections or TLS session resumption, 
 7. **ESP32-S2: temperature reads could hang.**
    - On the S2, ESP-IDF's sensor read sets a bit, busy-waits for the result and clears the bit, without a lock. The status thread, the alarm task and the WASM app all read it, and two overlapping reads can leave one spinning forever.
    - Fix: a lock around the read in `port/espidf`, for every chip.
+8. **Chunked HTTP bodies: integer overflow** (milestone 1, found by fuzzing).
+   - A chunk size close to the maximum of an unsigned long wrapped the bounds check, in code that dated from the proof of concept.
+   - Fix: chunk sizes are parsed by hand and capped; the input is kept as a fuzzing seed.
+9. **Layer size from a manifest: undefined conversion** (milestone 1, found by fuzzing).
+   - A size such as `1e400` became infinity, then was cast to an integer.
+   - Fix: sizes outside 1 byte to 64 MB are rejected.
+10. **Certificate renewal: use after free** (milestone 1, found in review).
+    - A long-poll could still refer to a certificate that two renewals had already replaced and freed.
+    - Fix: each request works on its own copy of the certificate.
 
 ## Flight Control limitations found (upstream proposals)
 
@@ -140,26 +164,13 @@ Traffic goes down mostly with keep-alive connections or TLS session resumption, 
    - Re-pushing the same tag is not seen as an update.
    - Proposal: recommend digest references (`@sha256:`) for firmware and apps, or compare `imageDigest`.
 
-## PoC limitations (not production ready)
+## Current limitations
 
 - **Security**:
-  - The registry is plain HTTP without authentication.
-  - Firmware and apps are **not signed**: there is no cosign, no signature verified by the bootloader (Secure Boot v2), and no flash encryption.
-  - The device key is stored in NVS unencrypted.
+  - The registry is plain HTTP without authentication. Signatures protect the images from tampering, not from being read.
+  - No Secure Boot v2 and no flash encryption: the device key is stored in NVS unencrypted.
 - **WiFi configured at build time.** There is no provisioning (BLE or SoftAP), and no way to transfer the enrollment config either.
-- **Management certificate renewal is not implemented.** The API for it (`certificatesigningrequests`) exists.
-- **One TLS connection per request**, without keep-alive. It is simple, but it increases traffic and power use.
 - **App formats**: only the WASM OCI artifact. Podman "compat" images (with the `.wasm` in a tar.gz layer) are not supported.
-- **Debug build** (`-Og`). With `-Os` the images would be smaller.
-- **Hardware coverage**: automatic rollback was not exercised on the C6.
+- **Hardware coverage**: automatic rollback was not exercised on the C6, and the milestone 1 changes have run on the simulated device and in builds, not yet on the boards.
 
-## Suggested next steps
-
-1. Open an upstream discussion on Flight Control limitations 1–4, the ones that block adoption for MCUs.
-2. Security:
-   - image signing with verification on the device;
-   - Secure Boot v2 and flash encryption;
-   - the device key in the HMAC/DS peripheral, where the chip supports it.
-3. WiFi and enrollment provisioning, in the factory or in the field.
-4. A Zephyr port of the `port/` layer: the core is POSIX C and WAMR supports Zephyr.
-5. Support for battery-powered devices: optional long-poll and status only on wake-up. This depends on limitation 3.
+What comes next is in the [roadmap](ROADMAP.md).

@@ -33,6 +33,9 @@ jobs:
       - run: ci/dummy-secrets.sh
       - shell: bash
         run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7}
+      - name: build the release profile (-Os)
+        shell: bash
+        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} release
       - uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.target }}
@@ -49,10 +52,36 @@ jobs:
           export PATH="$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)"):$PATH"
           NO_PUSH=1 wasm-apps/build.sh alarm v1
           NO_PUSH=1 wasm-apps/build.sh alarm v2
+          NO_PUSH=1 wasm-apps/build.sh trend v1
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-apps
           path: wasm-apps/build/*/*.wasm
+
+  fuzz:
+    name: fuzzing (HTTP, OCI, agent)
+    runs-on: ubuntu-latest
+    env:
+      MBEDTLS_VERSION: v3.6.7
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang ninja-build
+      - name: mbedTLS 3.6
+        run: |
+          git clone --depth 1 --branch $MBEDTLS_VERSION --recurse-submodules --shallow-submodules \
+            https://github.com/Mbed-TLS/mbedtls /tmp/mbedtls-src
+          cmake -S /tmp/mbedtls-src -B /tmp/mbedtls -G Ninja -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/mbedtls-install
+          cmake --build /tmp/mbedtls --target install
+      - name: fuzz, 2 minutes per target
+        run: |
+          third_party/fetch-wamr.sh
+          FUZZ_SECONDS=120 CC=clang ci/fuzz.sh -DMbedTLS_DIR=/tmp/mbedtls-install/lib/cmake/MbedTLS
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-findings
+          path: build/fuzz/crash-*
 
   e2e:
     name: end-to-end (simulated device vs Flight Control on kind)
@@ -72,6 +101,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y clang lld ninja-build python3-yaml
           echo "$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)")" >> "$GITHUB_PATH"
       - uses: oras-project/setup-oras@v1
+      - uses: sigstore/cosign-installer@v3 # e2e checks that cosign accepts our signatures
       - name: mbedTLS 3.6
         run: |
           git clone --depth 1 --branch $MBEDTLS_VERSION --recurse-submodules --shallow-submodules \

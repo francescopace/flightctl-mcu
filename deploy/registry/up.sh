@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local OCI registry for firmware and WASM images, reachable from the LAN over
-# plain HTTP (PoC only). Port 5000 is taken by AirPlay on macOS, so 5001.
+# plain HTTP (development only: signatures protect the images, not their contents from being read). Port 5000 is taken by AirPlay on macOS, so 5001.
 set -euo pipefail
 source "$(dirname "$0")/../local-ip.sh"
 PORT="${PORT:-5001}"

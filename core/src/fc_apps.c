@@ -7,9 +7,11 @@
  * entry with platform.architecture "wasm"). The module is kept in the port
  * key/value store, so apps restart after a reboot without the network.
  *
- * App contract: export tick(i32 now_ms), called every TICK_MS (env var,
- * default 100). Host functions: "env" module, the core's set_state(ptr, len)
- * and log(ptr, len) plus whatever the firmware registers (sensors, LED...).
+ * App contract (wasm-apps/sdk/fc_app.h, version FC_APP_ABI_VERSION): export
+ * tick(i32 now_ms), called every TICK_MS (env var, default 100), and
+ * optionally fc_abi_version(). Host functions: "env" module, the core's
+ * set_state(ptr, len) and log(ptr, len) plus whatever the firmware registers
+ * (sensors, LED...).
  * A trap stops the app; it is restarted after a back-off and counted in
  * status.applications[].restarts.
  */
@@ -28,6 +30,7 @@
 #include "wasm_export.h"
 
 #define MAX_APPS        2
+#define FC_APP_ABI_VERSION 1 /* wasm-apps/sdk/fc_app.h */
 #define MAX_WASM_SIZE   (64 * 1024)
 #define WASM_STACK      2048 /* WASM operand/frame stack per app */
 #define THREAD_STACK    8192
@@ -135,6 +138,18 @@ static void *runner(void *arg)
             set_status(a, "Error", why);
         } else {
             wasm_runtime_set_user_data(env, a);
+            wasm_function_inst_t abi = wasm_runtime_lookup_function(inst, "fc_abi_version");
+            uint32_t abi_argv[1] = {0};
+            if (abi != NULL && wasm_runtime_call_wasm(env, abi, 0, abi_argv) && abi_argv[0] > FC_APP_ABI_VERSION) {
+                snprintf(ebuf, sizeof(ebuf), "app needs interface v%u, this device has v%d", (unsigned)abi_argv[0],
+                         FC_APP_ABI_VERSION);
+                fc_port_log(FC_LOG_WARN, "app %s: %s", a->name, ebuf);
+                set_status(a, "Error", ebuf);
+                wasm_runtime_destroy_exec_env(env);
+                wasm_runtime_deinstantiate(inst);
+                wasm_runtime_unload(module);
+                goto done;
+            }
             set_status(a, "Running", NULL);
             fc_port_log(FC_LOG_INFO, "app %s running (%s, tick %d ms)", a->name, a->image, a->tick_ms);
             while (!a->stop) {

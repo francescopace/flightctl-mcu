@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # End-to-end test: the simulated device (build/host/fc-host-agent) against a
 # real Flight Control. Checks enrollment, approval, status, inline config,
-# a WASM app install, an update v1 -> v2 without restart, a config change
-# and the app removal.
+# a WASM app install, an update v1 -> v2 without restart, a config change,
+# the rejection of an unsigned app, an update while the registry is down,
+# the app removal, the renewal of the management certificate (the server is
+# told to issue 2-minute certificates for the test) and a server restart. Apps are signed with a throwaway key; when cosign is
+# installed, it checks that signature too.
 #
 #   ci/e2e.sh                 deploy Flight Control on kind + registry, then test
 #   SKIP_DEPLOY=1 ci/e2e.sh   test against the cluster and registry already running
@@ -19,12 +22,19 @@ AGENT="agent-api.$IP.nip.io:8443"
 REGISTRY="${REGISTRY:-$IP:5001}"
 TAG="e2e$(date +%s)"
 WORK="$(mktemp -d)"
+echo "work dir: $WORK"
 FLEET=e2e
 AGENT_PID=""
 DEVICE=""
+CERT_TTL=120
 
 log() { printf '\n== %s\n' "$*"; }
-fail() { echo "FAIL: $*" >&2; echo "--- agent log (last 40 lines)" >&2; tail -40 "$WORK/agent.log" >&2 || true; exit 1; }
+fail() {
+  echo "FAIL: $*" >&2
+  echo "--- agent log (last 60 lines, without LED changes)" >&2
+  grep -v '^LED' "$WORK/agent.log" | tail -60 >&2 || true
+  exit 1
+}
 
 cleanup() {
   if [[ -n "$AGENT_PID" ]]; then
@@ -37,6 +47,9 @@ cleanup() {
     [[ -n "$DEVICE" ]] && flightctl delete "enrollmentrequest/$DEVICE" >/dev/null 2>&1 || true
     rm -rf "$WORK"
   fi
+  # Back to the default certificate lifetime on a cluster that stays up.
+  [[ -n "${SKIP_DEPLOY:-}" ]] && kubectl -n flightctl set env deployment/flightctl-api \
+    FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS- >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -60,9 +73,9 @@ sys.exit(0 if ($expr) else 1)" 2>/dev/null; then
   done
 }
 
-# fleet <threshold_c> <app tag, or empty for no app>
+# fleet <threshold_c> <app tag, or empty for no app> [app image name, default alarm]
 apply_fleet() {
-  local threshold="$1" app="$2"
+  local threshold="$1" app="$2" image="${3:-alarm}"
   {
     cat <<EOF
 apiVersion: flightctl.io/v1beta1
@@ -89,7 +102,7 @@ EOF
       applications:
         - name: alarm
           appType: container
-          image: $REGISTRY/flightctl-mcu/alarm:$app
+          image: $REGISTRY/flightctl-mcu/$image:$app
           envVars:
             TICK_MS: "100"
 EOF
@@ -108,7 +121,9 @@ if [[ -z "${SKIP_DEPLOY:-}" ]]; then
   deploy/registry/up.sh
 fi
 
-log "wait for Flight Control"
+log "wait for Flight Control (management certificates valid ${CERT_TTL}s)"
+kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS=$CERT_TTL >/dev/null
+kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m
 kubectl wait --timeout=15m -n flightctl --for=condition=Available deployment --all
 for i in $(seq 1 60); do
   curl -sk -o /dev/null "$API/api/v1/auth/config" && break
@@ -118,15 +133,29 @@ done
 flightctl login "$API" --insecure-skip-tls-verify \
   -t "$(kubectl create token flightctl-admin -n flightctl --duration=1h)" >/dev/null
 
-log "enrollment credentials and WASM apps ($REGISTRY)"
+log "enrollment credentials, signing key and WASM apps ($REGISTRY)"
 deploy/enrollment.sh "$WORK/secrets" >/dev/null
+deploy/signing/keygen.sh "$WORK/signing" >/dev/null
+export SIGNING_KEY="$WORK/signing/signing.key"
 wasm-apps/build.sh alarm "v1.$TAG" "$REGISTRY" >/dev/null
 wasm-apps/build.sh alarm "v2.$TAG" "$REGISTRY" >/dev/null
+# The unsigned image must differ from every signed one: same content means
+# same digest, and a digest that is signed is signed whatever the tag.
+(cd "wasm-apps/build/alarm-v2.$TAG" && oras push --plain-http --disable-path-validation \
+  --annotation "io.flightctl-mcu.e2e=unsigned-$TAG" --config config.json:application/vnd.wasm.config.v0+json \
+  "$REGISTRY/flightctl-mcu/alarm:v2.$TAG-unsigned" alarm.wasm:application/vnd.wasm.content.layer.v1+wasm >/dev/null)
+wasm-apps/build.sh trend "v1.$TAG" "$REGISTRY" >/dev/null
+if command -v cosign >/dev/null; then
+  cosign verify --key "$WORK/signing/signing.pub" --insecure-ignore-tlog --allow-http-registry \
+    "$REGISTRY/flightctl-mcu/alarm:v2.$TAG" >/dev/null 2>&1 || fail "cosign does not accept the signature"
+  echo "ok: cosign verifies the signature"
+fi
 
 log "start the simulated device"
 build/host/fc-host-agent --server "$AGENT" --ca "$WORK/secrets/ca.crt" \
   --enroll-cert "$WORK/secrets/enroll.crt" --enroll-key "$WORK/secrets/enroll.key" \
-  --data-dir "$WORK/data" --label app=e2e --label site=ci >"$WORK/agent.log" 2>&1 &
+  --signing-key "$WORK/signing/signing.pub" \
+  --data-dir "$WORK/data" --label app=e2e --label site=ci -v >"$WORK/agent.log" 2>&1 &
 AGENT_PID=$!
 for i in $(seq 1 30); do
   DEVICE=$(sed -n 's/.*device name: \([a-z0-9]*\).*/\1/p' "$WORK/agent.log" | head -1)
@@ -142,7 +171,9 @@ for i in $(seq 1 30); do
   (( i == 30 )) && fail "no enrollment request"
   sleep 2
 done
-flightctl approve -l stage=ci "enrollmentrequest/$DEVICE" >/dev/null
+# Approved by the allow-list script, as a production setup would.
+printf 'defaults:\n  labels:\n    site: ci\ndevices:\n  - name: %s\n    labels:\n      stage: ci\n' "$DEVICE" > "$WORK/allowlist.yaml"
+deploy/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
 wait_for 120 "device Online" "st.get('summary', {}).get('status') == 'Online'"
 wait_for 30 "status accepted with system info" "ci.get('agent') == 'flightctl-mcu' and st['systemInfo'].get('agentVersion')"
 
@@ -168,8 +199,52 @@ wait_for 180 "new config applied" "d['metadata']['annotations']['device-controll
 grep -q '"threshold_c": 35' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "new config not written"
 echo "ok: config file updated"
 
+log "unsigned app rejected"
+apply_fleet 35 "v2.$TAG-unsigned"
+wait_for 180 "unsigned app rejected" "st['updated']['status'] == 'OutOfDate' and 'not signed' in st['updated'].get('info', '')"
+wait_for 10 "signed app still running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v2')"
+
+log "registry down during an update"
+docker stop fc-registry >/dev/null
+apply_fleet 35 "v1.$TAG"
+wait_for 120 "download failure reported" "st['updated']['status'] == 'OutOfDate' and 'registry' in st['updated'].get('info', '')"
+docker start fc-registry >/dev/null
+wait_for 180 "update done once the registry is back" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v1') and st['updated']['status'] == 'UpToDate'"
+
 log "app removal"
 apply_fleet 35 ""
 wait_for 180 "app removed" "not apps and st['applicationsSummary']['status'] == 'NoApplications'"
+
+log "second example app (trend)"
+apply_fleet 35 "v1.$TAG" trend
+wait_for 120 "trend app reporting" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').split(' ')[0] in ('rising', 'falling', 'steady')"
+apply_fleet 35 ""
+wait_for 120 "trend app removed" "not apps"
+
+log "management certificate renewal"
+# Issued at enrollment for CERT_TTL seconds; the agent renews it after a
+# quarter of that. The device must keep reporting after the first one expires.
+custom() { flightctl get "device/$DEVICE" -o json | python3 -c "import json,sys; print(json.load(sys.stdin)['status']['systemInfo']['customInfo'].get('$1',''))"; }
+first=$(custom mgmtCertNotAfter)
+[[ -n "$first" ]] || fail "no mgmtCertNotAfter in the status"
+echo "first certificate valid until $first"
+wait_for $CERT_TTL "certificate renewed" "ci.get('mgmtCertNotAfter', '$first') > '$first'"
+grep -q "management certificate renewed" "$WORK/agent.log" || fail "no renewal in the agent log"
+expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
+wait_s=$(( expiry - $(date +%s) + 5 ))
+(( wait_s > 0 )) && { echo "waiting ${wait_s}s for the first certificate to expire"; sleep "$wait_s"; }
+tx=$(custom netTxBytes)
+wait_for 90 "status accepted after the first certificate expired" "int(ci.get('netTxBytes', 0)) > $tx and st['summary']['status'] == 'Online'"
+
+log "server restart"
+# Kept connections die with the server: the agent must reconnect, report and
+# take new specs.
+kubectl -n flightctl rollout restart deployment/flightctl-api >/dev/null
+kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
+tx=$(custom netTxBytes)
+wait_for 120 "status accepted after the restart" "int(ci.get('netTxBytes', 0)) > $tx and st['summary']['status'] == 'Online'"
+before=$(rendered)
+apply_fleet 30 ""
+wait_for 330 "spec applied after the restart" "st['config']['renderedVersion'] == d['metadata']['annotations']['device-controller/renderedVersion'] != '$before'"
 
 log "PASS"

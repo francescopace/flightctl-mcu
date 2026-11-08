@@ -54,3 +54,25 @@ target_link_libraries(fc_core PUBLIC vmlib MbedTLS::mbedtls MbedTLS::mbedx509 Mb
 
 add_executable(fc-host-agent host/main.c port/host/fc_port_host.c)
 target_link_libraries(fc-host-agent PRIVATE fc_core)
+
+# Fuzzers (clang with libFuzzer): cmake -DFC_FUZZ=ON -DCMAKE_C_COMPILER=clang ...
+# then ci/fuzz.sh runs them. Each one compiles the sources it tests, with
+# the sanitizers on.
+option(FC_FUZZ "Build the libFuzzer targets" OFF)
+if(FC_FUZZ)
+    set(FUZZ_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined -g -O1)
+    add_compile_options(-Wno-deprecated-declarations)
+    set(CJSON core/third_party/cjson/cJSON.c)
+    function(fc_fuzzer name)
+        add_executable(${name} tests/fuzz/${name}.c ${ARGN})
+        target_include_directories(${name} PRIVATE core/include core/src core/third_party/cjson
+                                   ${WAMR_ROOT_DIR}/core/iwasm/include)
+        target_compile_options(${name} PRIVATE ${FUZZ_FLAGS})
+        target_link_options(${name} PRIVATE ${FUZZ_FLAGS})
+        target_link_libraries(${name} PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::mbedcrypto Threads::Threads)
+    endfunction()
+    fc_fuzzer(fuzz_http ${CJSON})
+    fc_fuzzer(fuzz_oci port/host/fc_port_host.c ${CJSON})
+    fc_fuzzer(fuzz_agent core/src/fc_http.c core/src/fc_identity.c core/src/fc_apps.c port/host/fc_port_host.c ${CJSON})
+    target_link_libraries(fuzz_agent PRIVATE vmlib)
+endif()

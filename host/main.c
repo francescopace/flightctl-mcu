@@ -3,7 +3,8 @@
  *
  *   fc-host-agent --server agent-api.192.0.2.10.nip.io:8443 \
  *       --ca .secrets/ca.crt --enroll-cert .secrets/enroll.crt \
- *       --enroll-key .secrets/enroll.key [--data-dir DIR] [--label k=v]... [-v]
+ *       --enroll-key .secrets/enroll.key [--signing-key .secrets/signing.pub] \
+ *       [--data-dir DIR] [--label k=v]... [-v]
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,7 +66,7 @@ static char *read_file(const char *path)
 
 int main(int argc, char **argv)
 {
-    const char *server = NULL, *ca = NULL, *cert = NULL, *key = NULL;
+    const char *server = NULL, *ca = NULL, *cert = NULL, *key = NULL, *signing = NULL;
     const char *data_dir = "build/host-data";
     const char *labels[33] = {0};
     int nlabels = 0, debug = 0;
@@ -80,6 +81,8 @@ int main(int argc, char **argv)
             cert = v; i++;
         } else if (strcmp(argv[i], "--enroll-key") == 0 && v) {
             key = v; i++;
+        } else if (strcmp(argv[i], "--signing-key") == 0 && v) {
+            signing = v; i++;
         } else if (strcmp(argv[i], "--data-dir") == 0 && v) {
             data_dir = v; i++;
         } else if (strcmp(argv[i], "--label") == 0 && v && nlabels < 30) {
@@ -101,7 +104,7 @@ int main(int argc, char **argv)
     }
     if (!server || !ca || !cert || !key) {
         fprintf(stderr, "usage: %s --server host:port --ca F --enroll-cert F --enroll-key F "
-                        "[--data-dir D] [--label k=v]... [-v]\n", argv[0]);
+                        "[--signing-key F] [--data-dir D] [--label k=v]... [-v]\n", argv[0]);
         return 2;
     }
 
@@ -120,6 +123,7 @@ int main(int argc, char **argv)
         .ca_pem = read_file(ca),
         .enrollment_cert_pem = read_file(cert),
         .enrollment_key_pem = read_file(key),
+        .signing_pub_pem = signing ? read_file(signing) : NULL,
         .labels = labels,
         .agent_version = "flightctl-mcu/0.1.0",
         .status_interval_s = 60,

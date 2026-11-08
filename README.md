@@ -4,7 +4,7 @@
 
 A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers. ESP32 boards enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. The devices don't run Linux, and Flight Control runs unmodified.
 
-This is a proof of concept. It works end to end on real hardware, but it is not hardened (see [Limitations](#limitations)).
+It works end to end on real hardware, with signed images and certificate renewal. It is not production ready yet: see [Limitations](#limitations) and the [roadmap](docs/ROADMAP.md).
 
 ## Why
 
@@ -27,8 +27,9 @@ A C client for it, with mbedTLS for TLS 1.3, fits in about 21 KB of flash. Once 
 | Flight Control | On the microcontroller |
 |---|---|
 | Enrollment request + approval | P-256 key generated on the device, CSR, management certificate stored in flash |
+| Certificate signing request (renewal signer) | The device renews its management certificate for the same key before it expires |
 | `spec.config` (inline files) | Files stored in NVS. The firmware gets each file through a callback and can reject it. |
-| `spec.os.image` | Firmware image, pulled from an OCI registry into the inactive OTA slot. One image index covers all chips; each board picks its own. |
+| `spec.os.image` | Firmware image, pulled from an OCI registry into the inactive OTA slot. One image index covers all chips; each board picks its own. Its cosign signature is checked first. |
 | `spec.applications` (`appType: container`) | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
 | `status` | Heap, flash, chip and firmware version, RSSI, temperature, app state, bytes on the wire (in `customInfo`) |
 | Fleet rollout (`BatchSequence`) | Works unchanged. The device reports a new version only after the new firmware has reached the server. |
@@ -160,13 +161,16 @@ port/espidf/     ESP-IDF port
 port/host/       host port (simulated device)
 host/            simulated device executable
 firmware/        ESP-IDF project: main app, build/flash/push scripts
-wasm-apps/       example WASM app (the alarm LED logic) and its build script
+wasm-apps/       app SDK header, example apps (alarm, trend) and the build script
 deploy/kind/     Flight Control on kind
 deploy/registry/ local OCI registry
 deploy/fleet/    example fleet
+deploy/signing/  signing key and signer for firmware and apps (cosign format)
+deploy/auto-approve/ enrollment approval from an allow list
+tests/fuzz/      libFuzzer targets and seed inputs
 third_party/     WAMR fetch script (WAMR itself is not vendored)
 ci/              helpers for the GitHub Actions workflow
-docs/            PoC plan and results
+docs/            roadmap and results
 ```
 
 ## Try it
@@ -197,6 +201,12 @@ The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
 deploy/enrollment.sh
 ```
 
+Create the key that signs firmware and apps. Its public half is built into the firmware, and from then on the device installs only images signed with it. The push scripts sign with it automatically:
+
+```bash
+deploy/signing/keygen.sh
+```
+
 ```bash
 third_party/fetch-wamr.sh
 ```
@@ -217,6 +227,8 @@ Put your WiFi credentials in `sdkconfig.wifi`. Put the agent endpoint that `depl
 TARGET=esp32c3 FW_VERSION=v1 firmware/build.sh
 ```
 
+That is a debug build. `VARIANT=release` builds with `-Os` and quieter logs, about 15% smaller, in `firmware/build-<chip>-release`; push those with `fw-push.py --variant release`.
+
 ```bash
 firmware/flash.sh /dev/cu.usbmodem1101
 ```
@@ -229,6 +241,12 @@ flightctl get enrollmentrequests
 
 ```bash
 flightctl approve -l stage=canary enrollmentrequest/<name>
+```
+
+For more than a few boards, list them in `deploy/auto-approve/allowlist.yaml` (start from `allowlist.example.yaml`), by device name or MAC address with their labels, and let the script approve them as they show up:
+
+```bash
+deploy/auto-approve/auto-approve.py deploy/auto-approve/allowlist.yaml --watch 10
 ```
 
 **5. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/alarm-lab.yaml`, or edit them there.
@@ -254,37 +272,39 @@ cmake -S . -B build/host -G Ninja -DMbedTLS_DIR=$(brew --prefix mbedtls@3)/lib/c
 ```
 
 ```bash
-build/host/fc-host-agent --server agent-api.<your-ip>.nip.io:8443 --ca .secrets/ca.crt --enroll-cert .secrets/enroll.crt --enroll-key .secrets/enroll.key --label site=lab
+build/host/fc-host-agent --server agent-api.<your-ip>.nip.io:8443 --ca .secrets/ca.crt --enroll-cert .secrets/enroll.crt --enroll-key .secrets/enroll.key --signing-key .secrets/signing.pub --label site=lab
 ```
 
 ## Writing a WASM app
 
-An app exports `tick(now_ms)`, which the firmware calls every `TICK_MS` milliseconds. That value comes from the app's `envVars` in the fleet and defaults to 100. The app talks to the hardware only through host functions in the `env` module.
+Apps include [wasm-apps/sdk/fc_app.h](wasm-apps/sdk/fc_app.h), which is the interface between an app and the device, with a version number. An app exports `tick(now_ms)`, which the device calls every `TICK_MS` milliseconds. That value comes from the app's `envVars` in the fleet and defaults to 100. The app reaches the hardware only through host functions:
 
-The firmware provides:
+- from the agent, on every device: `fc_set_state()`, shown in Flight Control as `customInfo["app.<name>"]`, and `fc_log()`;
+- from the firmware: `fc_temp_mc()`, `fc_threshold_mc()` (from the fleet config) and `fc_led(r, g, b)`.
 
-- `temp_mc()`: temperature in milli-°C;
-- `threshold_mc()`: the threshold from the fleet config;
-- `led(r, g, b)`: drives the board LED.
+`FC_APP_ABI()` declares the interface version the app was built for, so an older device refuses it with a clear error instead of failing later.
 
-The agent adds:
+There are two examples:
 
-- `set_state(ptr, len)`: shown in `status.customInfo["app.<name>"]`;
-- `log(ptr, len)`: writes to the device log.
+- [alarm](wasm-apps/alarm/alarm.c): the LED logic of the temperature alarm, a few hundred bytes. It uses only blue, dim for the pre-alarm and blinking for the alarm, so boards with a single-colour LED look the same as RGB ones.
+- [trend](wasm-apps/trend/trend.c): no LED. It smooths the temperature and reports whether it is rising or falling, and how fast.
 
-See [wasm-apps/alarm/alarm.c](wasm-apps/alarm/alarm.c). It uses only blue: dim and steady for the pre-alarm, blinking for the alarm. Most boards with a single-colour LED have a blue one, so RGB and single-colour boards look the same in a demo. Compiled, it is a few hundred bytes. Keep the link flags in [wasm-apps/build.sh](wasm-apps/build.sh): exporting `__heap_base` and `__data_end` lets WAMR shrink the 64 KB WebAssembly memory page to what the module actually uses. Without that, the module does not fit on a C3.
+Build and push with `wasm-apps/build.sh <app> <version>`. Keep its link flags: exporting `__heap_base` and `__data_end` lets WAMR shrink the 64 KB WebAssembly memory page to what the module actually uses. Without that, an app does not fit on a C3.
 
 ## Limitations
 
-This is a PoC. Do not put it on a network you care about.
+What is done:
+
+- **Signed images.** Firmware and apps are signed in cosign's format (`cosign verify --key` accepts them). A device with a signing key in its firmware refuses anything unsigned or signed with another key.
+- **Certificate renewal.** The device renews its management certificate before it expires, as the Linux agent does.
+- **Kept connections.** HTTP keep-alive, one connection per agent thread: a simulated device idles at about 220 KB/hour, against 560 KB/hour with a connection per request. What is left is mostly the full status sent every minute.
+
+What is not:
 
 - **Security**:
-  - The registry is plain HTTP without authentication.
-  - Firmware and apps are not signed.
-  - The device key is stored unencrypted (no Secure Boot or flash encryption).
+  - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
+  - The device key is stored unencrypted (no Secure Boot or flash encryption yet).
 - **Provisioning**: WiFi credentials and enrollment credentials are compiled into the firmware.
-- **Certificates**: the management certificate is not renewed.
-- **Connections**: every request opens a new TLS connection. Idle traffic is about 730 KB/hour per device, mostly handshakes. Fine on WiFi, too much for NB-IoT.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 
 Some of what we ran into points at gaps in Flight Control for this class of device:
@@ -294,21 +314,26 @@ Some of what we ran into points at gaps in Flight Control for this class of devi
 - `matchExpressions` in fleet selectors is silently ignored;
 - rollout success is judged on `renderedVersion` only.
 
-These are written up, with measurements, in [docs/POC-RESULTS.md](docs/POC-RESULTS.md). The original plan is in [docs/POC-PLAN.md](docs/POC-PLAN.md).
+These are written up, with measurements, in [docs/RESULTS.md](docs/RESULTS.md). What comes next is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## CI
 
 GitHub Actions runs on every push:
 
-- **Builds**: the simulated device on Linux, the firmware for every supported chip, and the example WASM app. The firmware jobs use throwaway credentials (`ci/dummy-secrets.sh`).
+- **Builds**: the simulated device on Linux, the firmware for every supported chip in debug and release profiles, and the example WASM apps. The firmware jobs use throwaway credentials (`ci/dummy-secrets.sh`).
+- **Fuzzing** ([ci/fuzz.sh](ci/fuzz.sh)): two minutes each for the HTTP response reader, the OCI manifest and signature handling, and the agent's handling of rendered specs and certificates. Crashes found so far are kept as seed inputs in `tests/fuzz/corpus`.
 - **End-to-end test** ([ci/e2e.sh](ci/e2e.sh)): the job deploys Flight Control 1.3.1 on kind and a registry on the runner. The simulated device then goes through:
-  - enrollment and approval;
+  - enrollment, approved by the allow-list script;
   - Online status;
   - inline config;
-  - a WASM app install;
+  - a signed WASM app install, and `cosign verify` on its signature;
   - an in-place update from v1 to v2;
   - a config change;
-  - the app's removal.
+  - an unsigned app, which it must refuse;
+  - an update while the registry is down, which must complete once it is back;
+  - the app's removal, then the second example app;
+  - the renewal of its management certificate (the server issues 2-minute certificates for the test), and a status accepted after the first one expired;
+  - a server restart, after which it must reconnect and take a new spec.
 
 You can run the same test against a cluster you already have:
 

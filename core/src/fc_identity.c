@@ -43,10 +43,13 @@ static void base32hex_lower(const unsigned char *in, size_t len, char *out)
     out[o] = '\0';
 }
 
-static int compute_name(mbedtls_pk_context *pk, char *name, size_t name_len)
+int fc_identity_name_of(mbedtls_pk_context *pk, char *name, size_t name_len)
 {
     unsigned char raw[65];
     size_t olen = 0;
+    if (!mbedtls_pk_can_do(pk, MBEDTLS_PK_ECKEY)) {
+        return -1;
+    }
     int rc = mbedtls_ecp_write_public_key(mbedtls_pk_ec(*pk), MBEDTLS_ECP_PF_UNCOMPRESSED,
                                           &olen, raw, sizeof(raw));
     if (rc != 0 || olen != 65) {
@@ -113,7 +116,7 @@ int fc_identity_load(fc_identity_t *id)
     }
     id->key_pem = pem;
 
-    if (compute_name(&pk, id->name, sizeof(id->name)) != 0) {
+    if (fc_identity_name_of(&pk, id->name, sizeof(id->name)) != 0) {
         goto fail;
     }
 

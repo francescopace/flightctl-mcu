@@ -1,5 +1,9 @@
 #pragma once
 
+#include <stddef.h>
+
+#include "mbedtls/pk.h"
+
 typedef struct {
     char name[64];  /* device name derived from the public key */
     char *key_pem;  /* private key, PEM */
@@ -10,3 +14,7 @@ typedef struct {
  * boot, then derives the device name and CSR. */
 int fc_identity_load(fc_identity_t *id);
 void fc_identity_free(fc_identity_t *id);
+
+/* Device name for a public key (the one in a certificate, for instance):
+ * lower(base32hex(sha256(X || Y))), as Flight Control computes it. */
+int fc_identity_name_of(mbedtls_pk_context *pk, char *name, size_t name_len);

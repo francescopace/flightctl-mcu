@@ -6,6 +6,7 @@ sdkconfig.old
 managed_components/
 firmware/sdkconfig.wifi
 firmware/sdkconfig.local
+deploy/auto-approve/allowlist.yaml
 third_party/wamr/
 wasm-apps/build/
 # Never commit keys or enrollment material, wherever a tool writes them.
