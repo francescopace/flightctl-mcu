@@ -9,8 +9,9 @@
 #   SKIP_DEPLOY=1 ci/e2e-emu.sh    against the cluster and registry already running
 #   CHIP=esp32c5 ci/e2e-emu.sh     another emulated chip (esp32c3, esp32c5, esp32s3)
 #   ROLLBACK=0 ci/e2e-emu.sh       skip the rollback step (about 4 minutes)
-#   PREBUILT=1 ci/e2e-emu.sh       use firmware/build-<chip>{,-release,-broken} as they are
-#                                  (CI: the firmware job's builds), instead of building
+#   PREBUILT=1 ci/e2e-emu.sh       use firmware/build-<chip>{,-release,-broken} and
+#                                  wasm-apps/build/alarm-v2 as they are (CI: the firmware
+#                                  and WASM jobs' builds), instead of building
 #
 # The firmware has no credentials in it: the test provisions the emulated
 # device's fc_creds partition (deploy/provision.py) for this cluster, so the
@@ -150,10 +151,10 @@ cp "firmware/build-$CHIP$SUFFIX/merged-binary.bin" "$WORK/flash.bin"
 deploy/provision.py --image "$WORK/flash.bin" --secrets "$WORK/secrets" --server "agent-api.$IP.nip.io:8443" \
   --labels "app=$FLEET,site=emu" --wifi-ssid myssid --wifi-password mypassword
 firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}release" "$REGISTRY/flightctl-mcu/fw:release.$TAG" "$CHIP" >/dev/null
-wasm-apps/build.sh alarm "v2.$TAG" "$REGISTRY" >/dev/null
-(cd "wasm-apps/build/alarm-v2.$TAG" && oras push --plain-http --disable-path-validation \
-  --annotation "io.flightctl-mcu.e2e=unsigned-$TAG" --config config.json:application/vnd.wasm.config.v0+json \
-  "$REGISTRY/flightctl-mcu/alarm:v2.$TAG-unsigned" alarm.wasm:application/vnd.wasm.content.layer.v1+wasm >/dev/null)
+[[ -n "${PREBUILT:-}" ]] || NO_PUSH=1 wasm-apps/build.sh alarm v2 >/dev/null
+wasm-apps/push.sh alarm v2 "v2.$TAG" "$REGISTRY" >/dev/null
+NO_SIGN=1 ORAS_ARGS="--annotation io.flightctl-mcu.e2e=unsigned-$TAG" \
+  wasm-apps/push.sh alarm v2 "v2.$TAG-unsigned" "$REGISTRY" >/dev/null
 
 log "boot v1 in the emulator"
 ESP_EMU="$(command -v esp-emu || echo "$HOME/.local/bin/esp-emu")"

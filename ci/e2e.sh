@@ -137,14 +137,18 @@ log "enrollment credentials, signing key and WASM apps ($REGISTRY)"
 deploy/enrollment.sh "$WORK/secrets" >/dev/null
 deploy/signing/keygen.sh "$WORK/signing" >/dev/null
 export SIGNING_KEY="$WORK/signing/signing.key"
-wasm-apps/build.sh alarm "v1.$TAG" "$REGISTRY" >/dev/null
-wasm-apps/build.sh alarm "v2.$TAG" "$REGISTRY" >/dev/null
+# WASM apps: built here, or taken as they are from wasm-apps/build
+# (PREBUILT_APPS=1: CI's WASM job), then pushed and signed under test tags.
+for a in alarm-v1 alarm-v2 trend-v1; do
+  [[ -n "${PREBUILT_APPS:-}" ]] || NO_PUSH=1 wasm-apps/build.sh "${a%-*}" "${a##*-}" >/dev/null
+done
+wasm-apps/push.sh alarm v1 "v1.$TAG" "$REGISTRY" >/dev/null
+wasm-apps/push.sh alarm v2 "v2.$TAG" "$REGISTRY" >/dev/null
 # The unsigned image must differ from every signed one: same content means
 # same digest, and a digest that is signed is signed whatever the tag.
-(cd "wasm-apps/build/alarm-v2.$TAG" && oras push --plain-http --disable-path-validation \
-  --annotation "io.flightctl-mcu.e2e=unsigned-$TAG" --config config.json:application/vnd.wasm.config.v0+json \
-  "$REGISTRY/flightctl-mcu/alarm:v2.$TAG-unsigned" alarm.wasm:application/vnd.wasm.content.layer.v1+wasm >/dev/null)
-wasm-apps/build.sh trend "v1.$TAG" "$REGISTRY" >/dev/null
+NO_SIGN=1 ORAS_ARGS="--annotation io.flightctl-mcu.e2e=unsigned-$TAG" \
+  wasm-apps/push.sh alarm v2 "v2.$TAG-unsigned" "$REGISTRY" >/dev/null
+wasm-apps/push.sh trend v1 "v1.$TAG" "$REGISTRY" >/dev/null
 if command -v cosign >/dev/null; then
   cosign verify --key "$WORK/signing/signing.pub" --insecure-ignore-tlog --allow-http-registry \
     "$REGISTRY/flightctl-mcu/alarm:v2.$TAG" >/dev/null 2>&1 || fail "cosign does not accept the signature"
