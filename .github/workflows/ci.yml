@@ -1,8 +1,9 @@
 name: ci
 
-# Stage 1 (parallel): host agent, firmware for every chip, WASM apps, a quick
-# fuzzing pass. Stage 2: the end-to-end tests, which reuse what stage 1 built
-# instead of building it again. Long fuzzing runs nightly (fuzz-nightly.yml).
+# Stage 1 (parallel): firmware for every chip; host agent, WASM apps and a
+# quick fuzzing pass in one job. Stage 2: the end-to-end tests, which reuse
+# what stage 1 built instead of building it again. Long fuzzing runs nightly
+# (fuzz-nightly.yml).
 
 on:
   push:
@@ -23,21 +24,48 @@ env:
   ESP_EMU_VERSION: 0.51.0
 
 jobs:
-  host:
-    name: host agent (Linux)
+  build:
+    name: host agent, WASM apps, quick fuzzing
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/mbedtls
+        id: mbedtls
         with:
           version: ${{ env.MBEDTLS_VERSION }}
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      # clang + lld: WASM apps and the fuzzers; ninja: host agent and fuzzers.
+      - run: sudo apt-get update && sudo apt-get install -y clang lld ninja-build
       - run: third_party/fetch-wamr.sh
-      - run: ci/build-host.sh
+      - name: WASM apps (alarm v1 and v2, trend v1)
+        run: |
+          export PATH="$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)"):$PATH"
+          NO_PUSH=1 wasm-apps/build.sh alarm v1
+          NO_PUSH=1 wasm-apps/build.sh alarm v2
+          NO_PUSH=1 wasm-apps/build.sh trend v1
+      - name: host agent
+        run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} ci/build-host.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-apps
+          path: wasm-apps/build/*/*.wasm
       - uses: actions/upload-artifact@v4
         with:
           name: host-agent
           path: build/host/fc-host-agent
+      # Last, so a finding does not stop the artifacts above. Starts from the
+      # corpus of the nightly runs (read only here).
+      - uses: actions/cache/restore@v4
+        with:
+          path: build/fuzz/corpus_*
+          key: fuzz-corpus-
+          restore-keys: fuzz-corpus-
+      - name: fuzzing, 30 seconds per target
+        run: FUZZ_SECONDS=30 CC=clang ci/fuzz.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-findings
+          path: build/fuzz/crash-*
 
   firmware:
     name: firmware (${{ matrix.target }})
@@ -76,52 +104,11 @@ jobs:
             firmware/build-${{ matrix.target }}-release/merged-binary.bin
             firmware/build-${{ matrix.target }}-broken/flightctl_mcu_fw.bin
 
-  wasm:
-    name: WASM apps
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y clang lld
-      - name: build alarm v1 and v2, trend v1
-        run: |
-          export PATH="$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)"):$PATH"
-          NO_PUSH=1 wasm-apps/build.sh alarm v1
-          NO_PUSH=1 wasm-apps/build.sh alarm v2
-          NO_PUSH=1 wasm-apps/build.sh trend v1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wasm-apps
-          path: wasm-apps/build/*/*.wasm
-
-  fuzz:
-    name: fuzzing, quick pass (HTTP, OCI, agent)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/mbedtls
-        id: mbedtls
-        with:
-          version: ${{ env.MBEDTLS_VERSION }}
-      - run: sudo apt-get update && sudo apt-get install -y clang ninja-build
-      # Start from what the nightly runs found (read only here).
-      - uses: actions/cache/restore@v4
-        with:
-          path: build/fuzz/corpus_*
-          key: fuzz-corpus-
-          restore-keys: fuzz-corpus-
-      - name: 30 seconds per target
-        run: |
-          third_party/fetch-wamr.sh
-          FUZZ_SECONDS=30 CC=clang ci/fuzz.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: fuzz-findings
-          path: build/fuzz/crash-*
-
   e2e:
     name: end-to-end (simulated device vs Flight Control on kind)
-    needs: [host, wasm]
+    needs: [build]
+    # Runs even when the quick fuzzing found something: the artifacts are there.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -156,7 +143,8 @@ jobs:
 
   emulator:
     name: end-to-end on an emulated ${{ matrix.chip }} (esp-emu)
-    needs: [firmware, wasm]
+    needs: [firmware, build]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
