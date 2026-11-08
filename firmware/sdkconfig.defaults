@@ -11,6 +11,9 @@ CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
 CONFIG_MBEDTLS_SSL_TLS1_3_KEXM_EPHEMERAL=y
 CONFIG_MBEDTLS_HAVE_TIME_DATE=y
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+# The agent trusts only the CA it is provisioned with, never ESP-IDF's
+# bundle of public root CAs (the linker already left it out: no size change).
+# CONFIG_MBEDTLS_CERTIFICATE_BUNDLE is not set
 
 # Console on USB-Serial/JTAG (native USB port of the devkit).
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

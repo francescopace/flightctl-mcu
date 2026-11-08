@@ -49,6 +49,8 @@ add_library(fc_core STATIC
     core/third_party/cjson/cJSON.c
 )
 target_include_directories(fc_core PUBLIC core/include core/third_party/cjson PRIVATE core/src)
+# Same cJSON nesting limit as the firmware (firmware/components/fc_core).
+target_compile_definitions(fc_core PUBLIC CJSON_NESTING_LIMIT=32)
 target_include_directories(fc_core PRIVATE ${WAMR_ROOT_DIR}/core/iwasm/include)
 target_link_libraries(fc_core PUBLIC vmlib MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::mbedcrypto Threads::Threads)
 
@@ -68,6 +70,7 @@ if(FC_FUZZ)
         target_include_directories(${name} PRIVATE core/include core/src core/third_party/cjson
                                    ${WAMR_ROOT_DIR}/core/iwasm/include)
         target_compile_options(${name} PRIVATE ${FUZZ_FLAGS})
+        target_compile_definitions(${name} PRIVATE CJSON_NESTING_LIMIT=32)
         target_link_options(${name} PRIVATE ${FUZZ_FLAGS})
         target_link_libraries(${name} PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::mbedcrypto Threads::Threads)
     endfunction()

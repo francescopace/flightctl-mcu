@@ -51,7 +51,6 @@ static volatile int64_t s_app_led_us; /* last LED write by a WASM app */
 #define APP_LED_HOLD_US 1000000      /* the app owns the LED while it writes it */
 static TaskHandle_t s_task;
 static alarm_cfg_t s_cfg;
-static char s_source[12] = "default"; /* "default" or "fleet" */
 static bool s_alarm;
 static unsigned s_transitions;
 static float s_max_c = -100.0f; /* highest temperature seen since boot (v2) */
@@ -141,7 +140,6 @@ static void set_config(const alarm_cfg_t *c, const char *source)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_cfg = *c;
-    snprintf(s_source, sizeof(s_source), "%s", source);
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "config (%s): threshold %.1f C, hysteresis %.1f C, sample %d ms, LED GPIO %d%s", source,
              c->threshold_c, c->hysteresis_c, c->sample_ms, c->led_gpio, c->led_ws2812 ? " (WS2812)" : "");
@@ -172,18 +170,13 @@ void alarm_custom_info(void *obj, void *ctx)
     bool alarm = s_alarm;
     unsigned transitions = s_transitions;
     float max_c = s_max_c;
-    char source[sizeof(s_source)];
-    strcpy(source, s_source);
     xSemaphoreGive(s_lock);
 
     cJSON_AddStringToObject(o, "alarm", alarm ? "on" : "off");
     snprintf(buf, sizeof(buf), "%.1f", c.threshold_c);
     cJSON_AddStringToObject(o, "alarmThresholdC", buf);
-    snprintf(buf, sizeof(buf), "%d", c.sample_ms);
-    cJSON_AddStringToObject(o, "alarmSampleMs", buf);
     snprintf(buf, sizeof(buf), "%u", transitions);
     cJSON_AddStringToObject(o, "alarmTransitions", buf);
-    cJSON_AddStringToObject(o, "alarmConfig", source);
     if (max_c > -100.0f) {
         snprintf(buf, sizeof(buf), "%.1f", max_c);
         cJSON_AddStringToObject(o, "alarmMaxC", buf);

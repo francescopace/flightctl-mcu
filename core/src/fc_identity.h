@@ -15,6 +15,10 @@ typedef struct {
 int fc_identity_load(fc_identity_t *id);
 void fc_identity_free(fc_identity_t *id);
 
+/* Deletes the stored device key: the next fc_identity_load makes a new one,
+ * hence a new device name. */
+void fc_identity_forget(void);
+
 /* Device name for a public key (the one in a certificate, for instance):
  * lower(base32hex(sha256(X || Y))), as Flight Control computes it. */
 int fc_identity_name_of(mbedtls_pk_context *pk, char *name, size_t name_len);

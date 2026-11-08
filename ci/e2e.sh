@@ -26,6 +26,7 @@ echo "work dir: $WORK"
 FLEET=e2e
 AGENT_PID=""
 DEVICE=""
+OLD_DEVICE=""
 CERT_TTL=120
 
 log() { printf '\n== %s\n' "$*"; }
@@ -45,6 +46,8 @@ cleanup() {
     flightctl delete "fleet/$FLEET" >/dev/null 2>&1 || true
     [[ -n "$DEVICE" ]] && flightctl delete "device/$DEVICE" >/dev/null 2>&1 || true
     [[ -n "$DEVICE" ]] && flightctl delete "enrollmentrequest/$DEVICE" >/dev/null 2>&1 || true
+    [[ -n "$OLD_DEVICE" ]] && flightctl delete "device/$OLD_DEVICE" >/dev/null 2>&1 || true
+    [[ -n "$OLD_DEVICE" ]] && flightctl delete "enrollmentrequest/$OLD_DEVICE" >/dev/null 2>&1 || true
     rm -rf "$WORK"
   fi
   # Back to the default certificate lifetime on a cluster that stays up.
@@ -130,8 +133,9 @@ for i in $(seq 1 60); do
   (( i == 60 )) && fail "API $API not reachable"
   sleep 5
 done
-flightctl login "$API" --insecure-skip-tls-verify \
-  -t "$(kubectl create token flightctl-admin -n flightctl --duration=1h)" >/dev/null
+# Keep a working login (a cluster you already use); else log in for the test.
+flightctl get devices >/dev/null 2>&1 || flightctl login "$API" --insecure-skip-tls-verify \
+  -t "$(kubectl create token flightctl-admin -n flightctl --duration=2h)" >/dev/null
 
 log "enrollment credentials, signing key and WASM apps ($REGISTRY)"
 deploy/enrollment.sh "$WORK/secrets" >/dev/null
@@ -155,19 +159,26 @@ if command -v cosign >/dev/null; then
   echo "ok: cosign verifies the signature"
 fi
 
+# start_agent: runs the simulated device (its state stays in $WORK/data) and
+# sets DEVICE to the name it reports.
+start_agent() {
+  build/host/fc-host-agent --server "$AGENT" --ca "$WORK/secrets/ca.crt" \
+    --enroll-cert "$WORK/secrets/enroll.crt" --enroll-key "$WORK/secrets/enroll.key" \
+    --signing-key "$WORK/signing/signing.pub" \
+    --data-dir "$WORK/data" --label app=e2e --label site=ci -v >>"$WORK/agent.log" 2>&1 &
+  AGENT_PID=$!
+  local before; before=$(grep -c 'device name:' "$WORK/agent.log" 2>/dev/null || true)
+  for i in $(seq 1 30); do
+    (( $(grep -c 'device name:' "$WORK/agent.log" 2>/dev/null || true) > before )) && break
+    sleep 1
+  done
+  DEVICE=$(sed -n 's/.*device name: \([a-z0-9]*\).*/\1/p' "$WORK/agent.log" | tail -1)
+  [[ -n "$DEVICE" ]] || fail "agent did not start"
+  echo "device: $DEVICE"
+}
+
 log "start the simulated device"
-build/host/fc-host-agent --server "$AGENT" --ca "$WORK/secrets/ca.crt" \
-  --enroll-cert "$WORK/secrets/enroll.crt" --enroll-key "$WORK/secrets/enroll.key" \
-  --signing-key "$WORK/signing/signing.pub" \
-  --data-dir "$WORK/data" --label app=e2e --label site=ci -v >"$WORK/agent.log" 2>&1 &
-AGENT_PID=$!
-for i in $(seq 1 30); do
-  DEVICE=$(sed -n 's/.*device name: \([a-z0-9]*\).*/\1/p' "$WORK/agent.log" | head -1)
-  [[ -n "$DEVICE" ]] && break
-  sleep 1
-done
-[[ -n "$DEVICE" ]] || fail "agent did not start"
-echo "device: $DEVICE"
+start_agent
 
 log "enrollment"
 for i in $(seq 1 30); do
@@ -179,7 +190,7 @@ done
 printf 'defaults:\n  labels:\n    site: ci\ndevices:\n  - name: %s\n    labels:\n      stage: ci\n' "$DEVICE" > "$WORK/allowlist.yaml"
 deploy/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
 wait_for 120 "device Online" "st.get('summary', {}).get('status') == 'Online'"
-wait_for 30 "status accepted with system info" "ci.get('agent') == 'flightctl-mcu' and st['systemInfo'].get('agentVersion')"
+wait_for 30 "status accepted with system info" "st['systemInfo'].get('agentVersion', '').startswith('flightctl-mcu')"
 
 log "fleet: config + app v1"
 apply_fleet 40 "v1.$TAG"
@@ -250,5 +261,37 @@ wait_for 120 "status accepted after the restart" "int(ci.get('netTxBytes', 0)) >
 before=$(rendered)
 apply_fleet 30 ""
 wait_for 330 "spec applied after the restart" "st['config']['renderedVersion'] == d['metadata']['annotations']['device-controller/renderedVersion'] != '$before'"
+
+log "certificate expired while the server was down: the device enrolls again"
+# The certificate lives CERT_TTL seconds and cannot be renewed with the server
+# down. Once it has expired the device starts over under a new key, keeping
+# its apps and config; the allow list approves the new request.
+first=$(custom mgmtCertNotAfter)
+expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
+kubectl -n flightctl scale deployment/flightctl-api --replicas=0 >/dev/null
+wait_s=$(( expiry - $(date +%s) + 70 ))
+(( wait_s > 0 )) && { echo "server down, waiting ${wait_s}s for the certificate to expire"; sleep "$wait_s"; }
+kubectl -n flightctl scale deployment/flightctl-api --replicas=1 >/dev/null
+kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
+for i in $(seq 1 60); do
+  kill -0 "$AGENT_PID" 2>/dev/null || break
+  (( i == 60 )) && fail "the device did not give up its expired certificate"
+  sleep 3
+done
+grep -q "enrolling again as a new device" "$WORK/agent.log" || fail "no re-enrollment in the agent log"
+echo "ok: the device dropped its expired identity"
+OLD_DEVICE=$DEVICE
+start_agent   # the agent stops for the restart; here we start it again
+[[ "$DEVICE" != "$OLD_DEVICE" ]] || fail "same device name after re-enrollment"
+for i in $(seq 1 30); do
+  flightctl get "enrollmentrequest/$DEVICE" >/dev/null 2>&1 && break
+  (( i == 30 )) && fail "no enrollment request from the new identity"
+  sleep 2
+done
+printf 'devices:\n  - name: %s\n    labels:\n      stage: ci\n' "$DEVICE" > "$WORK/allowlist.yaml"
+deploy/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
+wait_for 120 "new identity Online" "st.get('summary', {}).get('status') == 'Online'"
+grep -q '"threshold_c": 30' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "config lost across re-enrollment"
+echo "ok: config kept"
 
 log "PASS"

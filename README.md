@@ -251,7 +251,7 @@ deploy/auto-approve/auto-approve.py deploy/auto-approve/allowlist.yaml --watch 1
 **6. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/alarm-lab.yaml`, or edit them there.
 
 ```bash
-firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v2.10
+firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v3.0
 ```
 
 ```bash
@@ -295,8 +295,8 @@ Build and push with `wasm-apps/build.sh <app> <version>`. Keep its link flags: e
 What is done:
 
 - **Signed images.** Firmware and apps are signed in cosign's format (`cosign verify --key` accepts them). A device with a signing key in its firmware refuses anything unsigned or signed with another key.
-- **Certificate renewal.** The device renews its management certificate before it expires, as the Linux agent does.
-- **Kept connections.** HTTP keep-alive, one connection per agent thread: a simulated device idles at about 220 KB/hour, against 560 KB/hour with a connection per request. What is left is mostly the full status sent every minute. Status updates triggered by apps are grouped (one every 15 s at most), so an app whose state flaps cannot flood the network.
+- **Certificate renewal.** The device renews its management certificate before it expires, as the Linux agent does. If it was offline for longer than the certificate's lifetime, it enrolls again as a new device, keeping its apps and config.
+- **Kept connections.** HTTP keep-alive, one connection per agent thread: a simulated device idles at about 220 KB/hour, against 560 KB/hour with a connection per request. The firmware's heartbeat status goes out every 2 minutes; what is left is mostly that status. Status updates triggered by apps are grouped (one every 15 s at most), so an app whose state flaps cannot flood the network.
 
 What is not:
 
@@ -332,7 +332,8 @@ GitHub Actions runs on every push that touches code. It builds once and tests wh
   - an update while the registry is down, which must complete once it is back;
   - the app's removal, then the second example app;
   - the renewal of its management certificate (the server issues 2-minute certificates for the test), and a status accepted after the first one expired;
-  - a server restart, after which it must reconnect and take a new spec.
+  - a server restart, after which it must reconnect and take a new spec;
+  - the server down until its certificate expired, after which it must enroll again, under a new name, with its config.
 - **Firmware in the emulator** ([ci/e2e-emu.sh](ci/e2e-emu.sh)): the real firmware for the C3 and the C5 runs in Espressif's [esp-emu](https://github.com/espressif/esp-emulator), whose WiFi access point NATs to the runner, against Flight Control on kind. It provisions the debug image for the test cluster, then goes through enrollment, a signed update to the release image with a reboot into the other slot, a signed app and an unsigned one, certificate renewal, and the rollback of a broken image that cannot reach the server (built with a 30-second confirmation window instead of 150).
 
 You can run both tests against a cluster you already have:

@@ -94,7 +94,7 @@ Each request cost about 10 KB, and most of that was the TLS 1.3 handshake with m
 |---|---|---|---|---|
 | Fake device on the host (no app) | 87 KB/h | 130 KB/h | **about 220 KB/h** (was 560) | 0 |
 
-What is left is the full status sent every minute and the server's answer to it. Going lower needs less frequent or differential status updates (limitation 6 below). TLS session resumption was also tried: Flight Control 1.3.1 issues session tickets but did not resume a session with them, so a reconnection costs a full handshake (about 1.5 KB received).
+What is left is the full status and the server's answer to it. Since then the firmware sends its heartbeat status every 2 minutes instead of 1 (changes still go out at once; Flight Control marks a device Unknown after 5 minutes without one) and drops redundant fields from `customInfo`. Going lower needs differential status updates (limitation 6 below). TLS session resumption was also tried: Flight Control 1.3.1 issues session tickets but did not resume a session with them, so a reconnection costs a full handshake (about 1.5 KB received).
 
 ### Release build (milestone 1)
 
@@ -111,7 +111,7 @@ The C3 SuperMini, in a fleet of its own, with the `alarm` app:
 | Kept connections | 2 TLS handshakes after boot, none in the next 10 minutes |
 | Server restart | Both connections reopened (2 more handshakes), next spec applied in 2 s |
 | Internal heap with the two connections open | about 58–60 KB free, minimum since boot 38 KB (v2.12) |
-| Idle traffic | 1.5 MB/hour with v2.11, then about 690 KB/hour with v2.12: see problem 11 |
+| Idle traffic | 1.5 MB/hour with v2.11, then about 690 KB/hour with v2.12 (problem 11); about 280 KB/hour with v3.0 (2-minute heartbeat, trimmed status), over 10 minutes that included two server restarts and no alarm flapping |
 
 Certificate renewal was not run on the board, whose certificate is valid for a year; it ran in the emulator, below.
 
@@ -174,7 +174,12 @@ The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole
     - Fix: on the C5, WiFi code stays in flash and the WiFi stack has fewer buffers, as on the S2. Free heap went from 43.6 to 61.7 KB, the largest block from 19 to 41 KB, and no handshake failed in 5 minutes with a renewal every minute.
 13. **A device offline for longer than its certificate cannot come back** (milestone 1, found in the emulator).
     - In the rollback test the broken build kept the device away from the server for 3 minutes, longer than the 4-minute test certificate. Back on the good firmware, every request was refused: the certificate had expired, and renewal needs a valid one.
-    - With the default lifetime (one year, renewed after three months) this takes nine months offline. The recovery path, re-enrolling with the enrollment certificate, is on the roadmap; the test now goes back to the normal lifetime before the rollback step.
+    - With the default lifetime (one year, renewed after three months) this takes nine months offline. The rollback test now goes back to the normal lifetime before it starts.
+    - Fix: after a failed status update with an expired certificate, the device drops its key and certificate and enrolls again with the enrollment certificate, as a new device (the old enrollment request is approved already and cannot issue another certificate). Apps, config and firmware stay; the allow list approves it again by MAC; the old device record is left for the operator to delete. The end-to-end test stops the server until the certificate has expired and checks that the device comes back under a new name with its config.
+14. **A deeply nested JSON document crashed the firmware in a loop** (found in the emulator).
+    - A fleet config holding a JSON value nested 500 levels deep made the C3 overflow its 24 KB thread stack while parsing it ("Stack protection fault"), reboot, get the same config and crash again. A registry could do the same with a manifest, which is parsed before its signature is checked. The fuzzers run on the host, with 256 KB stacks, and could not see it.
+    - The real cause was two copies of cJSON in the firmware: ours and ESP-IDF's (component `json`), and the firmware ran ESP-IDF's.
+    - Fix: the firmware builds only the ESP-IDF components it needs (`set(COMPONENTS main)`; the build fails if `json` comes back), and cJSON's nesting limit is 32 instead of 1000 (real documents use fewer than 10). The same config is now rejected with an error in Flight Control. Side effect: a clean firmware build takes under a minute instead of three.
 
 ## Flight Control limitations found (upstream proposals)
 

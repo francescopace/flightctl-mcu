@@ -178,8 +178,6 @@ void fc_port_custom_info(void *obj)
     char buf[48];
     fc_sysinfo_t si = {0};
     fc_port_sysinfo(&si);
-    cJSON_AddStringToObject(o, "deviceClass", "mcu");
-    cJSON_AddStringToObject(o, "chip", CONFIG_IDF_TARGET);
     cJSON_AddStringToObject(o, "mac", si.hw_id);
     cJSON_AddStringToObject(o, "firmwareVersion", esp_app_get_description()->version);
     snprintf(buf, sizeof(buf), "%lld", (long long)(esp_timer_get_time() / 1000000));
@@ -210,9 +208,7 @@ void fc_port_custom_info(void *obj)
     if (fc_port_temperature(&t) == 0) {
         snprintf(buf, sizeof(buf), "%.1f", t);
         cJSON_AddStringToObject(o, "temperatureC", buf);
-#if SOC_TEMP_SENSOR_SUPPORTED
-        cJSON_AddStringToObject(o, "temperatureSource", "internal");
-#else
+#if !SOC_TEMP_SENSOR_SUPPORTED
         cJSON_AddStringToObject(o, "temperatureSource", "simulated");
 #endif
     }

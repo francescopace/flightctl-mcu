@@ -152,3 +152,8 @@ void fc_identity_free(fc_identity_t *id)
     id->key_pem = NULL;
     id->csr_pem = NULL;
 }
+
+void fc_identity_forget(void)
+{
+    fc_port_kv_del(KV_DEVICE_KEY);
+}

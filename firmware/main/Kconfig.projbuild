@@ -46,7 +46,11 @@ config FC_LABELS
 
 config FC_STATUS_INTERVAL
     int "Status update interval (s)"
-    default 60
+    default 120
+    help
+        Changes are reported right away; this is the heartbeat. Flight
+        Control marks a device Unknown after 5 minutes without a status, so
+        keep it well below 300.
 
 config FC_LED_GPIO
     int "Default LED GPIO (overridable from config)"

@@ -59,6 +59,13 @@
 #define CERT_RETRY_MIN_S 60
 #define CERT_RETRY_MAX_S 3600
 #define RENEWAL_SIGNER "flightctl.io/device-management-renewal"
+/* A device whose management certificate expired (offline for longer than its
+ * lifetime) is refused by the server, renewal included. It enrolls again with
+ * the enrollment certificate, under a new key (a new device name): the old
+ * enrollment request is approved already and cannot issue another
+ * certificate. Apps, config and firmware stay. */
+#define CERT_EXPIRED_GRACE_S 60
+#define CLOCK_SET_AFTER 1735689600 /* 2025-01-01: before that, the clock is not set */
 
 mbedtls_ctr_drbg_context *fc_http_drbg(void);
 
@@ -196,7 +203,9 @@ static cJSON *build_status(agent_t *a)
     cJSON_AddStringToObject(sys, "bootID", a->boot_id);
     cJSON_AddStringToObject(sys, "agentVersion", a->cfg->agent_version);
     cJSON *custom = cJSON_AddObjectToObject(sys, "customInfo");
-    cJSON_AddStringToObject(custom, "agent", "flightctl-mcu");
+    /* Every status carries all of this (Flight Control replaces the whole
+     * status), so only what is worth monitoring: the chip and the agent are
+     * already in systemInfo, the labels and agentVersion. */
     cJSON_AddStringToObject(custom, "osVersion", si.os_version);
     char num[32];
     snprintf(num, sizeof(num), "%llu", (unsigned long long)si.mem_free);
@@ -495,6 +504,26 @@ static int request_renewal(agent_t *a)
     return rc;
 }
 
+/* After a failed status update: with an expired certificate nothing will
+ * ever succeed again, so start over as a new device. */
+static void reenroll_if_expired(agent_t *a)
+{
+    time_t now = time(NULL);
+    if (a->cert_not_after == 0 || now < CLOCK_SET_AFTER || now < a->cert_not_after + CERT_EXPIRED_GRACE_S) {
+        return;
+    }
+    char exp[32];
+    struct tm tm;
+    gmtime_r(&a->cert_not_after, &tm);
+    strftime(exp, sizeof(exp), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    fc_port_log(FC_LOG_ERROR, "management certificate expired on %s: enrolling again as a new device", exp);
+    fc_port_kv_del(KV_MGMT_CERT);
+    fc_port_kv_del(KV_RENDERED);
+    fc_port_kv_del(KV_PREV_RENDERED);
+    fc_identity_forget();
+    fc_port_reboot();
+}
+
 /* Called from the status thread on every round. */
 static void renew_cert_if_due(agent_t *a)
 {
@@ -563,6 +592,7 @@ static void *status_thread(void *arg)
             last_ok = last_put;
         } else {
             fc_port_log(FC_LOG_WARN, "status update failed, retrying");
+            reenroll_if_expired(a);
         }
     }
     return NULL;
