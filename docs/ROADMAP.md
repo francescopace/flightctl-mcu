@@ -25,7 +25,7 @@ Measurements, problems found and Flight Control limitations are in [RESULTS.md](
 
 ## Milestone 1: production foundations (done, November 2026)
 
-The gaps that would stop anyone from leaving a device in the field. None of them needed new hardware or server changes, and each one is tested in CI. They ran on the simulated device and build for every chip; they still have to be run on the boards.
+The gaps that would stop anyone from leaving a device in the field. None of them needed new hardware or server changes, and each one is tested in CI. They ran on the simulated device and on an ESP32-C3, except certificate renewal, which only the simulated device has gone through (the board's certificate is valid for a year). See [RESULTS.md](RESULTS.md#milestone-1-on-a-board-esp32-c3).
 
 | # | Item | Why | Result |
 |---|---|---|---|

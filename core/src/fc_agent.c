@@ -43,9 +43,13 @@
 /* Liveness: no accepted status update for this long means the agent is
  * stuck (network stack, TLS, a hung connection): restart the device. */
 #define STATUS_STALL_REBOOT_S 600
-/* Changes (app state, alarms) trigger an immediate status update, but never
- * more than one every few seconds, whatever an app does. */
+/* The agent's own changes (spec applied, firmware confirmed) are reported
+ * within a few seconds. Changes reported by apps and the firmware (app state,
+ * alarms) are grouped: at most one status every NOTIFY_MIN_GAP_S, so a value
+ * flapping around a threshold cannot flood the network (each status is about
+ * 5 KB on the wire, the server's answer included). */
 #define STATUS_MIN_GAP_S 3
+#define NOTIFY_MIN_GAP_S 15
 /* Management certificate renewal, as the Linux agent does it: once a quarter
  * of the lifetime has passed (75% left), ask for a new certificate for the
  * same key. The server approves renewal requests on its own when they come
@@ -72,7 +76,8 @@ typedef struct {
 
     pthread_mutex_t lock;
     pthread_cond_t status_wake;
-    int status_dirty;
+    int status_urgent;      /* the agent's own change: report soon */
+    int status_dirty;       /* an app or the firmware changed something */
     char rendered_version[32]; /* last version applied without errors */
     char attempted_version[32]; /* last version received (knownRenderedVersion) */
     char os_image[256];
@@ -300,12 +305,21 @@ static int put_status(agent_t *a)
     return 0;
 }
 
-static void request_status(agent_t *a)
+static void wake_status(agent_t *a, int urgent)
 {
     pthread_mutex_lock(&a->lock);
-    a->status_dirty = 1;
+    if (urgent) {
+        a->status_urgent = 1;
+    } else {
+        a->status_dirty = 1;
+    }
     pthread_cond_signal(&a->status_wake);
     pthread_mutex_unlock(&a->lock);
+}
+
+static void request_status(agent_t *a)
+{
+    wake_status(a, 1);
 }
 
 static agent_t *s_running;
@@ -313,7 +327,7 @@ static agent_t *s_running;
 void fc_agent_notify_status(void)
 {
     if (s_running != NULL) {
-        request_status(s_running);
+        wake_status(s_running, 0);
     }
 }
 
@@ -509,10 +523,30 @@ static void *status_thread(void *arg)
     int interval = a->cfg->status_interval_s > 0 ? a->cfg->status_interval_s : 60;
     time_t last_ok = time(NULL), last_put = 0;
     for (;;) {
-        time_t since = time(NULL) - last_put;
-        if (last_put != 0 && since < STATUS_MIN_GAP_S) {
-            sleep((unsigned)(STATUS_MIN_GAP_S - since));
+        /* Wait until a status is due: the interval, an urgent change, an
+         * app change (grouped), or a certificate renewal. */
+        pthread_mutex_lock(&a->lock);
+        while (last_put != 0) {
+            time_t due = last_put + (a->verifying ? RETRY_DELAY_S : interval);
+            if (a->status_urgent && last_put + STATUS_MIN_GAP_S < due) {
+                due = last_put + STATUS_MIN_GAP_S;
+            } else if (a->status_dirty && last_put + NOTIFY_MIN_GAP_S < due) {
+                due = last_put + NOTIFY_MIN_GAP_S;
+            }
+            time_t renew = a->cert_next_try > a->cert_renew_at ? a->cert_next_try : a->cert_renew_at;
+            if (renew > 0 && renew < due) {
+                due = renew;
+            }
+            if (time(NULL) >= due) {
+                break;
+            }
+            struct timespec until = {.tv_sec = due};
+            pthread_cond_timedwait(&a->status_wake, &a->lock, &until);
         }
+        a->status_urgent = 0;
+        a->status_dirty = 0;
+        pthread_mutex_unlock(&a->lock);
+
         if (time(NULL) - last_ok > STATUS_STALL_REBOOT_S) {
             fc_port_log(FC_LOG_ERROR, "no status update accepted for %d s: restarting", STATUS_STALL_REBOOT_S);
             fc_port_reboot();
@@ -529,21 +563,6 @@ static void *status_thread(void *arg)
         } else {
             fc_port_log(FC_LOG_WARN, "status update failed, retrying");
         }
-        pthread_mutex_lock(&a->lock);
-        if (!a->status_dirty) {
-            struct timespec until;
-            clock_gettime(CLOCK_REALTIME, &until);
-            time_t wait = a->verifying ? RETRY_DELAY_S : interval;
-            /* Wake up for a certificate renewal that is due, or pending. */
-            time_t now = time(NULL), renew = a->cert_next_try > a->cert_renew_at ? a->cert_next_try : a->cert_renew_at;
-            if (renew > 0 && renew - now < wait) {
-                wait = renew > now ? renew - now : 1;
-            }
-            until.tv_sec += wait;
-            pthread_cond_timedwait(&a->status_wake, &a->lock, &until);
-        }
-        a->status_dirty = 0;
-        pthread_mutex_unlock(&a->lock);
     }
     return NULL;
 }

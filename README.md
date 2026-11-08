@@ -297,7 +297,7 @@ What is done:
 
 - **Signed images.** Firmware and apps are signed in cosign's format (`cosign verify --key` accepts them). A device with a signing key in its firmware refuses anything unsigned or signed with another key.
 - **Certificate renewal.** The device renews its management certificate before it expires, as the Linux agent does.
-- **Kept connections.** HTTP keep-alive, one connection per agent thread: a simulated device idles at about 220 KB/hour, against 560 KB/hour with a connection per request. What is left is mostly the full status sent every minute.
+- **Kept connections.** HTTP keep-alive, one connection per agent thread: a simulated device idles at about 220 KB/hour, against 560 KB/hour with a connection per request. What is left is mostly the full status sent every minute. Status updates triggered by apps are grouped (one every 15 s at most), so an app whose state flaps cannot flood the network.
 
 What is not:
 

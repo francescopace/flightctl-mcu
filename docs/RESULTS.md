@@ -100,6 +100,21 @@ What is left is the full status sent every minute and the server's answer to it.
 
 The release profile (`VARIANT=release`: `-Os`, quieter logs) makes the C3 image 984 KB instead of 1,159 KB, about 15% smaller, with 41% of the OTA slot free.
 
+### Milestone 1 on a board (ESP32-C3)
+
+The C3 SuperMini, in a fleet of its own, with the `alarm` app:
+
+| Check | Result |
+|---|---|
+| Signed firmware update, v2.7 to v2.11 | Installed and confirmed in 24 s. From v2.11 on the device checks signatures: the next update (v2.12, signed) went through in 22 s |
+| Unsigned app | Refused ("is not signed"), the signed app keeps running, Flight Control shows the device OutOfDate with the reason |
+| Kept connections | 2 TLS handshakes after boot, none in the next 10 minutes |
+| Server restart | Both connections reopened (2 more handshakes), next spec applied in 2 s |
+| Internal heap with the two connections open | about 58–60 KB free, minimum since boot 38 KB (v2.12) |
+| Idle traffic | 1.5 MB/hour with v2.11, then about 690 KB/hour with v2.12: see problem 11 |
+
+Certificate renewal was not run on the board: its certificate is valid for a year. The renewal code is the same as on the simulated device, where the end-to-end test covers it with 2-minute certificates.
+
 ## Problems found and fixed
 
 1. **The rollout moved on while the canary was rebooting.**
@@ -138,6 +153,10 @@ The release profile (`VARIANT=release`: `-Os`, quieter logs) makes the C3 image 
 10. **Certificate renewal: use after free** (milestone 1, found in review).
     - A long-poll could still refer to a certificate that two renewals had already replaced and freed.
     - Fix: each request works on its own copy of the certificate.
+11. **A flapping app state flooded the network** (milestone 1, found on the C3).
+    - The C3 sensor reads in steps of 1 °C, and the chip sat right at the 40 °C threshold: the app went from alarm to pre-alarm and back several times a minute, and every change sent a status, up to one every 3 s. Each status costs about 5 KB on the wire with the server's answer, so the idle C3 used 1.5 MB/hour.
+    - Fix: the agent's own changes (spec applied, firmware confirmed) are still reported within a few seconds; changes reported by apps and the firmware are grouped, one status every 15 s at most. Same C3, same flapping: about 690 KB/hour.
+    - What is left is mostly the size of each status and of the server's answer to it (limitation 6 below).
 
 ## Flight Control limitations found (upstream proposals)
 
@@ -171,6 +190,6 @@ The release profile (`VARIANT=release`: `-Os`, quieter logs) makes the C3 image 
   - No Secure Boot v2 and no flash encryption: the device key is stored in NVS unencrypted.
 - **WiFi configured at build time.** There is no provisioning (BLE or SoftAP), and no way to transfer the enrollment config either.
 - **App formats**: only the WASM OCI artifact. Podman "compat" images (with the `.wasm` in a tar.gz layer) are not supported.
-- **Hardware coverage**: automatic rollback was not exercised on the C6, and the milestone 1 changes have run on the simulated device and in builds, not yet on the boards.
+- **Hardware coverage**: automatic rollback was not exercised on the C6. Milestone 1 ran on one board, the C3; certificate renewal only on the simulated device.
 
 What comes next is in the [roadmap](ROADMAP.md).

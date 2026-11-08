@@ -57,8 +57,10 @@ int fc_agent_run(const fc_agent_config_t *cfg);
  * it too (idempotent). */
 int fc_agent_apps_start(const fc_agent_config_t *cfg);
 
-/* Asks the running agent to send a status update now (e.g. an alarm changed).
- * Safe to call from any task; a no-op before fc_agent_run starts. */
+/* Asks the running agent to send a status update soon (e.g. an alarm
+ * changed). Calls are grouped: at most one status every 15 s, however often
+ * the value changes. Safe to call from any task; a no-op before fc_agent_run
+ * starts. */
 void fc_agent_notify_status(void);
 
 #ifdef __cplusplus

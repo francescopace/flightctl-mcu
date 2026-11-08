@@ -196,7 +196,7 @@ void fc_port_custom_info(void *obj)
         [ESP_RST_UNKNOWN] = "unknown", [ESP_RST_POWERON] = "poweron", [ESP_RST_EXT] = "external",
         [ESP_RST_SW] = "software", [ESP_RST_PANIC] = "panic", [ESP_RST_INT_WDT] = "int_wdt",
         [ESP_RST_TASK_WDT] = "task_wdt", [ESP_RST_WDT] = "wdt", [ESP_RST_DEEPSLEEP] = "deepsleep",
-        [ESP_RST_BROWNOUT] = "brownout", [ESP_RST_SDIO] = "sdio",
+        [ESP_RST_BROWNOUT] = "brownout", [ESP_RST_SDIO] = "sdio", [ESP_RST_USB] = "usb",
     };
     esp_reset_reason_t rr = esp_reset_reason();
     cJSON_AddStringToObject(o, "resetReason",
