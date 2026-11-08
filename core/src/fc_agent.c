@@ -38,7 +38,8 @@
 #define SPEC_POLL_TIMEOUT_S 300 /* server holds the long-poll up to ~4 min */
 #define RETRY_DELAY_S 10
 /* A new firmware must reach Flight Control (one accepted status update)
- * within this time, or it is rolled back to the previous image. */
+ * within this time, or it is rolled back to the previous image
+ * (fc_agent_config_t.ota_verify_timeout_s overrides it). */
 #define OTA_VERIFY_TIMEOUT_S 150
 /* Liveness: no accepted status update for this long means the agent is
  * stuck (network stack, TLS, a hung connection): restart the device. */
@@ -857,7 +858,8 @@ static void resume_firmware_update(agent_t *a)
         snprintf(a->os_image, sizeof(a->os_image), "%s", pending);
         kv_load_str(KV_OS_PENDING_DIGEST, a->os_digest, sizeof(a->os_digest));
         a->verifying = 1;
-        a->verify_deadline = time(NULL) + OTA_VERIFY_TIMEOUT_S;
+        a->verify_deadline = time(NULL) + (a->cfg->ota_verify_timeout_s > 0 ? a->cfg->ota_verify_timeout_s
+                                                                            : OTA_VERIFY_TIMEOUT_S);
         kv_load_str(KV_PREV_RENDERED, a->reported_rendered, sizeof(a->reported_rendered));
         fc_port_log(FC_LOG_INFO, "running new firmware %s: confirming once Flight Control is reached", pending);
         return;

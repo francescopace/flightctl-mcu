@@ -1,3 +1,5 @@
 # Rollback demo: a firmware that cannot reach Flight Control (wrong port).
 # It is never confirmed, so the device goes back to the previous image.
 CONFIG_FC_TEST_SERVER_PORT=9443
+# The rollback test does not need to wait the full 150 s.
+CONFIG_FC_OTA_VERIFY_TIMEOUT=30

@@ -26,6 +26,13 @@ config FC_SERVER_PORT
     int "Flight Control agent endpoint port"
     default 8443
 
+config FC_OTA_VERIFY_TIMEOUT
+    int "Seconds a new firmware has to reach Flight Control before rollback"
+    default 150
+    help
+        Counted from the boot into the new image. The rollback test build
+        (sdkconfig.broken) shortens it.
+
 config FC_TEST_SERVER_PORT
     int "Test only: force this agent endpoint port (0: off)"
     default 0

@@ -28,7 +28,7 @@ IP="${HOST_IP:-$(local_ip)}"
 REGISTRY="${REGISTRY:-$IP:5001}"
 CHIP="${CHIP:-esp32c3}"
 ROLLBACK="${ROLLBACK:-1}"
-CERT_TTL=240
+CERT_TTL=120
 TAG="emu$(date +%s)"
 FLEET="emu-e2e"
 WORK="$ROOT/build/e2e-emu"   # inside the repo: the ESP-IDF container mounts it
@@ -195,10 +195,10 @@ tx=$(custom netTxBytes)
 wait_for 120 "status accepted after the first certificate expired" "int(ci.get('netTxBytes', 0)) > $tx"
 
 if [[ "$ROLLBACK" == 1 ]]; then
-  # The broken build keeps the device away from the server for about 3
-  # minutes: a 4-minute certificate would expire meanwhile, and a device with
-  # an expired certificate cannot get back in yet (see the roadmap). Back to
-  # the server's normal lifetime, and wait for a renewal to bring one.
+  # The broken build keeps the device away from the server for a minute or
+  # more: a test certificate could expire meanwhile, and a device with an
+  # expired certificate cannot get back in yet (see the roadmap). Back to the
+  # server's normal lifetime, and wait for a renewal to bring one.
   log "back to long-lived certificates"
   kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS- >/dev/null
   kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null

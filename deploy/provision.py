@@ -16,8 +16,9 @@ Contents (NVS namespace "fc"):
                                if not given, the device uses the WiFi it was built with
 
 The firmware is the same for every installation: change the credentials, not the build.
-The partition is generated with ESP-IDF's nvs_partition_gen.py, in the espressif/idf image
-($IDF_IMAGE, default espressif/idf:v5.5.6). It holds the enrollment key: treat the output
+The partition is generated with ESP-IDF's NVS partition generator: the pip package
+esp-idf-nvs-partition-gen when it is installed, else nvs_partition_gen.py in the espressif/idf
+image ($IDF_IMAGE, default espressif/idf:v5.5.6). It holds the enrollment key: treat the output
 like the key itself.
 """
 import argparse
@@ -88,15 +89,23 @@ def build_partition(args, size):
             with open(os.path.join(work, key), "w") as f:
                 f.write(value)
         rows = ["key,type,encoding,value", "fc,namespace,,"]
-        rows += [f"{key},file,string,/w/{key}" for key, _ in entries]
-        rows += [f"{key},file,string,/w/{key}" for key in values if values[key] != ""]  # no password: open AP
+        local = subprocess.run([sys.executable, "-c", "import esp_idf_nvs_partition_gen"],
+                               capture_output=True).returncode == 0
+        base = work if local else "/w"
+        rows += [f"{key},file,string,{base}/{key}" for key, _ in entries]
+        rows += [f"{key},file,string,{base}/{key}" for key in values if values[key] != ""]  # no password: open AP
         rows.append(f"server_port,data,i32,{int(port)}")
         with open(os.path.join(work, "creds.csv"), "w") as f:
             f.write("\n".join(rows) + "\n")
-        gen = subprocess.run(["docker", "run", "--rm", "-v", f"{work}:/w", IDF_IMAGE, "bash", "-c",
-                              "python $IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py "
-                              f"generate /w/creds.csv /w/creds.bin {size:#x}"],
-                             capture_output=True, text=True)
+        if local:
+            gen = subprocess.run([sys.executable, "-m", "esp_idf_nvs_partition_gen", "generate",
+                                  f"{work}/creds.csv", f"{work}/creds.bin", f"{size:#x}"],
+                                 capture_output=True, text=True)
+        else:
+            gen = subprocess.run(["docker", "run", "--rm", "-v", f"{work}:/w", IDF_IMAGE, "bash", "-c",
+                                  "python $IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py "
+                                  f"generate /w/creds.csv /w/creds.bin {size:#x}"],
+                                 capture_output=True, text=True)
         if gen.returncode != 0:
             sys.exit(f"nvs_partition_gen failed:\n{gen.stdout}{gen.stderr}")
         with open(os.path.join(work, "creds.bin"), "rb") as f:

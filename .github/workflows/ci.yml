@@ -1,22 +1,43 @@
 name: ci
 
+# Stage 1 (parallel): host agent, firmware for every chip, WASM apps, a quick
+# fuzzing pass. Stage 2: the end-to-end tests, which reuse what stage 1 built
+# instead of building it again. Long fuzzing runs nightly (fuzz-nightly.yml).
+
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
   workflow_dispatch:
+
+# A newer push to the same branch makes the running workflow pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MBEDTLS_VERSION: v3.6.7
+  FLIGHTCTL_VERSION: v1.3.1
+  ESP_EMU_VERSION: 0.51.0
 
 jobs:
   host:
     name: host agent (Linux)
     runs-on: ubuntu-latest
-    # The IDF image has cmake, ninja, gcc and the same mbedTLS 3.6 the firmware uses.
-    container: espressif/idf:v5.5.6
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/mbedtls
+        with:
+          version: ${{ env.MBEDTLS_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
       - run: third_party/fetch-wamr.sh
-      - shell: bash
-        run: ci/build-host.sh
+      - run: ci/build-host.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: host-agent
+          path: build/host/fc-host-agent
 
   firmware:
     name: firmware (${{ matrix.target }})
@@ -30,13 +51,19 @@ jobs:
       - uses: actions/checkout@v4
       - run: git config --global --add safe.directory '*'
       - run: third_party/fetch-wamr.sh
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.target }}-
       - name: debug build
         shell: bash
         run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7}
       - name: release profile (-Os)
         shell: bash
         run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} release
-      - name: broken build (for the rollback test)
+      - name: broken build, for the rollback test (emulated chips only)
+        if: contains(fromJSON('["esp32c3", "esp32c5"]'), matrix.target)
         shell: bash
         run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} broken
       - uses: actions/upload-artifact@v4
@@ -55,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y clang lld
-      - name: build alarm v1 and v2
+      - name: build alarm v1 and v2, trend v1
         run: |
           export PATH="$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)"):$PATH"
           NO_PUSH=1 wasm-apps/build.sh alarm v1
@@ -67,24 +94,25 @@ jobs:
           path: wasm-apps/build/*/*.wasm
 
   fuzz:
-    name: fuzzing (HTTP, OCI, agent)
+    name: fuzzing, quick pass (HTTP, OCI, agent)
     runs-on: ubuntu-latest
-    env:
-      MBEDTLS_VERSION: v3.6.7
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/mbedtls
+        id: mbedtls
+        with:
+          version: ${{ env.MBEDTLS_VERSION }}
       - run: sudo apt-get update && sudo apt-get install -y clang ninja-build
-      - name: mbedTLS 3.6
-        run: |
-          git clone --depth 1 --branch $MBEDTLS_VERSION --recurse-submodules --shallow-submodules \
-            https://github.com/Mbed-TLS/mbedtls /tmp/mbedtls-src
-          cmake -S /tmp/mbedtls-src -B /tmp/mbedtls -G Ninja -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
-            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/mbedtls-install
-          cmake --build /tmp/mbedtls --target install
-      - name: fuzz, 2 minutes per target
+      # Start from what the nightly runs found (read only here).
+      - uses: actions/cache/restore@v4
+        with:
+          path: build/fuzz/corpus_*
+          key: fuzz-corpus-
+          restore-keys: fuzz-corpus-
+      - name: 30 seconds per target
         run: |
           third_party/fetch-wamr.sh
-          FUZZ_SECONDS=120 CC=clang ci/fuzz.sh -DMbedTLS_DIR=/tmp/mbedtls-install/lib/cmake/MbedTLS
+          FUZZ_SECONDS=30 CC=clang ci/fuzz.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -93,12 +121,9 @@ jobs:
 
   e2e:
     name: end-to-end (simulated device vs Flight Control on kind)
-    needs: wasm
+    needs: [host, wasm]
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      FLIGHTCTL_VERSION: v1.3.1
-      MBEDTLS_VERSION: v3.6.7
     steps:
       - uses: actions/checkout@v4
       - name: tools
@@ -107,21 +132,15 @@ jobs:
           sudo curl -fsSL -o /usr/local/bin/flightctl \
             https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
           sudo chmod +x /usr/local/bin/flightctl
-          sudo apt-get update && sudo apt-get install -y ninja-build python3-yaml
+          sudo apt-get update && sudo apt-get install -y python3-yaml
       - uses: oras-project/setup-oras@v1
       - uses: sigstore/cosign-installer@v3 # e2e checks that cosign accepts our signatures
-      - name: mbedTLS 3.6
-        run: |
-          git clone --depth 1 --branch $MBEDTLS_VERSION --recurse-submodules --shallow-submodules \
-            https://github.com/Mbed-TLS/mbedtls /tmp/mbedtls-src
-          cmake -S /tmp/mbedtls-src -B /tmp/mbedtls -G Ninja -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
-            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/mbedtls-install
-          cmake --build /tmp/mbedtls --target install
-      - name: host agent
-        run: |
-          third_party/fetch-wamr.sh
-          cmake -S . -B build/host -G Ninja -DMbedTLS_DIR=/tmp/mbedtls-install/lib/cmake/MbedTLS
-          cmake --build build/host
+      - name: host agent from the host job (not rebuilt)
+        uses: actions/download-artifact@v4
+        with:
+          name: host-agent
+          path: build/host
+      - run: chmod +x build/host/fc-host-agent
       - name: WASM apps from the WASM job (not rebuilt)
         uses: actions/download-artifact@v4
         with:
@@ -139,14 +158,11 @@ jobs:
     name: end-to-end on an emulated ${{ matrix.chip }} (esp-emu)
     needs: [firmware, wasm]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         chip: [esp32c3, esp32c5]
-    env:
-      FLIGHTCTL_VERSION: v1.3.1
-      ESP_EMU_VERSION: 0.51.0
     steps:
       - uses: actions/checkout@v4
       - name: tools
@@ -155,6 +171,8 @@ jobs:
             https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
           sudo chmod +x /usr/local/bin/flightctl
           sudo apt-get update && sudo apt-get install -y python3-yaml
+          # NVS partition generator for provisioning (else the ESP-IDF image is pulled)
+          pip install esp-idf-nvs-partition-gen==0.1.9
       - uses: oras-project/setup-oras@v1
       - name: esp-emu (checksum verified)
         run: |
@@ -175,7 +193,6 @@ jobs:
         with:
           name: wasm-apps
           path: wasm-apps/build
-      - run: docker pull espressif/idf:v5.5.6 # nvs_partition_gen, for provisioning
       - name: e2e on the emulator
         run: PREBUILT=1 CHIP=${{ matrix.chip }} ci/e2e-emu.sh
       - name: logs on failure

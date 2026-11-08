@@ -31,6 +31,9 @@ typedef struct {
 
     const char *agent_version;
     int status_interval_s; /* default 60 */
+    /* A new firmware must reach Flight Control within this time, or it is
+     * rolled back. Default 150 s. */
+    int ota_verify_timeout_s;
 
     /* Optional application hooks (may be NULL), both called with app_ctx.
      * on_config_file: called on the spec thread after an inline config file

@@ -125,7 +125,7 @@ Certificate renewal was not run on the board, whose certificate is valid for a y
 | ESP32-C5 | confirmed, 15 s | refused | renewed, still reporting after the first certificate expired | 61.7 / 42.2 / 40.9 KB (after problem 12) |
 | ESP32-S3 | confirmed, 35 s | – | renewed | 121.3 / 102.1 / 73.7 KB |
 
-The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole sequence for the C3 and the C5, in CI too. Since the credentials moved out of the firmware (`fc_creds` partition), it tests the same images CI builds for the boards, provisioned for the test cluster: it boots the debug build, updates it over the air to the release build (72 KB free on the C3, against 58 KB for the debug build), and tries a broken build that cannot reach the server, which is rolled back in about 3 minutes.
+The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole sequence for the C3 and the C5, in CI too. Since the credentials moved out of the firmware (`fc_creds` partition), it tests the same images CI builds for the boards, provisioned for the test cluster: it boots the debug build, updates it over the air to the release build (72 KB free on the C3, against 58 KB for the debug build), and tries a broken build that cannot reach the server, which is rolled back once its confirmation window ends (150 s by default, 30 s in the test build).
 
 ## Problems found and fixed
 

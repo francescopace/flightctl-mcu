@@ -13,3 +13,4 @@ wasm-apps/build/
 *.key
 client-enrollment.*
 enrollment-config.yaml
+.ccache/

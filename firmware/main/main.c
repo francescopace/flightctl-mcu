@@ -151,7 +151,7 @@ static const char **parse_labels(const char *spec)
 /* Safety net for a new firmware stuck before the agent runs (e.g. no WiFi):
  * the agent confirms the image once it reaches Flight Control; if that has
  * not happened by now, go back to the previous image. */
-#define OTA_GUARD_S 240
+#define OTA_GUARD_S (CONFIG_FC_OTA_VERIFY_TIMEOUT + 90)
 
 static void ota_guard(void *arg)
 {
@@ -209,6 +209,7 @@ void app_main(void)
         .labels = parse_labels(labels),
         .agent_version = "flightctl-mcu/0.1.0",
         .status_interval_s = CONFIG_FC_STATUS_INTERVAL,
+        .ota_verify_timeout_s = CONFIG_FC_OTA_VERIFY_TIMEOUT,
         .on_config_file = alarm_on_config_file,
         .custom_info = alarm_custom_info,
         .wasm_natives = natives,

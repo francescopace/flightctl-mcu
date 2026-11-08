@@ -317,10 +317,10 @@ These are written up, with measurements, in [docs/RESULTS.md](docs/RESULTS.md). 
 
 ## CI
 
-GitHub Actions runs on every push:
+GitHub Actions runs on every push that touches code. It builds once and tests what it built: the end-to-end jobs take the host agent, the firmware images and the WASM apps from the build jobs.
 
-- **Builds**: the simulated device on Linux, the firmware for every supported chip in debug and release profiles, and the example WASM apps. The firmware jobs use throwaway credentials (`ci/dummy-secrets.sh`).
-- **Fuzzing** ([ci/fuzz.sh](ci/fuzz.sh)): two minutes each for the HTTP response reader, the OCI manifest and signature handling, and the agent's handling of rendered specs and certificates. Crashes found so far are kept as seed inputs in `tests/fuzz/corpus`.
+- **Builds**: the simulated device on Linux, the firmware for every supported chip in debug and release profiles (with `ccache`), and the example WASM apps. The firmware has no credentials in it.
+- **Fuzzing** ([ci/fuzz.sh](ci/fuzz.sh)): the HTTP response reader, the OCI manifest and signature handling, and the agent's handling of rendered specs and certificates. 30 seconds per target on every push, 20 minutes per target every night ([fuzz-nightly.yml](.github/workflows/fuzz-nightly.yml)), with the corpus kept from one night to the next. Crashes found so far are kept as seed inputs in `tests/fuzz/corpus`.
 - **End-to-end test** ([ci/e2e.sh](ci/e2e.sh)): the job deploys Flight Control 1.3.1 on kind and a registry on the runner. The simulated device then goes through:
   - enrollment, approved by the allow-list script;
   - Online status;
@@ -333,7 +333,7 @@ GitHub Actions runs on every push:
   - the app's removal, then the second example app;
   - the renewal of its management certificate (the server issues 2-minute certificates for the test), and a status accepted after the first one expired;
   - a server restart, after which it must reconnect and take a new spec.
-- **Firmware in the emulator** ([ci/e2e-emu.sh](ci/e2e-emu.sh)): the real firmware for the C3 and the C5 runs in Espressif's [esp-emu](https://github.com/espressif/esp-emulator), whose WiFi access point NATs to the runner, against Flight Control on kind. It goes through enrollment, a signed firmware update with a reboot into the other slot, a signed app and an unsigned one, certificate renewal, and the rollback of a firmware that cannot reach the server.
+- **Firmware in the emulator** ([ci/e2e-emu.sh](ci/e2e-emu.sh)): the real firmware for the C3 and the C5 runs in Espressif's [esp-emu](https://github.com/espressif/esp-emulator), whose WiFi access point NATs to the runner, against Flight Control on kind. It provisions the debug image for the test cluster, then goes through enrollment, a signed update to the release image with a reboot into the other slot, a signed app and an unsigned one, certificate renewal, and the rollback of a broken image that cannot reach the server (built with a 30-second confirmation window instead of 150).
 
 You can run both tests against a cluster you already have:
 
