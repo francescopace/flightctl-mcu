@@ -121,3 +121,43 @@ jobs:
         run: |
           kubectl get pods -A || true
           kubectl get events -n flightctl --sort-by=.lastTimestamp | tail -40 || true
+
+  emulator:
+    name: end-to-end on an emulated ${{ matrix.chip }} (esp-emu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [esp32c3, esp32c5]
+    env:
+      FLIGHTCTL_VERSION: v1.3.1
+      ESP_EMU_VERSION: 0.51.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/flightctl \
+            https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
+          sudo chmod +x /usr/local/bin/flightctl
+          sudo apt-get update && sudo apt-get install -y clang lld python3-yaml
+          echo "$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)")" >> "$GITHUB_PATH"
+      - uses: oras-project/setup-oras@v1
+      - name: esp-emu (checksum verified)
+        run: |
+          cd /tmp
+          base=https://github.com/espressif/esp-emulator/releases/download/v$ESP_EMU_VERSION
+          name=esp-emu-$ESP_EMU_VERSION-x86_64-unknown-linux-gnu
+          curl -fsSLO "$base/$name.tar.gz" && curl -fsSLO "$base/SHA256SUMS"
+          grep " $name.tar.gz\$" SHA256SUMS | sha256sum -c -
+          tar xzf "$name.tar.gz" && sudo install -m 755 "$name/esp-emu" /usr/local/bin/esp-emu
+          esp-emu --version
+      - run: third_party/fetch-wamr.sh
+      - run: docker pull espressif/idf:v5.5.6
+      - name: e2e on the emulator
+        run: CHIP=${{ matrix.chip }} ci/e2e-emu.sh
+      - name: logs on failure
+        if: failure()
+        run: |
+          tail -80 build/e2e-emu/emu.log || true
+          kubectl get pods -A || true

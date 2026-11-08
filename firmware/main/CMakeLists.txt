@@ -3,6 +3,9 @@
 # The image signing key (deploy/signing/keygen.sh) is embedded when present:
 # then the device only installs firmware and apps signed with it.
 set(SECRETS ${CMAKE_CURRENT_LIST_DIR}/../../.secrets)
+if(DEFINED ENV{FC_SECRETS_DIR}) # tests: credentials of a throwaway cluster
+    set(SECRETS $ENV{FC_SECRETS_DIR})
+endif()
 set(EMBED ${SECRETS}/ca.crt ${SECRETS}/enroll.crt ${SECRETS}/enroll.key)
 if(EXISTS ${SECRETS}/signing.pub)
     list(APPEND EMBED ${SECRETS}/signing.pub)

@@ -113,7 +113,19 @@ The C3 SuperMini, in a fleet of its own, with the `alarm` app:
 | Internal heap with the two connections open | about 58–60 KB free, minimum since boot 38 KB (v2.12) |
 | Idle traffic | 1.5 MB/hour with v2.11, then about 690 KB/hour with v2.12: see problem 11 |
 
-Certificate renewal was not run on the board: its certificate is valid for a year. The renewal code is the same as on the simulated device, where the end-to-end test covers it with 2-minute certificates.
+Certificate renewal was not run on the board, whose certificate is valid for a year; it ran in the emulator, below.
+
+### Milestone 1 in Espressif's emulator
+
+[esp-emu](https://github.com/espressif/esp-emulator) 0.51 runs the real firmware for the C3, C5 and S3 (not the S2 or the classic ESP32). Its WiFi access point NATs to the host, so the emulated chip enrolls in the same Flight Control as the boards. With the server issuing 4-minute certificates:
+
+| Chip | Signed OTA (reboot into the other slot) | Unsigned app | Certificate renewal | Heap free / minimum / largest block |
+|---|---|---|---|---|
+| ESP32-C3 | confirmed, 19 s | refused | 6 renewals, still reporting after the first certificate expired | 57.8 / 37.6 KB / – |
+| ESP32-C5 | confirmed, 15 s | refused | renewed, still reporting after the first certificate expired | 61.7 / 42.2 / 40.9 KB (after problem 12) |
+| ESP32-S3 | confirmed, 35 s | – | renewed | 121.3 / 102.1 / 73.7 KB |
+
+The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole sequence for the C3 and the C5, in CI too, including a broken firmware (it cannot reach the server) that is rolled back in about 3 minutes.
 
 ## Problems found and fixed
 
@@ -157,6 +169,9 @@ Certificate renewal was not run on the board: its certificate is valid for a yea
     - The C3 sensor reads in steps of 1 °C, and the chip sat right at the 40 °C threshold: the app went from alarm to pre-alarm and back several times a minute, and every change sent a status, up to one every 3 s. Each status costs about 5 KB on the wire with the server's answer, so the idle C3 used 1.5 MB/hour.
     - Fix: the agent's own changes (spec applied, firmware confirmed) are still reported within a few seconds; changes reported by apps and the firmware are grouped, one status every 15 s at most. Same C3, same flapping: about 690 KB/hour.
     - What is left is mostly the size of each status and of the server's answer to it (limitation 6 below).
+12. **ESP32-C5: TLS handshakes failed for lack of memory** (milestone 1, found in the emulator).
+    - With the two kept connections, the largest free block went down to 19 KB, and a handshake needs 16.7 KB in one piece for the TLS receive buffer. When both connections opened together (at boot, and after each certificate renewal) one failed and was retried later.
+    - Fix: on the C5, WiFi code stays in flash and the WiFi stack has fewer buffers, as on the S2. Free heap went from 43.6 to 61.7 KB, the largest block from 19 to 41 KB, and no handshake failed in 5 minutes with a renewal every minute.
 
 ## Flight Control limitations found (upstream proposals)
 
@@ -190,6 +205,6 @@ Certificate renewal was not run on the board: its certificate is valid for a yea
   - No Secure Boot v2 and no flash encryption: the device key is stored in NVS unencrypted.
 - **WiFi configured at build time.** There is no provisioning (BLE or SoftAP), and no way to transfer the enrollment config either.
 - **App formats**: only the WASM OCI artifact. Podman "compat" images (with the `.wasm` in a tar.gz layer) are not supported.
-- **Hardware coverage**: automatic rollback was not exercised on the C6. Milestone 1 ran on one board, the C3; certificate renewal only on the simulated device.
+- **Hardware coverage**: automatic rollback was not exercised on the C6. Milestone 1 ran on one board, the C3, and in the emulator for the C3, C5 and S3; S2 and classic ESP32 have neither.
 
 What comes next is in the [roadmap](ROADMAP.md).

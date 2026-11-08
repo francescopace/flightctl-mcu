@@ -334,12 +334,19 @@ GitHub Actions runs on every push:
   - the app's removal, then the second example app;
   - the renewal of its management certificate (the server issues 2-minute certificates for the test), and a status accepted after the first one expired;
   - a server restart, after which it must reconnect and take a new spec.
+- **Firmware in the emulator** ([ci/e2e-emu.sh](ci/e2e-emu.sh)): the real firmware for the C3 and the C5 runs in Espressif's [esp-emu](https://github.com/espressif/esp-emulator), whose WiFi access point NATs to the runner, against Flight Control on kind. It goes through enrollment, a signed firmware update with a reboot into the other slot, a signed app and an unsigned one, certificate renewal, and the rollback of a firmware that cannot reach the server.
 
-You can run the same test against a cluster you already have:
+You can run both tests against a cluster you already have:
 
 ```bash
 SKIP_DEPLOY=1 ci/e2e.sh
 ```
+
+```bash
+SKIP_DEPLOY=1 CHIP=esp32c5 ci/e2e-emu.sh
+```
+
+The emulator test needs `esp-emu` on the PATH or in `~/.local/bin`. To try the firmware in the emulator by hand, build with `VARIANT=emu` (WiFi set to the emulator's access point) and `merge-bin`, then run `esp-emu --chip esp32c3 --firmware firmware/build-esp32c3-emu/merged-binary.bin`.
 
 ## License
 

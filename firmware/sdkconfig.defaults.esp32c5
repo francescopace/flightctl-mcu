@@ -1,1 +1,13 @@
 CONFIG_FC_LED_GPIO=27
+
+# The C5 has the smallest heap margin of the family. With the two kept
+# connections (spec long-poll and status) a TLS handshake needs a contiguous
+# 16.7 KB block, which was not always there (found in the emulator). Trade
+# WiFi throughput for heap: WiFi code in flash, fewer buffers, smaller
+# block-ack window.
+# CONFIG_ESP_WIFI_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_RX_BA_WIN=6
