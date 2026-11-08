@@ -1,0 +1,29 @@
+# Lolin/Wemos S2 Mini: native USB only (no USB-UART bridge). The console
+# stays on UART0: with the console on USB CDC and PSRAM on, the board stopped
+# enumerating after a reset. Without a
+# USB-UART adapter there is no log; Flight Control status is the way to see
+# the device. Plain blue LED on GPIO 15, active high.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_FC_LED_GPIO=15
+# CONFIG_FC_LED_WS2812 is not set
+
+# The S2 has the least SRAM of the family (IRAM and DRAM share 320 KB): with
+# the defaults the TLS handshake cannot find a 16 KB block. Use the PSRAM in
+# the package (S2FNR2, as on the S2 Mini) for everything above 1 KB except
+# what must stay internal. TLS buffers stay in internal RAM (mbedTLS default):
+# with them in PSRAM, records got corrupted ("bad record MAC" on the server,
+# 400 on status updates). The 48 KB reserved for internal-only allocations
+# is where they go. Boards without PSRAM still boot, but stay short of memory.
+# Also trade WiFi throughput for heap: WiFi code in flash, fewer buffers,
+# smaller block-ack window.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=49152
+# CONFIG_ESP_WIFI_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_RX_BA_WIN=4

@@ -2,6 +2,7 @@
  * ESP-IDF port: key/value and config files in a dedicated NVS partition,
  * system info from the SoC, logging through esp_log.
  */
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +36,10 @@
 static const char *TAG = "fc";
 #if SOC_TEMP_SENSOR_SUPPORTED
 static temperature_sensor_handle_t s_tsens;
+/* The status thread, the alarm task and WASM apps all read the sensor. On
+ * the S2 a read starts a conversion and busy-waits for it, without a lock in
+ * the driver: two overlapping reads can leave one spinning forever. */
+static pthread_mutex_t s_tsens_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
 int fc_port_espidf_init(void)
@@ -56,7 +61,13 @@ int fc_port_espidf_init(void)
 int fc_port_temperature(float *celsius)
 {
 #if SOC_TEMP_SENSOR_SUPPORTED
-    return s_tsens && temperature_sensor_get_celsius(s_tsens, celsius) == ESP_OK ? 0 : -1;
+    if (!s_tsens) {
+        return -1;
+    }
+    pthread_mutex_lock(&s_tsens_lock);
+    esp_err_t err = temperature_sensor_get_celsius(s_tsens, celsius);
+    pthread_mutex_unlock(&s_tsens_lock);
+    return err == ESP_OK ? 0 : -1;
 #else
     /* No usable internal sensor (classic ESP32): a simulated 34-46 C swing
      * over 10 minutes, so the alarm logic still has something to act on. */
@@ -175,6 +186,21 @@ void fc_port_custom_info(void *obj)
     cJSON_AddStringToObject(o, "uptimeSeconds", buf);
     snprintf(buf, sizeof(buf), "%u", (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));
     cJSON_AddStringToObject(o, "memMinFreeBytes", buf);
+    /* With PSRAM the totals above include it; TLS and WiFi care about
+     * internal RAM, and about its largest free block. */
+    snprintf(buf, sizeof(buf), "%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddStringToObject(o, "memInternalFreeBytes", buf);
+    snprintf(buf, sizeof(buf), "%u", (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    cJSON_AddStringToObject(o, "memInternalLargestBlock", buf);
+    static const char *const reasons[] = {
+        [ESP_RST_UNKNOWN] = "unknown", [ESP_RST_POWERON] = "poweron", [ESP_RST_EXT] = "external",
+        [ESP_RST_SW] = "software", [ESP_RST_PANIC] = "panic", [ESP_RST_INT_WDT] = "int_wdt",
+        [ESP_RST_TASK_WDT] = "task_wdt", [ESP_RST_WDT] = "wdt", [ESP_RST_DEEPSLEEP] = "deepsleep",
+        [ESP_RST_BROWNOUT] = "brownout", [ESP_RST_SDIO] = "sdio",
+    };
+    esp_reset_reason_t rr = esp_reset_reason();
+    cJSON_AddStringToObject(o, "resetReason",
+                            (unsigned)rr < sizeof(reasons) / sizeof(reasons[0]) && reasons[rr] ? reasons[rr] : "other");
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         snprintf(buf, sizeof(buf), "%d", ap.rssi);

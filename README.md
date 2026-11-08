@@ -8,7 +8,7 @@ This is a proof of concept. It works end to end on real hardware, but it is not 
 
 ## Why
 
-Flight Control (upstream of Red Hat Edge Manager) manages fleets of Linux edge devices from OpenShift: enrollment, monitoring, declarative config, OS images and container apps, with staged rollouts. Its agent is written in Go and expects a full Linux system with bootc, systemd and Podman.
+Flight Control (upstream of Red Hat Edge Manager, [video overview](https://www.youtube.com/watch?v=BrLQr61dTik)) manages fleets of Linux edge devices from OpenShift: enrollment, monitoring, declarative config, OS images and container apps, with staged rollouts. Its agent is written in Go and expects a full Linux system with bootc, systemd and Podman.
 
 Plenty of devices in the field are not like that. A sensor node or a small controller on a production line is usually a microcontroller with a few hundred KB of RAM and an RTOS. These devices end up managed by something else: a vendor cloud, a custom MQTT backend, or nothing at all. So the gateway that collects their data shows up in Flight Control, and the devices behind it don't.
 
@@ -107,9 +107,9 @@ Tested on real boards with ESP-IDF 5.5.6:
 | ESP32-C5 | RISC-V | everything works | ~68 KB |
 | ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~88 KB |
 | ESP32-C6 | RISC-V | everything except rollback, which was not exercised; on the DevKitC flash over the native USB port with the board powered up holding BOOT, then replug it | ~177 KB |
-| ESP32-S2 | Xtensa LX7 | not tried yet | |
+| ESP32-S2 | Xtensa LX7 | everything works, using the PSRAM in the package (S2FNR2, as on the Lolin S2 Mini): internal RAM alone is not enough for TLS; no serial log on the S2 Mini, because the console is on UART0 | ~40 KB internal + 2 MB PSRAM |
 
-"Everything" means enrollment, monitoring, config, firmware OTA with rollback and WASM apps. PSRAM is not used, so a single image runs on every board variant of a chip. The same `.wasm` file runs on Xtensa and RISC-V.
+"Everything" means enrollment, monitoring, config, firmware OTA with rollback and WASM apps. PSRAM is not used, so a single image runs on every board variant of a chip. The exception is the S2, which needs its PSRAM (see the table). The same `.wasm` file runs on Xtensa and RISC-V.
 
 Firmware images are 1.08–1.25 MB, leaving 25–35% of a 1.6 MB OTA slot free. Most of that size is the WiFi stack and mbedTLS. The agent itself is about 21 KB and WAMR about 71 KB.
 
@@ -119,7 +119,7 @@ Firmware images are 1.08–1.25 MB, leaving 25–35% of a 1.6 MB OTA slot free. 
 
 If ESP-IDF supports the chip, it is mostly configuration:
 
-1. Build for it: `TARGET=esp32s2 FW_VERSION=v1 firmware/build.sh`. The build directory is `firmware/build-<target>`.
+1. Build for it: `TARGET=esp32c61 FW_VERSION=v1 firmware/build.sh`. The build directory is `firmware/build-<target>`.
 2. Put board-specific defaults in `firmware/sdkconfig.defaults.<target>`. For example the LED pin: see `sdkconfig.defaults.esp32c3` or `sdkconfig.defaults.esp32`.
 3. If the chip has no temperature sensor, `port/espidf` already falls back to a simulated one (`SOC_TEMP_SENSOR_SUPPORTED`).
 4. `firmware/fw-push.py` picks up every `build-*` directory, so the chip ends up in the next firmware index on its own.
@@ -232,7 +232,7 @@ flightctl approve -l stage=canary enrollmentrequest/<name>
 **5. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/alarm-lab.yaml`, or edit them there.
 
 ```bash
-firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v2.7
+firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v2.10
 ```
 
 ```bash
