@@ -9,9 +9,16 @@
 #   SKIP_DEPLOY=1 ci/e2e-emu.sh    against the cluster and registry already running
 #   CHIP=esp32c5 ci/e2e-emu.sh     another emulated chip (esp32c3, esp32c5, esp32s3)
 #   ROLLBACK=0 ci/e2e-emu.sh       skip the rollback step (about 4 minutes)
+#   PREBUILT=1 ci/e2e-emu.sh       use firmware/build-<chip>{,-release,-broken} as they are
+#                                  (CI: the firmware job's builds), instead of building
+#
+# The firmware has no credentials in it: the test provisions the emulated
+# device's fc_creds partition (deploy/provision.py) for this cluster, so the
+# same images as on real boards are tested. It boots the debug build, updates
+# it to the release build over the air, then tries the broken build.
 #
 # Needs: esp-emu, docker (ESP-IDF image), flightctl (logged in), kubectl, oras,
-# clang + wasm-ld, python3. Builds go to firmware/build-<chip>-e2e*.
+# clang + wasm-ld, python3.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -98,11 +105,9 @@ spec:
 EOF2
 }
 
-build() { # build <version> <build dir suffix> [extra config]
-  local extra="../build/e2e-emu/endpoint.cfg${3:+;$3}"
-  FC_SECRETS_DIR="$WORK/secrets" EXTRA_SDKCONFIG="$extra" BUILD_DIR="build-$CHIP-$2" \
-    TARGET="$CHIP" VARIANT=emu FW_VERSION="$1" firmware/build.sh build merge-bin >"$WORK/build-$2.log" 2>&1 \
-    || { tail -30 "$WORK/build-$2.log"; fail "firmware build $1"; }
+build() { # build <build dir> <version> [variant]
+  BUILD_DIR="$1" TARGET="$CHIP" VARIANT="${3:-}" FW_VERSION="$2" firmware/build.sh build merge-bin \
+    >"$WORK/$1.log" 2>&1 || { tail -30 "$WORK/$1.log"; fail "firmware build $1"; }
 }
 
 if [[ -z "${SKIP_DEPLOY:-}" ]]; then
@@ -123,17 +128,28 @@ log "server issues ${CERT_TTL}s management certificates"
 kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS=$CERT_TTL >/dev/null
 kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
 
-log "credentials, signing key, firmware for $CHIP ($REGISTRY)"
+log "firmware for $CHIP: debug, release, broken"
 rm -rf "$WORK" && mkdir -p "$WORK"
+if [[ -n "${PREBUILT:-}" ]]; then
+  SUFFIX=""
+else
+  SUFFIX="-e2e"
+  build "build-$CHIP-e2e" e2e
+  build "build-$CHIP-e2e-release" e2e-release release
+  [[ "$ROLLBACK" == 1 ]] && build "build-$CHIP-e2e-broken" e2e-broken broken
+fi
+for d in "" -release; do
+  [[ -f "firmware/build-$CHIP$SUFFIX$d/flightctl_mcu_fw.bin" ]] || fail "no firmware/build-$CHIP$SUFFIX$d"
+done
+
+log "credentials and signing key ($REGISTRY), provisioned into the flash image"
 deploy/enrollment.sh "$WORK/secrets" >/dev/null
 deploy/signing/keygen.sh "$WORK/secrets" >/dev/null
 export SIGNING_KEY="$WORK/secrets/signing.key"
-printf 'CONFIG_FC_SERVER_HOST="agent-api.%s.nip.io"\nCONFIG_FC_SERVER_PORT=8443\nCONFIG_FC_LABELS="app=%s,site=emu"\n' \
-  "$IP" "$FLEET" > "$WORK/endpoint.cfg"
-build v1 e2e
-cp "firmware/build-$CHIP-e2e/merged-binary.bin" "$WORK/flash.bin"
-build v2 e2e
-firmware/fw-push.py --variant e2e "$REGISTRY/flightctl-mcu/fw:v2.$TAG" "$CHIP" >/dev/null
+cp "firmware/build-$CHIP$SUFFIX/merged-binary.bin" "$WORK/flash.bin"
+deploy/provision.py --image "$WORK/flash.bin" --secrets "$WORK/secrets" --server "agent-api.$IP.nip.io:8443" \
+  --labels "app=$FLEET,site=emu" --wifi-ssid myssid --wifi-password mypassword
+firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}release" "$REGISTRY/flightctl-mcu/fw:release.$TAG" "$CHIP" >/dev/null
 wasm-apps/build.sh alarm "v2.$TAG" "$REGISTRY" >/dev/null
 (cd "wasm-apps/build/alarm-v2.$TAG" && oras push --plain-http --disable-path-validation \
   --annotation "io.flightctl-mcu.e2e=unsigned-$TAG" --config config.json:application/vnd.wasm.config.v0+json \
@@ -152,19 +168,20 @@ done
 echo "device: $DEVICE"
 printf 'devices:\n  - name: %s\n    labels:\n      stage: emu\n' "$DEVICE" > "$WORK/allowlist.yaml"
 deploy/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
-wait_for 120 "device Online" "st.get('summary', {}).get('status') == 'Online' and ci.get('firmwareVersion') == 'v1'"
+wait_for 120 "device Online (debug build)" "st.get('summary', {}).get('status') == 'Online' and not ci.get('firmwareVersion', '').endswith('-release')"
 
-log "signed firmware v2 over the air, signed app"
-apply_fleet "v2.$TAG" "v2.$TAG"
-wait_for 300 "firmware v2 confirmed, app running" \
-  "ci.get('firmwareVersion') == 'v2' and upd.get('status') == 'UpToDate' and apps and apps[0]['status'] == 'Running'"
-grep -q "confirmed" "$WORK/emu.log" || fail "no firmware confirmation in the log"
+log "signed release build over the air, signed app"
+apply_fleet "release.$TAG" "v2.$TAG"
+wait_for 300 "release build confirmed, app running" \
+  "ci.get('firmwareVersion', '').endswith('-release') and upd.get('status') == 'UpToDate' and apps and apps[0]['status'] == 'Running'"
+# UpToDate is enough: the device reports the new version only once the new
+# image is confirmed (and the release build does not log at INFO level).
 echo "heap: free $(custom memFreeBytes), min $(custom memMinFreeBytes), largest internal block $(custom memInternalLargestBlock)"
 
 log "unsigned app refused"
-apply_fleet "v2.$TAG" "v2.$TAG-unsigned"
+apply_fleet "release.$TAG" "v2.$TAG-unsigned"
 wait_for 120 "unsigned app refused" "upd.get('status') == 'OutOfDate' and 'not signed' in upd.get('info', '')"
-apply_fleet "v2.$TAG" "v2.$TAG"
+apply_fleet "release.$TAG" "v2.$TAG"
 wait_for 120 "back to the signed app" "upd.get('status') == 'UpToDate'"
 
 log "management certificate renewal"
@@ -177,12 +194,23 @@ tx=$(custom netTxBytes)
 wait_for 120 "status accepted after the first certificate expired" "int(ci.get('netTxBytes', 0)) > $tx"
 
 if [[ "$ROLLBACK" == 1 ]]; then
-  log "broken firmware v3 is rolled back"
-  build v3 e2e-broken sdkconfig.broken   # cannot reach Flight Control (wrong port)
-  firmware/fw-push.py --variant e2e-broken "$REGISTRY/flightctl-mcu/fw:v3.$TAG" "$CHIP" >/dev/null
-  apply_fleet "v3.$TAG" "v2.$TAG"
-  wait_for 480 "back on v2, update reported as failed" \
-    "ci.get('firmwareVersion') == 'v2' and 'rolled back' in upd.get('info', '')"
+  # The broken build keeps the device away from the server for about 3
+  # minutes: a 4-minute certificate would expire meanwhile, and a device with
+  # an expired certificate cannot get back in yet (see the roadmap). Back to
+  # the server's normal lifetime, and wait for a renewal to bring one.
+  log "back to long-lived certificates"
+  kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS- >/dev/null
+  kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
+  day=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 86400)))")
+  wait_for 300 "certificate valid for more than a day" "ci.get('mgmtCertNotAfter', '') > '$day'"
+
+  log "broken build is rolled back"
+  # sdkconfig.broken: cannot reach Flight Control (wrong port), never confirmed
+  [[ -f "firmware/build-$CHIP$SUFFIX-broken/flightctl_mcu_fw.bin" ]] || fail "no firmware/build-$CHIP$SUFFIX-broken"
+  firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}broken" "$REGISTRY/flightctl-mcu/fw:broken.$TAG" "$CHIP" >/dev/null
+  apply_fleet "broken.$TAG" "v2.$TAG"
+  wait_for 480 "back on the release build, update reported as failed" \
+    "ci.get('firmwareVersion', '').endswith('-release') and 'rolled back' in upd.get('info', '')"
 fi
 
 log "PASS"

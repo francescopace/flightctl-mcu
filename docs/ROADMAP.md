@@ -40,7 +40,7 @@ The gaps that would stop anyone from leaving a device in the field. None of them
 
 Needs hardware in the loop, and some steps are irreversible on a board (eFuses).
 
-- **Provisioning**: WiFi and enrollment credentials set in the field (BLE or SoftAP via ESP-IDF provisioning) instead of at build time; one enrollment certificate per batch, revocable.
+- **Provisioning**: done over USB: credentials, endpoint, signing key and WiFi live in an `fc_creds` partition (`deploy/provision.py`), and the firmware has none built in. Still to do: provisioning in the field (BLE or SoftAP via ESP-IDF provisioning), and one enrollment certificate per batch, revocable.
 - **Secure Boot v2 and flash encryption**, with a documented factory procedure.
 - **Device key in hardware**: the HMAC/DS peripheral where the chip has one (S2, S3, C3, C6), or an external secure element.
 - **Battery-powered devices**: deep sleep, status only on wake-up, no long-poll. Depends on a configurable disconnect timeout upstream.

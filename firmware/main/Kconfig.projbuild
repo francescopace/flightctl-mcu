@@ -1,10 +1,14 @@
 menu "flightctl-mcu"
 
+# The settings below are defaults for development. A device takes them from
+# its fc_creds partition (deploy/provision.sh) when they are there.
+
 config FC_WIFI_SSID
     string "WiFi SSID"
     default ""
     help
-        Set it in sdkconfig.wifi (git-ignored), not in sdkconfig.defaults.
+        Set it in sdkconfig.wifi (git-ignored), not in sdkconfig.defaults,
+        or provision it.
 
 config FC_WIFI_PASSWORD
     string "WiFi password"
@@ -21,6 +25,13 @@ config FC_SERVER_HOST
 config FC_SERVER_PORT
     int "Flight Control agent endpoint port"
     default 8443
+
+config FC_TEST_SERVER_PORT
+    int "Test only: force this agent endpoint port (0: off)"
+    default 0
+    help
+        Used by the rollback test (sdkconfig.broken): a firmware that cannot
+        reach Flight Control whatever the device was provisioned with.
 
 config FC_LABELS
     string "Enrollment labels (k=v,k=v)"

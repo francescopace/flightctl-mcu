@@ -1,7 +1,0 @@
-# Emulator profile (esp-emu, https://github.com/espressif/esp-emulator):
-#   VARIANT=emu TARGET=esp32c3 firmware/build.sh build merge-bin
-# The emulator's soft AP has these defaults; it NATs to the host, so the
-# Flight Control endpoint in sdkconfig.local is reached as from a real board.
-CONFIG_FC_WIFI_SSID="myssid"
-CONFIG_FC_WIFI_PASSWORD="mypassword"
-CONFIG_FC_LABELS="site=emu,app=emu"

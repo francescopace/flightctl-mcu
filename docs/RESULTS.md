@@ -125,7 +125,7 @@ Certificate renewal was not run on the board, whose certificate is valid for a y
 | ESP32-C5 | confirmed, 15 s | refused | renewed, still reporting after the first certificate expired | 61.7 / 42.2 / 40.9 KB (after problem 12) |
 | ESP32-S3 | confirmed, 35 s | – | renewed | 121.3 / 102.1 / 73.7 KB |
 
-The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole sequence for the C3 and the C5, in CI too, including a broken firmware (it cannot reach the server) that is rolled back in about 3 minutes.
+The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole sequence for the C3 and the C5, in CI too. Since the credentials moved out of the firmware (`fc_creds` partition), it tests the same images CI builds for the boards, provisioned for the test cluster: it boots the debug build, updates it over the air to the release build (72 KB free on the C3, against 58 KB for the debug build), and tries a broken build that cannot reach the server, which is rolled back in about 3 minutes.
 
 ## Problems found and fixed
 
@@ -172,6 +172,9 @@ The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole
 12. **ESP32-C5: TLS handshakes failed for lack of memory** (milestone 1, found in the emulator).
     - With the two kept connections, the largest free block went down to 19 KB, and a handshake needs 16.7 KB in one piece for the TLS receive buffer. When both connections opened together (at boot, and after each certificate renewal) one failed and was retried later.
     - Fix: on the C5, WiFi code stays in flash and the WiFi stack has fewer buffers, as on the S2. Free heap went from 43.6 to 61.7 KB, the largest block from 19 to 41 KB, and no handshake failed in 5 minutes with a renewal every minute.
+13. **A device offline for longer than its certificate cannot come back** (milestone 1, found in the emulator).
+    - In the rollback test the broken build kept the device away from the server for 3 minutes, longer than the 4-minute test certificate. Back on the good firmware, every request was refused: the certificate had expired, and renewal needs a valid one.
+    - With the default lifetime (one year, renewed after three months) this takes nine months offline. The recovery path, re-enrolling with the enrollment certificate, is on the roadmap; the test now goes back to the normal lifetime before the rollback step.
 
 ## Flight Control limitations found (upstream proposals)
 
@@ -203,7 +206,7 @@ The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole
 - **Security**:
   - The registry is plain HTTP without authentication. Signatures protect the images from tampering, not from being read.
   - No Secure Boot v2 and no flash encryption: the device key is stored in NVS unencrypted.
-- **WiFi configured at build time.** There is no provisioning (BLE or SoftAP), and no way to transfer the enrollment config either.
+- **Provisioning over USB only.** Credentials, endpoint and WiFi live in an `fc_creds` partition written with `deploy/provision.py`, so the firmware is the same everywhere; there is no provisioning over BLE or SoftAP, and one enrollment certificate serves a whole installation.
 - **App formats**: only the WASM OCI artifact. Podman "compat" images (with the `.wasm` in a tar.gz layer) are not supported.
 - **Hardware coverage**: automatic rollback was not exercised on the C6. Milestone 1 ran on one board, the C3, and in the emulator for the C3, C5 and S3; S2 and classic ESP32 have neither.
 

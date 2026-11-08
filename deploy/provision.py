@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Writes a device's fc_creds partition: what it needs to reach Flight Control.
+
+    deploy/provision.py --port /dev/cu.usbmodem1101      write it to a board
+    deploy/provision.py --image flash.bin                put it into a merged flash image (emulator)
+    deploy/provision.py --out creds.bin                  just the partition
+
+Contents (NVS namespace "fc"):
+  ca, enroll_crt, enroll_key   from --secrets (default .secrets, see deploy/enrollment.sh)
+  signing_pub                  from --secrets/signing.pub, if there (deploy/signing/keygen.sh);
+                               without it the device does not check image signatures
+  server_host, server_port     --server HOST[:PORT]; default: firmware/sdkconfig.local,
+                               else agent-api.<this machine's LAN IP>.nip.io:8443
+  labels                       --labels k=v,k=v; default: firmware/sdkconfig.local, else site=lab,app=alarm
+  wifi_ssid, wifi_pass         --wifi-ssid / --wifi-password, or $WIFI_SSID / $WIFI_PASSWORD;
+                               if not given, the device uses the WiFi it was built with
+
+The firmware is the same for every installation: change the credentials, not the build.
+The partition is generated with ESP-IDF's nvs_partition_gen.py, in the espressif/idf image
+($IDF_IMAGE, default espressif/idf:v5.5.6). It holds the enrollment key: treat the output
+like the key itself.
+"""
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+IDF_IMAGE = os.environ.get("IDF_IMAGE", "espressif/idf:v5.5.6")
+
+
+def partition():
+    """Offset and size of fc_creds in firmware/partitions.csv."""
+    with open(os.path.join(ROOT, "firmware", "partitions.csv")) as f:
+        for line in f:
+            cols = [c.strip() for c in line.split("#")[0].split(",")]
+            if cols[0] == "fc_creds":
+                return int(cols[3], 0), int(cols[4], 0)
+    sys.exit("no fc_creds partition in firmware/partitions.csv")
+
+
+def sdkconfig_local(key):
+    path = os.path.join(ROOT, "firmware", "sdkconfig.local")
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        for line in f:
+            m = re.match(rf'CONFIG_{key}=("?)(.*)\1\s*$', line.strip())
+            if m:
+                return m.group(2)
+    return None
+
+
+def local_ip():
+    out = subprocess.run(["bash", "-c", f"source '{ROOT}/deploy/local-ip.sh'; local_ip"],
+                         capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def build_partition(args, size):
+    secrets = os.path.abspath(args.secrets)
+    for name in ("ca.crt", "enroll.crt", "enroll.key"):
+        if not os.path.exists(os.path.join(secrets, name)):
+            sys.exit(f"{secrets}/{name} missing (deploy/enrollment.sh creates it)")
+    host, port = args.server.rsplit(":", 1) if ":" in args.server else (args.server, "8443")
+
+    # Inside the repo, so the ESP-IDF container sees it; removed afterwards.
+    os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
+    work = tempfile.mkdtemp(prefix="provision-", dir=os.path.join(ROOT, "build"))
+    try:
+        entries = [("ca", "ca.crt"), ("enroll_crt", "enroll.crt"), ("enroll_key", "enroll.key")]
+        for key, name in entries:
+            shutil.copy(os.path.join(secrets, name), os.path.join(work, key))
+        if os.path.exists(os.path.join(secrets, "signing.pub")):
+            shutil.copy(os.path.join(secrets, "signing.pub"), os.path.join(work, "signing_pub"))
+            entries.append(("signing_pub", None))
+        else:
+            print("warning: no signing.pub, the device will not check image signatures", file=sys.stderr)
+        # Strings go in files too, so commas and quotes need no CSV escaping.
+        values = {"server_host": host, "labels": args.labels}
+        if args.wifi_ssid:
+            values["wifi_ssid"] = args.wifi_ssid
+            values["wifi_pass"] = args.wifi_password or ""
+        for key, value in values.items():
+            with open(os.path.join(work, key), "w") as f:
+                f.write(value)
+        rows = ["key,type,encoding,value", "fc,namespace,,"]
+        rows += [f"{key},file,string,/w/{key}" for key, _ in entries]
+        rows += [f"{key},file,string,/w/{key}" for key in values if values[key] != ""]  # no password: open AP
+        rows.append(f"server_port,data,i32,{int(port)}")
+        with open(os.path.join(work, "creds.csv"), "w") as f:
+            f.write("\n".join(rows) + "\n")
+        gen = subprocess.run(["docker", "run", "--rm", "-v", f"{work}:/w", IDF_IMAGE, "bash", "-c",
+                              "python $IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py "
+                              f"generate /w/creds.csv /w/creds.bin {size:#x}"],
+                             capture_output=True, text=True)
+        if gen.returncode != 0:
+            sys.exit(f"nvs_partition_gen failed:\n{gen.stdout}{gen.stderr}")
+        with open(os.path.join(work, "creds.bin"), "rb") as f:
+            data = f.read()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print(f"fc_creds: {host}:{port}, labels {args.labels}, "
+          f"signing key {'yes' if any(k == 'signing_pub' for k, _ in entries) else 'no'}, "
+          f"WiFi {'provisioned' if args.wifi_ssid else 'from the build'}")
+    return data
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--secrets", default=os.path.join(ROOT, ".secrets"))
+    p.add_argument("--server")
+    p.add_argument("--labels")
+    p.add_argument("--wifi-ssid", default=os.environ.get("WIFI_SSID"))
+    p.add_argument("--wifi-password", default=os.environ.get("WIFI_PASSWORD"))
+    dest = p.add_mutually_exclusive_group(required=True)
+    dest.add_argument("--port", help="serial port of the board to write")
+    dest.add_argument("--image", help="merged flash image to patch")
+    dest.add_argument("--out", help="file to write the partition to")
+    args = p.parse_args()
+    if not args.server:
+        host = sdkconfig_local("FC_SERVER_HOST") or f"agent-api.{local_ip()}.nip.io"
+        args.server = f"{host}:{sdkconfig_local('FC_SERVER_PORT') or 8443}"
+    if not args.labels:
+        args.labels = sdkconfig_local("FC_LABELS") or "site=lab,app=alarm"
+
+    offset, size = partition()
+    data = build_partition(args, size)
+    if args.out:
+        with open(args.out, "wb") as f:
+            f.write(data)
+    elif args.image:
+        with open(args.image, "r+b") as f:
+            f.seek(0, os.SEEK_END)
+            if f.tell() < offset:
+                f.write(b"\xff" * (offset - f.tell()))
+            f.seek(offset)
+            f.write(data)
+        print(f"written into {args.image} at {offset:#x}")
+    else:
+        with tempfile.NamedTemporaryFile(suffix=".bin") as f:
+            f.write(data)
+            f.flush()
+            subprocess.run(["esptool", "-p", args.port, "--before", "default-reset", "--after", "watchdog-reset",
+                            "write-flash", f"{offset:#x}", f.name], check=True)
+
+
+if __name__ == "__main__":
+    main()

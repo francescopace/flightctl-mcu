@@ -21,16 +21,68 @@
 
 int fc_port_espidf_init(void);
 
-extern const char ca_pem[] asm("_binary_ca_crt_start");
-extern const char enroll_crt_pem[] asm("_binary_enroll_crt_start");
-extern const char enroll_key_pem[] asm("_binary_enroll_key_start");
-#ifdef FC_SIGNING_KEY
-extern const char signing_pub_pem[] asm("_binary_signing_pub_start");
-#else
-static const char *const signing_pub_pem = NULL;
-#endif
-
 static const char *TAG = "main";
+
+/* What the device needs to reach its Flight Control, from the fc_creds
+ * partition (deploy/provision.sh). WiFi, endpoint and labels fall back to the
+ * build settings, for development. */
+typedef struct {
+    char *ca, *enroll_crt, *enroll_key, *signing_pub;
+    char *host, *labels, *ssid, *password;
+    int port;
+} creds_t;
+
+static char *creds_str(nvs_handle_t h, const char *key)
+{
+    size_t len = 0;
+    if (nvs_get_str(h, key, NULL, &len) != ESP_OK || len == 0) {
+        return NULL;
+    }
+    char *s = malloc(len);
+    if (s != NULL && nvs_get_str(h, key, s, &len) != ESP_OK) {
+        free(s);
+        s = NULL;
+    }
+    return s;
+}
+
+static void load_creds(creds_t *c)
+{
+    memset(c, 0, sizeof(*c));
+    c->port = CONFIG_FC_SERVER_PORT;
+    nvs_handle_t h;
+    if (nvs_flash_init_partition("fc_creds") == ESP_OK &&
+        nvs_open_from_partition("fc_creds", "fc", NVS_READONLY, &h) == ESP_OK) {
+        c->ca = creds_str(h, "ca");
+        c->enroll_crt = creds_str(h, "enroll_crt");
+        c->enroll_key = creds_str(h, "enroll_key");
+        c->signing_pub = creds_str(h, "signing_pub");
+        c->host = creds_str(h, "server_host");
+        c->labels = creds_str(h, "labels");
+        c->ssid = creds_str(h, "wifi_ssid");
+        c->password = creds_str(h, "wifi_pass");
+        int32_t port;
+        if (nvs_get_i32(h, "server_port", &port) == ESP_OK) {
+            c->port = (int)port;
+        }
+        nvs_close(h);
+    }
+    if (c->host == NULL) {
+        c->host = strdup(CONFIG_FC_SERVER_HOST);
+    }
+    if (c->labels == NULL) {
+        c->labels = strdup(CONFIG_FC_LABELS);
+    }
+    if (c->ssid == NULL) {
+        c->ssid = strdup(CONFIG_FC_WIFI_SSID);
+        c->password = strdup(CONFIG_FC_WIFI_PASSWORD);
+    } else if (c->password == NULL) {
+        c->password = strdup("");
+    }
+#if CONFIG_FC_TEST_SERVER_PORT
+    c->port = CONFIG_FC_TEST_SERVER_PORT;
+#endif
+}
 static EventGroupHandle_t s_wifi;
 #define WIFI_UP BIT0
 
@@ -46,7 +98,7 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
-static void wifi_start(void)
+static void wifi_start(const creds_t *c)
 {
     s_wifi = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_netif_init());
@@ -57,8 +109,8 @@ static void wifi_start(void)
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi, NULL);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi, NULL);
     wifi_config_t wc = {0};
-    strlcpy((char *)wc.sta.ssid, CONFIG_FC_WIFI_SSID, sizeof(wc.sta.ssid));
-    strlcpy((char *)wc.sta.password, CONFIG_FC_WIFI_PASSWORD, sizeof(wc.sta.password));
+    strlcpy((char *)wc.sta.ssid, c->ssid, sizeof(wc.sta.ssid));
+    strlcpy((char *)wc.sta.password, c->password, sizeof(wc.sta.password));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -81,7 +133,7 @@ static void time_sync(void)
 static const char **parse_labels(const char *spec)
 {
     static const char *out[17];
-    static char buf[128];
+    static char buf[256];
     strlcpy(buf, spec, sizeof(buf));
     int n = 0;
     for (char *save, *tok = strtok_r(buf, ",", &save); tok && n < 16; tok = strtok_r(NULL, ",", &save)) {
@@ -140,16 +192,21 @@ void app_main(void)
     ESP_LOGI(TAG, "flightctl-mcu firmware %s", esp_app_get_description()->version);
     alarm_start(); /* runs offline too, with the last stored config */
 
+    static creds_t creds;
+    load_creds(&creds);
+    static char labels[256];
+    snprintf(labels, sizeof(labels), "chip=%s,%s", CONFIG_IDF_TARGET, creds.labels);
+
     int n_natives = 0;
     const void *natives = alarm_wasm_natives(&n_natives);
     fc_agent_config_t cfg = {
-        .server_host = CONFIG_FC_SERVER_HOST,
-        .server_port = CONFIG_FC_SERVER_PORT,
-        .ca_pem = ca_pem,
-        .enrollment_cert_pem = enroll_crt_pem,
-        .enrollment_key_pem = enroll_key_pem,
-        .signing_pub_pem = signing_pub_pem,
-        .labels = parse_labels("chip=" CONFIG_IDF_TARGET "," CONFIG_FC_LABELS),
+        .server_host = creds.host,
+        .server_port = creds.port,
+        .ca_pem = creds.ca,
+        .enrollment_cert_pem = creds.enroll_crt,
+        .enrollment_key_pem = creds.enroll_key,
+        .signing_pub_pem = creds.signing_pub,
+        .labels = parse_labels(labels),
         .agent_version = "flightctl-mcu/0.1.0",
         .status_interval_s = CONFIG_FC_STATUS_INTERVAL,
         .on_config_file = alarm_on_config_file,
@@ -159,15 +216,17 @@ void app_main(void)
     };
     fc_agent_apps_start(&cfg); /* WASM apps saved by a previous run, before the network */
 
-    if (strlen(CONFIG_FC_WIFI_SSID) == 0) {
-        ESP_LOGE(TAG, "WiFi not configured: create firmware/sdkconfig.wifi (see README)");
+    if (creds.ca == NULL || creds.enroll_crt == NULL || creds.enroll_key == NULL || creds.host[0] == '\0') {
+        ESP_LOGE(TAG, "not provisioned: write the fc_creds partition with deploy/provision.sh (see README)");
         return;
     }
-    if (strlen(CONFIG_FC_SERVER_HOST) == 0) {
-        ESP_LOGE(TAG, "Flight Control endpoint not configured: create firmware/sdkconfig.local (see README)");
+    if (creds.ssid[0] == '\0') {
+        ESP_LOGE(TAG, "WiFi not configured: provision it, or build with firmware/sdkconfig.wifi");
         return;
     }
-    wifi_start();
+    ESP_LOGI(TAG, "Flight Control %s:%d, image signatures %s", creds.host, creds.port,
+             creds.signing_pub ? "checked" : "NOT checked (no signing key provisioned)");
+    wifi_start(&creds);
     time_sync();
 
 

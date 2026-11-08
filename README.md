@@ -165,6 +165,7 @@ wasm-apps/       app SDK header, example apps (alarm, trend) and the build scrip
 deploy/kind/     Flight Control on kind
 deploy/registry/ local OCI registry
 deploy/fleet/    example fleet
+deploy/provision.py  writes a device's credentials partition (fc_creds)
 deploy/signing/  signing key and signer for firmware and apps (cosign format)
 deploy/auto-approve/ enrollment approval from an allow list
 tests/fuzz/      libFuzzer targets and seed inputs
@@ -195,45 +196,43 @@ flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t 
 
 The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
 
-**2. Credentials and settings.** The enrollment certificate is embedded in the firmware. It goes to `.secrets/`, which is git-ignored:
+**2. Credentials.** The enrollment credentials go to `.secrets/`, which is git-ignored:
 
 ```bash
 deploy/enrollment.sh
 ```
 
-Create the key that signs firmware and apps. Its public half is built into the firmware, and from then on the device installs only images signed with it. The push scripts sign with it automatically:
+Create the key that signs firmware and apps. The device gets its public half, and from then on installs only images signed with it. The push scripts sign with it automatically:
 
 ```bash
 deploy/signing/keygen.sh
 ```
+
+**3. Build and flash a board.** The firmware has no credentials in it, so one build serves every installation. `flash.sh` detects the chip on the port:
 
 ```bash
 third_party/fetch-wamr.sh
 ```
 
 ```bash
-cp firmware/sdkconfig.wifi.example firmware/sdkconfig.wifi
-```
-
-```bash
-cp firmware/sdkconfig.local.example firmware/sdkconfig.local
-```
-
-Put your WiFi credentials in `sdkconfig.wifi`. Put the agent endpoint that `deploy/enrollment.sh` printed in `sdkconfig.local`. Both files are git-ignored.
-
-**3. Build and flash a board.** `flash.sh` detects the chip on the port:
-
-```bash
 TARGET=esp32c3 FW_VERSION=v1 firmware/build.sh
 ```
-
-That is a debug build. `VARIANT=release` builds with `-Os` and quieter logs, about 15% smaller, in `firmware/build-<chip>-release`; push those with `fw-push.py --variant release`.
 
 ```bash
 firmware/flash.sh /dev/cu.usbmodem1101
 ```
 
-**4. Approve it.** A few seconds after boot the board asks to enroll:
+That is a debug build. `VARIANT=release` builds with `-Os` and quieter logs, about 15% smaller, in `firmware/build-<chip>-release`; push those with `fw-push.py --variant release`.
+
+**4. Provision it.** `provision.py` writes the board's `fc_creds` partition: the CA, the enrollment credentials, the signing key, the agent endpoint (by default `agent-api.<your-ip>.nip.io:8443`) and the labels. Pass the WiFi as well:
+
+```bash
+deploy/provision.py --port /dev/cu.usbmodem1101 --wifi-ssid <ssid> --wifi-password <password>
+```
+
+`--image` writes the same partition into a merged flash image instead (the emulator uses it), `--out` into a file. During development you can also build the WiFi and the endpoint into the firmware, from `firmware/sdkconfig.wifi` and `firmware/sdkconfig.local` (see the `.example` files); a provisioned value wins.
+
+**5. Approve it.** A few seconds after boot the board asks to enroll:
 
 ```bash
 flightctl get enrollmentrequests
@@ -249,7 +248,7 @@ For more than a few boards, list them in `deploy/auto-approve/allowlist.yaml` (s
 deploy/auto-approve/auto-approve.py deploy/auto-approve/allowlist.yaml --watch 10
 ```
 
-**5. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/alarm-lab.yaml`, or edit them there.
+**6. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/alarm-lab.yaml`, or edit them there.
 
 ```bash
 firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v2.10
@@ -304,7 +303,7 @@ What is not:
 - **Security**:
   - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
   - The device key is stored unencrypted (no Secure Boot or flash encryption yet).
-- **Provisioning**: WiFi credentials and enrollment credentials are compiled into the firmware.
+- **Provisioning**: credentials are written over USB (`deploy/provision.py`); there is no provisioning over BLE or SoftAP yet, and the enrollment certificate is one per installation, not per batch.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 
 Some of what we ran into points at gaps in Flight Control for this class of device:
@@ -346,7 +345,15 @@ SKIP_DEPLOY=1 ci/e2e.sh
 SKIP_DEPLOY=1 CHIP=esp32c5 ci/e2e-emu.sh
 ```
 
-The emulator test needs `esp-emu` on the PATH or in `~/.local/bin`. To try the firmware in the emulator by hand, build with `VARIANT=emu` (WiFi set to the emulator's access point) and `merge-bin`, then run `esp-emu --chip esp32c3 --firmware firmware/build-esp32c3-emu/merged-binary.bin`.
+The emulator test needs `esp-emu` on the PATH or in `~/.local/bin`. In CI it does not rebuild the firmware: it provisions the images the firmware job built. To try a build in the emulator by hand, provision its merged image for the emulator's access point and run it:
+
+```bash
+deploy/provision.py --image firmware/build-esp32c3/merged-binary.bin --wifi-ssid myssid --wifi-password mypassword
+```
+
+```bash
+esp-emu --chip esp32c3 --firmware firmware/build-esp32c3/merged-binary.bin --net user
+```
 
 ## License
 
