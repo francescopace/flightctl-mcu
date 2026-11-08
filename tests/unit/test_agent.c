@@ -55,6 +55,7 @@ static void new_agent(void)
 {
     stub_reset();
     free(s_a.mgmt_cert_pem);
+    fc_identity_free(&s_a.id);
     memset(&s_a, 0, sizeof(s_a));
     s_a.cfg = &s_cfg;
     pthread_mutex_init(&s_a.lock, NULL);
@@ -274,6 +275,8 @@ int main(void)
     RUN(a_denied_request_is_a_failure);
     RUN(an_expired_certificate_starts_over_as_a_new_device);
     RUN(status_requests_are_urgent_or_grouped);
+    free(s_a.mgmt_cert_pem);
+    fc_identity_free(&s_a.id);
     stub_reset();
     return TEST_RESULT();
 }

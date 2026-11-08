@@ -314,5 +314,9 @@ int main(void)
     RUN(signatures_are_checked);
     RUN(firmware_needs_an_ota_slot);
     reg_reset();
+    mbedtls_pk_free(&s_key);
+    mbedtls_pk_free(&s_other);
+    mbedtls_ctr_drbg_free(&s_drbg);
+    mbedtls_entropy_free(&entropy);
     return TEST_RESULT();
 }
