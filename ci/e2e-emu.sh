@@ -12,6 +12,13 @@
 #   PREBUILT=1 ci/e2e-emu.sh       use firmware/build-<chip>{,-release,-broken} and
 #                                  wasm-apps/build/alarm-v2 as they are (CI: the firmware
 #                                  and WASM jobs' builds), instead of building
+#   SECURE=1 ci/e2e-emu.sh         the secure variant (firmware/sdkconfig.secure): Secure
+#                                  Boot v2, flash encryption (release mode) and NVS
+#                                  encryption, burned into the emulated chip's eFuses on
+#                                  first boot; builds in build-<chip>-secure{,-release,-broken}.
+#                                  Also checks that firmware signed with another key is
+#                                  refused. SECURE_BOOT_KEY: the signing key of prebuilt
+#                                  images is not needed (a test key is made to build).
 #
 # The firmware has no credentials in it: the test provisions the emulated
 # device's fc_creds partition (deploy/provision.py) for this cluster, so the
@@ -28,6 +35,12 @@ IP="${HOST_IP:-$(local_ip)}"
 REGISTRY="${REGISTRY:-$IP:5001}"
 CHIP="${CHIP:-esp32c3}"
 ROLLBACK="${ROLLBACK:-1}"
+SECURE="${SECURE:-0}"
+if [[ "$SECURE" == 1 ]]; then
+  DEBUG_V=secure; RELEASE_V=secure-release; BROKEN_V=secure-broken
+else
+  DEBUG_V=""; RELEASE_V=release; BROKEN_V=broken
+fi
 CERT_TTL=120
 TAG="emu$(date +%s)"
 FLEET="emu-e2e"
@@ -107,8 +120,11 @@ EOF2
 }
 
 build() { # build <build dir> <version> [variant]
-  BUILD_DIR="$1" TARGET="$CHIP" VARIANT="${3:-}" FW_VERSION="$2" firmware/build.sh build merge-bin \
-    >"$WORK/$1.log" 2>&1 || { tail -30 "$WORK/$1.log"; fail "firmware build $1"; }
+  BUILD_DIR="$1" TARGET="$CHIP" VARIANT="${3:-}" FW_VERSION="$2" SECURE_BOOT_KEY="${SECURE_BOOT_KEY:-}" \
+    firmware/build.sh build merge-bin >"$WORK/$1.log" 2>&1 || { tail -30 "$WORK/$1.log"; fail "firmware build $1"; }
+  if [[ "${3:-}" == secure* ]]; then
+    python3 firmware/merge-secure.py "firmware/$1" >>"$WORK/$1.log" 2>&1 || fail "merged image of $1"
+  fi
 }
 
 if [[ -z "${SKIP_DEPLOY:-}" ]]; then
@@ -129,28 +145,45 @@ log "server issues ${CERT_TTL}s management certificates"
 kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS=$CERT_TTL >/dev/null
 kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
 
-log "firmware for $CHIP: debug, release, broken"
+log "firmware for $CHIP${DEBUG_V:+ ($DEBUG_V)}: debug, release, broken"
 rm -rf "$WORK" && mkdir -p "$WORK"
 if [[ -n "${PREBUILT:-}" ]]; then
   SUFFIX=""
 else
   SUFFIX="-e2e"
-  build "build-$CHIP-e2e" e2e
-  build "build-$CHIP-e2e-release" e2e-release release
-  [[ "$ROLLBACK" == 1 ]] && build "build-$CHIP-e2e-broken" e2e-broken broken
+  if [[ "$SECURE" == 1 && -z "${SECURE_BOOT_KEY:-}" ]]; then
+    export SECURE_BOOT_KEY="$WORK/secure_boot_test.pem"
+    python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$SECURE_BOOT_KEY" >/dev/null
+  fi
+  build "build-$CHIP-e2e${DEBUG_V:+-$DEBUG_V}" e2e "$DEBUG_V"
+  build "build-$CHIP-e2e-$RELEASE_V" e2e-release "$RELEASE_V"
+  [[ "$ROLLBACK" == 1 ]] && build "build-$CHIP-e2e-$BROKEN_V" e2e-broken "$BROKEN_V"
 fi
-for d in "" -release; do
-  [[ -f "firmware/build-$CHIP$SUFFIX$d/flightctl_mcu_fw.bin" ]] || fail "no firmware/build-$CHIP$SUFFIX$d"
+DEBUG_DIR="firmware/build-$CHIP$SUFFIX${DEBUG_V:+-$DEBUG_V}"
+RELEASE_DIR="firmware/build-$CHIP$SUFFIX-$RELEASE_V"
+for d in "$DEBUG_DIR" "$RELEASE_DIR"; do
+  [[ -f "$d/flightctl_mcu_fw.bin" ]] || fail "no $d"
 done
 
 log "credentials and signing key ($REGISTRY), provisioned into the flash image"
 deploy/enrollment.sh "$WORK/secrets" >/dev/null
 deploy/signing/keygen.sh "$WORK/secrets" >/dev/null
 export SIGNING_KEY="$WORK/secrets/signing.key"
-cp "firmware/build-$CHIP$SUFFIX/merged-binary.bin" "$WORK/flash.bin"
+cp "$DEBUG_DIR/merged-binary.bin" "$WORK/flash.bin"
 deploy/provision.py --image "$WORK/flash.bin" --secrets "$WORK/secrets" --server "agent-api.$IP.nip.io:8443" \
   --labels "app=$FLEET,site=emu" --wifi-ssid myssid --wifi-password mypassword
-firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}release" "$REGISTRY/flightctl-mcu/fw:release.$TAG" "$CHIP" >/dev/null
+firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}$RELEASE_V" "$REGISTRY/flightctl-mcu/fw:release.$TAG" "$CHIP" >/dev/null
+if [[ "$SECURE" == 1 ]]; then
+  # The release build signed with a key the chip does not know, pushed and
+  # cosign-signed like any other: only Secure Boot can stop it.
+  OTHER_DIR="firmware/build-$CHIP$SUFFIX-$RELEASE_V-otherkey"
+  mkdir -p "$OTHER_DIR"
+  python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$WORK/other_key.pem" >/dev/null
+  python3 -m espsecure sign_data --version 2 --keyfile "$WORK/other_key.pem" \
+    --output "$OTHER_DIR/flightctl_mcu_fw.bin" "$RELEASE_DIR/flightctl_mcu_fw-unsigned.bin" >/dev/null
+  firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}$RELEASE_V-otherkey" "$REGISTRY/flightctl-mcu/fw:otherkey.$TAG" "$CHIP" >/dev/null
+  rm -rf "$OTHER_DIR"
+fi
 [[ -n "${PREBUILT:-}" ]] || NO_PUSH=1 wasm-apps/build.sh alarm v2 >/dev/null
 wasm-apps/push.sh alarm v2 "v2.$TAG" "$REGISTRY" >/dev/null
 NO_SIGN=1 ORAS_ARGS="--annotation io.flightctl-mcu.e2e=unsigned-$TAG" \
@@ -170,6 +203,12 @@ echo "device: $DEVICE"
 printf 'devices:\n  - name: %s\n    labels:\n      stage: emu\n' "$DEVICE" > "$WORK/allowlist.yaml"
 deploy/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
 wait_for 120 "device Online (debug build)" "st.get('summary', {}).get('status') == 'Online' and not ci.get('firmwareVersion', '').endswith('-release')"
+if [[ "$SECURE" == 1 ]]; then
+  wait_for 30 "chip reports Secure Boot and flash encryption (release)" \
+    "ci.get('secureBoot') == 'true' and ci.get('flashEncryption') == 'release'"
+  grep -q 'provisioning moved to the encrypted store' "$WORK/emu.log" || fail "fc_creds not moved to the encrypted store"
+  echo "ok: provisioning moved to the encrypted store, fc_creds erased"
+fi
 
 log "signed release build over the air, signed app"
 apply_fleet "release.$TAG" "v2.$TAG"
@@ -184,6 +223,15 @@ apply_fleet "release.$TAG" "v2.$TAG-unsigned"
 wait_for 120 "unsigned app refused" "upd.get('status') == 'OutOfDate' and 'not signed' in upd.get('info', '')"
 apply_fleet "release.$TAG" "v2.$TAG"
 wait_for 120 "back to the signed app" "upd.get('status') == 'UpToDate'"
+
+if [[ "$SECURE" == 1 ]]; then
+  log "firmware signed with another Secure Boot key refused"
+  apply_fleet "otherkey.$TAG" "v2.$TAG"
+  wait_for 300 "firmware refused, still on the release build" \
+    "upd.get('status') == 'OutOfDate' and 'rejected' in upd.get('info', '') and ci.get('firmwareVersion', '').endswith('-release')"
+  apply_fleet "release.$TAG" "v2.$TAG"
+  wait_for 120 "back to the release build" "upd.get('status') == 'UpToDate'"
+fi
 
 log "management certificate renewal"
 first=$(custom mgmtCertNotAfter)
@@ -207,8 +255,8 @@ if [[ "$ROLLBACK" == 1 ]]; then
 
   log "broken build is rolled back"
   # sdkconfig.broken: cannot reach Flight Control (wrong port), never confirmed
-  [[ -f "firmware/build-$CHIP$SUFFIX-broken/flightctl_mcu_fw.bin" ]] || fail "no firmware/build-$CHIP$SUFFIX-broken"
-  firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}broken" "$REGISTRY/flightctl-mcu/fw:broken.$TAG" "$CHIP" >/dev/null
+  [[ -f "firmware/build-$CHIP$SUFFIX-$BROKEN_V/flightctl_mcu_fw.bin" ]] || fail "no firmware/build-$CHIP$SUFFIX-$BROKEN_V"
+  firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}$BROKEN_V" "$REGISTRY/flightctl-mcu/fw:broken.$TAG" "$CHIP" >/dev/null
   apply_fleet "broken.$TAG" "v2.$TAG"
   wait_for 480 "back on the release build, update reported as failed" \
     "ci.get('firmwareVersion', '').endswith('-release') and 'rolled back' in upd.get('info', '')"

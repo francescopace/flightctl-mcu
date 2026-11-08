@@ -65,7 +65,7 @@ class SignTest(unittest.TestCase):
 
 class ProvisionTest(unittest.TestCase):
     def test_partition_from_the_table(self):
-        self.assertEqual(provision.partition(), (0x12000, 0x6000))
+        self.assertEqual(provision.partition(), (0x1a000, 0x6000))
 
     def test_csv_rows(self):
         rows = provision.csv_rows(["ca", "labels"], "8443", "/w")

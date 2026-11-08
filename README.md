@@ -175,7 +175,7 @@ tests/python/    tests of the deploy scripts
 tests/fuzz/      libFuzzer targets and seed inputs
 third_party/     WAMR fetch script (WAMR itself is not vendored)
 ci/              helpers for the GitHub Actions workflow
-docs/            roadmap and results
+docs/            roadmap, results, device security
 ```
 
 ## Try it
@@ -227,6 +227,8 @@ firmware/flash.sh /dev/cu.usbmodem1101
 ```
 
 That is a debug build. `VARIANT=release` builds with `-Os` and quieter logs, about 15% smaller, in `firmware/build-<chip>-release`; push those with `fw-push.py --variant release`.
+
+For devices in the field, `VARIANT=secure` adds Secure Boot v2, flash encryption and NVS encryption. Its first boot burns the chip's eFuses for good; read [docs/SECURITY.md](docs/SECURITY.md) first, which also has the factory procedure. `flash.sh` will not flash it without being told.
 
 **4. Provision it.** `provision.py` writes the board's `fc_creds` partition: the CA, the enrollment credentials, the signing key, the agent endpoint (by default `agent-api.<your-ip>.nip.io:8443`) and the labels. Pass the WiFi as well:
 
@@ -306,7 +308,7 @@ What is not:
 
 - **Security**:
   - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
-  - The device key is stored unencrypted (no Secure Boot or flash encryption yet).
+  - The device key is in flash in clear, except in the `secure` variant (encrypted, see [docs/SECURITY.md](docs/SECURITY.md)), which has been tested in the emulator only. Even then the CPU can read it: it is not in a hardware key store yet.
 - **Provisioning**: credentials are written over USB (`deploy/provision.py`); there is no provisioning over BLE or SoftAP yet, and the enrollment certificate is one per installation, not per batch.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 
@@ -339,7 +341,7 @@ GitHub Actions runs on every push that touches code. It builds once and tests wh
   - the renewal of its management certificate (the server issues 2-minute certificates for the test), and a status accepted after the first one expired;
   - a server restart, after which it must reconnect and take a new spec;
   - the server down until its certificate expired, after which it must enroll again, under a new name, with its config.
-- **Firmware in the emulator** ([ci/e2e-emu.sh](ci/e2e-emu.sh)): the real firmware for the C3 and the C5 runs in Espressif's [esp-emu](https://github.com/espressif/esp-emulator), whose WiFi access point NATs to the runner, against Flight Control on kind. It provisions the debug image for the test cluster, then goes through enrollment, a signed update to the release image with a reboot into the other slot, a signed app and an unsigned one, certificate renewal, and the rollback of a broken image that cannot reach the server (built with a 30-second confirmation window instead of 150).
+- **Firmware in the emulator** ([ci/e2e-emu.sh](ci/e2e-emu.sh)): the real firmware for the C3 and the C5 runs in Espressif's [esp-emu](https://github.com/espressif/esp-emulator), whose WiFi access point NATs to the runner, against Flight Control on kind. It provisions the debug image for the test cluster, then goes through enrollment, a signed update to the release image with a reboot into the other slot, a signed app and an unsigned one, certificate renewal, and the rollback of a broken image that cannot reach the server (built with a 30-second confirmation window instead of 150). The same runs for the `secure` variant (`SECURE=1`): the first boot burns the emulated eFuses and encrypts the flash, the device reports Secure Boot and flash encryption on, and a firmware signed with another Secure Boot key is refused even though its cosign signature is valid.
 
 You can run both tests against a cluster you already have:
 

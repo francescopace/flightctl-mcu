@@ -46,13 +46,103 @@ static char *creds_str(nvs_handle_t h, const char *key)
     return s;
 }
 
+#if CONFIG_NVS_ENCRYPTION
+/* fc_creds is written in clear by provisioning (deploy/provision.py), and is
+ * only a drop box: what is in it moves into the encrypted store, then it is
+ * erased. A second provisioning replaces what the store holds. */
+#define CREDS_PART "nvs_store"
+#define CREDS_NS "fc_creds"
+
+static esp_err_t copy_entry(nvs_handle_t from, nvs_handle_t to, const nvs_entry_info_t *e)
+{
+    size_t len = 0;
+    esp_err_t err;
+    switch (e->type) {
+    case NVS_TYPE_I32: {
+        int32_t v;
+        err = nvs_get_i32(from, e->key, &v);
+        return err == ESP_OK ? nvs_set_i32(to, e->key, v) : err;
+    }
+    case NVS_TYPE_STR:
+    case NVS_TYPE_BLOB: {
+        int str = e->type == NVS_TYPE_STR;
+        err = str ? nvs_get_str(from, e->key, NULL, &len) : nvs_get_blob(from, e->key, NULL, &len);
+        if (err != ESP_OK) {
+            return err;
+        }
+        char *v = malloc(len);
+        if (v == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+        err = str ? nvs_get_str(from, e->key, v, &len) : nvs_get_blob(from, e->key, v, &len);
+        if (err == ESP_OK) {
+            err = str ? nvs_set_str(to, e->key, v) : nvs_set_blob(to, e->key, v, len);
+        }
+        free(v);
+        return err;
+    }
+    default:
+        ESP_LOGW(TAG, "fc_creds: %s has an unexpected type, skipped", e->key);
+        return ESP_OK;
+    }
+}
+
+static void import_creds(void)
+{
+    nvs_handle_t from, to;
+    if (nvs_flash_init_partition("fc_creds") != ESP_OK) {
+        return;
+    }
+    if (nvs_open_from_partition("fc_creds", "fc", NVS_READONLY, &from) != ESP_OK) {
+        nvs_flash_deinit_partition("fc_creds"); /* nothing new */
+        return;
+    }
+    esp_err_t err = nvs_open_from_partition(CREDS_PART, CREDS_NS, NVS_READWRITE, &to);
+    int n = 0;
+    if (err == ESP_OK) {
+        err = nvs_erase_all(to);
+        nvs_iterator_t it = NULL;
+        esp_err_t found = nvs_entry_find("fc_creds", "fc", NVS_TYPE_ANY, &it);
+        while (err == ESP_OK && found == ESP_OK) {
+            nvs_entry_info_t e;
+            nvs_entry_info(it, &e);
+            err = copy_entry(from, to, &e);
+            n++;
+            found = nvs_entry_next(&it);
+        }
+        nvs_release_iterator(it);
+        if (err == ESP_OK) {
+            err = nvs_commit(to);
+        }
+        nvs_close(to);
+    }
+    nvs_close(from);
+    nvs_flash_deinit_partition("fc_creds");
+    if (err != ESP_OK) {
+        /* fc_creds stays: the next boot tries again. */
+        ESP_LOGE(TAG, "moving fc_creds to the encrypted store: %s", esp_err_to_name(err));
+        return;
+    }
+    nvs_flash_erase_partition("fc_creds");
+    ESP_LOGI(TAG, "provisioning moved to the encrypted store (%d entries), fc_creds erased", n);
+}
+#else
+#define CREDS_PART "fc_creds"
+#define CREDS_NS "fc"
+#endif
+
 static void load_creds(creds_t *c)
 {
     memset(c, 0, sizeof(*c));
     c->port = CONFIG_FC_SERVER_PORT;
     nvs_handle_t h;
-    if (nvs_flash_init_partition("fc_creds") == ESP_OK &&
-        nvs_open_from_partition("fc_creds", "fc", NVS_READONLY, &h) == ESP_OK) {
+#if CONFIG_NVS_ENCRYPTION
+    import_creds();
+    if (nvs_open_from_partition(CREDS_PART, CREDS_NS, NVS_READONLY, &h) == ESP_OK) {
+#else
+    if (nvs_flash_init_partition(CREDS_PART) == ESP_OK &&
+        nvs_open_from_partition(CREDS_PART, CREDS_NS, NVS_READONLY, &h) == ESP_OK) {
+#endif
         c->ca = creds_str(h, "ca");
         c->enroll_crt = creds_str(h, "enroll_crt");
         c->enroll_key = creds_str(h, "enroll_key");

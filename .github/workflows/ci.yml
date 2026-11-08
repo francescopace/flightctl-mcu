@@ -70,13 +70,24 @@ jobs:
           path: build/fuzz/crash-*
 
   firmware:
-    name: firmware (${{ matrix.target }})
+    name: firmware (${{ matrix.target }}${{ matrix.profile == 'secure' && ', secure' || '' }})
     runs-on: ubuntu-latest
     container: espressif/idf:v5.5.6
+    env:
+      # Build variants and directories of the profile: secure, secure-release, build-<chip>-secure
+      V: ${{ matrix.profile == 'secure' && 'secure' || '' }}
+      P: ${{ matrix.profile == 'secure' && 'secure-' || '' }}
+      S: ${{ matrix.profile == 'secure' && '-secure' || '' }}
     strategy:
       fail-fast: false
       matrix:
         target: [esp32, esp32s2, esp32s3, esp32c3, esp32c5, esp32c6]
+        profile: [plain]
+        # Secure Boot v2 + flash encryption + NVS encryption, for the emulated
+        # chips (signed with a throwaway key, see ci/build-firmware.sh).
+        include:
+          - { target: esp32c3, profile: secure }
+          - { target: esp32c5, profile: secure }
     steps:
       - uses: actions/checkout@v4
       - run: git config --global --add safe.directory '*'
@@ -84,27 +95,28 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .ccache
-          key: ccache-${{ matrix.target }}-${{ github.sha }}
-          restore-keys: ccache-${{ matrix.target }}-
+          key: ccache-${{ matrix.target }}-${{ matrix.profile }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.target }}-${{ matrix.profile }}-
       - name: debug build
         shell: bash
-        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7}
+        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.V }}
       - name: release profile (-Os)
         shell: bash
-        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} release
+        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}release
       - name: broken build, for the rollback test (emulated chips only)
         if: contains(fromJSON('["esp32c3", "esp32c5"]'), matrix.target)
         shell: bash
-        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} broken
+        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}broken
       - uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ matrix.target }}
+          name: firmware-${{ matrix.target }}${{ env.S }}
           path: |
-            firmware/build-${{ matrix.target }}/flightctl_mcu_fw.bin
-            firmware/build-${{ matrix.target }}/merged-binary.bin
-            firmware/build-${{ matrix.target }}-release/flightctl_mcu_fw.bin
-            firmware/build-${{ matrix.target }}-release/merged-binary.bin
-            firmware/build-${{ matrix.target }}-broken/flightctl_mcu_fw.bin
+            firmware/build-${{ matrix.target }}${{ env.S }}/flightctl_mcu_fw.bin
+            firmware/build-${{ matrix.target }}${{ env.S }}/merged-binary.bin
+            firmware/build-${{ matrix.target }}-${{ env.P }}release/flightctl_mcu_fw.bin
+            firmware/build-${{ matrix.target }}-${{ env.P }}release/flightctl_mcu_fw-unsigned.bin
+            firmware/build-${{ matrix.target }}-${{ env.P }}release/merged-binary.bin
+            firmware/build-${{ matrix.target }}-${{ env.P }}broken/flightctl_mcu_fw.bin
 
   e2e:
     name: end-to-end (simulated device vs Flight Control on kind)
@@ -144,7 +156,7 @@ jobs:
           kubectl get events -n flightctl --sort-by=.lastTimestamp | tail -40 || true
 
   emulator:
-    name: end-to-end on an emulated ${{ matrix.chip }} (esp-emu)
+    name: end-to-end on an emulated ${{ matrix.chip }}${{ matrix.secure == 1 && ', secure' || '' }} (esp-emu)
     needs: [firmware, build]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -153,6 +165,7 @@ jobs:
       fail-fast: false
       matrix:
         chip: [esp32c3, esp32c5]
+        secure: [0, 1]
     steps:
       - uses: actions/checkout@v4
       - name: tools
@@ -163,6 +176,8 @@ jobs:
           sudo apt-get update && sudo apt-get install -y python3-yaml
           # NVS partition generator for provisioning (else the ESP-IDF image is pulled)
           pip install esp-idf-nvs-partition-gen==0.1.9
+          # espsecure: the secure test signs a firmware with a key the chip does not know
+          pip install esptool==5.1.0
       - uses: oras-project/setup-oras@v1
       - name: esp-emu (checksum verified)
         run: |
@@ -176,7 +191,7 @@ jobs:
       - name: firmware from the firmware job (not rebuilt)
         uses: actions/download-artifact@v4
         with:
-          name: firmware-${{ matrix.chip }}
+          name: firmware-${{ matrix.chip }}${{ matrix.secure == 1 && '-secure' || '' }}
           path: firmware
       - name: WASM apps from the WASM job (not rebuilt)
         uses: actions/download-artifact@v4
@@ -184,7 +199,7 @@ jobs:
           name: wasm-apps
           path: wasm-apps/build
       - name: e2e on the emulator
-        run: PREBUILT=1 CHIP=${{ matrix.chip }} ci/e2e-emu.sh
+        run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} ci/e2e-emu.sh
       - name: logs on failure
         if: failure()
         run: |

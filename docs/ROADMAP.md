@@ -42,7 +42,7 @@ Needs hardware in the loop, and some steps are irreversible on a board (eFuses).
 
 - **Provisioning**: done over USB: credentials, endpoint, signing key and WiFi live in an `fc_creds` partition (`deploy/provision.py`), and the firmware has none built in. Still to do: provisioning in the field (BLE or SoftAP via ESP-IDF provisioning), and one enrollment certificate per batch, revocable.
 - **Expired certificates**: done. A device offline for longer than its certificate enrolls again as a new device (see problem 13 in RESULTS.md). Still to do: keep the device name across re-enrollment, which needs Flight Control's help.
-- **Secure Boot v2, flash encryption and NVS encryption**, with a documented factory procedure. The `fc_creds` partition is readable today by anyone holding the board. The emulator models eFuses and flash encryption, so this can be developed and tested in CI without burning a board.
+- **Secure Boot v2, flash encryption and NVS encryption**: done in the emulator. The `secure` firmware variant, the factory procedure and what is left are in [SECURITY.md](SECURITY.md); CI runs the end-to-end test on emulated C3 and C5 with it. Still to do: burn one real board per chip, anti-rollback, Secure Boot key rotation.
 - **Device key in hardware**: the HMAC/DS peripheral where the chip has one (S2, S3, C3, C6), or an external secure element.
 - **Battery-powered devices**: deep sleep, status only on wake-up, no long-poll. Depends on a configurable disconnect timeout upstream.
 - **Soak tests**: the lab fleet running for weeks, metrics collected automatically.

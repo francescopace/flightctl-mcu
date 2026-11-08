@@ -17,6 +17,8 @@
 #endif
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
+#include "esp_flash_encrypt.h"
+#include "esp_secure_boot.h"
 #include "esp_heap_caps.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
@@ -42,15 +44,33 @@ static temperature_sensor_handle_t s_tsens;
 static pthread_mutex_t s_tsens_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
+/* nvs_flash_init() encrypts only the default partition: with NVS encryption
+ * the store gets the same keys (nvs_keys partition, made by nvs_flash_init()
+ * on first boot), so the device key never sits in flash in clear. */
+static esp_err_t store_init(void)
+{
+#if CONFIG_NVS_ENCRYPTION
+    nvs_sec_cfg_t keys;
+    esp_err_t err = nvs_flash_read_security_cfg_v2(nvs_flash_get_default_security_scheme(), &keys);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS keys: %s", esp_err_to_name(err));
+        return err;
+    }
+    return nvs_flash_secure_init_partition(PART, &keys);
+#else
+    return nvs_flash_init_partition(PART);
+#endif
+}
+
 int fc_port_espidf_init(void)
 {
-    esp_err_t err = nvs_flash_init_partition(PART);
+    esp_err_t err = store_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         /* The device key, its certificate and the apps are in there: after
          * this the device enrolls again under a new name. Say so. */
         ESP_LOGE(TAG, "%s unusable (%s): erasing it, the device identity is lost", PART, esp_err_to_name(err));
         nvs_flash_erase_partition(PART);
-        err = nvs_flash_init_partition(PART);
+        err = store_init();
     }
 #if SOC_TEMP_SENSOR_SUPPORTED
     temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
@@ -202,6 +222,12 @@ void fc_port_custom_info(void *obj)
     esp_reset_reason_t rr = esp_reset_reason();
     cJSON_AddStringToObject(o, "resetReason",
                             (unsigned)rr < sizeof(reasons) / sizeof(reasons[0]) && reasons[rr] ? reasons[rr] : "other");
+    /* What the chip enforces (eFuses), not what the image was built for. */
+    cJSON_AddStringToObject(o, "secureBoot", esp_secure_boot_enabled() ? "true" : "false");
+    esp_flash_enc_mode_t fe = esp_get_flash_encryption_mode();
+    cJSON_AddStringToObject(o, "flashEncryption", fe == ESP_FLASH_ENC_MODE_RELEASE       ? "release"
+                                                   : fe == ESP_FLASH_ENC_MODE_DEVELOPMENT ? "development"
+                                                                                          : "off");
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         snprintf(buf, sizeof(buf), "%d", ap.rssi);
