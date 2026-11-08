@@ -95,7 +95,8 @@ int fc_identity_load(fc_identity_t *id)
             goto fail;
         }
     } else {
-        fc_port_log(FC_LOG_INFO, "generating device key (ECDSA P-256)");
+        /* First boot, or the storage was erased: either way a new device. */
+        fc_port_log(FC_LOG_WARN, "no device key stored: generating one (ECDSA P-256), this is a new device");
         if ((rc = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY))) != 0 ||
             (rc = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(pk),
                                       mbedtls_ctr_drbg_random, fc_http_drbg())) != 0) {

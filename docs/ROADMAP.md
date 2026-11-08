@@ -25,7 +25,7 @@ Measurements, problems found and Flight Control limitations are in [RESULTS.md](
 
 ## Milestone 1: production foundations (done, November 2026)
 
-The gaps that would stop anyone from leaving a device in the field. None of them needed new hardware or server changes, and each one is tested in CI. They ran on the simulated device, on an ESP32-C3 board, and in Espressif's emulator for the C3, C5 and S3, where CI also runs the real firmware. See [RESULTS.md](RESULTS.md#milestone-1-on-a-board-esp32-c3).
+The gaps that would stop anyone from leaving a device in the field. None of them needed new hardware or server changes, and each one is tested in CI. They ran on the simulated device, on all six boards (firmware v3.0, see [RESULTS.md](RESULTS.md#firmware-v30-on-all-six-boards)), and in Espressif's emulator for the C3, C5 and S3, where CI also runs the real firmware.
 
 | # | Item | Why | Result |
 |---|---|---|---|

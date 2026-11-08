@@ -101,20 +101,22 @@ sequenceDiagram
 
 ## Supported microcontrollers
 
-Tested on real boards with ESP-IDF 5.5.6:
+Tested on real boards with ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open):
 
 | Chip | Core | Status | Free heap with an app running |
 |---|---|---|---|
-| ESP32-S3 | Xtensa LX7 | everything works | ~150 KB |
-| ESP32-C3 | RISC-V | everything works | ~87 KB |
-| ESP32-C5 | RISC-V | everything works | ~68 KB |
-| ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~88 KB |
-| ESP32-C6 | RISC-V | everything except rollback, which was not exercised; on the DevKitC flash over the native USB port with the board powered up holding BOOT, then replug it | ~177 KB |
-| ESP32-S2 | Xtensa LX7 | everything works, using the PSRAM in the package (S2FNR2, as on the Lolin S2 Mini): internal RAM alone is not enough for TLS; no serial log on the S2 Mini, because the console is on UART0 | ~40 KB internal + 2 MB PSRAM |
+| ESP32-S3 | Xtensa LX7 | everything works | ~118 KB |
+| ESP32-C3 | RISC-V | everything works; also tested in the emulator in CI | ~57 KB |
+| ESP32-C5 | RISC-V | everything works; also tested in the emulator in CI | ~59 KB |
+| ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~73 KB |
+| ESP32-C6 | RISC-V | everything except rollback, which was not exercised | ~163 KB |
+| ESP32-S2 | Xtensa LX7 | everything works, using the PSRAM in the package (S2FNR2, as on the Lolin S2 Mini): internal RAM alone is not enough for TLS; no serial log on the S2 Mini, because the console is on UART0 | ~28 KB internal + 2 MB PSRAM |
+
+The S2 Mini and the C6 DevKitC flash only over their native USB port, started in download mode (plug them in holding BOOT).
 
 "Everything" means enrollment, monitoring, config, firmware OTA with rollback and WASM apps. PSRAM is not used, so a single image runs on every board variant of a chip. The exception is the S2, which needs its PSRAM (see the table). The same `.wasm` file runs on Xtensa and RISC-V.
 
-Firmware images are 1.08–1.25 MB, leaving 25–35% of a 1.6 MB OTA slot free. Most of that size is the WiFi stack and mbedTLS. The agent itself is about 21 KB and WAMR about 71 KB.
+Firmware images are 1.06–1.25 MB, leaving 25–36% of a 1.6 MB OTA slot free. Most of that size is the WiFi stack and mbedTLS. The agent itself is about 21 KB and WAMR about 71 KB.
 
 ## Adding another microcontroller
 

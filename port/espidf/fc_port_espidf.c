@@ -46,6 +46,9 @@ int fc_port_espidf_init(void)
 {
     esp_err_t err = nvs_flash_init_partition(PART);
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        /* The device key, its certificate and the apps are in there: after
+         * this the device enrolls again under a new name. Say so. */
+        ESP_LOGE(TAG, "%s unusable (%s): erasing it, the device identity is lost", PART, esp_err_to_name(err));
         nvs_flash_erase_partition(PART);
         err = nvs_flash_init_partition(PART);
     }

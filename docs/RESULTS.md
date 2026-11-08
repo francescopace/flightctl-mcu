@@ -115,6 +115,23 @@ The C3 SuperMini, in a fleet of its own, with the `alarm` app:
 
 Certificate renewal was not run on the board, whose certificate is valid for a year; it ran in the emulator, below.
 
+### Firmware v3.0 on all six boards
+
+Flashed over USB once (the partition table gained `fc_creds`), provisioned with `deploy/provision.py`, then updated over the air to the signed v3.0 index by the `alarm-lab` fleet:
+
+| Chip | Free heap | Minimum | Largest internal block | TLS handshakes |
+|---|---|---|---|---|
+| ESP32-C3 | 56.8 KB | 35.6 KB | 36.9 KB | 2 |
+| ESP32-C5 | 59.1 KB | 43.7 KB | 36.9 KB | 2 |
+| ESP32-S3 | 118.3 KB | 99.2 KB | – | 2 |
+| ESP32-C6 | 162.9 KB | 142.2 KB | 135.2 KB | 2 |
+| Classic ESP32 | 73.4 KB | 56.1 KB | 65.5 KB | 2 |
+| ESP32-S2 | 27.6 KB internal (+2 MB PSRAM) | – | 18.4 KB | 2 |
+
+The S2 has the least room: its largest internal block is only just above the 16.7 KB a TLS handshake needs.
+
+Five of the six boards came back with a new device key, hence a new name, and were approved again with their old labels. Their flash had been erased by other projects using the same boards (`esptool erase_flash`); flashing our firmware does not touch the key storage: the C5, and the C3 flashed a second time, kept theirs. Since v3.0 the firmware logs an error when the key storage is unusable and has to be erased, and a warning when it generates a new key.
+
 ### Milestone 1 in Espressif's emulator
 
 [esp-emu](https://github.com/espressif/esp-emulator) 0.51 runs the real firmware for the C3, C5 and S3 (not the S2 or the classic ESP32). Its WiFi access point NATs to the host, so the emulated chip enrolls in the same Flight Control as the boards. With the server issuing 4-minute certificates:
@@ -213,6 +230,6 @@ The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole
   - No Secure Boot v2 and no flash encryption: the device key is stored in NVS unencrypted.
 - **Provisioning over USB only.** Credentials, endpoint and WiFi live in an `fc_creds` partition written with `deploy/provision.py`, so the firmware is the same everywhere; there is no provisioning over BLE or SoftAP, and one enrollment certificate serves a whole installation.
 - **App formats**: only the WASM OCI artifact. Podman "compat" images (with the `.wasm` in a tar.gz layer) are not supported.
-- **Hardware coverage**: automatic rollback was not exercised on the C6. Milestone 1 ran on one board, the C3, and in the emulator for the C3, C5 and S3; S2 and classic ESP32 have neither.
+- **Hardware coverage**: automatic rollback was not exercised on the C6. Milestone 1 ran on all six boards (firmware v3.0) and in the emulator for the C3, C5 and S3.
 
 What comes next is in the [roadmap](ROADMAP.md).
