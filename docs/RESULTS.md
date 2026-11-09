@@ -222,6 +222,10 @@ The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole
 7. **The server compares `os.image` only as a string.**
    - Re-pushing the same tag is not seen as an update.
    - Proposal: recommend digest references (`@sha256:`) for firmware and apps, or compare `imageDigest`.
+8. **An enrollment certificate cannot be revoked.**
+   - The enrollment endpoint checks only the certificate's signer and expiry (`internal/api_server/middleware/enrollment_auth.go`). One leaked from a batch of devices can enroll new devices until it expires; deleting its CertificateSigningRequest changes nothing.
+   - Workaround: one certificate per batch with a short lifetime (`BATCH=… EXPIRATION=… deploy/enrollment.sh`), and approval from an allow list.
+   - Proposal: a revocation list for enrollment certificates, or refuse those whose CertificateSigningRequest was deleted or denied.
 
 ## Current limitations
 
