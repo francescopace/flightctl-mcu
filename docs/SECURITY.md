@@ -121,7 +121,10 @@ block was altered, and one signed with another key.
   chip, then a full OTA cycle.
 - **ESP32 (classic).** Secure Boot v2 needs silicon revision 3
   (`CONFIG_ESP32_REV_MIN_3`, set by the variant), and the chip has no secure
-  download mode. The emulator does not run it.
+  download mode: the build falls back to leaving the ROM download mode fully
+  open (`CONFIG_SECURE_INSECURE_ALLOW_DL_MODE`), which can load code into RAM.
+  For the field, `CONFIG_SECURE_DISABLE_ROM_DL_MODE` closes it, at the price
+  of no provisioning over USB afterwards. The emulator does not run it.
 - **Anti-rollback.** A signed older firmware can still be installed. ESP-IDF
   can refuse it (secure version in eFuse); left for when releases are numbered.
 - **Device key in hardware** (roadmap 2.2). The key is encrypted at rest, but
