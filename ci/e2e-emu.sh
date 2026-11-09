@@ -20,6 +20,12 @@
 #                                  refused. SECURE_BOOT_KEY: the signing key of prebuilt
 #                                  images is not needed (a test key is made to build).
 #
+# The secure run also checks anti-rollback: the release and broken builds have
+# security version 1, the debug build 0, which the device refuses once it has
+# confirmed the release. And, when it builds the images, Secure Boot key
+# rotation: the bootloader is signed with a second key, and at the end a
+# release signed with that key alone retires the first one.
+#
 # A valid image of the other security variant is refused too: a plain device
 # gets the secure release build (PREBUILT: firmware/build-<chip>-secure-release
 # must be there), a secure device the plain release build signed with its own
@@ -124,11 +130,14 @@ spec:
 EOF2
 }
 
-build() { # build <build dir> <version> [variant]
+build() { # build <build dir> <version> [variant] [security version]
   BUILD_DIR="$1" TARGET="$CHIP" VARIANT="${3:-}" FW_VERSION="$2" SECURE_BOOT_KEY="${SECURE_BOOT_KEY:-}" \
-    firmware/build.sh build merge-bin >"$WORK/$1.log" 2>&1 || { tail -30 "$WORK/$1.log"; fail "firmware build $1"; }
+    SECURE_VERSION="${4:-}" firmware/build.sh build merge-bin >"$WORK/$1.log" 2>&1 ||
+    { tail -30 "$WORK/$1.log"; fail "firmware build $1"; }
   if [[ "${3:-}" == secure* ]]; then
-    python3 firmware/merge-secure.py "firmware/$1" >>"$WORK/$1.log" 2>&1 || fail "merged image of $1"
+    # The bootloader also trusts a second key, for the key rotation step.
+    python3 firmware/merge-secure.py ${NEXT_KEY:+--extra-key "$NEXT_KEY"} "firmware/$1" >>"$WORK/$1.log" 2>&1 ||
+      fail "merged image of $1"
   fi
 }
 
@@ -160,9 +169,16 @@ else
     export SECURE_BOOT_KEY="$WORK/secure_boot_test.pem"
     python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$SECURE_BOOT_KEY" >/dev/null
   fi
+  if [[ "$SECURE" == 1 ]]; then
+    NEXT_KEY="$WORK/secure_boot_next.pem"
+    python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$NEXT_KEY" >/dev/null
+    SV=1
+  else
+    SV=""
+  fi
   build "build-$CHIP-e2e${DEBUG_V:+-$DEBUG_V}" e2e "$DEBUG_V"
-  build "build-$CHIP-e2e-$RELEASE_V" e2e-release "$RELEASE_V"
-  [[ "$ROLLBACK" == 1 ]] && build "build-$CHIP-e2e-$BROKEN_V" e2e-broken "$BROKEN_V"
+  build "build-$CHIP-e2e-$RELEASE_V" e2e-release "$RELEASE_V" "$SV"
+  [[ "$ROLLBACK" == 1 ]] && build "build-$CHIP-e2e-$BROKEN_V" e2e-broken "$BROKEN_V" "$SV"
 fi
 # The other security variant's release build (see the top)
 VARIANT_DIR=""
@@ -183,7 +199,8 @@ for d in "$DEBUG_DIR" "$RELEASE_DIR"; do
 done
 
 log "credentials and signing key ($REGISTRY), provisioned into the flash image"
-deploy/enrollment.sh "$WORK/secrets" >/dev/null
+# One enrollment certificate for this run, as for a production batch
+BATCH="e2e-$TAG" EXPIRATION=1d deploy/enrollment.sh "$WORK/secrets" >/dev/null
 deploy/signing/keygen.sh "$WORK/secrets" >/dev/null
 export SIGNING_KEY="$WORK/secrets/signing.key"
 cp "$DEBUG_DIR/merged-binary.bin" "$WORK/flash.bin"
@@ -205,6 +222,19 @@ if [[ -n "$VARIANT_DIR" ]]; then
   [[ -f "$VARIANT_DIR/flightctl_mcu_fw.bin" ]] || fail "no $VARIANT_DIR"
   firmware/fw-push.py --variant "${VARIANT_DIR#firmware/build-$CHIP-}" "$REGISTRY/flightctl-mcu/fw:variant.$TAG" "$CHIP" >/dev/null
   [[ "$VARIANT_DIR" == *-signed ]] && rm -rf "$VARIANT_DIR"
+fi
+if [[ "$SECURE" == 1 ]]; then
+  # Anti-rollback: the debug build (security version 0) after the release (1)
+  firmware/fw-push.py --variant "${DEBUG_DIR#firmware/build-$CHIP-}" "$REGISTRY/flightctl-mcu/fw:old.$TAG" "$CHIP" >/dev/null
+fi
+if [[ -n "${NEXT_KEY:-}" ]]; then
+  # Key rotation: the release build signed with the next key only
+  NEXT_DIR="firmware/build-$CHIP-e2e-$RELEASE_V-nextkey"
+  mkdir -p "$NEXT_DIR"
+  python3 -m espsecure sign_data --version 2 --keyfile "$NEXT_KEY" \
+    --output "$NEXT_DIR/flightctl_mcu_fw.bin" "$RELEASE_DIR/flightctl_mcu_fw-unsigned.bin" >/dev/null
+  firmware/fw-push.py --variant "e2e-$RELEASE_V-nextkey" "$REGISTRY/flightctl-mcu/fw:nextkey.$TAG" "$CHIP" >/dev/null
+  rm -rf "$NEXT_DIR"
 fi
 [[ -n "${PREBUILT:-}" ]] || NO_PUSH=1 wasm-apps/build.sh alarm v2 >/dev/null
 wasm-apps/push.sh alarm v2 "v2.$TAG" "$REGISTRY" >/dev/null
@@ -228,6 +258,7 @@ wait_for 120 "device Online (debug build)" "st.get('summary', {}).get('status') 
 if [[ "$SECURE" == 1 ]]; then
   wait_for 30 "chip reports Secure Boot and flash encryption (release)" \
     "ci.get('secureBoot') == 'true' and ci.get('flashEncryption') == 'release'"
+  wait_for 30 "device key in the DS peripheral" "ci.get('deviceKey') == 'ds'"
   grep -q 'provisioning moved to the encrypted store' "$WORK/emu.log" || fail "fc_creds not moved to the encrypted store"
   echo "ok: provisioning moved to the encrypted store, fc_creds erased"
 fi
@@ -251,6 +282,16 @@ if [[ "$SECURE" == 1 ]]; then
   apply_fleet "otherkey.$TAG" "v2.$TAG"
   wait_for 300 "firmware refused, still on the release build" \
     "upd.get('status') == 'OutOfDate' and 'rejected' in upd.get('info', '') and ci.get('firmwareVersion', '').endswith('-release')"
+  apply_fleet "release.$TAG" "v2.$TAG"
+  wait_for 120 "back to the release build" "upd.get('status') == 'UpToDate'"
+fi
+
+if [[ "$SECURE" == 1 ]]; then
+  log "older firmware refused (anti-rollback)"
+  wait_for 60 "release build's security version held by the chip" "ci.get('secureVersion') == '1/1'"
+  apply_fleet "old.$TAG" "v2.$TAG"
+  wait_for 300 "older firmware refused, still on the release build" \
+    "upd.get('status') == 'OutOfDate' and 'older' in upd.get('info', '') and ci.get('firmwareVersion', '').endswith('-release')"
   apply_fleet "release.$TAG" "v2.$TAG"
   wait_for 120 "back to the release build" "upd.get('status') == 'UpToDate'"
 fi
@@ -291,6 +332,15 @@ if [[ "$ROLLBACK" == 1 ]]; then
   apply_fleet "broken.$TAG" "v2.$TAG"
   wait_for 480 "back on the release build, update reported as failed" \
     "ci.get('firmwareVersion', '').endswith('-release') and 'rolled back' in upd.get('info', '')"
+fi
+
+if [[ -n "${NEXT_KEY:-}" ]]; then
+  # Last: afterwards the device takes only images signed with the next key.
+  log "Secure Boot key rotation: a release signed with the next key retires the first"
+  wait_for 60 "both keys usable, the first signs the running image" "ci.get('secureBootKeys') == '0*,1'"
+  apply_fleet "nextkey.$TAG" "v2.$TAG"
+  wait_for 300 "release signed with the next key confirmed, the first key revoked" \
+    "upd.get('status') == 'UpToDate' and ci.get('secureBootKeys') == '1*'"
 fi
 
 log "PASS"

@@ -63,4 +63,22 @@ config FC_LED_WS2812
     bool "LED is a WS2812 (addressable RGB)"
     default y
 
+config FC_DEVICE_KEY_DS
+    bool "Device key in the Digital Signature peripheral (burns an eFuse key block)"
+    depends on SOC_DIG_SIGN_SUPPORTED
+    default n
+    help
+        The device key is RSA, generated on the first boot and sealed into
+        the DS peripheral: its parameters are encrypted with an HMAC key
+        burned into a free eFuse key block, which software cannot read.
+        Each new device key (first boot, re-enrollment) takes one key block
+        for good; with none left, the key stays in storage. Set by the
+        secure variant (sdkconfig.secure).
+
+config FC_DEVICE_KEY_DS_BITS
+    int "Device key size (RSA bits)"
+    depends on FC_DEVICE_KEY_DS
+    range 2048 4096
+    default 3072
+
 endmenu

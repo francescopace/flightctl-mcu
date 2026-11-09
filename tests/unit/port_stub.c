@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "mbedtls/pk.h"
+#include "mbedtls/rsa.h"
+
 #define MAX_ENTRIES 64
 
 typedef struct {
@@ -20,6 +23,9 @@ typedef struct {
 static entry_t s_kv[MAX_ENTRIES], s_files[MAX_ENTRIES];
 int stub_reboots;
 int stub_verbose;
+int stub_hwkey_bits;
+int stub_hwkey_seal_fails;
+int stub_hwkey_seals;
 
 static entry_t *find(entry_t *t, const char *key, int create)
 {
@@ -62,6 +68,10 @@ void stub_reset(void)
         s_kv[i].data = s_files[i].data = NULL;
     }
     stub_reboots = 0;
+    fc_port_hwkey_forget();
+    stub_hwkey_bits = 0;
+    stub_hwkey_seal_fails = 0;
+    stub_hwkey_seals = 0;
 }
 
 const char *stub_kv(const char *key)
@@ -160,4 +170,55 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
     vfprintf(stderr, fmt, ap);
     va_end(ap);
     fputc('\n', stderr);
+}
+
+/* "Hardware" key store: the sealed key is kept here, out of the identity's
+ * storage, and signs through an RSA_ALT context as the DS peripheral does. */
+static mbedtls_pk_context s_hw;
+static int s_hw_sealed;
+
+int fc_port_hwkey_bits(void)
+{
+    return stub_hwkey_bits;
+}
+
+int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
+{
+    if (stub_hwkey_seal_fails || mbedtls_pk_get_type(pk) != MBEDTLS_PK_RSA) {
+        return -1;
+    }
+    fc_port_hwkey_forget();
+    mbedtls_pk_setup(&s_hw, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+    if (mbedtls_rsa_copy(mbedtls_pk_rsa(s_hw), mbedtls_pk_rsa(*pk)) != 0) {
+        return -1;
+    }
+    s_hw_sealed = 1;
+    stub_hwkey_seals++;
+    return 0;
+}
+
+static int hw_sign(void *ctx, int (*f_rng)(void *, unsigned char *, size_t), void *p_rng, mbedtls_md_type_t md_alg,
+                   unsigned int hashlen, const unsigned char *hash, unsigned char *sig)
+{
+    return mbedtls_rsa_pkcs1_sign((mbedtls_rsa_context *)ctx, f_rng, p_rng, md_alg, hashlen, hash, sig);
+}
+
+static size_t hw_len(void *ctx)
+{
+    return mbedtls_rsa_get_len((mbedtls_rsa_context *)ctx);
+}
+
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
+{
+    if (!s_hw_sealed) {
+        return -1;
+    }
+    return mbedtls_pk_setup_rsa_alt(pk, mbedtls_pk_rsa(s_hw), NULL, hw_sign, hw_len);
+}
+
+void fc_port_hwkey_forget(void)
+{
+    mbedtls_pk_free(&s_hw);
+    mbedtls_pk_init(&s_hw);
+    s_hw_sealed = 0;
 }

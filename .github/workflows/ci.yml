@@ -100,12 +100,18 @@ jobs:
       - name: debug build
         shell: bash
         run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.V }}
+      # Secure profile: security version 1 (anti-rollback), so the device
+      # refuses the debug build (0) once it has confirmed the release.
       - name: release profile (-Os)
         shell: bash
+        env:
+          SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
         run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}release
       - name: broken build, for the rollback test (emulated chips only)
         if: contains(fromJSON('["esp32c3", "esp32c5"]'), matrix.target)
         shell: bash
+        env:
+          SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
         run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}broken
       - uses: actions/upload-artifact@v4
         with:

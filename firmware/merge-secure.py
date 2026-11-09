@@ -6,7 +6,13 @@ With Secure Boot, ESP-IDF leaves the bootloader out of flash_args and of
 the emulator needs it: this writes <build dir>/merged-binary.bin with the
 signed bootloader at its offset and everything flasher_args.json lists.
 
-Usage: firmware/merge-secure.py firmware/build-esp32c3-secure
+Usage: firmware/merge-secure.py [--extra-key KEY.pem ...] firmware/build-esp32c3-secure
+
+--extra-key (up to two): more Secure Boot keys to sign the bootloader with.
+The first boot trusts every key that signs the bootloader, in order (key 0
+is the build's, then these), and revokes the slots left empty. Releases can
+then move to the next key, which retires the previous one on the devices
+(see docs/SECURITY.md, "Key rotation").
 
 Flashing such an image to a real chip and booting it burns that chip's eFuses
 for good (see docs/SECURITY.md).
@@ -25,13 +31,25 @@ def sdkconfig(build, key):
 
 
 def main():
-    build = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
+    args, extra = sys.argv[1:], []
+    while args[:1] == ["--extra-key"] and len(args) > 1:
+        extra.append(os.path.abspath(args[1]))
+        args = args[2:]
+    build = args[0] if len(args) == 1 and len(extra) <= 2 else sys.exit(__doc__)
     if sdkconfig(build, "SECURE_BOOT") != "y":
         sys.exit(f"{build} is not a Secure Boot build: use idf.py merge-bin")
     with open(os.path.join(build, "flasher_args.json")) as f:
         args = json.load(f)
     files = {int(k, 16): v for k, v in args["flash_files"].items()}
-    files[int(sdkconfig(build, "BOOTLOADER_OFFSET_IN_FLASH"), 16)] = "bootloader/bootloader.bin"
+    bootloader = "bootloader/bootloader.bin"
+    if extra:
+        multi = "bootloader/bootloader-multikey.bin"
+        for i, key in enumerate(extra):
+            subprocess.run([sys.executable, "-m", "espsecure", "sign_data", "--version", "2", "--append_signatures",
+                            "--keyfile", key, "--output", multi, multi if i else bootloader],
+                           cwd=build, check=True, stdout=subprocess.DEVNULL)
+        bootloader = multi
+    files[int(sdkconfig(build, "BOOTLOADER_OFFSET_IN_FLASH"), 16)] = bootloader
     # "keep": rewriting the flash settings in an image header would change
     # the signed bytes, and the ROM would refuse the bootloader.
     cmd = [sys.executable, "-m", "esptool", "--chip", args["extra_esptool_args"]["chip"], "merge_bin",

@@ -12,6 +12,8 @@
 # BUILD_DIR=<dir> overrides the build directory (relative to firmware/).
 # SECURE_BOOT_KEY=<pem> is the Secure Boot v2 signing key for the secure
 # variants (VARIANT=secure): bootloader and app images are signed with it.
+# SECURE_VERSION=<n> is the release's security version (anti-rollback, secure
+# variants): a device refuses firmware below the highest it has confirmed.
 # The firmware has no credentials in it: write them to the device with
 # deploy/provision.py. sdkconfig.wifi and sdkconfig.local only give defaults
 # for development (WiFi, endpoint, labels) that a provisioned device overrides.
@@ -39,6 +41,18 @@ rm -f "$ROOT/firmware/${BUILD_DIR:?}/sdkconfig"
 KEY_MOUNT=()
 if [[ -n "${SECURE_BOOT_KEY:-}" ]]; then
   KEY_MOUNT=(-v "$(cd "$(dirname "$SECURE_BOOT_KEY")" && pwd)/$(basename "$SECURE_BOOT_KEY"):/keys/secure_boot_signing_key.pem:ro")
+  # The key is always mounted at the same path, so ESP-IDF would keep images
+  # signed with a previous key: a clean build when the key changes.
+  KEY_SUM="$(shasum -a 256 "$SECURE_BOOT_KEY" | cut -d' ' -f1)"
+  if [[ "$(cat "$ROOT/firmware/$BUILD_DIR/.secure_boot_key" 2>/dev/null)" != "$KEY_SUM" ]]; then
+    rm -rf "$ROOT/firmware/${BUILD_DIR:?}"
+    mkdir -p "$ROOT/firmware/$BUILD_DIR" && echo "$KEY_SUM" > "$ROOT/firmware/$BUILD_DIR/.secure_boot_key"
+  fi
+fi
+if [[ -n "${SECURE_VERSION:-}" ]]; then
+  mkdir -p "$ROOT/firmware/$BUILD_DIR"
+  echo "CONFIG_BOOTLOADER_APP_SECURE_VERSION=$SECURE_VERSION" > "$ROOT/firmware/$BUILD_DIR/sdkconfig.secure_version"
+  DEFAULTS="$DEFAULTS;$BUILD_DIR/sdkconfig.secure_version"
 fi
 docker run --rm \
   -e SDKCONFIG_DEFAULTS="$DEFAULTS" ${KEY_MOUNT[@]+"${KEY_MOUNT[@]}"} \

@@ -209,8 +209,14 @@ static int conn_open(conn_t *c, const fc_http_target_t *t)
                 log_mbedtls("parse client cert", rc);
                 return -1;
             }
-            if ((rc = mbedtls_pk_parse_key(&c->key, (const unsigned char *)t->key_pem, strlen(t->key_pem) + 1,
-                                           NULL, 0, mbedtls_ctr_drbg_random, &s_drbg)) != 0) {
+            if (t->hw_key) {
+                if (fc_port_hwkey_pk(&c->key) != 0) {
+                    fc_port_log(FC_LOG_ERROR, "device key in hardware unavailable");
+                    return -1;
+                }
+            } else if ((rc = mbedtls_pk_parse_key(&c->key, (const unsigned char *)t->key_pem,
+                                                  strlen(t->key_pem) + 1, NULL, 0, mbedtls_ctr_drbg_random,
+                                                  &s_drbg)) != 0) {
                 log_mbedtls("parse client key", rc);
                 return -1;
             }

@@ -308,7 +308,7 @@ What is not:
 
 - **Security**:
   - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
-  - The device key is in flash in clear, except in the `secure` variant (encrypted, see [docs/SECURITY.md](docs/SECURITY.md)), which has been tested in the emulator only. Even then the CPU can read it: it is not in a hardware key store yet.
+  - The device key is in flash in clear, except in the `secure` variant (see [docs/SECURITY.md](docs/SECURITY.md)), which has been tested in the emulator only: there it is sealed in the chip's Digital Signature peripheral, where software cannot read it (in the encrypted store on the ESP32).
 - **Provisioning**: credentials are written over USB (`deploy/provision.py`); there is no provisioning over BLE or SoftAP yet, and the enrollment certificate is one per installation, not per batch.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 

@@ -219,3 +219,21 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
     va_end(ap);
     fputc('\n', stderr);
 }
+
+/* No hardware key store on the host: the device key stays in storage. */
+int fc_port_hwkey_bits(void)
+{
+    return 0;
+}
+
+int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
+{
+    return -1;
+}
+
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
+{
+    return -1;
+}
+
+void fc_port_hwkey_forget(void) {}

@@ -17,6 +17,12 @@ BUILD="build-$TARGET${VARIANT:+-$VARIANT}"
 DEFAULTS="sdkconfig.defaults"
 IFS=- read -ra VARIANTS <<<"$VARIANT"
 for v in ${VARIANTS[@]+"${VARIANTS[@]}"}; do DEFAULTS="$DEFAULTS;sdkconfig.$v"; done
+# SECURE_VERSION: the release's security version (anti-rollback), see build.sh
+if [[ -n "${SECURE_VERSION:-}" ]]; then
+  mkdir -p "$BUILD"
+  echo "CONFIG_BOOTLOADER_APP_SECURE_VERSION=$SECURE_VERSION" > "$BUILD/sdkconfig.secure_version"
+  DEFAULTS="$DEFAULTS;$BUILD/sdkconfig.secure_version"
+fi
 if [[ "$VARIANT" == secure* && ! -f /keys/secure_boot_signing_key.pem ]]; then
   mkdir -p /keys
   espsecure.py generate_signing_key --version 2 --scheme rsa3072 /keys/secure_boot_signing_key.pem >/dev/null

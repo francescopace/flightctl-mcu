@@ -57,12 +57,15 @@ int fc_port_write_file(const char *path, const void *data, size_t len);
  * fc_port_ota_begin/write/end: stream an image into the inactive slot;
  *   end(commit=1) validates it and makes it the next boot image, end(0) aborts;
  *   it returns FC_OTA_WRONG_VARIANT for a valid image built for other security
- *   features (e.g. Secure Boot and flash encryption on a plain device).
+ *   features (e.g. Secure Boot and flash encryption on a plain device), and
+ *   FC_OTA_TOO_OLD for one below the security version the device holds
+ *   (anti-rollback).
  * fc_port_ota_pending_verify: 1 while the running image is new and must be
  *   confirmed (fc_port_ota_confirm) or it is rolled back on the next reset;
  *   fc_port_ota_rollback marks it bad and reboots into the previous image.
  * Ports without OTA return -1 from fc_port_ota_begin. */
 #define FC_OTA_WRONG_VARIANT (-2)
+#define FC_OTA_TOO_OLD (-3)
 const char *fc_port_fw_platform(void);
 int fc_port_ota_begin(size_t size, void **handle);
 int fc_port_ota_write(void *handle, const void *data, size_t len);
@@ -71,6 +74,22 @@ int fc_port_ota_pending_verify(void);
 void fc_port_ota_confirm(void);
 void fc_port_ota_rollback(void);
 void fc_port_reboot(void);
+
+/* ---- Device key in hardware (optional) ----------------------------------
+ * A port that can keep the device's private key where software cannot read
+ * it (the ESP32 DS peripheral) returns the RSA key size it takes from
+ * fc_port_hwkey_bits; 0 means it cannot, and the key stays in storage.
+ * The core generates the key, writes the CSR with it, then hands it to
+ * fc_port_hwkey_seal, which moves it into the hardware and checks a
+ * signature made there (0), or fails (-1: the core keeps a software key).
+ * fc_port_hwkey_pk sets up an RSA_ALT context that signs through the
+ * hardware, as long as a sealed key exists (0), and fc_port_hwkey_forget
+ * drops it. */
+struct mbedtls_pk_context;
+int fc_port_hwkey_bits(void);
+int fc_port_hwkey_seal(struct mbedtls_pk_context *pk);
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk);
+void fc_port_hwkey_forget(void);
 
 void fc_port_log(fc_log_level_t level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));

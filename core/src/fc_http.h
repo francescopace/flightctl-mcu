@@ -13,6 +13,7 @@ typedef struct {
     const char *ca_pem;   /* NUL terminated (TLS only) */
     const char *cert_pem; /* client certificate (chain), NUL terminated; NULL: no client auth */
     const char *key_pem;  /* client private key, NUL terminated */
+    int hw_key;           /* 1: the client key is in hardware, key_pem unused */
     const char *accept;   /* Accept header; NULL: application/json */
     int timeout_s;        /* read timeout (no data for this long) */
     fc_http_session_t *session; /* NULL: one connection per request */

@@ -167,6 +167,7 @@ static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, cons
     }
     t.cert_pem = cert;
     t.key_pem = a->id.key_pem;
+    t.hw_key = a->id.hw_key;
     t.session = sess;
     int rc = fc_http_request(&t, method, path, content_type, body, body_len, r);
     free(cert);

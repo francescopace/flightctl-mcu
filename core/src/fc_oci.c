@@ -373,6 +373,10 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
         return -1;
     }
     int rc = fc_port_ota_end(ota, 1);
+    if (rc == FC_OTA_TOO_OLD) {
+        snprintf(err, err_len, "firmware older than this device accepts (anti-rollback security version)");
+        return -1;
+    }
     if (rc == FC_OTA_WRONG_VARIANT) {
         snprintf(err, err_len, "firmware built for another security variant (secure or plain) than this device");
         return -1;

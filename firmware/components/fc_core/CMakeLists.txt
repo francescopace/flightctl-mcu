@@ -11,7 +11,7 @@ idf_component_register(
     INCLUDE_DIRS ${ROOT}/core/include ${ROOT}/core/third_party/cjson
     PRIV_INCLUDE_DIRS ${ROOT}/core/src
     REQUIRES mbedtls pthread wamr
-    PRIV_REQUIRES soc nvs_flash bootloader_support esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update)
+    PRIV_REQUIRES soc nvs_flash bootloader_support esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update efuse)
 # cJSON parses recursively: its default 1000 levels of nesting overflow the
 # agent's 24 KB thread stacks (a nested fleet config made devices crash in a
 # loop). Real documents use fewer than 10.

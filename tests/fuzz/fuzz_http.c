@@ -31,3 +31,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 }
 
 void fc_port_log(fc_log_level_t level, const char *fmt, ...) {}
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
+{
+    return -1;
+}
