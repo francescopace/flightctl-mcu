@@ -12,7 +12,12 @@
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
+#include "esp_mac.h"
 #include "esp_wifi.h"
+#if CONFIG_FC_FIELD_PROVISIONING
+#include "wifi_provisioning/manager.h"
+#include "wifi_provisioning/scheme_softap.h"
+#endif
 #include "alarm.h"
 #include "fc_agent.h"
 #include "freertos/FreeRTOS.h"
@@ -28,7 +33,7 @@ static const char *TAG = "main";
  * build settings, for development. */
 typedef struct {
     char *ca, *enroll_crt, *enroll_key, *signing_pub;
-    char *host, *labels, *ssid, *password;
+    char *host, *labels, *ssid, *password, *pop;
     int port;
 } creds_t;
 
@@ -151,6 +156,7 @@ static void load_creds(creds_t *c)
         c->labels = creds_str(h, "labels");
         c->ssid = creds_str(h, "wifi_ssid");
         c->password = creds_str(h, "wifi_pass");
+        c->pop = creds_str(h, "prov_pop");
         int32_t port;
         if (nvs_get_i32(h, "server_port", &port) == ESP_OK) {
             c->port = (int)port;
@@ -188,6 +194,59 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
+#if CONFIG_FC_FIELD_PROVISIONING
+/* Provisioning in the field: a device that left the factory without WiFi
+ * (provision.py --pop, no --wifi-ssid) opens an access point, FC-xxxxxx,
+ * where an installer gives it the site's network with esp_prov or
+ * Espressif's provisioning app. Security 1: X25519 key exchange, the
+ * session authenticated by the proof of possession, which is also the
+ * access point's WPA2 password. The network is kept by the WiFi driver (in
+ * the default NVS partition, encrypted in the secure variant); erasing it
+ * (or the flash) starts provisioning again. */
+static void on_prov(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    if (id == WIFI_PROV_CRED_RECV) {
+        ESP_LOGI(TAG, "field provisioning: network \"%s\" received", (const char *)((wifi_sta_config_t *)data)->ssid);
+    } else if (id == WIFI_PROV_CRED_FAIL) {
+        ESP_LOGW(TAG, "field provisioning: cannot join that network (%s), waiting for another",
+                 *(wifi_prov_sta_fail_reason_t *)data == WIFI_PROV_STA_AUTH_ERROR ? "wrong password" : "not found");
+        wifi_prov_mgr_reset_sm_state_on_failure();
+    } else if (id == WIFI_PROV_END) {
+        ESP_LOGI(TAG, "field provisioning: done, access point closed");
+        wifi_prov_mgr_deinit();
+    }
+}
+
+/* 1: the WiFi driver has a network from an earlier field provisioning;
+ * 2: provisioning started (the manager runs WiFi); 0: neither. */
+static int field_provisioning(const creds_t *c)
+{
+    wifi_prov_mgr_config_t cfg = {
+        .scheme = wifi_prov_scheme_softap,
+        .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE,
+    };
+    ESP_ERROR_CHECK(wifi_prov_mgr_init(cfg));
+    bool done = false;
+    wifi_prov_mgr_is_provisioned(&done);
+    if (done) {
+        wifi_prov_mgr_deinit();
+        return 1; /* the driver starts with the stored network */
+    }
+    if (c->pop == NULL) {
+        wifi_prov_mgr_deinit();
+        return 0;
+    }
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    char name[16];
+    snprintf(name, sizeof(name), "FC-%02X%02X%02X", mac[3], mac[4], mac[5]);
+    esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, on_prov, NULL);
+    ESP_LOGW(TAG, "no WiFi network: field provisioning on access point %s (esp_prov --transport softap)", name);
+    ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, c->pop, name, c->pop));
+    return 2;
+}
+#endif
+
 static void wifi_start(const creds_t *c)
 {
     s_wifi = xEventGroupCreate();
@@ -198,6 +257,24 @@ static void wifi_start(const creds_t *c)
     ESP_ERROR_CHECK(esp_wifi_init(&init));
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi, NULL);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi, NULL);
+#if CONFIG_FC_FIELD_PROVISIONING
+    if (c->ssid[0] == '\0') {
+        esp_netif_create_default_wifi_ap();
+        int fp = field_provisioning(c);
+        if (fp == 0) {
+            ESP_LOGE(TAG, "WiFi not configured: provision it (--wifi-ssid, or --pop to set it in the field)");
+            vTaskDelay(portMAX_DELAY);
+        }
+        if (fp == 1) {
+            ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+            ESP_ERROR_CHECK(esp_wifi_start());
+        }
+        xEventGroupWaitBits(s_wifi, WIFI_UP, pdFALSE, pdTRUE, portMAX_DELAY);
+        return;
+    }
+#endif
+    /* Provisioned at the factory: this network, not one kept by the driver. */
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     wifi_config_t wc = {0};
     strlcpy((char *)wc.sta.ssid, c->ssid, sizeof(wc.sta.ssid));
     strlcpy((char *)wc.sta.password, c->password, sizeof(wc.sta.password));
@@ -311,10 +388,12 @@ void app_main(void)
         ESP_LOGE(TAG, "not provisioned: write the fc_creds partition with deploy/provision.sh (see README)");
         return;
     }
+#if !CONFIG_FC_FIELD_PROVISIONING
     if (creds.ssid[0] == '\0') {
         ESP_LOGE(TAG, "WiFi not configured: provision it, or build with firmware/sdkconfig.wifi");
         return;
     }
+#endif
     ESP_LOGI(TAG, "Flight Control %s:%d, image signatures %s", creds.host, creds.port,
              creds.signing_pub ? "checked" : "NOT checked (no signing key provisioned)");
     wifi_start(&creds);

@@ -175,7 +175,7 @@ tests/python/    tests of the deploy scripts
 tests/fuzz/      libFuzzer targets and seed inputs
 third_party/     WAMR fetch script (WAMR itself is not vendored)
 ci/              helpers for the GitHub Actions workflow
-docs/            roadmap, results, device security
+docs/            roadmap, results, device security, provisioning
 ```
 
 ## Try it
@@ -236,7 +236,9 @@ Nothing above touches the chip's eFuses. The `secure` variant does: Secure Boot 
 deploy/provision.py --port /dev/cu.usbmodem1101 --wifi-ssid <ssid> --wifi-password <password>
 ```
 
-`--image` writes the same partition into a merged flash image instead (the emulator uses it), `--out` into a file. During development you can also build the WiFi and the endpoint into the firmware, from `firmware/sdkconfig.wifi` and `firmware/sdkconfig.local` (see the `.example` files); a provisioned value wins.
+When the site's network is not known yet, pass `--pop <secret>` instead of the WiFi: the device then opens an access point where an installer gives it the network, with Espressif's provisioning app or `esp_prov` (see [docs/PROVISIONING.md](docs/PROVISIONING.md)).
+
+`--image` writes the same partition into a merged flash image instead (the emulator uses it), `--out` into a file. During development you can also build the WiFi and the endpoint into the firmware, from `firmware/sdkconfig.wifi` and `firmware/sdkconfig.local` (see the `.example` files); a provisioned value wins. `LOCAL=0 firmware/build.sh` leaves those two files out, for images that leave your desk.
 
 **5. Approve it.** A few seconds after boot the board asks to enroll:
 
@@ -309,7 +311,7 @@ What is not:
 - **Security**:
   - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
   - The device key is in flash in clear, except in the `secure` variant (see [docs/SECURITY.md](docs/SECURITY.md)), which has been tested in the emulator only: there it is sealed in the chip's Digital Signature peripheral, where software cannot read it (in the encrypted store on the ESP32).
-- **Provisioning**: credentials are written over USB (`deploy/provision.py`); there is no provisioning over BLE or SoftAP yet, and the enrollment certificate is one per installation, not per batch.
+- **Provisioning**: credentials are written over USB (`deploy/provision.py`), the WiFi network over USB or in the field through the device's own access point (SoftAP, see [docs/PROVISIONING.md](docs/PROVISIONING.md)); not over BLE yet. An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 
 Some of what we ran into points at gaps in Flight Control for this class of device:
@@ -369,6 +371,6 @@ Apache 2.0, see [LICENSE](LICENSE).
 
 ## Third-party code
 
-- [cJSON](https://github.com/DaveGamble/cJSON) (MIT), vendored in `core/third_party/cjson`
+- [cJSON](https://github.com/DaveGamble/cJSON) (MIT), vendored in `core/third_party/cjson` for the host build and the fuzzers; the firmware uses ESP-IDF's copy
 - [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) (Apache 2.0 with LLVM exception), fetched at build time
 - [mbedTLS](https://github.com/Mbed-TLS/mbedtls) (Apache 2.0), from ESP-IDF or your system

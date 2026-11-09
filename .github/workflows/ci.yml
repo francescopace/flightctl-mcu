@@ -210,7 +210,12 @@ jobs:
         with:
           name: wasm-apps
           path: wasm-apps/build
+      - name: esp_prov's dependencies (the plain run provisions WiFi in the field)
+        if: matrix.secure == 0
+        run: pip install protobuf cryptography
       - name: e2e on the emulator
+        env:
+          ESP_PROV_LOCAL: 1
         run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} ci/e2e-emu.sh
       - name: logs on failure
         if: failure()

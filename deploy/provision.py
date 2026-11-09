@@ -14,6 +14,10 @@ Contents (NVS namespace "fc"):
   labels                       --labels k=v,k=v; default: firmware/sdkconfig.local, else site=lab,app=alarm
   wifi_ssid, wifi_pass         --wifi-ssid / --wifi-password, or $WIFI_SSID / $WIFI_PASSWORD;
                                if not given, the device uses the WiFi it was built with
+  prov_pop                     --pop SECRET (8+ characters): with no WiFi, the device opens a
+                               provisioning access point where an installer sets it in the field
+                               (esp_prov or Espressif's provisioning app); the secret proves
+                               they hold the device. See docs/PROVISIONING.md.
 
 The firmware is the same for every installation: change the credentials, not the build.
 The partition is generated with ESP-IDF's NVS partition generator: the pip package
@@ -93,6 +97,8 @@ def build_partition(args, size):
         if args.wifi_ssid:
             values["wifi_ssid"] = args.wifi_ssid
             values["wifi_pass"] = args.wifi_password or ""
+        if args.pop:
+            values["prov_pop"] = args.pop
         for key, value in values.items():
             with open(os.path.join(work, key), "w") as f:
                 f.write(value)
@@ -119,7 +125,7 @@ def build_partition(args, size):
         shutil.rmtree(work, ignore_errors=True)
     print(f"fc_creds: {host}:{port}, labels {args.labels}, "
           f"signing key {'yes' if any(k == 'signing_pub' for k, _ in entries) else 'no'}, "
-          f"WiFi {'provisioned' if args.wifi_ssid else 'from the build'}")
+          f"WiFi {'provisioned' if args.wifi_ssid else 'set in the field' if args.pop else 'from the build'}")
     return data
 
 
@@ -130,6 +136,8 @@ def main():
     p.add_argument("--labels")
     p.add_argument("--wifi-ssid", default=os.environ.get("WIFI_SSID"))
     p.add_argument("--wifi-password", default=os.environ.get("WIFI_PASSWORD"))
+    p.add_argument("--pop", default=os.environ.get("PROV_POP"),
+                   help="proof of possession for provisioning in the field (8+ characters)")
     dest = p.add_mutually_exclusive_group(required=True)
     dest.add_argument("--port", help="serial port of the board to write")
     dest.add_argument("--image", help="merged flash image to patch")
@@ -140,6 +148,8 @@ def main():
         args.server = f"{host}:{sdkconfig_local('FC_SERVER_PORT') or 8443}"
     if not args.labels:
         args.labels = sdkconfig_local("FC_LABELS") or "site=lab,app=alarm"
+    if args.pop is not None and not 8 <= len(args.pop) <= 63:
+        p.error("--pop: 8 to 63 characters (it is also the provisioning access point's password)")
 
     offset, size = partition()
     data = build_partition(args, size)

@@ -27,8 +27,12 @@ VARIANTS=()
 [[ -n "$VARIANT" ]] && IFS=- read -ra VARIANTS <<<"$VARIANT"
 DEFAULTS="sdkconfig.defaults"
 # Local, git-ignored settings: WiFi credentials and your server endpoint.
-[[ -f "$ROOT/firmware/sdkconfig.wifi" ]] && DEFAULTS="$DEFAULTS;sdkconfig.wifi"
-[[ -f "$ROOT/firmware/sdkconfig.local" ]] && DEFAULTS="$DEFAULTS;sdkconfig.local"
+# LOCAL=0 leaves them out, for images that leave your desk (factory, field
+# provisioning tests): they would carry your WiFi.
+if [[ "${LOCAL:-1}" != 0 ]]; then
+  [[ -f "$ROOT/firmware/sdkconfig.wifi" ]] && DEFAULTS="$DEFAULTS;sdkconfig.wifi"
+  [[ -f "$ROOT/firmware/sdkconfig.local" ]] && DEFAULTS="$DEFAULTS;sdkconfig.local"
+fi
 for v in ${VARIANTS[@]+"${VARIANTS[@]}"}; do
   [[ -f "$ROOT/firmware/sdkconfig.$v" ]] || { echo "no firmware/sdkconfig.$v" >&2; exit 1; }
   DEFAULTS="$DEFAULTS;sdkconfig.$v"

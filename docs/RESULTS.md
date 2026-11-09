@@ -197,6 +197,7 @@ The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole
     - A fleet config holding a JSON value nested 500 levels deep made the C3 overflow its 24 KB thread stack while parsing it ("Stack protection fault"), reboot, get the same config and crash again. A registry could do the same with a manifest, which is parsed before its signature is checked. The fuzzers run on the host, with 256 KB stacks, and could not see it.
     - The real cause was two copies of cJSON in the firmware: ours and ESP-IDF's (component `json`), and the firmware ran ESP-IDF's.
     - Fix: the firmware builds only the ESP-IDF components it needs (`set(COMPONENTS main)`; the build fails if `json` comes back), and cJSON's nesting limit is 32 instead of 1000 (real documents use fewer than 10). The same config is now rejected with an error in Flight Control. Side effect: a clean firmware build takes under a minute instead of three.
+    - Later, WiFi provisioning in the field needed ESP-IDF's `json` component: the firmware now links only ESP-IDF's cJSON, built with the same limit of 32 (`firmware/CMakeLists.txt`), and no longer ours.
 
 ## Flight Control limitations found (upstream proposals)
 

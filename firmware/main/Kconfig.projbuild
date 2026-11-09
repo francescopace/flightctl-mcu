@@ -63,6 +63,16 @@ config FC_LED_WS2812
     bool "LED is a WS2812 (addressable RGB)"
     default y
 
+config FC_FIELD_PROVISIONING
+    bool "WiFi provisioning in the field (SoftAP)"
+    default y
+    help
+        A device provisioned without WiFi but with a proof of possession
+        (deploy/provision.py --pop) opens an access point where an installer
+        gives it the site's network (esp_prov, or Espressif's provisioning
+        app). Security 1 with the proof of possession. See
+        docs/PROVISIONING.md.
+
 config FC_DEVICE_KEY_DS
     bool "Device key in the Digital Signature peripheral (burns an eFuse key block)"
     depends on SOC_DIG_SIGN_SUPPORTED

@@ -31,6 +31,11 @@
 # must be there), a secure device the plain release build signed with its own
 # key (only when building: prebuilt images come without their key).
 #
+# The plain run gets its WiFi network in the field: provisioned with a proof
+# of possession and no network, the device opens an access point, which the
+# emulator joins; ci/esp-prov.sh then plays the installer (a wrong proof is
+# refused first). The secure run is given its network at the factory.
+#
 # The firmware has no credentials in it: the test provisions the emulated
 # device's fc_creds partition (deploy/provision.py) for this cluster, so the
 # same images as on real boards are tested. It boots the debug build, updates
@@ -131,7 +136,8 @@ EOF2
 }
 
 build() { # build <build dir> <version> [variant] [security version]
-  BUILD_DIR="$1" TARGET="$CHIP" VARIANT="${3:-}" FW_VERSION="$2" SECURE_BOOT_KEY="${SECURE_BOOT_KEY:-}" \
+  # LOCAL=0: not your sdkconfig.wifi/.local, the test provisions its own.
+  LOCAL=0 BUILD_DIR="$1" TARGET="$CHIP" VARIANT="${3:-}" FW_VERSION="$2" SECURE_BOOT_KEY="${SECURE_BOOT_KEY:-}" \
     SECURE_VERSION="${4:-}" firmware/build.sh build merge-bin >"$WORK/$1.log" 2>&1 ||
     { tail -30 "$WORK/$1.log"; fail "firmware build $1"; }
   if [[ "${3:-}" == secure* ]]; then
@@ -204,8 +210,15 @@ BATCH="e2e-$TAG" EXPIRATION=1d deploy/enrollment.sh "$WORK/secrets" >/dev/null
 deploy/signing/keygen.sh "$WORK/secrets" >/dev/null
 export SIGNING_KEY="$WORK/secrets/signing.key"
 cp "$DEBUG_DIR/merged-binary.bin" "$WORK/flash.bin"
+POP="fieldprov-$TAG"
+PROV_PORT="${PROV_PORT:-18080}"
+if [[ "$SECURE" == 1 ]]; then
+  NET_ARGS=(--wifi-ssid myssid --wifi-password mypassword)
+else
+  NET_ARGS=(--pop "$POP")
+fi
 deploy/provision.py --image "$WORK/flash.bin" --secrets "$WORK/secrets" --server "agent-api.$IP.nip.io:8443" \
-  --labels "app=$FLEET,site=emu" --wifi-ssid myssid --wifi-password mypassword
+  --labels "app=$FLEET,site=emu" "${NET_ARGS[@]}"
 firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}$RELEASE_V" "$REGISTRY/flightctl-mcu/fw:release.$TAG" "$CHIP" >/dev/null
 if [[ "$SECURE" == 1 ]]; then
   # The release build signed with a key the chip does not know, pushed and
@@ -243,8 +256,29 @@ NO_SIGN=1 ORAS_ARGS="--annotation io.flightctl-mcu.e2e=unsigned-$TAG" \
 
 log "boot v1 in the emulator"
 ESP_EMU="$(command -v esp-emu || echo "$HOME/.local/bin/esp-emu")"
-"$ESP_EMU" --chip "$CHIP" --firmware "$WORK/flash.bin" --net user --timeout 2400s >"$WORK/emu.log" 2>&1 &
+EMU_NET=(--net user)
+[[ "$SECURE" == 0 ]] && EMU_NET=(--net "user,hostfwd=tcp::$PROV_PORT-:80" --wifi-fw-ap-password "$POP")
+"$ESP_EMU" --chip "$CHIP" --firmware "$WORK/flash.bin" "${EMU_NET[@]}" --timeout 2400s >"$WORK/emu.log" 2>&1 &
 EMU_PID=$!
+if [[ "$SECURE" == 0 ]]; then
+  log "WiFi provisioning in the field"
+  for i in $(seq 1 60); do
+    grep -q 'join, AID' "$WORK/emu.log" && break
+    (( i == 60 )) && fail "no provisioning access point"
+    sleep 2
+  done
+  grep -q 'field provisioning on access point' "$WORK/emu.log" || fail "no field provisioning"
+  if [[ "${ESP_PROV_LOCAL:-0}" == 1 || "$(uname)" == Linux ]]; then PROV_HOST=127.0.0.1; else PROV_HOST=host.docker.internal; fi
+  if ci/esp-prov.sh "$PROV_HOST:$PROV_PORT" --pop "wrong-$POP" --ssid myssid --passphrase mypassword >"$WORK/prov-wrong.log" 2>&1; then
+    fail "provisioning with a wrong proof of possession accepted"
+  fi
+  grep -q 'Error in establishing session' "$WORK/prov-wrong.log" || { cat "$WORK/prov-wrong.log"; fail "wrong proof: unexpected error"; }
+  echo "ok: wrong proof of possession refused"
+  ci/esp-prov.sh "$PROV_HOST:$PROV_PORT" --pop "$POP" --ssid myssid --passphrase mypassword >"$WORK/prov.log" 2>&1 ||
+    { tail -20 "$WORK/prov.log"; fail "field provisioning"; }
+  grep -q 'Provisioning was successful' "$WORK/prov.log" || fail "field provisioning not confirmed"
+  echo "ok: network given in the field, device connected"
+fi
 for i in $(seq 1 60); do
   DEVICE=$(sed -n 's/.*device name: \([a-z0-9]*\).*/\1/p' "$WORK/emu.log" | head -1)
   [[ -n "$DEVICE" ]] && flightctl get "enrollmentrequest/$DEVICE" >/dev/null 2>&1 && break

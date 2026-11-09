@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -84,6 +85,15 @@ class ProvisionTest(unittest.TestCase):
         finally:
             os.unlink(f.name)
         self.assertIsNone(provision.sdkconfig_local("FC_SERVER_HOST", "/nonexistent"))
+
+    def test_pop_length(self):
+        # It is also the provisioning access point's WPA2 password: 8 to 63.
+        for pop, code in (("short", 2), ("x" * 64, 2)):
+            r = subprocess.run([sys.executable, os.path.join(ROOT, "deploy", "provision.py"), "--out", os.devnull,
+                                "--server", "h:1", "--labels", "a=b", "--pop", pop],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, code, r.stderr)
+            self.assertIn("--pop", r.stderr)
 
 
 class AutoApproveTest(unittest.TestCase):
