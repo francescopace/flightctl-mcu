@@ -11,7 +11,7 @@ chip offers against that:
 | **Flash encryption** (release mode) | The flash is encrypted with an AES-XTS key generated on the chip, which nothing can read back. JTAG is off. | Reading the firmware out of the flash chip. |
 | **NVS encryption** | The NVS partitions are encrypted with keys held in the `nvs_keys` partition, itself under flash encryption. | Reading the device key, its certificate and the enrollment credentials out of the flash. |
 | **Secure download mode** | The ROM serial loader can still write the flash, to provision the device again, but cannot read it or run code. | Using the USB port to dump memory or run code. |
-| **Device key in the DS peripheral** (RSA-3072; not on the ESP32) | The device's TLS key is generated on the first boot and sealed into the Digital Signature peripheral, under an HMAC key burned into an eFuse block that software cannot read. The DS signs; nothing can read the key, not even the firmware. | Taking a device's identity from its memory, even with code running on it. |
+| **Device key in the DS peripheral** (RSA-3072; off, see below) | The device's TLS key is generated on the first boot and sealed into the Digital Signature peripheral, under an HMAC key burned into an eFuse block that software cannot read. The DS signs; nothing can read the key, not even the firmware. | Taking a device's identity from its memory, even with code running on it. |
 | **Anti-rollback** | Each image carries a security version. Once a release is confirmed, the chip keeps its version in eFuse and refuses older ones, at update and at boot. | Putting back a signed firmware with a known vulnerability. |
 | **Secure Boot key rotation** | The bootloader can trust up to three keys. A release signed with the next key retires the previous one on each device that confirms it. | A Secure Boot key that is lost or exposed. |
 
@@ -60,8 +60,17 @@ the image.
 
 ## Device key in hardware
 
-On every chip with a DS peripheral (S2, S3, C3, C5, C6) the secure variant
-keeps the device key there (`CONFIG_FC_DEVICE_KEY_DS`). On the first boot,
+**Off for now.** The DS peripheral signs only with RSA, and Flight Control
+1.3.1 cannot enroll a device with an RSA key: its internal CA copies the
+request's signature algorithm into the certificate (`internal_ca.go`), and
+with its ECDSA key Go refuses to sign ("requested SignatureAlgorithm does not
+match private key type"). Found by the end-to-end test. Until Flight Control
+fixes it (upstream item 9 in RESULTS.md) the secure variant keeps the device
+key in the encrypted store, and `CONFIG_FC_DEVICE_KEY_DS` stays off. With a
+CA that signs RSA keys it can be turned on.
+
+On every chip with a DS peripheral (S2, S3, C3, C5, C6), with
+`CONFIG_FC_DEVICE_KEY_DS`, the device key lives there. On the first boot,
 with no key yet, the agent:
 
 1. generates an RSA-3072 key (about 3 s on the C3) and the CSR with it;
@@ -165,13 +174,12 @@ provisioned again: an OTA update cannot change the partition table.
 
    The app then generates the NVS keys and moves what `fc_creds` holds into
    the encrypted `nvs_store` (namespace `fc_creds`). Then it erases `fc_creds`
-   and generates the device key in the DS peripheral (about 3 s), then
-   enrolls. Until that first boot, `fc_creds` is in clear on the flash:
+   and enrolls. Until that first boot, `fc_creds` is in clear on the flash:
    provision in a trusted place.
 
 5. **Check it in Flight Control.** The device reports what its chip enforces in
    `customInfo`: `secureBoot: "true"`, `flashEncryption: "release"`,
-   `deviceKey: "ds"`, `secureBootKeys` and `secureVersion`.
+   `deviceKey: "storage"`, `secureBootKeys` and `secureVersion`.
 
 To provision a device again later (new endpoint, new enrollment certificate),
 write `fc_creds` again (`provision.py --port`): the next boot moves it into the
@@ -201,8 +209,7 @@ CI, with a throwaway Secure Boot key):
   release signed with it alone retires the first (key rotation). CI's
   prebuilt images come without their keys.
 
-The device key is in the DS peripheral throughout: the device enrolls and
-talks to Flight Control with it.
+The device key stays in the encrypted store (`deviceKey: "storage"`).
 
 Tried by hand in the emulator:
 
@@ -217,10 +224,9 @@ Tried by hand in the emulator:
 
 ## Not yet done
 
-- **Against Flight Control.** The device key in the DS peripheral, the
-  anti-rollback and the key rotation steps above have run in the emulator
-  without a server; the end-to-end test with Flight Control (RSA enrollment,
-  TLS 1.3 signed by the DS peripheral, the update steps) has not run yet.
+- **Device key in hardware.** Blocked by Flight Control (above). The C5's
+  ECDSA peripheral, which keeps a P-256 key in eFuse, would avoid RSA; not
+  done yet.
 - **Real boards.** Nothing has been burned yet. Before a batch: one board per
   chip, then a full OTA cycle.
 - **ESP32 (classic).** Secure Boot v2 needs silicon revision 3

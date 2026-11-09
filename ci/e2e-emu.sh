@@ -292,7 +292,7 @@ wait_for 120 "device Online (debug build)" "st.get('summary', {}).get('status') 
 if [[ "$SECURE" == 1 ]]; then
   wait_for 30 "chip reports Secure Boot and flash encryption (release)" \
     "ci.get('secureBoot') == 'true' and ci.get('flashEncryption') == 'release'"
-  wait_for 30 "device key in the DS peripheral" "ci.get('deviceKey') == 'ds'"
+  wait_for 30 "device key in the encrypted store" "ci.get('deviceKey') == 'storage'"
   grep -q 'provisioning moved to the encrypted store' "$WORK/emu.log" || fail "fc_creds not moved to the encrypted store"
   echo "ok: provisioning moved to the encrypted store, fc_creds erased"
 fi

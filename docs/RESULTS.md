@@ -227,6 +227,10 @@ The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole
    - The enrollment endpoint checks only the certificate's signer and expiry (`internal/api_server/middleware/enrollment_auth.go`). One leaked from a batch of devices can enroll new devices until it expires; deleting its CertificateSigningRequest changes nothing.
    - Workaround: one certificate per batch with a short lifetime (`BATCH=… EXPIRATION=… deploy/enrollment.sh`), and approval from an allow list.
    - Proposal: a revocation list for enrollment certificates, or refuse those whose CertificateSigningRequest was deleted or denied.
+9. **A device with an RSA key cannot enroll.**
+   - The internal CA builds the certificate with the request's signature algorithm (`internal/crypto/internal_ca.go`: `SignatureAlgorithm: csr.SignatureAlgorithm`). An RSA request asks for SHA256WithRSA, the CA's key is ECDSA, and Go's `x509.CreateCertificate` refuses: "requested SignatureAlgorithm does not match private key type". Approving the request fails with a 400.
+   - It matters for keys in hardware: the ESP32 DS peripheral signs only with RSA.
+   - Proposal: leave `SignatureAlgorithm` unset in the template, so the CA signs with its own algorithm whatever the device key.
 
 ## Current limitations
 

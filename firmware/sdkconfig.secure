@@ -20,10 +20,10 @@ CONFIG_NVS_ENCRYPTION=y
 CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y
 # Secure Boot v2 on the classic ESP32 needs silicon revision 3.
 CONFIG_ESP32_REV_MIN_3=y
-# The device key sealed in the Digital Signature peripheral (RSA-3072), with
-# an HMAC key burned into a free eFuse key block. Not on the ESP32, which has
-# no DS peripheral: its key stays in the encrypted store.
-CONFIG_FC_DEVICE_KEY_DS=y
+# The device key in the Digital Signature peripheral (CONFIG_FC_DEVICE_KEY_DS)
+# is off: the peripheral signs only with RSA, and Flight Control 1.3.1 cannot
+# issue a certificate for an RSA key with its ECDSA CA (docs/SECURITY.md).
+# The key stays in the encrypted store.
 # Anti-rollback: each image carries a security version (SECURE_VERSION=<n>
 # when building, 0 by default). Once a release is confirmed, the chip keeps
 # its version in eFuse and refuses, at update and at boot, any image below
