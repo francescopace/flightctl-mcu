@@ -168,6 +168,7 @@ deploy/kind/     Flight Control on kind
 deploy/registry/ local OCI registry
 deploy/fleet/    example fleet
 deploy/provision.py  writes a device's credentials partition (fc_creds)
+deploy/soak/         soak test: samples the fleet's status into a CSV, reports per device
 deploy/signing/  signing key and signer for firmware and apps (cosign format)
 deploy/auto-approve/ enrollment approval from an allow list
 tests/unit/      unit tests of the C core (in-memory port)

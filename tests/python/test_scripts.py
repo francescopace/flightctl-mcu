@@ -24,6 +24,7 @@ def load(name, path):
 
 sign = load("sign", "deploy/signing/sign.py")
 provision = load("provision", "deploy/provision.py")
+soak = load("soak", "deploy/soak/collect.py")
 approve = load("auto_approve", "deploy/auto-approve/auto-approve.py")
 
 
@@ -94,6 +95,39 @@ class ProvisionTest(unittest.TestCase):
                                capture_output=True, text=True)
             self.assertEqual(r.returncode, code, r.stderr)
             self.assertIn("--pop", r.stderr)
+
+
+class SoakTest(unittest.TestCase):
+    @staticmethod
+    def device(name, status, uptime, mem_min, tx, reason="poweron"):
+        return {"metadata": {"name": name},
+                "status": {"summary": {"status": status}, "updated": {"status": "UpToDate"},
+                           "systemInfo": {"customInfo": {"uptimeSeconds": str(uptime), "memMinFreeBytes": str(mem_min),
+                                                         "netTxBytes": str(tx), "resetReason": reason}}}}
+
+    def test_report(self):
+        samples = [  # one device sampled hourly: a restart (task_wdt) between the 2nd and 3rd sample
+            ("2026-11-01T00:00:00Z", self.device("d1", "Online", 100, 50000, 1000)),
+            ("2026-11-01T01:00:00Z", self.device("d1", "Online", 3700, 49000, 3000)),
+            ("2026-11-01T02:00:00Z", self.device("d1", "Unknown", 50, 51000, 500, "task_wdt")),
+            ("2026-11-01T03:00:00Z", self.device("d1", "Online", 3650, 48000, 2500, "task_wdt")),
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, newline="") as f:
+            w = soak.csv.DictWriter(f, soak.FIELDS)
+            w.writeheader()
+            for t, d in samples:
+                for row in soak.rows({"items": [d]}, t):
+                    w.writerow(row)
+        try:
+            [r] = soak.report(f.name)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(r["hours"], 3.0)
+        self.assertEqual(r["notOnline"], "25.0%")
+        self.assertEqual(r["restarts"], 1)
+        self.assertEqual(r["reasons"], {"task_wdt": 1})
+        self.assertEqual(r["memMinFree"], (50000, 48000, 48000))
+        self.assertEqual(r["txBytesPerHour"], (2000 + 2000) // 3)  # the drop at the restart is not counted
 
 
 class AutoApproveTest(unittest.TestCase):

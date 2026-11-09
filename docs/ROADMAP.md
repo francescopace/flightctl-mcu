@@ -45,7 +45,7 @@ Needs hardware in the loop, and some steps are irreversible on a board (eFuses).
 - **Secure Boot v2, flash encryption and NVS encryption**: done in the emulator. The `secure` firmware variant, the factory procedure and what is left are in [SECURITY.md](SECURITY.md); CI runs the end-to-end test on emulated C3 and C5 with it. Anti-rollback (security version in eFuse) and Secure Boot key rotation (bootloader signed with spare keys, the old key revoked by the first release signed with the next) work in the emulator; their end-to-end steps against Flight Control have not run yet. Still to do: burn one real board per chip.
 - **Device key in hardware**: done in the emulator. In the secure variant the device key is RSA-3072, sealed in the DS peripheral on every chip that has one (S2, S3, C3, C5, C6) under an HMAC key in eFuse; the ESP32 keeps it in the encrypted store. Generation, sealing and signing work in the emulator; enrollment and TLS with it against Flight Control have not run yet.
 - **Battery-powered devices**: deep sleep, status only on wake-up, no long-poll. Depends on a configurable disconnect timeout upstream.
-- **Soak tests**: the lab fleet running for weeks, metrics collected automatically.
+- **Soak tests**: the lab fleet running for weeks, metrics collected automatically. The collector is ready: `deploy/soak/collect.py` samples every device's status into a CSV and reports, per device, time not online, restarts and their causes, the heap's low-water mark over time and traffic per hour. Still to do: run it on the lab fleet (the boards need the new flash layout first).
 - **Hardware-in-the-loop CI**: flash and test real boards on every release.
 
 ## Milestone 3: beyond Espressif
