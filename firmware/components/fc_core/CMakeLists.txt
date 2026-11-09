@@ -16,3 +16,6 @@ idf_component_register(
 # agent's 24 KB thread stacks (a nested fleet config made devices crash in a
 # loop). Real documents use fewer than 10.
 target_compile_definitions(${COMPONENT_LIB} PUBLIC CJSON_NESTING_LIMIT=32)
+# The firmware's security variant, read from an update before it is installed
+# (fc_port_espidf.c): unreferenced, so kept explicitly.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-u fc_fw_desc")

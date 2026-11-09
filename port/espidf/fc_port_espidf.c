@@ -16,6 +16,8 @@
 #include <math.h>
 #endif
 #include "esp_app_desc.h"
+#include "esp_app_format.h"
+#include "esp_partition.h"
 #include "esp_chip_info.h"
 #include "esp_flash_encrypt.h"
 #include "esp_secure_boot.h"
@@ -278,6 +280,44 @@ int fc_port_ota_write(void *handle, const void *data, size_t len)
     return esp_ota_write((esp_ota_handle_t)(uintptr_t)handle, data, len) == ESP_OK ? 0 : -1;
 }
 
+/* Which security features this firmware is built for, in the image itself:
+ * ESP-IDF places .rodata_custom_desc right after esp_app_desc_t. A secure
+ * build installed on a plain chip could not open its encrypted store, and a
+ * plain build on a secure chip would store keys in clear: the device takes
+ * only images built for what it is. Images from before this marker count as
+ * plain. */
+#define FW_DESC_MAGIC 0x44564346u /* "FCVD" */
+#define FW_SECURE_BOOT 1u
+#define FW_FLASH_ENC   2u
+#define FW_NVS_ENC     4u
+#if CONFIG_SECURE_BOOT
+#define FW_F1 FW_SECURE_BOOT
+#else
+#define FW_F1 0u
+#endif
+#if CONFIG_SECURE_FLASH_ENC_ENABLED
+#define FW_F2 FW_FLASH_ENC
+#else
+#define FW_F2 0u
+#endif
+#if CONFIG_NVS_ENCRYPTION
+#define FW_F3 FW_NVS_ENC
+#else
+#define FW_F3 0u
+#endif
+#define FW_FLAGS (FW_F1 | FW_F2 | FW_F3)
+typedef struct {
+    uint32_t magic;
+    uint32_t flags;
+} fw_desc_t;
+/* Kept by "-u fc_fw_desc" (fc_core's CMakeLists.txt): nothing references it. */
+const __attribute__((section(".rodata_custom_desc"))) fw_desc_t fc_fw_desc = {FW_DESC_MAGIC, FW_FLAGS};
+
+static const char *fw_variant(uint32_t flags)
+{
+    return flags == 0 ? "plain" : "secure";
+}
+
 int fc_port_ota_end(void *handle, int commit)
 {
     esp_ota_handle_t h = (esp_ota_handle_t)(uintptr_t)handle;
@@ -285,12 +325,27 @@ int fc_port_ota_end(void *handle, int commit)
         esp_ota_abort(h);
         return 0;
     }
+    const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);
     esp_err_t err = esp_ota_end(h); /* checks the image header, segments and hash */
-    if (err == ESP_OK) {
-        err = esp_ota_set_boot_partition(esp_ota_get_next_update_partition(NULL));
-    }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "OTA end: %s", esp_err_to_name(err));
+        return -1;
+    }
+    fw_desc_t d;
+    size_t off = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t);
+    if (esp_partition_read(next, off, &d, sizeof(d)) != ESP_OK) {
+        ESP_LOGW(TAG, "OTA: cannot read the image's variant");
+        return -1;
+    }
+    uint32_t flags = d.magic == FW_DESC_MAGIC ? d.flags : 0;
+    if (flags != FW_FLAGS) {
+        ESP_LOGW(TAG, "OTA: image built for a %s device (0x%x), this one is %s (0x%x)", fw_variant(flags),
+                 (unsigned)flags, fw_variant(FW_FLAGS), (unsigned)FW_FLAGS);
+        return FC_OTA_WRONG_VARIANT;
+    }
+    err = esp_ota_set_boot_partition(next);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "OTA set boot: %s", esp_err_to_name(err));
         return -1;
     }
     return 0;

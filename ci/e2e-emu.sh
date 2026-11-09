@@ -20,6 +20,11 @@
 #                                  refused. SECURE_BOOT_KEY: the signing key of prebuilt
 #                                  images is not needed (a test key is made to build).
 #
+# A valid image of the other security variant is refused too: a plain device
+# gets the secure release build (PREBUILT: firmware/build-<chip>-secure-release
+# must be there), a secure device the plain release build signed with its own
+# key (only when building: prebuilt images come without their key).
+#
 # The firmware has no credentials in it: the test provisions the emulated
 # device's fc_creds partition (deploy/provision.py) for this cluster, so the
 # same images as on real boards are tested. It boots the debug build, updates
@@ -151,13 +156,25 @@ if [[ -n "${PREBUILT:-}" ]]; then
   SUFFIX=""
 else
   SUFFIX="-e2e"
-  if [[ "$SECURE" == 1 && -z "${SECURE_BOOT_KEY:-}" ]]; then
+  if [[ -z "${SECURE_BOOT_KEY:-}" ]]; then
     export SECURE_BOOT_KEY="$WORK/secure_boot_test.pem"
     python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$SECURE_BOOT_KEY" >/dev/null
   fi
   build "build-$CHIP-e2e${DEBUG_V:+-$DEBUG_V}" e2e "$DEBUG_V"
   build "build-$CHIP-e2e-$RELEASE_V" e2e-release "$RELEASE_V"
   [[ "$ROLLBACK" == 1 ]] && build "build-$CHIP-e2e-$BROKEN_V" e2e-broken "$BROKEN_V"
+fi
+# The other security variant's release build (see the top)
+VARIANT_DIR=""
+if [[ "$SECURE" == 0 ]]; then
+  [[ -n "${PREBUILT:-}" ]] || build "build-$CHIP-e2e-secure-release" e2e-release secure-release
+  VARIANT_DIR="firmware/build-$CHIP$SUFFIX-secure-release"
+elif [[ -z "${PREBUILT:-}" ]]; then
+  build "build-$CHIP-e2e-release" e2e-release release
+  VARIANT_DIR="firmware/build-$CHIP-e2e-release-signed"
+  mkdir -p "$VARIANT_DIR"
+  python3 -m espsecure sign_data --version 2 --keyfile "$SECURE_BOOT_KEY" \
+    --output "$VARIANT_DIR/flightctl_mcu_fw.bin" "firmware/build-$CHIP-e2e-release/flightctl_mcu_fw.bin" >/dev/null
 fi
 DEBUG_DIR="firmware/build-$CHIP$SUFFIX${DEBUG_V:+-$DEBUG_V}"
 RELEASE_DIR="firmware/build-$CHIP$SUFFIX-$RELEASE_V"
@@ -183,6 +200,11 @@ if [[ "$SECURE" == 1 ]]; then
     --output "$OTHER_DIR/flightctl_mcu_fw.bin" "$RELEASE_DIR/flightctl_mcu_fw-unsigned.bin" >/dev/null
   firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}$RELEASE_V-otherkey" "$REGISTRY/flightctl-mcu/fw:otherkey.$TAG" "$CHIP" >/dev/null
   rm -rf "$OTHER_DIR"
+fi
+if [[ -n "$VARIANT_DIR" ]]; then
+  [[ -f "$VARIANT_DIR/flightctl_mcu_fw.bin" ]] || fail "no $VARIANT_DIR"
+  firmware/fw-push.py --variant "${VARIANT_DIR#firmware/build-$CHIP-}" "$REGISTRY/flightctl-mcu/fw:variant.$TAG" "$CHIP" >/dev/null
+  [[ "$VARIANT_DIR" == *-signed ]] && rm -rf "$VARIANT_DIR"
 fi
 [[ -n "${PREBUILT:-}" ]] || NO_PUSH=1 wasm-apps/build.sh alarm v2 >/dev/null
 wasm-apps/push.sh alarm v2 "v2.$TAG" "$REGISTRY" >/dev/null
@@ -229,6 +251,15 @@ if [[ "$SECURE" == 1 ]]; then
   apply_fleet "otherkey.$TAG" "v2.$TAG"
   wait_for 300 "firmware refused, still on the release build" \
     "upd.get('status') == 'OutOfDate' and 'rejected' in upd.get('info', '') and ci.get('firmwareVersion', '').endswith('-release')"
+  apply_fleet "release.$TAG" "v2.$TAG"
+  wait_for 120 "back to the release build" "upd.get('status') == 'UpToDate'"
+fi
+
+if [[ -n "$VARIANT_DIR" ]]; then
+  log "firmware of the other security variant refused"
+  apply_fleet "variant.$TAG" "v2.$TAG"
+  wait_for 300 "firmware refused, still on the release build" \
+    "upd.get('status') == 'OutOfDate' and 'security variant' in upd.get('info', '') and ci.get('firmwareVersion', '').endswith('-release')"
   apply_fleet "release.$TAG" "v2.$TAG"
   wait_for 120 "back to the release build" "upd.get('status') == 'UpToDate'"
 fi

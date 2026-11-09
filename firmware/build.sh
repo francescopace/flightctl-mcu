@@ -31,6 +31,11 @@ for v in ${VARIANTS[@]+"${VARIANTS[@]}"}; do
   [[ -f "$ROOT/firmware/sdkconfig.$v" ]] || { echo "no firmware/sdkconfig.$v" >&2; exit 1; }
   DEFAULTS="$DEFAULTS;sdkconfig.$v"
 done
+# The settings come only from the sdkconfig.* files: ESP-IDF keeps the values
+# of an existing build's sdkconfig over new defaults, so a build directory from
+# before a change (e.g. the partition table offset) would silently keep the old
+# value. menuconfig changes do not survive the next build: put them in a file.
+rm -f "$ROOT/firmware/${BUILD_DIR:?}/sdkconfig"
 KEY_MOUNT=()
 if [[ -n "${SECURE_BOOT_KEY:-}" ]]; then
   KEY_MOUNT=(-v "$(cd "$(dirname "$SECURE_BOOT_KEY")" && pwd)/$(basename "$SECURE_BOOT_KEY"):/keys/secure_boot_signing_key.pem:ro")

@@ -55,11 +55,14 @@ int fc_port_write_file(const char *path, const void *data, size_t len);
  * fc_port_fw_platform: the platform.architecture this firmware matches in a
  *   multi-chip OCI index, e.g. "esp32c3".
  * fc_port_ota_begin/write/end: stream an image into the inactive slot;
- *   end(commit=1) validates it and makes it the next boot image, end(0) aborts.
+ *   end(commit=1) validates it and makes it the next boot image, end(0) aborts;
+ *   it returns FC_OTA_WRONG_VARIANT for a valid image built for other security
+ *   features (e.g. Secure Boot and flash encryption on a plain device).
  * fc_port_ota_pending_verify: 1 while the running image is new and must be
  *   confirmed (fc_port_ota_confirm) or it is rolled back on the next reset;
  *   fc_port_ota_rollback marks it bad and reboots into the previous image.
  * Ports without OTA return -1 from fc_port_ota_begin. */
+#define FC_OTA_WRONG_VARIANT (-2)
 const char *fc_port_fw_platform(void);
 int fc_port_ota_begin(size_t size, void **handle);
 int fc_port_ota_write(void *handle, const void *data, size_t len);

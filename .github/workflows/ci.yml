@@ -193,6 +193,12 @@ jobs:
         with:
           name: firmware-${{ matrix.chip }}${{ matrix.secure == 1 && '-secure' || '' }}
           path: firmware
+      - name: secure build too, which a plain device must refuse
+        if: matrix.secure == 0
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-${{ matrix.chip }}-secure
+          path: firmware
       - name: WASM apps from the WASM job (not rebuilt)
         uses: actions/download-artifact@v4
         with:

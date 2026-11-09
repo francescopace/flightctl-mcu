@@ -16,6 +16,18 @@ All this is fixed in the chip's eFuses on the device's first boot, and cannot
 be undone: from then on the chip runs only images signed with your Secure Boot
 key. **Lose that key and the devices can never be updated again.**
 
+**It is a separate build, off by default.** `firmware/build.sh` without
+`VARIANT=secure` builds the plain firmware, which never touches the eFuses: the
+development boards and most of CI run it. The secure variant is built only on
+purpose, with your Secure Boot key, in its own directory
+(`firmware/build-<chip>-secure`), and pushed with its own `--variant`. A device
+stays on the variant it was flashed with: each image carries the security
+features it was built for, and the agent refuses an update built for others
+before it is installed (`firmware built for another security variant`). A
+secure build pushed to plain devices by mistake therefore changes nothing on
+them; a plain device can become a secure one only by flashing it over USB.
+Devices on firmware older than this check (v3.0) do not have it.
+
 The variant is tested on emulated chips (esp-emu) in CI; it has not been
 burned on a real board yet.
 
@@ -110,6 +122,10 @@ CI, with a throwaway Secure Boot key):
 - an OTA update to the release build, signed with the same key, is installed;
 - the same release build, signed with another Secure Boot key and properly
   cosign-signed, is refused, and the device stays on its firmware;
+- the plain release build signed with the device's own Secure Boot key is
+  refused as another variant (when the test builds the images: CI's prebuilt
+  ones come without their key). On the plain run, the plain device refuses
+  the secure release build;
 - the broken build is rolled back, as without Secure Boot.
 
 Tried by hand in the emulator: the ROM refuses a bootloader whose signature

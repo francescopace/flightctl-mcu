@@ -372,7 +372,12 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
         fc_port_ota_end(ota, 0);
         return -1;
     }
-    if (fc_port_ota_end(ota, 1) != 0) {
+    int rc = fc_port_ota_end(ota, 1);
+    if (rc == FC_OTA_WRONG_VARIANT) {
+        snprintf(err, err_len, "firmware built for another security variant (secure or plain) than this device");
+        return -1;
+    }
+    if (rc != 0) {
         snprintf(err, err_len, "firmware image rejected by the bootloader checks");
         return -1;
     }
