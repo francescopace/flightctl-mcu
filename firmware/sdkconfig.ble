@@ -7,3 +7,27 @@ CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+# The controller's code in flash, not IRAM: IRAM is not given back after
+# provisioning, and the 20+ KB the controller takes there leave too little
+# heap for an update (agent and registry TLS connections at once). BLE is
+# slower, which only matters while provisioning. C3 and S3 (others: ignored).
+CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
+# What provisioning does not use, so that the image (larger with the
+# controller in flash) still fits a slot in the secure variant: no scanning,
+# no direct test mode, no BLE 5 extended advertising, no GATT client, no
+# standard services.
+CONFIG_BT_CTRL_BLE_SCAN=n
+CONFIG_BT_CTRL_DTM_ENABLE=n
+CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=n
+CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
+CONFIG_BT_NIMBLE_PROX_SERVICE=n
+CONFIG_BT_NIMBLE_ANS_SERVICE=n
+CONFIG_BT_NIMBLE_CTS_SERVICE=n
+CONFIG_BT_NIMBLE_HTP_SERVICE=n
+CONFIG_BT_NIMBLE_IPSS_SERVICE=n
+CONFIG_BT_NIMBLE_HID_SERVICE=n
+CONFIG_BT_NIMBLE_BAS_SERVICE=n
+CONFIG_BT_NIMBLE_DIS_SERVICE=n
+CONFIG_BT_NIMBLE_PRINT_ERR_NAME=n
+CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y

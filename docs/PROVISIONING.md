@@ -75,9 +75,16 @@ TARGET=esp32c3 VARIANT=ble firmware/build.sh
 Espressif's provisioning app (ESP BLE Prov) or `esp_prov --transport ble
 --service_name FC-xxxxxx`, with the same proof of possession and the same
 Security 1 session. NimBLE runs only while the device has no network: its
-memory is given back once provisioning is over, or at boot on a device that
-has its network. It adds about 230 KB of flash (1.54 MB on the C3, 1.58 MB
-secure, in a 1.7 MB slot). Not on the ESP32-S2, which has no Bluetooth.
+heap is given back once provisioning is over, or at boot on a device that
+has its network. Its code stays, and the BLE controller's would take about
+22 KB of IRAM, which is RAM on these chips and too much for an update (the
+agent's and the registry's TLS connections at once): the variant runs the
+controller from flash (`CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY`, slower BLE, only
+while provisioning) and leaves out the BLE features provisioning does not
+use. It adds about 400 KB of flash (1.59 MB on the C3, 1.64 MB secure, in a
+1.7 MB slot). Not on the ESP32-S2, which has no Bluetooth. Not yet tried on
+a board: the emulator stands in for the controller, so how BLE behaves while
+the flash is written (the network is saved during the session) is untested.
 
 ## What the CI checks
 
