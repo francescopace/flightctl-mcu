@@ -12,6 +12,9 @@
 #   PREBUILT=1 ci/e2e-emu.sh       use firmware/build-<chip>{,-release,-broken} and
 #                                  wasm-apps/build/alarm-v2 as they are (CI: the firmware
 #                                  and WASM jobs' builds), instead of building
+#   PROV=ble ci/e2e-emu.sh         the plain run provisions WiFi over BLE (ble variant of the
+#                                  debug build, Bumble as controller: ci/ble-prov.sh) instead
+#                                  of SoftAP
 #   SECURE=1 ci/e2e-emu.sh         the secure variant (firmware/sdkconfig.secure): Secure
 #                                  Boot v2, flash encryption (release mode) and NVS
 #                                  encryption, burned into the emulated chip's eFuses on
@@ -24,7 +27,8 @@
 # security version 1, the debug build 0, which the device refuses once it has
 # confirmed the release. And, when it builds the images, Secure Boot key
 # rotation: the bootloader is signed with a second key, and at the end a
-# release signed with that key alone retires the first one.
+# release signed with that key alone retires the first one; before that, a
+# third, spare key is revoked through the fleet's config.
 #
 # A valid image of the other security variant is refused too: a plain device
 # gets the secure release build (PREBUILT: firmware/build-<chip>-secure-release
@@ -57,6 +61,8 @@ if [[ "$SECURE" == 1 ]]; then
 else
   DEBUG_V=""; RELEASE_V=release; BROKEN_V=broken
 fi
+PROV="${PROV:-softap}"
+[[ "$SECURE" == 0 && "$PROV" == ble ]] && DEBUG_V=ble  # the device starts on the ble variant
 CERT_TTL=120
 TAG="emu$(date +%s)"
 FLEET="emu-e2e"
@@ -106,8 +112,14 @@ sys.exit(0 if ($expr) else 1)" 2>/dev/null; then
 
 custom() { flightctl get "device/$DEVICE" -o json | python3 -c "import json,sys; print(json.load(sys.stdin)['status']['systemInfo']['customInfo'].get('$1',''))"; }
 
-# fleet <firmware tag> <app tag>
+# fleet <firmware tag> <app tag> [content of /etc/flightctl-mcu/secure-boot.json]
 apply_fleet() {
+  local security=""
+  [[ -n "${3:-}" ]] && security="
+        - name: security
+          inline:
+            - path: /etc/flightctl-mcu/secure-boot.json
+              content: '$3'"
   flightctl apply -f - >/dev/null <<EOF2
 apiVersion: flightctl.io/v1beta1
 kind: Fleet
@@ -131,7 +143,7 @@ spec:
         - name: alarm
           inline:
             - path: /etc/fc-app/alarm.json
-              content: '{"threshold_c": 40}'
+              content: '{"threshold_c": 40}'$security
 EOF2
 }
 
@@ -142,7 +154,8 @@ build() { # build <build dir> <version> [variant] [security version]
     { tail -30 "$WORK/$1.log"; fail "firmware build $1"; }
   if [[ "${3:-}" == secure* ]]; then
     # The bootloader also trusts a second key, for the key rotation step.
-    python3 firmware/merge-secure.py ${NEXT_KEY:+--extra-key "$NEXT_KEY"} "firmware/$1" >>"$WORK/$1.log" 2>&1 ||
+    python3 firmware/merge-secure.py ${NEXT_KEY:+--extra-key "$NEXT_KEY"} ${SPARE_KEY:+--extra-key "$SPARE_KEY"} \
+      "firmware/$1" >>"$WORK/$1.log" 2>&1 ||
       fail "merged image of $1"
   fi
 }
@@ -177,7 +190,10 @@ else
   fi
   if [[ "$SECURE" == 1 ]]; then
     NEXT_KEY="$WORK/secure_boot_next.pem"
-    python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$NEXT_KEY" >/dev/null
+    SPARE_KEY="$WORK/secure_boot_spare.pem"
+    for k in "$NEXT_KEY" "$SPARE_KEY"; do
+      python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$k" >/dev/null
+    done
     SV=1
   else
     SV=""
@@ -257,10 +273,31 @@ NO_SIGN=1 ORAS_ARGS="--annotation io.flightctl-mcu.e2e=unsigned-$TAG" \
 log "boot v1 in the emulator"
 ESP_EMU="$(command -v esp-emu || echo "$HOME/.local/bin/esp-emu")"
 EMU_NET=(--net user)
-[[ "$SECURE" == 0 ]] && EMU_NET=(--net "user,hostfwd=tcp::$PROV_PORT-:80" --wifi-fw-ap-password "$POP")
+if [[ "$SECURE" == 0 && "$PROV" == ble ]]; then
+  # The phone side first: it is the BLE controller the emulator connects to.
+  ci/ble-prov.sh --pop "$POP" --wrong-pop "wrong-$POP" --ssid myssid --passphrase mypassword --timeout 300 \
+    >"$WORK/prov.log" 2>&1 &
+  BLE_PID=$!
+  for i in $(seq 1 120); do
+    grep -q 'BLE controller for the emulator' "$WORK/prov.log" && break
+    (( i == 120 )) && { cat "$WORK/prov.log"; fail "BLE controller not up"; }
+    sleep 2
+  done
+  EMU_NET+=(--elf "$DEBUG_DIR/flightctl_mcu_fw.elf" --ble-hci tcp:localhost:9544)
+elif [[ "$SECURE" == 0 ]]; then
+  EMU_NET=(--net "user,hostfwd=tcp::$PROV_PORT-:80" --wifi-fw-ap-password "$POP")
+fi
 "$ESP_EMU" --chip "$CHIP" --firmware "$WORK/flash.bin" "${EMU_NET[@]}" --timeout 2400s >"$WORK/emu.log" 2>&1 &
 EMU_PID=$!
-if [[ "$SECURE" == 0 ]]; then
+if [[ "$SECURE" == 0 && "$PROV" == ble ]]; then
+  log "WiFi provisioning in the field, over BLE"
+  wait "$BLE_PID" || { tail -20 "$WORK/prov.log"; fail "BLE field provisioning"; }
+  grep -q 'session refused' "$WORK/prov.log" || fail "wrong proof of possession not refused over BLE"
+  echo "ok: wrong proof of possession refused"
+  grep -q 'Provisioning was successful' "$WORK/prov.log" || fail "BLE field provisioning not confirmed"
+  grep -q 'field provisioning over BLE' "$WORK/emu.log" || fail "device not in BLE provisioning"
+  echo "ok: network given in the field over BLE, device connected"
+elif [[ "$SECURE" == 0 ]]; then
   log "WiFi provisioning in the field"
   for i in $(seq 1 60); do
     grep -q 'join, AID' "$WORK/emu.log" && break
@@ -366,6 +403,18 @@ if [[ "$ROLLBACK" == 1 ]]; then
   apply_fleet "broken.$TAG" "v2.$TAG"
   wait_for 480 "back on the release build, update reported as failed" \
     "ci.get('firmwareVersion', '').endswith('-release') and 'rolled back' in upd.get('info', '')"
+fi
+
+if [[ -n "${SPARE_KEY:-}" ]]; then
+  log "a spare Secure Boot key revoked through the fleet's config"
+  wait_for 60 "three keys usable, the first signs the running image" "ci.get('secureBootKeys') == '0*,1,2'"
+  apply_fleet "release.$TAG" "v2.$TAG" '{"revokeKeys": [2]}'
+  wait_for 180 "key 2 revoked" "upd.get('status') == 'UpToDate' and ci.get('secureBootKeys') == '0*,1'"
+  apply_fleet "release.$TAG" "v2.$TAG" '{"revokeKeys": [0]}'
+  wait_for 180 "revoking the key that signs the running firmware refused" \
+    "upd.get('status') == 'OutOfDate' and ci.get('secureBootKeys') == '0*,1'"
+  apply_fleet "release.$TAG" "v2.$TAG"
+  wait_for 120 "back to the plain config" "upd.get('status') == 'UpToDate'"
 fi
 
 if [[ -n "${NEXT_KEY:-}" ]]; then

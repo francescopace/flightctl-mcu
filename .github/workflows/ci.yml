@@ -113,6 +113,10 @@ jobs:
         env:
           SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
         run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}broken
+      - name: ble variant, for the BLE field provisioning test (C3)
+        if: matrix.target == 'esp32c3' && matrix.profile == 'plain'
+        shell: bash
+        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ble
       - uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.target }}${{ env.S }}
@@ -123,6 +127,9 @@ jobs:
             firmware/build-${{ matrix.target }}-${{ env.P }}release/flightctl_mcu_fw-unsigned.bin
             firmware/build-${{ matrix.target }}-${{ env.P }}release/merged-binary.bin
             firmware/build-${{ matrix.target }}-${{ env.P }}broken/flightctl_mcu_fw.bin
+            firmware/build-${{ matrix.target }}-ble/flightctl_mcu_fw.bin
+            firmware/build-${{ matrix.target }}-ble/flightctl_mcu_fw.elf
+            firmware/build-${{ matrix.target }}-ble/merged-binary.bin
 
   e2e:
     name: end-to-end (simulated device vs Flight Control on kind)
@@ -162,7 +169,7 @@ jobs:
           kubectl get events -n flightctl --sort-by=.lastTimestamp | tail -40 || true
 
   emulator:
-    name: end-to-end on an emulated ${{ matrix.chip }}${{ matrix.secure == 1 && ', secure' || '' }} (esp-emu)
+    name: end-to-end on an emulated ${{ matrix.chip }}${{ matrix.secure == 1 && ', secure' || '' }}${{ matrix.prov == 'ble' && ', BLE provisioning' || '' }} (esp-emu)
     needs: [firmware, build]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -172,6 +179,10 @@ jobs:
       matrix:
         chip: [esp32c3, esp32c5]
         secure: [0, 1]
+        prov: [softap]
+        # an extra job, not a change to the plain C3 one: prov differs
+        include:
+          - { chip: esp32c3, secure: 0, prov: ble }
     steps:
       - uses: actions/checkout@v4
       - name: tools
@@ -212,11 +223,11 @@ jobs:
           path: wasm-apps/build
       - name: esp_prov's dependencies (the plain run provisions WiFi in the field)
         if: matrix.secure == 0
-        run: pip install protobuf cryptography
+        run: pip install protobuf cryptography ${{ matrix.prov == 'ble' && 'bumble' || '' }}
       - name: e2e on the emulator
         env:
           ESP_PROV_LOCAL: 1
-        run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} ci/e2e-emu.sh
+        run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} PROV=${{ matrix.prov }} ci/e2e-emu.sh
       - name: logs on failure
         if: failure()
         run: |

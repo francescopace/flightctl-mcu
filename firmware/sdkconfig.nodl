@@ -1,0 +1,8 @@
+# No ROM download mode at all, for devices in the field:
+#   VARIANT=secure-nodl (VARIANT=secure-nodl-release for the release profile)
+# The serial/USB port can then no longer write, read or run anything: fc_creds
+# cannot be written again over USB, and a broken device cannot be recovered
+# over it. Meant for the ESP32, which has no secure download mode, so the
+# plain secure variant leaves its ROM loader fully open (docs/SECURITY.md); on
+# the other chips it replaces secure download mode. Burned on first boot.
+CONFIG_SECURE_DISABLE_ROM_DL_MODE=y

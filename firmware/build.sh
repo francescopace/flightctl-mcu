@@ -12,6 +12,8 @@
 # BUILD_DIR=<dir> overrides the build directory (relative to firmware/).
 # SECURE_BOOT_KEY=<pem> is the Secure Boot v2 signing key for the secure
 # variants (VARIANT=secure): bootloader and app images are signed with it.
+# SECURE_BOOT_SIGNER=external builds them unsigned, for an HSM to sign
+# (firmware/sign-external.py).
 # SECURE_VERSION=<n> is the release's security version (anti-rollback, secure
 # variants): a device refuses firmware below the highest it has confirmed.
 # The firmware has no credentials in it: write them to the device with
@@ -52,6 +54,13 @@ if [[ -n "${SECURE_BOOT_KEY:-}" ]]; then
     rm -rf "$ROOT/firmware/${BUILD_DIR:?}"
     mkdir -p "$ROOT/firmware/$BUILD_DIR" && echo "$KEY_SUM" > "$ROOT/firmware/$BUILD_DIR/.secure_boot_key"
   fi
+fi
+# SECURE_BOOT_SIGNER=external: a secure build with no key at hand (an HSM
+# signs it afterwards, firmware/sign-external.py): padded, unsigned images.
+if [[ "${SECURE_BOOT_SIGNER:-}" == external ]]; then
+  mkdir -p "$ROOT/firmware/$BUILD_DIR"
+  echo "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n" > "$ROOT/firmware/$BUILD_DIR/sdkconfig.external_signer"
+  DEFAULTS="$DEFAULTS;$BUILD_DIR/sdkconfig.external_signer"
 fi
 if [[ -n "${SECURE_VERSION:-}" ]]; then
   mkdir -p "$ROOT/firmware/$BUILD_DIR"

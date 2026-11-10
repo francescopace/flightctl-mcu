@@ -237,7 +237,7 @@ Nothing above touches the chip's eFuses. The `secure` variant does: Secure Boot 
 deploy/provision.py --port /dev/cu.usbmodem1101 --wifi-ssid <ssid> --wifi-password <password>
 ```
 
-When the site's network is not known yet, pass `--pop <secret>` instead of the WiFi: the device then opens an access point where an installer gives it the network, with Espressif's provisioning app or `esp_prov` (see [docs/PROVISIONING.md](docs/PROVISIONING.md)).
+When the site's network is not known yet, pass `--pop <secret>` instead of the WiFi: the device then opens an access point (or, built with `VARIANT=ble`, advertises over Bluetooth) where an installer gives it the network, with Espressif's provisioning app or `esp_prov` (see [docs/PROVISIONING.md](docs/PROVISIONING.md)).
 
 `--image` writes the same partition into a merged flash image instead (the emulator uses it), `--out` into a file. During development you can also build the WiFi and the endpoint into the firmware, from `firmware/sdkconfig.wifi` and `firmware/sdkconfig.local` (see the `.example` files); a provisioned value wins. `LOCAL=0 firmware/build.sh` leaves those two files out, for images that leave your desk.
 
@@ -312,7 +312,7 @@ What is not:
 - **Security**:
   - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
   - The device key is in flash in clear, except in the `secure` variant (see [docs/SECURITY.md](docs/SECURITY.md)), tested in the emulator only, where it is encrypted. The CPU can still read it: keeping it in the chip's Digital Signature peripheral works, but Flight Control cannot enroll the RSA key that needs.
-- **Provisioning**: credentials are written over USB (`deploy/provision.py`), the WiFi network over USB or in the field through the device's own access point (SoftAP, see [docs/PROVISIONING.md](docs/PROVISIONING.md)); not over BLE yet. An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
+- **Provisioning**: credentials are written over USB (`deploy/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [docs/PROVISIONING.md](docs/PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 
 Some of what we ran into points at gaps in Flight Control for this class of device:

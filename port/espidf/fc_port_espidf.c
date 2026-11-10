@@ -440,6 +440,21 @@ static void revoke_older_keys(void)
     }
 }
 
+/* Revokes Secure Boot key `index` for good, on request (fleet config, see
+ * main.c): a spare key that was exposed. Refused when the bootloader or the
+ * running app would no longer verify without it, or before the running app
+ * is confirmed. Revoking a key already revoked succeeds. */
+int fc_port_espidf_revoke_secure_boot_key(int index)
+{
+    if (!esp_secure_boot_enabled() || index < 0 || index >= SOC_EFUSE_SECURE_BOOT_KEY_DIGESTS) {
+        ESP_LOGW(TAG, "Secure Boot key %d: not a key this device can revoke", index);
+        return -1;
+    }
+    esp_err_t err = esp_ota_revoke_secure_boot_public_key((esp_ota_secure_boot_public_key_index_t)index);
+    ESP_LOGW(TAG, "Secure Boot key %d revoked on request: %s", index, esp_err_to_name(err));
+    return err == ESP_OK ? 0 : -1;
+}
+
 static void secure_boot_keys_info(cJSON *o)
 {
     char keys[24] = "";
@@ -450,6 +465,11 @@ static void secure_boot_keys_info(cJSON *o)
 #else
 static void revoke_older_keys(void) {}
 static void secure_boot_keys_info(cJSON *o) {}
+int fc_port_espidf_revoke_secure_boot_key(int index)
+{
+    ESP_LOGW(TAG, "Secure Boot key %d: this firmware has no Secure Boot", index);
+    return -1;
+}
 #endif
 
 void fc_port_ota_confirm(void)

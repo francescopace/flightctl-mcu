@@ -61,6 +61,24 @@ factory (`--wifi-ssid`) always wins, and is not stored by the driver.
 `CONFIG_FC_FIELD_PROVISIONING` (on by default) adds the provisioning manager,
 its HTTP server and protocomm: about 128 KB of flash.
 
+### Over BLE
+
+The `ble` variant does the same over Bluetooth Low Energy instead of an
+access point, which suits phones better and needs no WiFi hop:
+
+```bash
+TARGET=esp32c3 VARIANT=ble firmware/build.sh
+```
+
+(`VARIANT=secure-ble` with the secure variant.) The device advertises
+`FC-xxxxxx` with ESP-IDF's provisioning service; the installer uses
+Espressif's provisioning app (ESP BLE Prov) or `esp_prov --transport ble
+--service_name FC-xxxxxx`, with the same proof of possession and the same
+Security 1 session. NimBLE runs only while the device has no network: its
+memory is given back once provisioning is over, or at boot on a device that
+has its network. It adds about 230 KB of flash (1.54 MB on the C3, 1.58 MB
+secure, in a 1.7 MB slot). Not on the ESP32-S2, which has no Bluetooth.
+
 ## What the CI checks
 
 The plain emulator run (`ci/e2e-emu.sh`) provisions its device in the field:
@@ -70,5 +88,9 @@ the right one with the emulator's network, and the device carries on to
 enroll. The end-to-end test also takes a one-day enrollment certificate for
 the run, as for a batch.
 
-Not done: provisioning over BLE (the emulator can, through Bumble), and
-setting the Flight Control endpoint or labels in the field.
+An extra CI job does it over BLE (`PROV=ble ci/e2e-emu.sh`, C3, ble variant):
+`ci/ble-prov.py` runs Google's Bumble as the emulator's BLE controller and as
+the installer's phone, and ESP-IDF's esp_prov code for the session. A wrong
+proof is refused there too.
+
+Not done: setting the Flight Control endpoint or labels in the field.

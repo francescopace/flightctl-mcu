@@ -73,6 +73,14 @@ config FC_FIELD_PROVISIONING
         app). Security 1 with the proof of possession. See
         docs/PROVISIONING.md.
 
+config FC_FIELD_PROVISIONING_BLE
+    bool "Field provisioning over BLE instead of SoftAP"
+    depends on FC_FIELD_PROVISIONING && BT_NIMBLE_ENABLED
+    default y
+    help
+        Set by the ble variant (firmware/sdkconfig.ble), which turns on
+        NimBLE. The Bluetooth memory is freed once the device has a network.
+
 config FC_DEVICE_KEY_DS
     bool "Device key in the Digital Signature peripheral (burns an eFuse key block)"
     depends on SOC_DIG_SIGN_SUPPORTED

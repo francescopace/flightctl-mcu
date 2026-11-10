@@ -11,16 +11,21 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v5.5.6}"
+checkout() { # sparse checkout of ESP-IDF's esp_prov in build/esp-idf; prints its path
+  local idf="$ROOT/build/esp-idf"
+  if [[ ! -d "$idf/tools/esp_prov" ]]; then
+    rm -rf "$idf"
+    git clone -q --depth 1 --branch "${IDF_IMAGE##*:}" --filter=blob:none --sparse \
+      https://github.com/espressif/esp-idf.git "$idf"
+    git -C "$idf" sparse-checkout set tools/esp_prov components/protocomm/python components/wifi_provisioning/python
+  fi
+  echo "$idf"
+}
+if [[ "${1:-}" == --checkout ]]; then checkout; exit; fi
 SERVICE="${1:?HOST:PORT}"; shift
 ARGS=(--transport softap --service_name "$SERVICE" --sec_ver 1 "$@")
 if [[ "${ESP_PROV_LOCAL:-0}" == 1 ]]; then
-  IDF="$ROOT/build/esp-idf"
-  if [[ ! -d "$IDF/tools/esp_prov" ]]; then
-    rm -rf "$IDF"
-    git clone -q --depth 1 --branch "${IDF_IMAGE##*:}" --filter=blob:none --sparse \
-      https://github.com/espressif/esp-idf.git "$IDF"
-    git -C "$IDF" sparse-checkout set tools/esp_prov components/protocomm/python components/wifi_provisioning/python
-  fi
+  IDF="$(checkout)"
   IDF_PATH="$IDF" python3 "$IDF/tools/esp_prov/esp_prov.py" "${ARGS[@]}"
 else
   NET=()

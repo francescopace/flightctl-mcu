@@ -127,6 +127,62 @@ accepts only images signed with key 1. The device reports
 `secureBootKeys: "0*,1"` (usable slots, `*` for those that sign the running
 image).
 
+A spare key that was exposed is revoked through the fleet's config, with a
+file the device reads as a command:
+
+```yaml
+config:
+  - name: security
+    inline:
+      - path: /etc/flightctl-mcu/secure-boot.json
+        content: '{"revokeKeys": [2]}'
+```
+
+Each device revokes those slots for good once its running firmware is
+confirmed. It refuses the file (the update is reported as failed) when a key
+cannot go: the one that signs the running firmware or the bootloader, or any
+key on a device without Secure Boot. Keeping the file in the fleet is
+harmless: revoking a key already revoked succeeds.
+
+## Keys in an HSM
+
+The build signs with a key file (`SECURE_BOOT_KEY`). To keep the Secure Boot
+keys in an HSM instead, build without a key and sign afterwards:
+
+```bash
+TARGET=esp32c3 VARIANT=secure-release SECURE_BOOT_SIGNER=external firmware/build.sh
+```
+
+```bash
+firmware/sign-external.py firmware/build-esp32c3-secure-release --pub-key key0.pub.pem --sign-cmd '<command> {digest} {signature}'
+```
+
+The command gets a file with the image's SHA-256 digest and must write an
+RSA-PSS signature of it (SHA-256, salt length 32): the HSM's PKCS#11 tool, or
+OpenSSL through its PKCS#11 engine or provider. `sign-external.py` checks the
+signature against the public key and appends the signature block, to the
+bootloader and to the app. For the factory bootloader, run it again with
+`--bootloader-only` for each spare key. Tried in the emulator with OpenSSL
+and key files standing in for the HSM: bootloader signed with two keys, app
+with one; it booted and trusted both keys.
+
+## ESP32 download mode
+
+The ESP32 (classic) has no secure download mode, so the secure variant leaves
+its ROM serial loader fully open (`CONFIG_SECURE_INSECURE_ALLOW_DL_MODE`): with
+the device in hand, it can load code into RAM. For the field, the `nodl`
+variant turns the ROM download mode off for good on first boot:
+
+```bash
+TARGET=esp32 VARIANT=secure-nodl-release SECURE_BOOT_KEY=secure_boot_key.pem firmware/build.sh
+```
+
+After that the serial port can no longer write the flash either: `fc_creds`
+cannot be written again over USB (provision before the first boot, or in the
+field for the WiFi), and a device that does not boot cannot be recovered over
+it. On the other chips `nodl` replaces secure download mode the same way. It
+builds; the emulator does not run the ESP32.
+
 ## Flash layout
 
 Signed, a bootloader with Secure Boot and flash encryption takes up to 48 KB
@@ -205,9 +261,10 @@ CI, with a throwaway Secure Boot key):
 - the debug build (security version 0) is refused once the release (1) is
   confirmed (anti-rollback);
 - the broken build is rolled back, as without Secure Boot;
-- when the test builds the images: the bootloader trusts a second key, and a
-  release signed with it alone retires the first (key rotation). CI's
-  prebuilt images come without their keys.
+- when the test builds the images: the bootloader trusts three keys; the
+  third, a spare, is revoked through the fleet's config, revoking the key in
+  use is refused, and a release signed with the second key alone retires the
+  first (key rotation). CI's prebuilt images come without their keys.
 
 The device key stays in the encrypted store (`deviceKey: "storage"`).
 
@@ -230,13 +287,7 @@ Tried by hand in the emulator:
 - **Real boards.** Nothing has been burned yet. Before a batch: one board per
   chip, then a full OTA cycle.
 - **ESP32 (classic).** Secure Boot v2 needs silicon revision 3
-  (`CONFIG_ESP32_REV_MIN_3`, set by the variant), and the chip has no secure
-  download mode: the build falls back to leaving the ROM download mode fully
-  open (`CONFIG_SECURE_INSECURE_ALLOW_DL_MODE`), which can load code into RAM.
-  For the field, `CONFIG_SECURE_DISABLE_ROM_DL_MODE` closes it, at the price
-  of no provisioning over USB afterwards. The emulator does not run it.
-- **Revoking a key that is not in use** (one of the spares, exposed): ESP-IDF
-  can (`esp_ota_revoke_secure_boot_public_key`), the agent has no command for
-  it yet.
-- **Keys in an HSM.** The scripts sign with key files; ESP-IDF also supports
-  signing with an external signature (`espsecure sign_data --pub-key`).
+  (`CONFIG_ESP32_REV_MIN_3`, set by the variant). Not run anywhere yet: the
+  emulator does not run the ESP32.
+- **The image signing key in an HSM.** `deploy/signing` signs OCI artifacts
+  with a key file; cosign itself can sign with a KMS or PKCS#11 key.

@@ -1,0 +1,9 @@
+# Field provisioning over BLE instead of SoftAP (docs/PROVISIONING.md):
+#   VARIANT=ble firmware/build.sh, or combined: VARIANT=secure-ble
+# NimBLE as a peripheral only, for the provisioning service; its memory is
+# given back once the device has a network. Not on the ESP32-S2 (no BLE).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1

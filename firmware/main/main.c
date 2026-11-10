@@ -16,9 +16,22 @@
 #include "esp_wifi.h"
 #if CONFIG_FC_FIELD_PROVISIONING
 #include "wifi_provisioning/manager.h"
+#if CONFIG_FC_FIELD_PROVISIONING_BLE
+#include "wifi_provisioning/scheme_ble.h"
+/* BLE: advertised as FC-xxxxxx; the Bluetooth memory is given back when
+ * provisioning is over, or right away on a device that has its network. */
+#define PROV_SCHEME wifi_prov_scheme_ble
+#define PROV_SCHEME_HANDLER WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
+#define PROV_HOW "over BLE as"
+#else
 #include "wifi_provisioning/scheme_softap.h"
+#define PROV_SCHEME wifi_prov_scheme_softap
+#define PROV_SCHEME_HANDLER WIFI_PROV_EVENT_HANDLER_NONE
+#define PROV_HOW "on access point"
+#endif
 #endif
 #include "alarm.h"
+#include "cJSON.h"
 #include "fc_agent.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -196,9 +209,9 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
 
 #if CONFIG_FC_FIELD_PROVISIONING
 /* Provisioning in the field: a device that left the factory without WiFi
- * (provision.py --pop, no --wifi-ssid) opens an access point, FC-xxxxxx,
- * where an installer gives it the site's network with esp_prov or
- * Espressif's provisioning app. Security 1: X25519 key exchange, the
+ * (provision.py --pop, no --wifi-ssid) opens an access point, FC-xxxxxx (or,
+ * in the ble variant, advertises it over BLE), where an installer gives it
+ * the site's network with esp_prov or Espressif's provisioning app. Security 1: X25519 key exchange, the
  * session authenticated by the proof of possession, which is also the
  * access point's WPA2 password. The network is kept by the WiFi driver (in
  * the default NVS partition, encrypted in the secure variant); erasing it
@@ -212,7 +225,7 @@ static void on_prov(void *arg, esp_event_base_t base, int32_t id, void *data)
                  *(wifi_prov_sta_fail_reason_t *)data == WIFI_PROV_STA_AUTH_ERROR ? "wrong password" : "not found");
         wifi_prov_mgr_reset_sm_state_on_failure();
     } else if (id == WIFI_PROV_END) {
-        ESP_LOGI(TAG, "field provisioning: done, access point closed");
+        ESP_LOGI(TAG, "field provisioning: done");
         wifi_prov_mgr_deinit();
     }
 }
@@ -222,8 +235,8 @@ static void on_prov(void *arg, esp_event_base_t base, int32_t id, void *data)
 static int field_provisioning(const creds_t *c)
 {
     wifi_prov_mgr_config_t cfg = {
-        .scheme = wifi_prov_scheme_softap,
-        .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE,
+        .scheme = PROV_SCHEME,
+        .scheme_event_handler = PROV_SCHEME_HANDLER,
     };
     ESP_ERROR_CHECK(wifi_prov_mgr_init(cfg));
     bool done = false;
@@ -241,8 +254,12 @@ static int field_provisioning(const creds_t *c)
     char name[16];
     snprintf(name, sizeof(name), "FC-%02X%02X%02X", mac[3], mac[4], mac[5]);
     esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, on_prov, NULL);
-    ESP_LOGW(TAG, "no WiFi network: field provisioning on access point %s (esp_prov --transport softap)", name);
+    ESP_LOGW(TAG, "no WiFi network: field provisioning " PROV_HOW " %s", name);
+#if CONFIG_FC_FIELD_PROVISIONING_BLE
+    ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, c->pop, name, NULL));
+#else
     ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, c->pop, name, c->pop));
+#endif
     return 2;
 }
 #endif
@@ -259,7 +276,9 @@ static void wifi_start(const creds_t *c)
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi, NULL);
 #if CONFIG_FC_FIELD_PROVISIONING
     if (c->ssid[0] == '\0') {
+#if !CONFIG_FC_FIELD_PROVISIONING_BLE
         esp_netif_create_default_wifi_ap();
+#endif
         int fp = field_provisioning(c);
         if (fp == 0) {
             ESP_LOGE(TAG, "WiFi not configured: provision it (--wifi-ssid, or --pop to set it in the field)");
@@ -345,6 +364,42 @@ static void start_ota_guard(void)
     ESP_LOGW(TAG, "firmware %s pending verification", esp_app_get_description()->version);
 }
 
+int fc_port_espidf_revoke_secure_boot_key(int index);
+
+/* Device security settings from the fleet's config, as a file:
+ *   /etc/flightctl-mcu/secure-boot.json  {"revokeKeys": [2]}
+ * revokes Secure Boot key slots for good (a spare key that was exposed, see
+ * docs/SECURITY.md). The device refuses the file, and the update is reported
+ * as failed, when a key cannot be revoked: the one that signs the running
+ * firmware or the bootloader, or any key on a device without Secure Boot. */
+#define SECURE_BOOT_CONFIG "/etc/flightctl-mcu/secure-boot.json"
+
+static int secure_boot_config(const char *data)
+{
+    cJSON *doc = cJSON_Parse(data);
+    const cJSON *keys = cJSON_GetObjectItemCaseSensitive(doc, "revokeKeys");
+    int rc = cJSON_IsArray(keys) ? 0 : -1;
+    const cJSON *k;
+    cJSON_ArrayForEach(k, keys) {
+        if (!cJSON_IsNumber(k) || fc_port_espidf_revoke_secure_boot_key(k->valueint) != 0) {
+            rc = -1;
+        }
+    }
+    if (rc != 0) {
+        ESP_LOGW(TAG, "%s refused", SECURE_BOOT_CONFIG);
+    }
+    cJSON_Delete(doc);
+    return rc;
+}
+
+static int on_config_file(const char *path, const char *data, size_t len, void *ctx)
+{
+    if (strcmp(path, SECURE_BOOT_CONFIG) == 0) {
+        return secure_boot_config(data);
+    }
+    return alarm_on_config_file(path, data, len, ctx);
+}
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -377,7 +432,7 @@ void app_main(void)
         .agent_version = "flightctl-mcu/0.1.0",
         .status_interval_s = CONFIG_FC_STATUS_INTERVAL,
         .ota_verify_timeout_s = CONFIG_FC_OTA_VERIFY_TIMEOUT,
-        .on_config_file = alarm_on_config_file,
+        .on_config_file = on_config_file,
         .custom_info = alarm_custom_info,
         .wasm_natives = natives,
         .wasm_natives_count = n_natives,
