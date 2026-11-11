@@ -316,10 +316,12 @@ elif [[ "$SECURE" == 0 ]]; then
   grep -q 'Provisioning was successful' "$WORK/prov.log" || fail "field provisioning not confirmed"
   echo "ok: network given in the field, device connected"
 fi
-for i in $(seq 1 60); do
+# Up to 5 minutes: over BLE the agent starts only when provisioning has ended,
+# about 50 s of the device's time, and the emulator runs slowly meanwhile.
+for i in $(seq 1 150); do
   DEVICE=$(sed -n 's/.*device name: \([a-z0-9]*\).*/\1/p' "$WORK/emu.log" | head -1)
   [[ -n "$DEVICE" ]] && flightctl get "enrollmentrequest/$DEVICE" >/dev/null 2>&1 && break
-  (( i == 60 )) && fail "no enrollment request"
+  (( i == 150 )) && fail "no enrollment request"
   sleep 2
 done
 echo "device: $DEVICE"
