@@ -199,8 +199,8 @@ static void app_start(app_t *a)
     a->stop = 0;
     set_status(a, "Preparing", NULL);
     pthread_attr_init(&a->thread_attr);
-    pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK);
-    a->thread_running = pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
+    a->thread_running = pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK) == 0 &&
+                        pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
     if (!a->thread_running) {
         pthread_attr_destroy(&a->thread_attr);
         set_status(a, "Error", "cannot start thread");

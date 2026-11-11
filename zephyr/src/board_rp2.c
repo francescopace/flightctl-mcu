@@ -22,7 +22,12 @@
 static int wait_for_terminal(void)
 {
     for (int i = 0; i < 80; i++) { /* 8 s at most */
-        uint32_t dtr = 0;
+        uint32_t dtr = 0, baud = 0;
+        /* Also here, before anything else runs: a firmware that fails at
+         * every boot can still be replaced. */
+        if (uart_line_ctrl_get(CONSOLE, UART_LINE_CTRL_BAUD_RATE, &baud) == 0 && baud == 1200) {
+            reset_usb_boot(0, 0);
+        }
         if (uart_line_ctrl_get(CONSOLE, UART_LINE_CTRL_DTR, &dtr) == 0 && dtr != 0) {
             k_sleep(K_MSEC(1500)); /* the terminal has opened the port, not yet started to read */
             break;

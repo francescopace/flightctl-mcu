@@ -9,3 +9,5 @@ int fc_port_zephyr_init(void);
 /* The C heap (fc_heap_zephyr.c): its size, what is free, and the least that
  * has been free since boot. */
 void fc_heap_stats(size_t *total, size_t *free_now, size_t *free_min);
+/* The kernel heap, which thread stacks come from. */
+void fc_kernel_heap_stats(size_t *total, size_t *free_now);

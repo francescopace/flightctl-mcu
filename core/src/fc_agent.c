@@ -983,12 +983,13 @@ int fc_agent_run(const fc_agent_config_t *cfg)
 #else
     size_t stack = 256 * 1024; /* 64-bit hosts need more */
 #endif
-    pthread_attr_setstacksize(&status_attr, stack);
-    pthread_attr_setstacksize(&spec_attr, stack);
     s_running = &a;
-    if (pthread_create(&status, &status_attr, status_thread, &a) != 0 ||
+    /* The stack size too: where it cannot be had (Zephyr takes it from a
+     * heap), the thread would start on a default stack of 1 KB. */
+    if (pthread_attr_setstacksize(&status_attr, stack) != 0 || pthread_attr_setstacksize(&spec_attr, stack) != 0 ||
+        pthread_create(&status, &status_attr, status_thread, &a) != 0 ||
         pthread_create(&spec, &spec_attr, spec_thread, &a) != 0) {
-        fc_port_log(FC_LOG_ERROR, "cannot start the agent's threads");
+        fc_port_log(FC_LOG_ERROR, "cannot start the agent's threads (two stacks of %u KB)", (unsigned)(stack / 1024));
         return -1;
     }
     pthread_join(spec, NULL);

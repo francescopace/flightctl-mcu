@@ -10,8 +10,16 @@
 
 #include <zephyr/net/socket.h>
 
+#include "fc_port.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
+
+/* What the socket said, which mbedTLS's error code does not carry. */
+static int failed(const char *what, int code)
+{
+    fc_port_log(FC_LOG_WARN, "network: %s failed (errno %d)", what, errno);
+    return code;
+}
 
 void mbedtls_net_init(mbedtls_net_context *ctx)
 {
@@ -60,7 +68,8 @@ int mbedtls_net_send(void *ctx, const unsigned char *buf, size_t len)
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
         return MBEDTLS_ERR_SSL_WANT_WRITE;
     }
-    return errno == EPIPE || errno == ECONNRESET ? MBEDTLS_ERR_NET_CONN_RESET : MBEDTLS_ERR_NET_SEND_FAILED;
+    return errno == EPIPE || errno == ECONNRESET ? MBEDTLS_ERR_NET_CONN_RESET
+                                                 : failed("send", MBEDTLS_ERR_NET_SEND_FAILED);
 }
 
 int mbedtls_net_recv(void *ctx, unsigned char *buf, size_t len)
@@ -76,7 +85,8 @@ int mbedtls_net_recv(void *ctx, unsigned char *buf, size_t len)
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
         return MBEDTLS_ERR_SSL_WANT_READ;
     }
-    return errno == EPIPE || errno == ECONNRESET ? MBEDTLS_ERR_NET_CONN_RESET : MBEDTLS_ERR_NET_RECV_FAILED;
+    return errno == EPIPE || errno == ECONNRESET ? MBEDTLS_ERR_NET_CONN_RESET
+                                                 : failed("receive", MBEDTLS_ERR_NET_RECV_FAILED);
 }
 
 /* `timeout` in milliseconds; 0 waits for ever. */
@@ -92,7 +102,7 @@ int mbedtls_net_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_t
         return MBEDTLS_ERR_SSL_TIMEOUT;
     }
     if (rc < 0) {
-        return MBEDTLS_ERR_NET_RECV_FAILED;
+        return failed("poll", MBEDTLS_ERR_NET_RECV_FAILED);
     }
     return mbedtls_net_recv(ctx, buf, len);
 }

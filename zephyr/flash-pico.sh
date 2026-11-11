@@ -22,10 +22,20 @@ cp "$BIN" "$WORK/flash.bin"
 "$ROOT/deploy/provision.py" --format zephyr --board rpi_pico_rp2040_w --secrets "$SECRETS" --image "$WORK/flash.bin" "$@"
 python3 "$ROOT/third_party/zephyr-ws/zephyr/scripts/build/uf2conv.py" "$WORK/flash.bin" -c -b 0x10000000 -f 0xe48bff56 \
   -o "$WORK/flash.uf2" >/dev/null
-if [[ ! -d "$DRIVE" && -n "${PORT:-}" ]]; then
-  stty -f "$PORT" 1200 || true
-fi
-for i in $(seq 1 30); do [[ -d "$DRIVE" ]] && break; sleep 1; done
+# Ask for the bootloader until the drive is there: a board that restarts in
+# a loop only listens at times.
+for i in $(seq 1 60); do
+  [[ -d "$DRIVE" ]] && break
+  if [[ -n "${PORT:-}" && -e "$PORT" ]]; then
+    python3 -c "
+import serial, sys
+try:
+    serial.Serial(sys.argv[1], 1200, timeout=1, write_timeout=1).close()
+except Exception:
+    pass" "$PORT" || true
+  fi
+  sleep 1
+done
 [[ -d "$DRIVE" ]] || { echo "no $DRIVE: plug the board in with BOOTSEL held down" >&2; exit 1; }
 before="$(ls /dev/cu.usbmodem* 2>/dev/null || true)"
 # The drive appears a moment before it can be written.

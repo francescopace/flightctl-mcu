@@ -197,6 +197,11 @@ int main(void)
     wifi_up(creds);
 #endif
     wait_for_time();
+    size_t heap, heap_free, heap_min, kheap, kheap_free;
+    fc_heap_stats(&heap, &heap_free, &heap_min);
+    fc_kernel_heap_stats(&kheap, &kheap_free);
+    fc_port_log(FC_LOG_INFO, "memory: heap %u of %u bytes free, for thread stacks %u of %u", (unsigned)heap_free,
+                (unsigned)heap, (unsigned)kheap_free, (unsigned)kheap);
     fc_agent_config_t cfg = {
         .server_host = host,
         .server_port = cJSON_IsNumber(port) ? port->valueint : 8443,

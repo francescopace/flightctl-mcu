@@ -5,8 +5,9 @@ application in `zephyr/`. The core is unchanged between the two.
 
 **Where it stands.** On `native_sim` (Zephyr built as a Linux process) the
 agent passes the end-to-end test of the simulated device, against an
-unmodified Flight Control. Not there yet: firmware updates (they need
-MCUboot), WiFi, and a real board.
+unmodified Flight Control. On a real Raspberry Pi Pico W it enrolls over WiFi
+and stays online, with almost no memory to spare (below). Not there yet:
+firmware updates (they need MCUboot), and apps on the board.
 
 ## Try it
 
@@ -92,6 +93,61 @@ rebooting itself.
 
 One check is weaker than on the host: that a config file was stored is read
 from the device's log, as the file is inside the flash image.
+
+## On a Raspberry Pi Pico W
+
+An RP2040 (Cortex-M0+, 264 KB of RAM, 2 MB of flash) with a CYW43439 for
+WiFi: less RAM than any ESP32 the agent runs on.
+
+```bash
+third_party/fetch-zephyr-sdk.sh
+```
+
+```bash
+BOARD=rpi_pico/rp2040/w BUILD_DIR=build-pico-usb zephyr/build.sh -S cdc-acm-console
+```
+
+```bash
+zephyr/flash-pico.sh .secrets
+```
+
+The first fetches the ARM toolchain (2.3 GB) and the WiFi chip's firmware;
+the last writes one UF2 with the application and the credentials (the WiFi
+network is the one in `firmware/sdkconfig.wifi`, or `--wifi-ssid`) and prints
+the console. The board must be in its bootloader: plugged in with BOOTSEL
+held down, or, once it runs this build, `PORT=/dev/cu.usbmodemXXXX`.
+
+What was seen on the board: it joins the network in 3 s, takes the time from
+SNTP, makes its key in 2 s, does a TLS 1.3 handshake in about 9 s, enrolls,
+keeps its identity across restarts, and is Online and UpToDate in Flight
+Control with its two connections open.
+
+Memory is the limit. Of 264 KB: 114 KB of static data in this build (the
+WiFi driver's and the network stack's buffers, the USB console), 71 KB of
+kernel heap (the two agent threads' 24 KB stacks, 14 KB the WiFi driver and
+USB take), 81 KB of C heap. With both TLS connections open 11 KB of that
+heap were free, and it had been down to 4 KB: an app or a firmware update
+does not fit yet. Where there is room to find: the stacks (how much of the
+24 KB they use is not measured), the USB console (12 KB, only for
+development), the WiFi driver's fixed 32 KB of buffers.
+
+What the board taught the port:
+
+- **Flash writes of less than a page do nothing** on this board with Zephyr
+  4.3: they report success, and the data is not there. Whole pages work, so
+  LittleFS is set to write whole pages (`CONFIG_FS_LITTLEFS_PROG_SIZE=256`).
+- **A stack that cannot be had becomes a 1 KB stack.** Zephyr takes a
+  thread's stack from the kernel heap when its size is set; if that fails the
+  thread keeps the default. The core now checks, and says so instead of
+  overflowing.
+- **A fatal error restarts the device**, and what it was is kept in RAM and
+  logged at the next boot: Zephyr's default is to stop for ever, silently
+  when the console is on USB.
+- **No entropy source.** The RP2040 has no random generator and Zephyr 4.3
+  no driver for its ring oscillator: this build uses Zephyr's test generator,
+  and its keys are predictable. To be solved before any real use.
+- **One DNS query at a time** is Zephyr's default; the agent's two threads
+  ask together at start.
 
 ## Things to know about native_sim
 
