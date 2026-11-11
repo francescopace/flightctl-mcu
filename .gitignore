@@ -10,8 +10,25 @@ deploy/auto-approve/allowlist.yaml
 third_party/wamr/
 third_party/detools/
 wasm-apps/build/
-# Never commit keys or enrollment material, wherever a tool writes them.
+.ccache/
+# Never commit keys or enrollment material, wherever a tool writes them:
+# device and signing keys, Secure Boot keys (*.pem), and flash or credential
+# images (deploy/provision.py --out), which hold a device's enrollment key and
+# WiFi password.
 *.key
+*.pem
+*.bin
+*.elf
 client-enrollment.*
 enrollment-config.yaml
-.ccache/
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+# macOS, editors
+.DS_Store
+*.swp
+*~
+.vscode/
+.idea/

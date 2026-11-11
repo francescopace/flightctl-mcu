@@ -90,9 +90,10 @@ hostile delta and the device:
   manifest.
 
 detools' C library computes with sizes read from the patch in plain `int`s,
-and the fuzzer found a signed overflow in it within seconds. It is built with
-wrapping arithmetic (`-fwrapv`) for that reason, and `fc_delta.c` refuses any
-seek outside the old image before detools counts it. `tests/fuzz/fuzz_delta.c`
+and the fuzzer found a signed overflow in it within seconds (reported upstream:
+[eerimoq/detools#22](https://github.com/eerimoq/detools/issues/22)). It is
+built with wrapping arithmetic (`-fwrapv`) for that reason, and `fc_delta.c`
+refuses any seek outside the old image before detools counts it. `tests/fuzz/fuzz_delta.c`
 fuzzes the decoder in CI with the others.
 
 ## Other ports
