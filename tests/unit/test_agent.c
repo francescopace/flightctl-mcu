@@ -27,6 +27,11 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
 
 void fc_oci_set_signing_key(const char *pub_pem) {}
 
+const char *fc_oci_firmware_download(void)
+{
+    return "";
+}
+
 int fc_apps_init(const void *natives, int n_natives)
 {
     return 0;

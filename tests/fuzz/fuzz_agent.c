@@ -26,6 +26,11 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
 
 void fc_oci_set_signing_key(const char *pub_pem) {}
 
+const char *fc_oci_firmware_download(void)
+{
+    return "";
+}
+
 void fc_port_host_init(const char *data_dir, int debug);
 
 static int on_config_file(const char *path, const char *data, size_t len, void *ctx)

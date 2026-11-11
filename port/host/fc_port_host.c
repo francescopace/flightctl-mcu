@@ -181,6 +181,20 @@ int fc_port_ota_end(void *handle, int commit)
     return rename(part, path) == 0 ? 0 : -1;
 }
 
+/* The "running image" is the file FC_FW_IMAGE names, if any: with it, the
+ * host takes firmware updates as deltas, like a device. */
+int fc_port_fw_read(size_t off, void *buf, size_t len)
+{
+    const char *path = getenv("FC_FW_IMAGE");
+    FILE *f = path && *path ? fopen(path, "rb") : NULL;
+    if (f == NULL) {
+        return -1;
+    }
+    int ok = fseek(f, (long)off, SEEK_SET) == 0 && fread(buf, 1, len, f) == len;
+    fclose(f);
+    return ok ? 0 : -1;
+}
+
 int fc_port_ota_pending_verify(void)
 {
     return 0;

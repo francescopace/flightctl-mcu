@@ -29,7 +29,7 @@ A C client for it, with mbedTLS for TLS 1.3, fits in about 21 KB of flash. Once 
 | Enrollment request + approval | P-256 key generated on the device, CSR, management certificate stored in flash |
 | Certificate signing request (renewal signer) | The device renews its management certificate for the same key before it expires |
 | `spec.config` (inline files) | Files stored in NVS. The firmware gets each file through a callback and can reject it. |
-| `spec.os.image` | Firmware image, pulled from an OCI registry into the inactive OTA slot. One image index covers all chips; each board picks its own. Its cosign signature is checked first. |
+| `spec.os.image` | Firmware image, pulled from an OCI registry into the inactive OTA slot. One image index covers all chips; each board picks its own. Its cosign signature is checked first. A release can carry deltas from earlier ones: a device on one of those downloads 1 to 12% of the image and rebuilds the rest from its own ([docs/DELTA.md](docs/DELTA.md)). |
 | `spec.applications` (`appType: container`) | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
 | `status` | Heap, flash, chip and firmware version, RSSI, temperature, app state, bytes on the wire (in `customInfo`) |
 | Fleet rollout (`BatchSequence`) | Works unchanged. The device reports a new version only after the new firmware has reached the server. |
@@ -174,9 +174,9 @@ deploy/auto-approve/ enrollment approval from an allow list
 tests/unit/      unit tests of the C core (in-memory port)
 tests/python/    tests of the deploy scripts
 tests/fuzz/      libFuzzer targets and seed inputs
-third_party/     WAMR fetch script (WAMR itself is not vendored)
+third_party/     fetch scripts for WAMR and detools (neither is vendored)
 ci/              helpers for the GitHub Actions workflow
-docs/            roadmap, results, device security, provisioning
+docs/            roadmap, results, device security, provisioning, firmware deltas
 ```
 
 ## Try it
@@ -217,6 +217,10 @@ deploy/signing/keygen.sh
 
 ```bash
 third_party/fetch-wamr.sh
+```
+
+```bash
+third_party/fetch-detools.sh
 ```
 
 ```bash

@@ -49,7 +49,7 @@ What burns eFuses (Secure Boot, flash encryption, anti-rollback, key revocation)
 
 - **Zephyr port** of `port/`, starting from `native_sim`, then a Nordic board. WAMR and mbedTLS both run on Zephyr.
 - **Other links**: Ethernet, cellular (NB-IoT, LTE-M).
-- **Delta firmware updates**, to cut download size.
+- **Delta firmware updates**: done. A release can carry deltas from earlier releases (`fw-push.py --delta-from`); a device running one of those downloads the delta, 1 to 12% of the image in the cases measured, and rebuilds the new image from its own, checked against the signed digest; otherwise, or if anything fails, it downloads the image. detools' format (bsdiff, heatshrink), as in Espressif's `esp_delta_ota`, applied in the core, so the next ports get it too. See [DELTA.md](DELTA.md). Emulator only, like Milestone 2.
 
 ## Later
 

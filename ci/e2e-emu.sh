@@ -235,7 +235,15 @@ else
 fi
 deploy/provision.py --image "$WORK/flash.bin" --secrets "$WORK/secrets" --server "agent-api.$IP.nip.io:8443" \
   --labels "app=$FLEET,site=emu" "${NET_ARGS[@]}"
-firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}$RELEASE_V" "$REGISTRY/flightctl-mcu/fw:release.$TAG" "$CHIP" >/dev/null
+# The debug build is pushed too: the device starts on it, and the release
+# comes with a delta from it, which the device must use.
+DEBUG_VARIANT="${DEBUG_DIR#firmware/build-$CHIP}"
+DEBUG_ARGS=()
+[[ -n "$DEBUG_VARIANT" ]] && DEBUG_ARGS=(--variant "${DEBUG_VARIANT#-}")
+firmware/fw-push.py ${DEBUG_ARGS[@]+"${DEBUG_ARGS[@]}"} "$REGISTRY/flightctl-mcu/fw:debug.$TAG" "$CHIP" >/dev/null
+firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}$RELEASE_V" --delta-from "debug.$TAG" \
+  "$REGISTRY/flightctl-mcu/fw:release.$TAG" "$CHIP" >"$WORK/fw-push.log" 2>&1 || { cat "$WORK/fw-push.log"; fail "push of the release"; }
+grep 'delta from' "$WORK/fw-push.log" || fail "no delta from the debug build in the release"
 if [[ "$SECURE" == 1 ]]; then
   # The release build signed with a key the chip does not know, pushed and
   # cosign-signed like any other: only Secure Boot can stop it.
@@ -375,6 +383,8 @@ wait_for 300 "release build confirmed, app running" \
 # UpToDate is enough: the device reports the new version only once the new
 # image is confirmed (and the release build does not log at INFO level).
 echo "heap: free $(custom memFreeBytes), min $(custom memMinFreeBytes), largest internal block $(custom memInternalLargestBlock)"
+wait_for 30 "the release came as a delta from the debug build ($(custom firmwareDownload))" \
+  "ci.get('firmwareDownload', '').startswith('delta ')"
 
 log "unsigned app refused"
 apply_fleet "release.$TAG" "v2.$TAG-unsigned"
@@ -437,6 +447,9 @@ if [[ "$ROLLBACK" == 1 ]]; then
   apply_fleet "broken.$TAG" "v2.$TAG"
   wait_for 480 "back on the release build, update reported as failed" \
     "ci.get('firmwareVersion', '').endswith('-release') and 'rolled back' in upd.get('info', '')"
+  # The broken build has no delta: it came whole.
+  wait_for 30 "an image without a delta came whole ($(custom firmwareDownload))" \
+    "ci.get('firmwareDownload', '').startswith('full ')"
 fi
 
 if [[ -n "${SPARE_KEY:-}" ]]; then

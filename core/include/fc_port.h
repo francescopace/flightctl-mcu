@@ -63,13 +63,17 @@ int fc_port_write_file(const char *path, const void *data, size_t len);
  * fc_port_ota_pending_verify: 1 while the running image is new and must be
  *   confirmed (fc_port_ota_confirm) or it is rolled back on the next reset;
  *   fc_port_ota_rollback marks it bad and reboots into the previous image.
- * Ports without OTA return -1 from fc_port_ota_begin. */
+ * Ports without OTA return -1 from fc_port_ota_begin.
+ * fc_port_fw_read: `len` bytes of the running image at `off`, as it was
+ *   downloaded (0), for updates that come as a delta from it; -1 when the
+ *   port cannot read it, or past its slot: updates are then whole images. */
 #define FC_OTA_WRONG_VARIANT (-2)
 #define FC_OTA_TOO_OLD (-3)
 const char *fc_port_fw_platform(void);
 int fc_port_ota_begin(size_t size, void **handle);
 int fc_port_ota_write(void *handle, const void *data, size_t len);
 int fc_port_ota_end(void *handle, int commit);
+int fc_port_fw_read(size_t off, void *buf, size_t len);
 int fc_port_ota_pending_verify(void);
 void fc_port_ota_confirm(void);
 void fc_port_ota_rollback(void);

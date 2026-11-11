@@ -217,6 +217,10 @@ static cJSON *build_status(agent_t *a)
     cJSON_AddStringToObject(custom, "netTxBytes", num);
     snprintf(num, sizeof(num), "%llu", rx);
     cJSON_AddStringToObject(custom, "netRxBytes", num);
+    if (fc_oci_firmware_download()[0] != '\0') {
+        /* how the running firmware came: whole, or as a delta */
+        cJSON_AddStringToObject(custom, "firmwareDownload", fc_oci_firmware_download());
+    }
     snprintf(num, sizeof(num), "%lu", fc_http_handshakes());
     cJSON_AddStringToObject(custom, "tlsHandshakes", num);
     if (a->cert_not_after > 0) {

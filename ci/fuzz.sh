@@ -8,9 +8,9 @@ cd "$ROOT"
 SECONDS_EACH="${FUZZ_SECONDS:-60}"
 CC="${CC:-$( [[ -x /opt/homebrew/opt/llvm/bin/clang ]] && echo /opt/homebrew/opt/llvm/bin/clang || echo clang )}"
 cmake -S . -B build/fuzz -G Ninja -DFC_FUZZ=ON -DCMAKE_C_COMPILER="$CC" "$@" >/dev/null
-cmake --build build/fuzz --target fuzz_http fuzz_oci fuzz_agent
+cmake --build build/fuzz --target fuzz_http fuzz_oci fuzz_agent fuzz_delta
 status=0
-for t in http oci agent; do
+for t in http oci agent delta; do
   mkdir -p "build/fuzz/corpus_$t"
   echo "== fuzz_$t (${SECONDS_EACH}s)"
   # New inputs go to build/fuzz/corpus_<t>; the seeds in tests/fuzz/corpus

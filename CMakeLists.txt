@@ -40,6 +40,23 @@ if(NOT APPLE)
     target_link_libraries(vmlib PUBLIC m dl Threads::Threads)
 endif()
 
+# detools (third_party/fetch-detools.sh) applies firmware deltas: its
+# sequential patches with heatshrink only, and its allocations through
+# fc_delta.c, which caps them. -fwrapv: it does arithmetic on sizes read from
+# the patch in plain ints, and a patch is not trusted; wrapping is harmless
+# there (fc_delta.c checks every read and write), undefined behavior is not.
+# The same settings as the firmware build.
+set(DETOOLS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/detools/c)
+set(DELTA_SRCS core/src/fc_delta.c ${DETOOLS_DIR}/detools.c ${DETOOLS_DIR}/heatshrink/heatshrink_decoder.c)
+set(DETOOLS_DEFS DETOOLS_CONFIG_FILE_IO=0 DETOOLS_CONFIG_COMPRESSION_NONE=0 DETOOLS_CONFIG_COMPRESSION_LZMA=0
+    DETOOLS_CONFIG_COMPRESSION_CRLE=0 HEATSHRINK_DYNAMIC_ALLOC=1)
+set_source_files_properties(${DELTA_SRCS} PROPERTIES
+    COMPILE_DEFINITIONS "${DETOOLS_DEFS}"
+    INCLUDE_DIRECTORIES "${DETOOLS_DIR};${DETOOLS_DIR}/heatshrink")
+set_source_files_properties(${DETOOLS_DIR}/detools.c ${DETOOLS_DIR}/heatshrink/heatshrink_decoder.c PROPERTIES
+    COMPILE_DEFINITIONS "${DETOOLS_DEFS};malloc=fc_delta_alloc;free=fc_delta_free"
+    COMPILE_OPTIONS "-w;-fwrapv")
+
 add_library(fc_core STATIC
     core/src/fc_agent.c
     core/src/fc_http.c
@@ -47,6 +64,7 @@ add_library(fc_core STATIC
     core/src/fc_oci.c
     core/src/fc_apps.c
     core/third_party/cjson/cJSON.c
+    ${DELTA_SRCS}
 )
 target_include_directories(fc_core PUBLIC core/include core/third_party/cjson PRIVATE core/src)
 # Same cJSON nesting limit as the firmware (firmware/components/fc_core).
@@ -75,7 +93,8 @@ if(FC_FUZZ)
         target_link_libraries(${name} PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::mbedcrypto Threads::Threads)
     endfunction()
     fc_fuzzer(fuzz_http ${CJSON})
-    fc_fuzzer(fuzz_oci port/host/fc_port_host.c ${CJSON})
+    fc_fuzzer(fuzz_oci port/host/fc_port_host.c ${CJSON} ${DELTA_SRCS})
+    fc_fuzzer(fuzz_delta ${DELTA_SRCS})
     fc_fuzzer(fuzz_agent core/src/fc_http.c core/src/fc_identity.c core/src/fc_apps.c port/host/fc_port_host.c ${CJSON})
     target_link_libraries(fuzz_agent PRIVATE vmlib)
 endif()
@@ -101,7 +120,7 @@ if(FC_UNIT)
         add_test(NAME ${name} COMMAND ${name})
     endfunction()
     fc_unit(test_http core/third_party/cjson/cJSON.c)
-    fc_unit(test_oci core/third_party/cjson/cJSON.c)
+    fc_unit(test_oci core/third_party/cjson/cJSON.c ${DELTA_SRCS})
     fc_unit(test_identity core/src/fc_identity.c core/src/fc_http.c core/third_party/cjson/cJSON.c)
     fc_unit(test_agent core/src/fc_identity.c core/src/fc_http.c core/third_party/cjson/cJSON.c)
 endif()

@@ -9,6 +9,7 @@
 
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
+#include "delta_vectors.h"
 #include "port_stub.h"
 #include "test.h"
 
@@ -295,6 +296,179 @@ static void firmware_needs_an_ota_slot(void)
     CHECK_STR(digest, md);
 }
 
+/* ---- firmware deltas --------------------------------------------------------- */
+
+#define DELTA_TYPE "application/vnd.flightctl-mcu.firmware.delta.v1+detools"
+
+/* A firmware manifest: the whole image first (served only if `serve_full`),
+ * then a delta from the image `from`. */
+static void push_firmware(const char *tag, const unsigned char *full, size_t full_len, int serve_full,
+                          const unsigned char *patch, size_t patch_len, const unsigned char *from, size_t from_len)
+{
+    char fd[72], pd[72], od[72], md[72], json[1536];
+    digest_of(full, full_len, fd);
+    if (serve_full) {
+        push_blob("fw", (const char *)full, full_len, fd);
+    }
+    push_blob("fw", (const char *)patch, patch_len, pd);
+    digest_of(from, from_len, od);
+    snprintf(json, sizeof(json),
+             "{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"layers\":["
+             "{\"mediaType\":\"application/vnd.espressif.app-image\",\"digest\":\"%s\",\"size\":%zu},"
+             "{\"mediaType\":\"" DELTA_TYPE "\",\"digest\":\"%s\",\"size\":%zu,\"annotations\":{"
+             "\"io.flightctl-mcu.delta.from\":\"%s\",\"io.flightctl-mcu.delta.from-size\":\"%zu\"}}]}",
+             fd, full_len, pd, patch_len, od, from_len);
+    push_manifest("fw", tag, json, md);
+}
+
+/* A device with an OTA slot, running `fw`. */
+static void device_running(const unsigned char *fw, size_t len)
+{
+    reg_reset();
+    stub_reset();
+    fc_oci_set_signing_key(NULL);
+    stub_ota_enabled = 1;
+    stub_fw = fw;
+    stub_fw_len = len;
+    s_running_digest[0] = '\0';
+    s_fw_download[0] = '\0';
+    s_fw_download_loaded = 0;
+}
+
+static int update(char *err, size_t err_len)
+{
+    char digest[80];
+    err[0] = '\0';
+    return fc_oci_fetch_firmware("reg:5001/fw:v2", digest, sizeof(digest), err, err_len);
+}
+
+#define CHECK_SLOT(image)                                                   \
+    do {                                                                    \
+        CHECK_INT((int)stub_ota_len, (int)sizeof(image));                   \
+        CHECK(memcmp(stub_ota, image, sizeof(image)) == 0);                 \
+    } while (0)
+
+static void firmware_comes_as_a_delta_from_the_running_image(void)
+{
+    char err[160];
+    device_running(delta_old, sizeof(delta_old));
+    /* The whole image is not even in the registry: only the delta can work. */
+    push_firmware("v2", delta_new, sizeof(delta_new), 0, delta_patch, sizeof(delta_patch), delta_old,
+                  sizeof(delta_old));
+    CHECK_INT(update(err, sizeof(err)), 0);
+    CHECK_STR(err, "");
+    CHECK_SLOT(delta_new);
+    CHECK_INT(stub_ota_commits, 1);
+    CHECK_INT(stub_ota_aborts, 0);
+    CHECK_CONTAINS(fc_oci_firmware_download(), "delta 0 of 3 KB");
+    CHECK_CONTAINS(stub_kv("fw.download"), "delta");
+}
+
+static void a_device_on_another_image_takes_the_whole_one(void)
+{
+    char err[160];
+    /* Running something else, of the same size as the delta's base. */
+    static unsigned char other[sizeof(delta_old)];
+    memcpy(other, delta_old, sizeof(other));
+    other[7] ^= 1;
+    device_running(other, sizeof(other));
+    push_firmware("v2", delta_new, sizeof(delta_new), 1, delta_patch, sizeof(delta_patch), delta_old,
+                  sizeof(delta_old));
+    CHECK_INT(update(err, sizeof(err)), 0);
+    CHECK_SLOT(delta_new);
+    CHECK_INT(stub_ota_commits, 1);
+    CHECK_INT(stub_ota_aborts, 0); /* the delta was not tried */
+    CHECK_STR(fc_oci_firmware_download(), "full 3 KB");
+
+    /* A port that cannot read its image, or an image shorter than the base. */
+    device_running(NULL, 0);
+    push_firmware("v2", delta_new, sizeof(delta_new), 1, delta_patch, sizeof(delta_patch), delta_old,
+                  sizeof(delta_old));
+    CHECK_INT(update(err, sizeof(err)), 0);
+    CHECK_SLOT(delta_new);
+    device_running(delta_old, 100);
+    push_firmware("v2", delta_new, sizeof(delta_new), 1, delta_patch, sizeof(delta_patch), delta_old,
+                  sizeof(delta_old));
+    CHECK_INT(update(err, sizeof(err)), 0);
+    CHECK_SLOT(delta_new);
+    CHECK_INT(stub_ota_aborts, 0);
+}
+
+/* Whatever is wrong with a delta, the device ends up with the whole image,
+ * checked as always, and the slot the delta touched is given up first. */
+static void a_bad_delta_falls_back_to_the_whole_image(void)
+{
+    char err[160];
+    /* It rebuilds an image, but not the one the manifest names. */
+    static unsigned char wanted[sizeof(delta_new)];
+    memcpy(wanted, delta_new, sizeof(wanted));
+    wanted[sizeof(wanted) - 1] ^= 1;
+    device_running(delta_old, sizeof(delta_old));
+    push_firmware("v2", wanted, sizeof(wanted), 1, delta_patch, sizeof(delta_patch), delta_old, sizeof(delta_old));
+    CHECK_INT(update(err, sizeof(err)), 0);
+    CHECK_SLOT(wanted);
+    CHECK_INT(stub_ota_aborts, 1);
+    CHECK_INT(stub_ota_commits, 1);
+    CHECK_STR(fc_oci_firmware_download(), "full 3 KB");
+
+    /* Corrupt, at every position in turn (its digest in the manifest is the
+     * corrupt one's: only the decoder and the image digest stand in the way). */
+    static unsigned char bad[sizeof(delta_patch)];
+    for (size_t i = 0; i < sizeof(bad); i++) {
+        memcpy(bad, delta_patch, sizeof(bad));
+        bad[i] ^= 0x10;
+        device_running(delta_old, sizeof(delta_old));
+        push_firmware("v2", delta_new, sizeof(delta_new), 1, bad, sizeof(bad), delta_old, sizeof(delta_old));
+        CHECK_INT(update(err, sizeof(err)), 0);
+        CHECK_SLOT(delta_new);
+        CHECK_INT(stub_ota_commits, 1);
+    }
+
+    /* Cut short. */
+    device_running(delta_old, sizeof(delta_old));
+    push_firmware("v2", delta_new, sizeof(delta_new), 1, delta_patch, sizeof(delta_patch) / 2, delta_old,
+                  sizeof(delta_old));
+    CHECK_INT(update(err, sizeof(err)), 0);
+    CHECK_SLOT(delta_new);
+    CHECK_INT(stub_ota_aborts, 1);
+
+    /* Asking for a larger window than the device gives a decoder. */
+    device_running(delta_old, sizeof(delta_old));
+    push_firmware("v2", delta_new, sizeof(delta_new), 1, delta_patch_w13, sizeof(delta_patch_w13), delta_old,
+                  sizeof(delta_old));
+    CHECK_INT(update(err, sizeof(err)), 0);
+    CHECK_SLOT(delta_new);
+    CHECK_INT(stub_ota_aborts, 1);
+
+    /* Not what its digest says: the download itself fails. */
+    device_running(delta_old, sizeof(delta_old));
+    push_firmware("v2", delta_new, sizeof(delta_new), 1, delta_patch, sizeof(delta_patch), delta_old,
+                  sizeof(delta_old));
+    char pd[72], path[400];
+    digest_of(delta_patch, sizeof(delta_patch), pd);
+    snprintf(path, sizeof(path), "/v2/fw/blobs/%s", pd);
+    route(path)->body[sizeof(delta_patch) - 1] ^= 1;
+    CHECK_INT(update(err, sizeof(err)), 0);
+    CHECK_SLOT(delta_new);
+    CHECK_INT(stub_ota_aborts, 1);
+}
+
+/* The image a delta rebuilds goes through the same checks at commit: what the
+ * device refuses there, it would refuse as a whole image too. */
+static void an_image_the_device_refuses_is_not_downloaded_again(void)
+{
+    char err[160];
+    device_running(delta_old, sizeof(delta_old));
+    push_firmware("v2", delta_new, sizeof(delta_new), 1, delta_patch, sizeof(delta_patch), delta_old,
+                  sizeof(delta_old));
+    stub_ota_end_result = FC_OTA_WRONG_VARIANT;
+    CHECK_INT(update(err, sizeof(err)), -1);
+    CHECK_CONTAINS(err, "another security variant");
+    CHECK_INT(stub_ota_commits, 0);
+    CHECK_INT(stub_ota_aborts, 0);
+    CHECK_STR(fc_oci_firmware_download(), "");
+}
+
 int main(void)
 {
     mbedtls_entropy_context entropy;
@@ -313,6 +487,10 @@ int main(void)
     RUN(absurd_or_too_large_layers_are_refused);
     RUN(signatures_are_checked);
     RUN(firmware_needs_an_ota_slot);
+    RUN(firmware_comes_as_a_delta_from_the_running_image);
+    RUN(a_device_on_another_image_takes_the_whole_one);
+    RUN(a_bad_delta_falls_back_to_the_whole_image);
+    RUN(an_image_the_device_refuses_is_not_downloaded_again);
     reg_reset();
     mbedtls_pk_free(&s_key);
     mbedtls_pk_free(&s_other);

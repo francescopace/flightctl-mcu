@@ -35,7 +35,7 @@ jobs:
           version: ${{ env.MBEDTLS_VERSION }}
       # clang + lld: WASM apps and the fuzzers; ninja: host agent and fuzzers.
       - run: sudo apt-get update && sudo apt-get install -y clang lld ninja-build python3-yaml
-      - run: third_party/fetch-wamr.sh
+      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
       - name: WASM apps (alarm v1 and v2, trend v1)
         run: |
           export PATH="$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)"):$PATH"
@@ -91,7 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: git config --global --add safe.directory '*'
-      - run: third_party/fetch-wamr.sh
+      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
       - uses: actions/cache@v4
         with:
           path: .ccache
@@ -195,6 +195,10 @@ jobs:
           pip install esp-idf-nvs-partition-gen==0.1.9
           # espsecure: the secure test signs a firmware with a key the chip does not know
           pip install esptool==5.1.0
+          # detools: the release is pushed with a delta from the debug build
+          # (the version third_party/fetch-detools.sh fetches for the device)
+          sudo apt-get install -y python3-dev
+          pip install detools==0.53.0
       - uses: oras-project/setup-oras@v1
       - name: esp-emu (checksum verified)
         run: |

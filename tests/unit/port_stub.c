@@ -69,6 +69,11 @@ void stub_reset(void)
     }
     stub_reboots = 0;
     fc_port_hwkey_forget();
+    stub_ota_enabled = 0;
+    stub_ota_len = 0;
+    stub_ota_commits = stub_ota_aborts = stub_ota_end_result = 0;
+    stub_fw = NULL;
+    stub_fw_len = 0;
     stub_hwkey_bits = 0;
     stub_hwkey_seal_fails = 0;
     stub_hwkey_seals = 0;
@@ -136,17 +141,54 @@ const char *fc_port_fw_platform(void)
     return "test";
 }
 
+/* No OTA unless a test turns it on: then the slot is stub_ota (what was
+ * written to it) and the running image is stub_fw. */
+int stub_ota_enabled;
+unsigned char stub_ota[STUB_OTA_MAX];
+size_t stub_ota_len;
+int stub_ota_commits, stub_ota_aborts, stub_ota_end_result;
+const unsigned char *stub_fw;
+size_t stub_fw_len;
+
 int fc_port_ota_begin(size_t size, void **handle)
 {
-    return -1;
+    if (!stub_ota_enabled || size > STUB_OTA_MAX) {
+        return -1;
+    }
+    stub_ota_len = 0;
+    *handle = stub_ota;
+    return 0;
 }
 int fc_port_ota_write(void *handle, const void *data, size_t len)
 {
-    return -1;
+    if (!stub_ota_enabled || len > STUB_OTA_MAX - stub_ota_len) {
+        return -1;
+    }
+    memcpy(stub_ota + stub_ota_len, data, len);
+    stub_ota_len += len;
+    return 0;
 }
 int fc_port_ota_end(void *handle, int commit)
 {
-    return -1;
+    if (!stub_ota_enabled) {
+        return -1;
+    }
+    if (!commit) {
+        stub_ota_aborts++;
+        return 0;
+    }
+    if (stub_ota_end_result == 0) {
+        stub_ota_commits++;
+    }
+    return stub_ota_end_result;
+}
+int fc_port_fw_read(size_t off, void *buf, size_t len)
+{
+    if (stub_fw == NULL || off > stub_fw_len || len > stub_fw_len - off) {
+        return -1;
+    }
+    memcpy(buf, stub_fw + off, len);
+    return 0;
 }
 int fc_port_ota_pending_verify(void)
 {

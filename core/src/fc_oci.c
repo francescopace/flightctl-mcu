@@ -9,6 +9,12 @@
  * firmware is the manifest's first layer; it is streamed to the OTA slot and
  * its sha256 checked against the layer digest before the slot is committed.
  *
+ * A manifest may also carry deltas: layers of type FW_DELTA_TYPE, each a
+ * patch (fc_delta.h) from the image named in its annotations to the first
+ * layer. When one starts from the image that is running, the device downloads
+ * it instead and rebuilds the new image, which must have the first layer's
+ * digest; if anything goes wrong it downloads the first layer.
+ *
  * With a signing key set, the digest the reference resolves to must carry a
  * cosign signature by that key (tag sha256-<hex>.sig, simplesigning payload
  * naming the digest). Manifests below it are fetched by digest and checked,
@@ -21,6 +27,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "fc_delta.h"
 #include "fc_http.h"
 #include "fc_port.h"
 #include "mbedtls/base64.h"
@@ -33,6 +40,11 @@
 #define SIG_ANNOTATION   "dev.cosignproject.cosign/signature"
 #define MAX_SIG_PAYLOAD  4096
 #define MAX_BLOB_SIZE    (64.0 * 1024 * 1024)
+#define FW_DELTA_TYPE    "application/vnd.flightctl-mcu.firmware.delta.v1+detools"
+#define DELTA_FROM       "io.flightctl-mcu.delta.from"      /* digest of the image the patch starts from */
+#define DELTA_FROM_SIZE  "io.flightctl-mcu.delta.from-size" /* and its size in bytes */
+#define MAX_DELTAS       8                                  /* deltas looked at in one manifest */
+#define KV_FW_DOWNLOAD   "fw.download"
 
 static const char *s_signing_key;
 
@@ -222,8 +234,11 @@ static int verify_signature(const oci_ref_t *r, const char *image, const char *d
  * whose mediaType is `layer_type` (NULL: the first layer). */
 static int resolve_layer(const char *image, const char *arch, const char *layer_type, oci_ref_t *r,
                          char blob_digest[72], long *blob_size, char *digest, size_t digest_len,
-                         char *err, size_t err_len)
+                         char *err, size_t err_len, cJSON **layers_out)
 {
+    if (layers_out != NULL) {
+        *layers_out = NULL;
+    }
     if (parse_ref(image, r) != 0) {
         snprintf(err, err_len, "invalid image reference %s", image);
         return -1;
@@ -280,6 +295,9 @@ static int resolve_layer(const char *image, const char *arch, const char *layer_
     *blob_size = sz >= 1 && sz <= MAX_BLOB_SIZE ? (long)sz : -1;
     if (blob != NULL) {
         snprintf(blob_digest, 72, "%s", blob);
+    }
+    if (layers_out != NULL && blob_digest[0] != '\0' && *blob_size > 0) {
+        *layers_out = cJSON_DetachItemFromObject(manifest, "layers"); /* the caller's now */
     }
     if (manifest != top) {
         cJSON_Delete(manifest);
@@ -351,27 +369,9 @@ static int ota_sink(const void *data, size_t len, void *ctx)
     return fc_port_ota_write(ctx, data, len);
 }
 
-int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, char *err, size_t err_len)
+/* Commits the slot; -1 with `err` set when the image is refused. */
+static int ota_commit(void *ota, char *err, size_t err_len)
 {
-    oci_ref_t r;
-    char blob_digest[72];
-    long blob_size;
-    const char *platform = fc_port_fw_platform();
-    if (resolve_layer(image, platform, NULL, &r, blob_digest, &blob_size, digest, digest_len, err, err_len) != 0) {
-        return -1;
-    }
-    fc_port_log(FC_LOG_INFO, "firmware %s (%s): %ld bytes, %s", image, platform, blob_size, blob_digest);
-    void *ota;
-    if (fc_port_ota_begin((size_t)blob_size, &ota) != 0) {
-        snprintf(err, err_len, "cannot start OTA (%ld bytes)", blob_size);
-        return -1;
-    }
-    char ferr[120];
-    if (fetch_blob(&r, blob_digest, blob_size, ota_sink, ota, 1, ferr, sizeof(ferr)) != 0) {
-        snprintf(err, err_len, "firmware %s", ferr);
-        fc_port_ota_end(ota, 0);
-        return -1;
-    }
     int rc = fc_port_ota_end(ota, 1);
     if (rc == FC_OTA_TOO_OLD) {
         snprintf(err, err_len, "firmware older than this device accepts (anti-rollback security version)");
@@ -385,6 +385,228 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
         snprintf(err, err_len, "firmware image rejected by the bootloader checks");
         return -1;
     }
+    return 0;
+}
+
+/* How the last firmware came, for the status: "delta 27 of 1110 KB". */
+static char s_fw_download[48];
+static int s_fw_download_loaded;
+
+const char *fc_oci_firmware_download(void)
+{
+    if (!s_fw_download_loaded) {
+        char *v = NULL;
+        size_t len = 0;
+        if (fc_port_kv_get(KV_FW_DOWNLOAD, &v, &len) == 0) {
+            snprintf(s_fw_download, sizeof(s_fw_download), "%.*s", (int)len, v);
+        }
+        free(v);
+        s_fw_download_loaded = 1;
+    }
+    return s_fw_download;
+}
+
+static void set_firmware_download(const char *how, long got, long full)
+{
+    if (got == full) {
+        snprintf(s_fw_download, sizeof(s_fw_download), "%s %ld KB", how, (full + 512) / 1024);
+    } else {
+        snprintf(s_fw_download, sizeof(s_fw_download), "%s %ld of %ld KB", how, (got + 512) / 1024,
+                 (full + 512) / 1024);
+    }
+    s_fw_download_loaded = 1;
+    fc_port_kv_set(KV_FW_DOWNLOAD, s_fw_download, strlen(s_fw_download));
+}
+
+/* sha256 of the first `size` bytes of the running image, "sha256:<hex>";
+ * -1 when the port cannot read it. Kept for the next call with that size:
+ * the running image does not change. */
+static size_t s_running_size;
+static char s_running_digest[72];
+
+static int running_image_digest(size_t size, char out[72])
+{
+    if (size == s_running_size && s_running_digest[0] != '\0') {
+        memcpy(out, s_running_digest, 72);
+        return 0;
+    }
+    unsigned char *buf = malloc(1024);
+    if (buf == NULL) {
+        return -1;
+    }
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    mbedtls_sha256_starts(&sha, 0);
+    int rc = 0;
+    for (size_t off = 0; off < size && rc == 0;) {
+        size_t n = size - off < 1024 ? size - off : 1024;
+        rc = fc_port_fw_read(off, buf, n);
+        mbedtls_sha256_update(&sha, buf, rc == 0 ? n : 0);
+        off += n;
+    }
+    unsigned char h[32];
+    mbedtls_sha256_finish(&sha, h);
+    mbedtls_sha256_free(&sha);
+    free(buf);
+    if (rc != 0) {
+        return -1;
+    }
+    sha256_hex(h, s_running_digest);
+    s_running_size = size;
+    memcpy(out, s_running_digest, 72);
+    return 0;
+}
+
+/* The delta in `layers` that starts from the running image, if any. */
+static int find_delta(const cJSON *layers, long full_size, char delta_digest[72], long *delta_size, long *from_size)
+{
+    const cJSON *l;
+    int seen = 0;
+    cJSON_ArrayForEach(l, layers) {
+        const char *lt = cJSON_GetStringValue(cJSON_GetObjectItem(l, "mediaType"));
+        if (lt == NULL || strcmp(lt, FW_DELTA_TYPE) != 0) {
+            continue;
+        }
+        if (++seen > MAX_DELTAS) {
+            break;
+        }
+        const cJSON *ann = cJSON_GetObjectItem(l, "annotations");
+        const char *from = cJSON_GetStringValue(cJSON_GetObjectItem(ann, DELTA_FROM));
+        const char *fs = cJSON_GetStringValue(cJSON_GetObjectItem(ann, DELTA_FROM_SIZE));
+        const char *blob = cJSON_GetStringValue(cJSON_GetObjectItem(l, "digest"));
+        const cJSON *size = cJSON_GetObjectItem(l, "size");
+        double sz = cJSON_IsNumber(size) ? size->valuedouble : -1;
+        double fsz = fs != NULL ? strtod(fs, NULL) : -1;
+        /* A delta as large as the image saves nothing. */
+        if (from == NULL || blob == NULL || strlen(blob) >= 72 || !(sz >= 1 && sz < (double)full_size) ||
+            !(fsz >= 1 && fsz <= MAX_BLOB_SIZE)) {
+            continue;
+        }
+        char running[72];
+        if (running_image_digest((size_t)fsz, running) != 0) {
+            return 0; /* this port cannot read its image: no deltas at all */
+        }
+        if (strcmp(running, from) == 0) {
+            snprintf(delta_digest, 72, "%s", blob);
+            *delta_size = (long)sz;
+            *from_size = (long)fsz;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+typedef struct {
+    void *ota;
+    mbedtls_sha256_context sha;
+    fc_delta_t *delta;
+} delta_ctx_t;
+
+static int delta_read(size_t off, void *buf, size_t len, void *ctx)
+{
+    return fc_port_fw_read(off, buf, len);
+}
+
+static int delta_write(const void *data, size_t len, void *ctx)
+{
+    delta_ctx_t *c = ctx;
+    mbedtls_sha256_update(&c->sha, data, len);
+    return fc_port_ota_write(c->ota, data, len);
+}
+
+static int delta_sink(const void *data, size_t len, void *ctx)
+{
+    return fc_delta_feed(((delta_ctx_t *)ctx)->delta, data, len);
+}
+
+/* Rebuilds the new image in the OTA slot from the running one and a delta.
+ * 0: done; 1: not this way (`why` says it), the slot is untouched and the
+ * whole image can still be downloaded; -1: the image is there and the device
+ * refuses it (`err` set). */
+static int fetch_firmware_delta(const oci_ref_t *r, const char *delta_digest, long delta_size, long from_size,
+                                const char *full_digest, long full_size, char *why, size_t why_len, char *err,
+                                size_t err_len)
+{
+    delta_ctx_t c = {0};
+    if (fc_port_ota_begin((size_t)full_size, &c.ota) != 0) {
+        snprintf(why, why_len, "cannot start OTA");
+        return 1;
+    }
+    c.delta = fc_delta_begin((size_t)delta_size, (size_t)from_size, (size_t)full_size, delta_read, delta_write, &c);
+    if (c.delta == NULL) {
+        fc_port_ota_end(c.ota, 0);
+        snprintf(why, why_len, "out of memory");
+        return 1;
+    }
+    mbedtls_sha256_init(&c.sha);
+    mbedtls_sha256_starts(&c.sha, 0);
+    int ok = fetch_blob(r, delta_digest, delta_size, delta_sink, &c, 1, why, why_len) == 0;
+    /* Even after a failed download: it frees the decoder. */
+    if (fc_delta_end(c.delta) != 0 && ok) {
+        snprintf(why, why_len, "the delta does not apply");
+        ok = 0;
+    }
+    unsigned char h[32];
+    char got[72];
+    mbedtls_sha256_finish(&c.sha, h);
+    mbedtls_sha256_free(&c.sha);
+    sha256_hex(h, got);
+    if (ok && strcmp(got, full_digest) != 0) {
+        snprintf(why, why_len, "the rebuilt image is not %.19s...", full_digest);
+        ok = 0;
+    }
+    if (!ok) {
+        fc_port_ota_end(c.ota, 0);
+        return 1;
+    }
+    return ota_commit(c.ota, err, err_len);
+}
+
+int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, char *err, size_t err_len)
+{
+    oci_ref_t r;
+    char blob_digest[72];
+    long blob_size;
+    cJSON *layers = NULL;
+    const char *platform = fc_port_fw_platform();
+    if (resolve_layer(image, platform, NULL, &r, blob_digest, &blob_size, digest, digest_len, err, err_len,
+                      &layers) != 0) {
+        return -1;
+    }
+    char delta_digest[72];
+    long delta_size = 0, from_size = 0;
+    int has_delta = find_delta(layers, blob_size, delta_digest, &delta_size, &from_size);
+    cJSON_Delete(layers);
+    if (has_delta) {
+        fc_port_log(FC_LOG_INFO, "firmware %s (%s): %ld bytes, as a delta of %ld from the running image", image,
+                    platform, blob_size, delta_size);
+        char why[120] = "";
+        int rc = fetch_firmware_delta(&r, delta_digest, delta_size, from_size, blob_digest, blob_size, why,
+                                      sizeof(why), err, err_len);
+        if (rc == 0) {
+            set_firmware_download("delta", delta_size, blob_size);
+        }
+        if (rc <= 0) {
+            return rc;
+        }
+        fc_port_log(FC_LOG_WARN, "firmware delta not used (%s): downloading the whole image", why);
+    }
+    fc_port_log(FC_LOG_INFO, "firmware %s (%s): %ld bytes, %s", image, platform, blob_size, blob_digest);
+    void *ota;
+    if (fc_port_ota_begin((size_t)blob_size, &ota) != 0) {
+        snprintf(err, err_len, "cannot start OTA (%ld bytes)", blob_size);
+        return -1;
+    }
+    char ferr[120];
+    if (fetch_blob(&r, blob_digest, blob_size, ota_sink, ota, 1, ferr, sizeof(ferr)) != 0) {
+        snprintf(err, err_len, "firmware %s", ferr);
+        fc_port_ota_end(ota, 0);
+        return -1;
+    }
+    if (ota_commit(ota, err, err_len) != 0) {
+        return -1;
+    }
+    set_firmware_download("full", blob_size, blob_size);
     return 0;
 }
 
@@ -411,7 +633,8 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
     oci_ref_t r;
     char blob_digest[72];
     long blob_size;
-    if (resolve_layer(image, arch, layer_type, &r, blob_digest, &blob_size, digest, digest_len, err, err_len) != 0) {
+    if (resolve_layer(image, arch, layer_type, &r, blob_digest, &blob_size, digest, digest_len, err, err_len,
+                      NULL) != 0) {
         return -1;
     }
     if ((size_t)blob_size > max_size) {

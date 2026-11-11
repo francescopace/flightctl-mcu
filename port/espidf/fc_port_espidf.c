@@ -343,6 +343,17 @@ static const char *fw_variant(uint32_t flags)
     return flags == 0 ? "plain" : "secure";
 }
 
+/* The running image as it was downloaded: the slot is read through the flash
+ * encryption, so this is the image in clear, signature included. */
+int fc_port_fw_read(size_t off, void *buf, size_t len)
+{
+    const esp_partition_t *p = esp_ota_get_running_partition();
+    if (p == NULL || off > p->size || len > p->size - off) {
+        return -1;
+    }
+    return esp_partition_read(p, off, buf, len) == ESP_OK ? 0 : -1;
+}
+
 int fc_port_ota_end(void *handle, int commit)
 {
     esp_ota_handle_t h = (esp_ota_handle_t)(uintptr_t)handle;
