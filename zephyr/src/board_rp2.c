@@ -38,16 +38,35 @@ static int wait_for_terminal(void)
 }
 SYS_INIT(wait_for_terminal, APPLICATION, 0);
 
+#ifdef CONFIG_INIT_STACKS
+/* How much of each thread's stack has ever been used: what tells whether a
+ * stack can be smaller on a board with little RAM. */
+static void stack_line(const struct k_thread *t, void *arg)
+{
+    size_t unused = 0;
+    if (k_thread_stack_space_get(t, &unused) == 0) {
+        const char *name = k_thread_name_get((k_tid_t)t);
+        printk("stack %-12s %5u of %5u used\n", name != NULL && name[0] != '\0' ? name : "(pthread)",
+               (unsigned)(t->stack_info.size - unused), (unsigned)t->stack_info.size);
+    }
+}
+#endif
+
 static void bootloader_watch(void *a, void *b, void *c)
 {
-    for (;;) {
+    for (int i = 0;; i++) {
         uint32_t baud = 0;
         if (uart_line_ctrl_get(CONSOLE, UART_LINE_CTRL_BAUD_RATE, &baud) == 0 && baud == 1200) {
             reset_usb_boot(0, 0);
         }
+#ifdef CONFIG_INIT_STACKS
+        if (i % 60 == 59) { /* every 30 s */
+            k_thread_foreach(stack_line, NULL);
+        }
+#endif
         k_sleep(K_MSEC(500));
     }
 }
-K_THREAD_DEFINE(fc_bootloader_watch, 1024, bootloader_watch, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
+K_THREAD_DEFINE(fc_bootloader_watch, 2048, bootloader_watch, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
 
 #endif

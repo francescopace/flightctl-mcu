@@ -11,6 +11,14 @@ config FC_HEAP_SIZE
 	  Everything the agent allocates: TLS sessions, JSON documents, WASM
 	  modules and their memory. The device reports how much of it is free.
 
+config FC_AGENT_STACK_SIZE
+	int "Stack of each of the agent's two threads, in bytes (0: the core's default)"
+	default 0
+	help
+	  The core asks for 24 KB on a microcontroller. A board short of RAM can
+	  give less once it has measured what the threads use (CONFIG_INIT_STACKS
+	  and, on the Pico, the console's stack report).
+
 config FC_LOG_DEBUG
 	bool "Log the agent's debug messages"
 	default n

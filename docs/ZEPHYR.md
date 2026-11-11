@@ -5,9 +5,9 @@ application in `zephyr/`. The core is unchanged between the two.
 
 **Where it stands.** On `native_sim` (Zephyr built as a Linux process) the
 agent passes the end-to-end test of the simulated device, against an
-unmodified Flight Control. On a real Raspberry Pi Pico W it enrolls over WiFi
-and stays online, with almost no memory to spare (below). Not there yet:
-firmware updates (they need MCUboot), and apps on the board.
+unmodified Flight Control. On a real Raspberry Pi Pico W it enrolls over WiFi,
+stays online and runs a signed WASM app (below); on some boots its network
+does not work. Not there yet: firmware updates (they need MCUboot).
 
 ## Try it
 
@@ -120,16 +120,25 @@ held down, or, once it runs this build, `PORT=/dev/cu.usbmodemXXXX`.
 What was seen on the board: it joins the network in 3 s, takes the time from
 SNTP, makes its key in 2 s, does a TLS 1.3 handshake in about 9 s, enrolls,
 keeps its identity across restarts, and is Online and UpToDate in Flight
-Control with its two connections open.
+Control with its two connections open. Given a fleet, it stores the config
+file, downloads the signed WASM app from the registry and runs it.
 
-Memory is the limit. Of 264 KB: 114 KB of static data in this build (the
-WiFi driver's and the network stack's buffers, the USB console), 71 KB of
-kernel heap (the two agent threads' 24 KB stacks, 14 KB the WiFi driver and
-USB take), 81 KB of C heap. With both TLS connections open 11 KB of that
-heap were free, and it had been down to 4 KB: an app or a firmware update
-does not fit yet. Where there is room to find: the stacks (how much of the
-24 KB they use is not measured), the USB console (12 KB, only for
-development), the WiFi driver's fixed 32 KB of buffers.
+Memory, of 264 KB: 111 KB of static data in this build (the WiFi driver's and
+the network stack's buffers, the USB console), 45 KB of kernel heap (thread
+stacks, and 14 KB the WiFi driver and USB take), 110 KB of C heap. With both
+TLS connections open and the app running, 34 KB of that heap were free, and
+24 KB at the least. It fits because the stacks are sized from what was
+measured on the board: the agent's threads use 5.6 KB at most (installing an
+app) and get 10 KB, not the 24 KB the core asks for by default; the main
+thread uses 3 KB and gets 8 KB.
+
+Open on this board:
+
+- **On some boots the network does not work**: the board joins WiFi and gets
+  an address, then name lookups time out for as long as it runs. A restart
+  usually clears it. Not looked into.
+- **No entropy source** (below): its keys are predictable.
+- **Never run there**: firmware updates, certificate renewal, days of uptime.
 
 What the board taught the port:
 
@@ -147,7 +156,9 @@ What the board taught the port:
   no driver for its ring oscillator: this build uses Zephyr's test generator,
   and its keys are predictable. To be solved before any real use.
 - **One DNS query at a time** is Zephyr's default; the agent's two threads
-  ask together at start.
+  ask together at start. **Four connections in all** is another: the two to
+  Flight Control, DHCP and DNS use them up, and the one to the registry was
+  refused.
 
 ## Things to know about native_sim
 

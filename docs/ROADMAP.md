@@ -47,7 +47,7 @@ What burns eFuses (Secure Boot, flash encryption, anti-rollback, key revocation)
 
 ## Milestone 3: beyond Espressif
 
-- **Zephyr port** of `port/`: in progress. On `native_sim` the agent passes the simulated device's end-to-end test against Flight Control, in CI, with the core unchanged ([ZEPHYR.md](ZEPHYR.md)). On a real Raspberry Pi Pico W it enrolls over WiFi and stays online, with almost no RAM to spare (264 KB). Next: memory on that board, firmware updates with MCUboot, an entropy source for the RP2040.
+- **Zephyr port** of `port/`: in progress. On `native_sim` the agent passes the simulated device's end-to-end test against Flight Control, in CI, with the core unchanged ([ZEPHYR.md](ZEPHYR.md)). On a real Raspberry Pi Pico W (264 KB of RAM) it enrolls over WiFi, stays online and runs a signed WASM app; the board is a test bench, not a target (no entropy source, and its network fails on some boots). Next: firmware updates with MCUboot, on a board with more room.
 - **Other links**: Ethernet, cellular (NB-IoT, LTE-M).
 - **Delta firmware updates**: done. A release can carry deltas from earlier releases (`fw-push.py --delta-from`); a device running one of those downloads the delta, 1 to 12% of the image in the cases measured, and rebuilds the new image from its own, checked against the signed digest; otherwise, or if anything fails, it downloads the image. detools' format (bsdiff, heatshrink), as in Espressif's `esp_delta_ota`, applied in the core, so the next ports get it too. See [DELTA.md](DELTA.md). Emulator only, like Milestone 2.
 

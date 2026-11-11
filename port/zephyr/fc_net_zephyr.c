@@ -33,14 +33,16 @@ int mbedtls_net_connect(mbedtls_net_context *ctx, const char *host, const char *
         .ai_socktype = proto == MBEDTLS_NET_PROTO_UDP ? SOCK_DGRAM : SOCK_STREAM,
     };
     struct zsock_addrinfo *list = NULL;
-    if (zsock_getaddrinfo(host, port, &hints, &list) != 0 || list == NULL) {
+    int gai = zsock_getaddrinfo(host, port, &hints, &list);
+    if (gai != 0 || list == NULL) {
+        fc_port_log(FC_LOG_WARN, "network: cannot resolve %s (%s)", host, zsock_gai_strerror(gai));
         return MBEDTLS_ERR_NET_UNKNOWN_HOST;
     }
     int ret = MBEDTLS_ERR_NET_UNKNOWN_HOST;
     for (struct zsock_addrinfo *a = list; a != NULL; a = a->ai_next) {
         int fd = zsock_socket(a->ai_family, a->ai_socktype, a->ai_protocol);
         if (fd < 0) {
-            ret = MBEDTLS_ERR_NET_SOCKET_FAILED;
+            ret = failed("socket", MBEDTLS_ERR_NET_SOCKET_FAILED);
             continue;
         }
         if (zsock_connect(fd, a->ai_addr, a->ai_addrlen) == 0) {
@@ -48,8 +50,8 @@ int mbedtls_net_connect(mbedtls_net_context *ctx, const char *host, const char *
             ret = 0;
             break;
         }
+        ret = failed("connect", MBEDTLS_ERR_NET_CONNECT_FAILED);
         zsock_close(fd);
-        ret = MBEDTLS_ERR_NET_CONNECT_FAILED;
     }
     zsock_freeaddrinfo(list);
     return ret;

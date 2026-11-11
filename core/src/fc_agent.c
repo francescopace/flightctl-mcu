@@ -977,8 +977,11 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     pthread_attr_t status_attr, spec_attr;
     pthread_attr_init(&status_attr);
     pthread_attr_init(&spec_attr);
-    /* TLS handshakes (ECDSA, X.509 parsing) need a generous stack on MCUs. */
-#if defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
+    /* TLS handshakes (ECDSA, X.509 parsing) need a generous stack on MCUs.
+     * A build that has measured what its threads use can say so. */
+#if defined(FC_AGENT_STACK_SIZE)
+    size_t stack = FC_AGENT_STACK_SIZE;
+#elif defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
     size_t stack = 24 * 1024;
 #else
     size_t stack = 256 * 1024; /* 64-bit hosts need more */
