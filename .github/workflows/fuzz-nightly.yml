@@ -20,14 +20,18 @@ jobs:
   fuzz:
     name: fuzzing, ${{ inputs.minutes || '20' }} minutes per target
     runs-on: ubuntu-latest
+    # Zephyr's build image has clang and ninja: nothing to install (ci.yml).
+    container: ghcr.io/zephyrproject-rtos/ci-base:v0.29.1
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory '*'
+      - name: clang on the PATH
+        run: echo "$(dirname "$(ls /usr/lib/llvm-*/bin/clang | tail -1)")" >> "$GITHUB_PATH"
       - uses: ./.github/actions/mbedtls
         id: mbedtls
         with:
           version: ${{ env.MBEDTLS_VERSION }}
-      - run: sudo apt-get update && sudo apt-get install -y clang ninja-build
       - uses: actions/cache/restore@v4
         with:
           path: build/fuzz/corpus_*
