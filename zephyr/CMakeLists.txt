@@ -54,6 +54,9 @@ target_sources(app PRIVATE
     ${ROOT}/core/third_party/cjson/cJSON.c
     ${DETOOLS_SRCS}
     ${WAMR_RUNTIME_LIB_SOURCE})
+if(CONFIG_FC_ENTROPY_RP2_ROSC)
+    target_sources(app PRIVATE ${ROOT}/port/zephyr/fc_entropy_rp2.c)
+endif()
 # Raspberry Pi Pico boards: the USB console's conveniences.
 if(CONFIG_SOC_FAMILY_RPI_PICO)
     target_sources(app PRIVATE src/board_rp2.c)

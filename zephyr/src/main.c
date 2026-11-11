@@ -84,6 +84,13 @@ static void wait_for_time(void)
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
 
+/* Where several access points carry the network, the chip may join a far one
+ * (Infineon's driver takes no access point's address, and telling the chip to
+ * prefer the strongest changed nothing): there, name lookups and handshakes
+ * time out. A weak join is given up for another one, a few times. */
+#define WIFI_GOOD_DBM (-60)
+#define WIFI_JOINS 5
+
 static K_SEM_DEFINE(s_ip_up, 0, 1);
 static struct net_mgmt_event_callback s_ip_cb;
 
@@ -117,12 +124,30 @@ static void wifi_up(const cJSON *creds)
         .band = WIFI_FREQ_BAND_2_4_GHZ,
         .mfp = WIFI_MFP_OPTIONAL,
     };
+    int joins = 0;
     for (;;) {
         fc_port_log(FC_LOG_INFO, "WiFi: joining \"%s\"", ssid);
-        if (net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &p, sizeof(p)) == 0 &&
-            k_sem_take(&s_ip_up, K_SECONDS(30)) == 0) {
-            fc_port_log(FC_LOG_INFO, "WiFi: connected");
-            return;
+        k_sem_reset(&s_ip_up);
+        if (net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &p, sizeof(p)) == 0) {
+            struct wifi_iface_status st = {0};
+            int known = net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, iface, &st, sizeof(st)) == 0;
+            if (known && st.rssi < WIFI_GOOD_DBM && ++joins < WIFI_JOINS) {
+                fc_port_log(FC_LOG_INFO, "WiFi: access point ..:%02x:%02x is weak (%d dBm), looking for a nearer one",
+                            st.bssid[4], st.bssid[5], st.rssi);
+                net_mgmt(NET_REQUEST_WIFI_DISCONNECT, iface, NULL, 0);
+                k_sleep(K_SECONDS(1));
+                continue;
+            }
+            if (k_sem_take(&s_ip_up, K_SECONDS(30)) == 0) {
+                if (known) {
+                    fc_port_log(FC_LOG_INFO, "WiFi: connected (channel %d, %d dBm, access point ..:%02x:%02x)",
+                                st.channel, st.rssi, st.bssid[4], st.bssid[5]);
+                } else {
+                    fc_port_log(FC_LOG_INFO, "WiFi: connected");
+                }
+                return;
+            }
+            net_mgmt(NET_REQUEST_WIFI_DISCONNECT, iface, NULL, 0);
         }
         fc_port_log(FC_LOG_WARN, "WiFi: no connection yet, trying again");
         k_sleep(K_SECONDS(5));

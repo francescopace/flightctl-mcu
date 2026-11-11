@@ -5,13 +5,14 @@
  *   the first messages are not lost;
  * - setting the port to 1200 baud restarts the board in its USB bootloader,
  *   ready for a new UF2, as firmware built with the Pico SDK does
- *   (stty -f /dev/cu.usbmodemXXXX 1200).
+ *   (stty -f /dev/cu.usbmodemXXXX 1200); 2400 baud restarts the firmware.
  */
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/reboot.h>
 
 #include <pico/bootrom.h>
 
@@ -58,6 +59,9 @@ static void bootloader_watch(void *a, void *b, void *c)
         uint32_t baud = 0;
         if (uart_line_ctrl_get(CONSOLE, UART_LINE_CTRL_BAUD_RATE, &baud) == 0 && baud == 1200) {
             reset_usb_boot(0, 0);
+        }
+        if (baud == 2400) { /* and 2400 baud just restarts it */
+            sys_reboot(SYS_REBOOT_COLD);
         }
 #ifdef CONFIG_INIT_STACKS
         if (i % 60 == 59) { /* every 30 s */

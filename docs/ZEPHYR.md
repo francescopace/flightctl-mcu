@@ -134,10 +134,7 @@ thread uses 3 KB and gets 8 KB.
 
 Open on this board:
 
-- **On some boots the network does not work**: the board joins WiFi and gets
-  an address, then name lookups time out for as long as it runs. A restart
-  usually clears it. Not looked into.
-- **No entropy source** (below): its keys are predictable.
+- **The entropy source is not a certified one** (below).
 - **Never run there**: firmware updates, certificate renewal, days of uptime.
 
 What the board taught the port:
@@ -152,9 +149,21 @@ What the board taught the port:
 - **A fatal error restarts the device**, and what it was is kept in RAM and
   logged at the next boot: Zephyr's default is to stop for ever, silently
   when the console is on USB.
-- **No entropy source.** The RP2040 has no random generator and Zephyr 4.3
-  no driver for its ring oscillator: this build uses Zephyr's test generator,
-  and its keys are predictable. To be solved before any real use.
+- **Entropy from the ring oscillator.** The RP2040 has no random generator
+  and Zephyr 4.3 no entropy driver for it. TLS and the device key take their
+  entropy from the chip's ring oscillator, sixteen samples folded into each
+  bit (`port/zephyr/fc_entropy_rp2.c`), and the port refuses to start TLS if
+  the oscillator gives the same bit every time. It is what the Pico SDK does
+  too, and it is not a certified source. The rest of Zephyr (TCP sequence
+  numbers, DNS query ids) still uses the test generator, which is
+  predictable.
+- **The chip joins any access point of the network, not the nearest.** On a
+  network carried by three access points, the board joined a far one (-75
+  dBm, against -42 for the near one) on 4 boots of 20, and on each of those
+  name lookups and handshakes timed out. Infineon's driver takes no access
+  point's address, and asking the chip to prefer the strongest changed
+  nothing, so `main.c` gives up a join weaker than -60 dBm and joins again,
+  up to five times. Where every access point is weak, the last join stays.
 - **One DNS query at a time** is Zephyr's default; the agent's two threads
   ask together at start. **Four connections in all** is another: the two to
   Flight Control, DHCP and DNS use them up, and the one to the registry was

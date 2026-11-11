@@ -19,6 +19,16 @@ config FC_AGENT_STACK_SIZE
 	  give less once it has measured what the threads use (CONFIG_INIT_STACKS
 	  and, on the Pico, the console's stack report).
 
+config FC_ENTROPY_RP2_ROSC
+	bool "Entropy for TLS from the RP2040's ring oscillator"
+	depends on SOC_SERIES_RP2040
+	default y
+	help
+	  The RP2040 has no random generator and Zephyr 4.3 no entropy driver
+	  for it. With this, mbedTLS takes its entropy from the chip's ring
+	  oscillator (port/zephyr/fc_entropy_rp2.c); set
+	  CONFIG_MBEDTLS_ENTROPY_POLL_ZEPHYR=n with it.
+
 config FC_LOG_DEBUG
 	bool "Log the agent's debug messages"
 	default n
