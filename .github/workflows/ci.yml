@@ -1,8 +1,8 @@
 name: ci
 
 # Stage 1 (parallel): firmware for every chip; host agent, WASM apps and a
-# quick fuzzing pass in one job. Stage 2: the end-to-end tests, which reuse
-# what stage 1 built instead of building it again. Long fuzzing runs nightly
+# quick fuzzing pass in one job; the Zephyr build. Stage 2: the end-to-end
+# tests, which reuse what stage 1 built instead of building it again. Long fuzzing runs nightly
 # (fuzz-nightly.yml).
 
 on:
@@ -130,6 +130,64 @@ jobs:
             firmware/build-${{ matrix.target }}-ble/flightctl_mcu_fw.bin
             firmware/build-${{ matrix.target }}-ble/flightctl_mcu_fw.elf
             firmware/build-${{ matrix.target }}-ble/merged-binary.bin
+
+  zephyr:
+    name: Zephyr (native_sim)
+    runs-on: ubuntu-latest
+    # Zephyr's own build image: west, CMake, the host compiler native_sim uses.
+    container: ghcr.io/zephyrproject-rtos/ci-base:v0.29.1
+    steps:
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory '*'
+      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
+      # The Zephyr tree (about 900 MB) changes only with the pinned version.
+      - uses: actions/cache@v4
+        with:
+          path: third_party/zephyr-ws
+          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh') }}
+      - run: third_party/fetch-zephyr.sh
+      - name: build
+        run: zephyr/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zephyr-native-sim
+          path: zephyr/build-native_sim_native_64/zephyr/zephyr.exe
+
+  e2e-zephyr:
+    name: end-to-end (Zephyr on native_sim vs Flight Control on kind)
+    needs: [zephyr, build]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: |
+          kind version && helm version --short && kubectl version --client
+          sudo curl -fsSL -o /usr/local/bin/flightctl \
+            https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
+          sudo chmod +x /usr/local/bin/flightctl
+          sudo apt-get update && sudo apt-get install -y python3-yaml
+      - uses: oras-project/setup-oras@v1
+      - name: Zephyr build from the Zephyr job (not rebuilt)
+        uses: actions/download-artifact@v4
+        with:
+          name: zephyr-native-sim
+          path: zephyr/build-native_sim_native_64/zephyr
+      - run: chmod +x zephyr/build-native_sim_native_64/zephyr/zephyr.exe
+      - name: WASM apps from the WASM job (not rebuilt)
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-apps
+          path: wasm-apps/build
+      # The test of the simulated device, with the Zephyr build as the device.
+      - name: e2e
+        run: PREBUILT_APPS=1 DEVICE_KIND=zephyr ci/e2e.sh
+      - name: cluster state on failure
+        if: failure()
+        run: |
+          kubectl get pods -A || true
+          kubectl get events -n flightctl --sort-by=.lastTimestamp | tail -40 || true
 
   e2e:
     name: end-to-end (simulated device vs Flight Control on kind)

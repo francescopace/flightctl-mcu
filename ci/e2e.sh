@@ -9,6 +9,8 @@
 #
 #   ci/e2e.sh                 deploy Flight Control on kind + registry, then test
 #   SKIP_DEPLOY=1 ci/e2e.sh   test against the cluster and registry already running
+#   DEVICE_KIND=zephyr ci/e2e.sh   the same test with the Zephyr build on native_sim
+#                             (zephyr/build.sh) as the device, instead of the host agent
 #
 # Needs: kind, helm, kubectl, flightctl, oras, clang + wasm-ld, python3 (PyYAML),
 # and the host agent built in build/host.
@@ -24,6 +26,10 @@ TAG="e2e$(date +%s)"
 WORK="$(mktemp -d)"
 echo "work dir: $WORK"
 FLEET=e2e
+DEVICE_KIND="${DEVICE_KIND:-host}"
+# The Zephyr device's flash: inside the repository, which is what the build
+# image sees when the device runs in it (zephyr/run.sh).
+ZFLASH="$ROOT/build/e2e-zephyr-$TAG.bin"
 AGENT_PID=""
 DEVICE=""
 OLD_DEVICE=""
@@ -48,7 +54,7 @@ cleanup() {
     [[ -n "$DEVICE" ]] && flightctl delete "enrollmentrequest/$DEVICE" >/dev/null 2>&1 || true
     [[ -n "$OLD_DEVICE" ]] && flightctl delete "device/$OLD_DEVICE" >/dev/null 2>&1 || true
     [[ -n "$OLD_DEVICE" ]] && flightctl delete "enrollmentrequest/$OLD_DEVICE" >/dev/null 2>&1 || true
-    rm -rf "$WORK"
+    rm -rf "$WORK" "$ZFLASH"
   fi
   # Back to the default certificate lifetime on a cluster that stays up.
   [[ -n "${SKIP_DEPLOY:-}" ]] && kubectl -n flightctl set env deployment/flightctl-api \
@@ -159,22 +165,54 @@ if command -v cosign >/dev/null; then
   echo "ok: cosign verifies the signature"
 fi
 
-# start_agent: runs the simulated device (its state stays in $WORK/data) and
-# sets DEVICE to the name it reports.
-start_agent() {
-  build/host/fc-host-agent --server "$AGENT" --ca "$WORK/secrets/ca.crt" \
-    --enroll-cert "$WORK/secrets/enroll.crt" --enroll-key "$WORK/secrets/enroll.key" \
-    --signing-key "$WORK/signing/signing.pub" \
-    --data-dir "$WORK/data" --label app=e2e --label site=ci -v >>"$WORK/agent.log" 2>&1 &
-  AGENT_PID=$!
-  local before; before=$(grep -c 'device name:' "$WORK/agent.log" 2>/dev/null || true)
-  for i in $(seq 1 30); do
-    (( $(grep -c 'device name:' "$WORK/agent.log" 2>/dev/null || true) > before )) && break
+# How many times the device has said its name: once per start.
+starts() { awk '/device name:/ { n++ } END { print n + 0 }' "$WORK/agent.log" 2>/dev/null || echo 0; }
+
+# await_device <starts before> <seconds>: waits for the device to say its name
+# again, and sets DEVICE to it.
+await_device() {
+  for i in $(seq 1 "$2"); do
+    (( $(starts) > $1 )) && break
     sleep 1
   done
+  (( $(starts) > $1 )) || fail "the device did not start"
   DEVICE=$(sed -n 's/.*device name: \([a-z0-9]*\).*/\1/p' "$WORK/agent.log" | tail -1)
-  [[ -n "$DEVICE" ]] || fail "agent did not start"
   echo "device: $DEVICE"
+}
+
+# start_agent: runs the device and sets DEVICE to the name it reports. Its
+# state stays in $WORK/data (host agent) or in its flash image (Zephyr).
+start_agent() {
+  local before; before=$(starts)
+  if [[ "$DEVICE_KIND" == zephyr ]]; then
+    if [[ ! -f "$ZFLASH" ]]; then
+      mkdir -p "$(dirname "$ZFLASH")"
+      python3 -c "open('$ZFLASH', 'wb').write(b'\xff' * (2 * 1024 * 1024))"
+      cp "$WORK/signing/signing.pub" "$WORK/secrets/signing.pub"
+      deploy/provision.py --format zephyr --secrets "$WORK/secrets" --server "$AGENT" \
+        --labels app=e2e,site=ci --image "$ZFLASH" >/dev/null
+    fi
+    zephyr/run.sh "$ZFLASH" >>"$WORK/agent.log" 2>&1 &
+  else
+    build/host/fc-host-agent --server "$AGENT" --ca "$WORK/secrets/ca.crt" \
+      --enroll-cert "$WORK/secrets/enroll.crt" --enroll-key "$WORK/secrets/enroll.key" \
+      --signing-key "$WORK/signing/signing.pub" \
+      --data-dir "$WORK/data" --label app=e2e --label site=ci -v >>"$WORK/agent.log" 2>&1 &
+  fi
+  AGENT_PID=$!
+  await_device "$before" 60
+}
+
+# config_stored <threshold> <nth write> <ok message> <failure>: the device
+# stored the fleet's config file. The host agent's is a file here; the Zephyr
+# device's is inside its flash image, so its log is what says it was written.
+config_stored() {
+  if [[ "$DEVICE_KIND" == zephyr ]]; then
+    (( $(grep -c 'config: wrote /etc/fc-app/alarm.json' "$WORK/agent.log") >= $2 )) || fail "$4"
+  else
+    grep -q "\"threshold_c\": $1" "$WORK/data/files/_etc_fc-app_alarm.json" || fail "$4"
+  fi
+  echo "ok: $3"
 }
 
 log "start the simulated device"
@@ -196,8 +234,7 @@ log "fleet: config + app v1"
 apply_fleet 40 "v1.$TAG"
 wait_for 180 "app v1 running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v1')"
 wait_for 60 "device up to date" "st['updated']['status'] == 'UpToDate'"
-grep -q '"threshold_c": 40' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "config file not written"
-echo "ok: config file written"
+config_stored 40 1 "config file written" "config file not written"
 
 log "app update v1 -> v2 (no restart)"
 pid_before=$AGENT_PID
@@ -211,8 +248,7 @@ log "config change"
 before=$(rendered)
 apply_fleet 35 "v2.$TAG"
 wait_for 180 "new config applied" "d['metadata']['annotations']['device-controller/renderedVersion'] != '$before' and st['config']['renderedVersion'] == d['metadata']['annotations']['device-controller/renderedVersion']"
-grep -q '"threshold_c": 35' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "new config not written"
-echo "ok: config file updated"
+config_stored 35 2 "config file updated" "new config not written"
 
 log "unsigned app rejected"
 apply_fleet 35 "v2.$TAG-unsigned"
@@ -268,20 +304,29 @@ log "certificate expired while the server was down: the device enrolls again"
 # its apps and config; the allow list approves the new request.
 first=$(custom mgmtCertNotAfter)
 expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
+starts_before=$(starts)
 kubectl -n flightctl scale deployment/flightctl-api --replicas=0 >/dev/null
 wait_s=$(( expiry - $(date +%s) + 70 ))
 (( wait_s > 0 )) && { echo "server down, waiting ${wait_s}s for the certificate to expire"; sleep "$wait_s"; }
 kubectl -n flightctl scale deployment/flightctl-api --replicas=1 >/dev/null
 kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
-for i in $(seq 1 60); do
-  kill -0 "$AGENT_PID" 2>/dev/null || break
-  (( i == 60 )) && fail "the device did not give up its expired certificate"
-  sleep 3
-done
-grep -q "enrolling again as a new device" "$WORK/agent.log" || fail "no re-enrollment in the agent log"
-echo "ok: the device dropped its expired identity"
 OLD_DEVICE=$DEVICE
-start_agent   # the agent stops for the restart; here we start it again
+if [[ "$DEVICE_KIND" == zephyr ]]; then
+  # The Zephyr device reboots by itself and comes back under its new name,
+  # possibly before the server is back.
+  await_device "$starts_before" 180
+  grep -q "enrolling again as a new device" "$WORK/agent.log" || fail "no re-enrollment in the agent log"
+  echo "ok: the device dropped its expired identity and rebooted"
+else
+  for i in $(seq 1 60); do
+    kill -0 "$AGENT_PID" 2>/dev/null || break
+    (( i == 60 )) && fail "the device did not give up its expired certificate"
+    sleep 3
+  done
+  grep -q "enrolling again as a new device" "$WORK/agent.log" || fail "no re-enrollment in the agent log"
+  echo "ok: the device dropped its expired identity"
+  start_agent   # the agent stops for the restart; here we start it again
+fi
 [[ "$DEVICE" != "$OLD_DEVICE" ]] || fail "same device name after re-enrollment"
 for i in $(seq 1 30); do
   flightctl get "enrollmentrequest/$DEVICE" >/dev/null 2>&1 && break
@@ -291,7 +336,11 @@ done
 printf 'devices:\n  - name: %s\n    labels:\n      stage: ci\n' "$DEVICE" > "$WORK/allowlist.yaml"
 deploy/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
 wait_for 120 "new identity Online" "st.get('summary', {}).get('status') == 'Online'"
-grep -q '"threshold_c": 30' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "config lost across re-enrollment"
-echo "ok: config kept"
+if [[ "$DEVICE_KIND" == zephyr ]]; then
+  echo "config across re-enrollment: not checked, the file is inside the flash image"
+else
+  grep -q '"threshold_c": 30' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "config lost across re-enrollment"
+  echo "ok: config kept"
+fi
 
 log "PASS"

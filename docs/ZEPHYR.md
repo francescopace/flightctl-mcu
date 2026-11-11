@@ -4,9 +4,9 @@ The second port of the agent, after ESP-IDF: `port/zephyr` and a small
 application in `zephyr/`. The core is unchanged between the two.
 
 **Where it stands.** On `native_sim` (Zephyr built as a Linux process) the
-agent enrolls, reports its status, takes configuration files and runs signed
-WASM apps, managed by an unmodified Flight Control. Not there yet: firmware
-updates (they need MCUboot), WiFi, a real board, and a CI job.
+agent passes the end-to-end test of the simulated device, against an
+unmodified Flight Control. Not there yet: firmware updates (they need
+MCUboot), WiFi, and a real board.
 
 ## Try it
 
@@ -78,11 +78,28 @@ has. Moving both ports to mbedTLS 4 is a job of its own.
   microcontroller, and `native_sim` is a 64-bit host that gives a thread
   exactly what it asks for.
 
+## What the tests check
+
+`DEVICE_KIND=zephyr ci/e2e.sh` is the end-to-end test of the simulated device
+with the Zephyr build as the device, and CI runs it (a job builds the
+application in Zephyr's image, another runs it against Flight Control on
+kind): enrollment and approval, status, a config file and its change, a WASM
+app installed, updated in place and removed, an unsigned app refused, an
+update while the registry is down, a second app, the renewal of the
+management certificate, a server restart, and a device whose certificate
+expired while the server was down, which enrolls again under a new key after
+rebooting itself.
+
+One check is weaker than on the host: that a config file was stored is read
+from the device's log, as the file is inside the flash image.
+
 ## Things to know about native_sim
 
 - **Always `--seed-random`** (`zephyr/run.sh` passes it). Without it the
   random generator starts from a fixed seed, and every instance makes the
   same device key, hence the same device name.
+- **A reboot starts the process again** (`CONFIG_NATIVE_SIM_REBOOT`), with
+  the same flash file, as a board would start again.
 - **The time is the host's**: the simulated clock starts there. A board will
   take it from SNTP (`CONFIG_FC_SNTP_SERVER`); that path is written and not
   yet run.
