@@ -162,10 +162,10 @@ static int csr_key_signs(const char *csr_pem, mbedtls_pk_context *pk, char *name
     return rc;
 }
 
-static void a_new_key_goes_to_the_hardware(void)
+static void a_new_key_goes_to_the_hardware(int bits)
 {
     stub_reset();
-    stub_hwkey_bits = 2048;
+    stub_hwkey_bits = bits;
     fc_identity_t id = {0};
     CHECK_INT(fc_identity_load(&id), 0);
     CHECK_INT(id.hw_key, 1);
@@ -197,6 +197,26 @@ static void a_new_key_goes_to_the_hardware(void)
     fc_identity_free(&id);
     fc_identity_free(&again);
     fc_identity_free(&next);
+}
+
+static void a_new_rsa_key_goes_to_the_hardware(void)
+{
+    a_new_key_goes_to_the_hardware(2048);
+}
+
+/* The ECDSA peripheral's key: the same kind of key and name as in storage. */
+static void a_new_ecdsa_key_goes_to_the_hardware(void)
+{
+    a_new_key_goes_to_the_hardware(FC_HWKEY_ECDSA_P256);
+    fc_identity_t id = {0};
+    CHECK_INT(fc_identity_load(&id), 0);
+    mbedtls_x509_csr csr;
+    mbedtls_x509_csr_init(&csr);
+    CHECK_INT(mbedtls_x509_csr_parse(&csr, (const unsigned char *)id.csr_pem, strlen(id.csr_pem) + 1), 0);
+    CHECK_INT(mbedtls_pk_get_type(&csr.pk), MBEDTLS_PK_ECKEY);
+    CHECK_INT((int)mbedtls_pk_get_bitlen(&csr.pk), 256);
+    mbedtls_x509_csr_free(&csr);
+    fc_identity_free(&id);
 }
 
 static void a_key_in_storage_stays_there(void)
@@ -254,7 +274,8 @@ int main(void)
     RUN(forgetting_the_key_makes_a_new_device);
     RUN(a_corrupt_key_is_an_error);
     RUN(an_rsa_key_gives_the_known_name);
-    RUN(a_new_key_goes_to_the_hardware);
+    RUN(a_new_rsa_key_goes_to_the_hardware);
+    RUN(a_new_ecdsa_key_goes_to_the_hardware);
     RUN(a_key_in_storage_stays_there);
     RUN(a_failed_seal_falls_back_to_storage);
     stub_reset();

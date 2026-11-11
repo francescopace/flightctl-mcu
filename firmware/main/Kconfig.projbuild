@@ -81,16 +81,32 @@ config FC_FIELD_PROVISIONING_BLE
         Set by the ble variant (firmware/sdkconfig.ble), which turns on
         NimBLE. The Bluetooth memory is freed once the device has a network.
 
+config FC_DEVICE_KEY_ECDSA
+    bool "Device key in the ECDSA peripheral (burns an eFuse key block)"
+    depends on SOC_ECDSA_SUPPORTED
+    select MBEDTLS_HARDWARE_ECDSA_SIGN
+    select SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS if SECURE_BOOT_V2_ENABLED
+    default n
+    help
+        The device key (ECDSA P-256) is generated on the first boot and
+        burned into a free eFuse key block that only the ECDSA peripheral
+        reads: software signs with it and cannot read it. The key takes one
+        key block for good. With Secure Boot, read protection of the other
+        blocks is closed once the key is there, so a later key (a device
+        that enrolls again) stays in storage, as it does with no block left.
+
 config FC_DEVICE_KEY_DS
     bool "Device key in the Digital Signature peripheral (burns an eFuse key block)"
-    depends on SOC_DIG_SIGN_SUPPORTED
+    depends on SOC_DIG_SIGN_SUPPORTED && !FC_DEVICE_KEY_ECDSA
+    select SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS if SECURE_BOOT_V2_ENABLED
     default n
     help
         The device key is RSA, generated on the first boot and sealed into
         the DS peripheral: its parameters are encrypted with an HMAC key
         burned into a free eFuse key block, which software cannot read.
-        Each new device key (first boot, re-enrollment) takes one key block
-        for good; with none left, the key stays in storage. Off: Flight
+        The key takes one key block for good. With Secure Boot, read
+        protection of the other blocks is closed once the key is there, so a
+        later key (re-enrollment) stays in storage. Off: Flight
         Control 1.3.1 cannot issue a certificate for an RSA key (its CA
         copies the request's signature algorithm, and the CA key is ECDSA).
 

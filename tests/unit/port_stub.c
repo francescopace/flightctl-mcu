@@ -176,6 +176,18 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
  * storage, and signs through an RSA_ALT context as the DS peripheral does. */
 static mbedtls_pk_context s_hw;
 static int s_hw_sealed;
+static unsigned char s_hw_ec[256]; /* an ECDSA key "in hardware", as DER at the end */
+static size_t s_hw_ec_len;
+
+/* Blinding only, in a test. */
+static int stub_rng(void *ctx, unsigned char *buf, size_t len)
+{
+    (void)ctx;
+    for (size_t i = 0; i < len; i++) {
+        buf[i] = (unsigned char)rand();
+    }
+    return 0;
+}
 
 int fc_port_hwkey_bits(void)
 {
@@ -184,7 +196,21 @@ int fc_port_hwkey_bits(void)
 
 int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
 {
-    if (stub_hwkey_seal_fails || mbedtls_pk_get_type(pk) != MBEDTLS_PK_RSA) {
+    if (stub_hwkey_seal_fails) {
+        return -1;
+    }
+    if (stub_hwkey_bits == FC_HWKEY_ECDSA_P256 && mbedtls_pk_get_type(pk) == MBEDTLS_PK_ECKEY) {
+        fc_port_hwkey_forget();
+        int len = mbedtls_pk_write_key_der(pk, s_hw_ec, sizeof(s_hw_ec));
+        if (len <= 0) {
+            return -1;
+        }
+        s_hw_ec_len = (size_t)len;
+        s_hw_sealed = 1;
+        stub_hwkey_seals++;
+        return 0;
+    }
+    if (stub_hwkey_bits == FC_HWKEY_ECDSA_P256 || mbedtls_pk_get_type(pk) != MBEDTLS_PK_RSA) {
         return -1;
     }
     fc_port_hwkey_forget();
@@ -213,6 +239,9 @@ int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
     if (!s_hw_sealed) {
         return -1;
     }
+    if (s_hw_ec_len > 0) {
+        return mbedtls_pk_parse_key(pk, s_hw_ec + sizeof(s_hw_ec) - s_hw_ec_len, s_hw_ec_len, NULL, 0, stub_rng, NULL);
+    }
     return mbedtls_pk_setup_rsa_alt(pk, mbedtls_pk_rsa(s_hw), NULL, hw_sign, hw_len);
 }
 
@@ -221,4 +250,5 @@ void fc_port_hwkey_forget(void)
     mbedtls_pk_free(&s_hw);
     mbedtls_pk_init(&s_hw);
     s_hw_sealed = 0;
+    s_hw_ec_len = 0;
 }

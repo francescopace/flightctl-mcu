@@ -311,7 +311,7 @@ What is not:
 
 - **Security**:
   - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
-  - The device key is in flash in clear, except in the `secure` variant (see [docs/SECURITY.md](docs/SECURITY.md)), tested in the emulator only, where it is encrypted. The CPU can still read it: keeping it in the chip's Digital Signature peripheral works, but Flight Control cannot enroll the RSA key that needs.
+  - The device key is in flash in clear, except in the `secure` variant (see [docs/SECURITY.md](docs/SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
 - **Provisioning**: credentials are written over USB (`deploy/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [docs/PROVISIONING.md](docs/PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 

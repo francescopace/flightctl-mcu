@@ -506,6 +506,46 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
  * block with the DS purpose: that block cannot be read by software, and
  * only the DS peripheral can decrypt the parameters and sign with them. The
  * encrypted parameters stay in the (encrypted) store. */
+#if CONFIG_FC_DEVICE_KEY_DS || CONFIG_FC_DEVICE_KEY_ECDSA
+#include "esp_efuse_table.h"
+
+/* A free eFuse key block for a key that software must not read, or
+ * EFUSE_BLK_KEY_MAX. None once the chip can no longer read-protect a block:
+ * the key would be burned and left readable. */
+static esp_efuse_block_t hwkey_free_block(bool not_block9)
+{
+    if (esp_efuse_read_field_bit(ESP_EFUSE_WR_DIS_RD_DIS)) {
+        ESP_LOGE(TAG, "device key in hardware: this chip no longer read-protects eFuse key blocks");
+        return EFUSE_BLK_KEY_MAX;
+    }
+    for (int b = EFUSE_BLK_KEY0; b < EFUSE_BLK_KEY_MAX; b++) {
+#if SOC_EFUSE_BLOCK9_KEY_PURPOSE_QUIRK
+        if (not_block9 && b == EFUSE_BLK9) {
+            continue;
+        }
+#endif
+        if (esp_efuse_key_block_unused((esp_efuse_block_t)b)) {
+            return (esp_efuse_block_t)b;
+        }
+    }
+    ESP_LOGE(TAG, "device key in hardware: no free eFuse key block left");
+    return EFUSE_BLK_KEY_MAX;
+}
+
+/* After the key is sealed. Secure Boot normally stops further read
+ * protection on its first boot (a read-protected key digest would brick the
+ * device); builds with the device key in hardware leave it open until here
+ * (CONFIG_SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS). A later key (re-enrollment)
+ * therefore stays in the encrypted store. */
+static void hwkey_sealed(void)
+{
+#if CONFIG_SECURE_BOOT_V2_ENABLED
+    esp_err_t err = esp_efuse_write_field_bit(ESP_EFUSE_WR_DIS_RD_DIS);
+    ESP_LOGW(TAG, "eFuse read protection closed for the other key blocks: %s", esp_err_to_name(err));
+#endif
+}
+#endif
+
 #if CONFIG_FC_DEVICE_KEY_DS
 #include "esp_ds.h"
 #include "esp_efuse.h"
@@ -620,9 +660,8 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
         ESP_LOGE(TAG, "DS: RSA-%u not supported", (unsigned)bits);
         return -1;
     }
-    esp_efuse_block_t blk = esp_efuse_find_unused_key_block();
+    esp_efuse_block_t blk = hwkey_free_block(false);
     if (blk == EFUSE_BLK_KEY_MAX) {
-        ESP_LOGE(TAG, "DS: no free eFuse key block left");
         return -1;
     }
     esp_ds_p_data_t *p = calloc(1, sizeof(*p));
@@ -640,7 +679,7 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
         /* From here on the HMAC key exists only in the eFuse block. */
         esp_err_t err = esp_efuse_write_key(blk, ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE, key, sizeof(key));
         ESP_LOGW(TAG, "DS: HMAC key burned into eFuse BLOCK_KEY%u: %s", (unsigned)b->block, esp_err_to_name(err));
-        rc = err == ESP_OK ? 0 : -1;
+        rc = err == ESP_OK && esp_efuse_get_key_dis_read(blk) ? 0 : -1;
     }
     mbedtls_platform_zeroize(key, sizeof(key));
     if (p != NULL) {
@@ -681,6 +720,9 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     if (rc == 0 && fc_port_kv_set(KV_DS, b, sizeof(*b)) != 0) {
         rc = -1;
     }
+    if (rc == 0) {
+        hwkey_sealed();
+    }
     if (rc != 0 && s_ds != b) {
         free(b);
     }
@@ -718,6 +760,142 @@ void fc_port_hwkey_forget(void)
 static const char *hwkey_info(void)
 {
     return s_ds != NULL ? "ds" : "storage";
+}
+#elif CONFIG_FC_DEVICE_KEY_ECDSA
+/* The device key in the ECDSA peripheral (ESP32-C5, H2, P4): a P-256 key in
+ * an eFuse key block that only the peripheral reads. */
+#include "ecdsa/ecdsa_alt.h"
+#include "esp_random.h"
+#include "mbedtls/ecdsa.h"
+#include "mbedtls/ecp.h"
+#include "mbedtls/pk.h"
+#include "mbedtls/platform_util.h"
+
+#define KV_ECDSA "hwkey.ecdsa"
+
+static pthread_mutex_t s_ecdsa_lock = PTHREAD_MUTEX_INITIALIZER;
+static int s_ecdsa_blk = -1; /* eFuse block (esp_efuse_block_t) of the key in use */
+
+static int esp_rng(void *ctx, unsigned char *buf, size_t len)
+{
+    esp_fill_random(buf, len);
+    return 0;
+}
+
+int fc_port_hwkey_bits(void)
+{
+    return FC_HWKEY_ECDSA_P256;
+}
+
+/* A context that signs with the key in `blk`: it holds no private key. */
+static int ecdsa_pk(mbedtls_pk_context *pk, int blk)
+{
+    if (blk < EFUSE_BLK_KEY0 || blk >= EFUSE_BLK_KEY_MAX ||
+        esp_efuse_get_key_purpose((esp_efuse_block_t)blk) != ESP_EFUSE_KEY_PURPOSE_ECDSA_KEY) {
+        return -1;
+    }
+    esp_ecdsa_pk_conf_t conf = {
+        .grp_id = MBEDTLS_ECP_DP_SECP256R1,
+        .efuse_block = (uint8_t)blk,
+#if SOC_ECDSA_SUPPORT_EXPORT_PUBKEY
+        .load_pubkey = true,
+#endif
+    };
+    return esp_ecdsa_set_pk_context(pk, &conf) == 0 ? 0 : -1;
+}
+
+int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
+{
+    if (mbedtls_pk_get_type(pk) != MBEDTLS_PK_ECKEY || mbedtls_pk_get_bitlen(pk) != 256) {
+        return -1;
+    }
+    esp_efuse_block_t blk = hwkey_free_block(true);
+    if (blk == EFUSE_BLK_KEY_MAX) {
+        return -1;
+    }
+    uint8_t d[32];
+    size_t len = 0;
+    int rc = mbedtls_ecp_write_key_ext(mbedtls_pk_ec(*pk), &len, d, sizeof(d)) == 0 && len == sizeof(d) ? 0 : -1;
+    if (rc == 0) {
+        /* The peripheral takes the scalar little-endian. From here on the
+         * key exists in this block, and in `pk` until the caller frees it. */
+        for (size_t i = 0; i < sizeof(d) / 2; i++) {
+            uint8_t t = d[i];
+            d[i] = d[sizeof(d) - 1 - i];
+            d[sizeof(d) - 1 - i] = t;
+        }
+        esp_err_t err = esp_efuse_write_key(blk, ESP_EFUSE_KEY_PURPOSE_ECDSA_KEY, d, sizeof(d));
+        ESP_LOGW(TAG, "ECDSA: device key burned into eFuse BLOCK_KEY%u: %s", (unsigned)(blk - EFUSE_BLK_KEY0),
+                 esp_err_to_name(err));
+        rc = err == ESP_OK && esp_efuse_get_key_dis_read(blk) ? 0 : -1;
+    }
+    mbedtls_platform_zeroize(d, sizeof(d));
+    /* A signature made by the peripheral, checked with the public key,
+     * before the software copy of the key is gone. */
+    if (rc == 0) {
+        mbedtls_pk_context hw;
+        mbedtls_pk_init(&hw);
+        unsigned char hash[32], sig[MBEDTLS_ECDSA_MAX_LEN];
+        size_t sig_len = 0;
+        esp_fill_random(hash, sizeof(hash));
+        rc = ecdsa_pk(&hw, blk);
+        if (rc == 0) {
+            rc = mbedtls_pk_sign(&hw, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sizeof(sig), &sig_len, esp_rng, NULL);
+        }
+        int signed_ok = rc == 0;
+        if (rc == 0) {
+            rc = mbedtls_pk_verify(pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sig_len);
+        }
+        mbedtls_pk_free(&hw);
+        if (rc == 0) {
+            ESP_LOGI(TAG, "ECDSA: signature made by the peripheral verified with the public key");
+        } else {
+            ESP_LOGE(TAG, "ECDSA: %s failed (-0x%04x)", signed_ok ? "signature check" : "signing", (unsigned)-rc);
+        }
+    }
+    uint32_t stored = (uint32_t)blk;
+    if (rc == 0 && fc_port_kv_set(KV_ECDSA, &stored, sizeof(stored)) != 0) {
+        rc = -1;
+    }
+    if (rc == 0) {
+        pthread_mutex_lock(&s_ecdsa_lock);
+        s_ecdsa_blk = (int)blk;
+        pthread_mutex_unlock(&s_ecdsa_lock);
+        hwkey_sealed();
+    }
+    return rc == 0 ? 0 : -1;
+}
+
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
+{
+    pthread_mutex_lock(&s_ecdsa_lock);
+    if (s_ecdsa_blk < 0) {
+        char *v = NULL;
+        size_t len = 0;
+        uint32_t stored;
+        if (fc_port_kv_get(KV_ECDSA, &v, &len) == 0 && len == sizeof(stored)) {
+            memcpy(&stored, v, sizeof(stored));
+            s_ecdsa_blk = (int)stored;
+        }
+        free(v);
+    }
+    int blk = s_ecdsa_blk;
+    pthread_mutex_unlock(&s_ecdsa_lock);
+    return ecdsa_pk(pk, blk);
+}
+
+/* The eFuse block stays used: a key block can be burned only once. */
+void fc_port_hwkey_forget(void)
+{
+    fc_port_kv_del(KV_ECDSA);
+    pthread_mutex_lock(&s_ecdsa_lock);
+    s_ecdsa_blk = -1;
+    pthread_mutex_unlock(&s_ecdsa_lock);
+}
+
+static const char *hwkey_info(void)
+{
+    return s_ecdsa_blk >= 0 ? "ecdsa" : "storage";
 }
 #else
 int fc_port_hwkey_bits(void)

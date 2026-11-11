@@ -77,14 +77,15 @@ void fc_port_reboot(void);
 
 /* ---- Device key in hardware (optional) ----------------------------------
  * A port that can keep the device's private key where software cannot read
- * it (the ESP32 DS peripheral) returns the RSA key size it takes from
- * fc_port_hwkey_bits; 0 means it cannot, and the key stays in storage.
+ * it says which key it takes from fc_port_hwkey_bits: an RSA key size (the
+ * ESP32 DS peripheral), or FC_HWKEY_ECDSA_P256 (the ECDSA peripheral); 0
+ * means it cannot, and the key stays in storage.
  * The core generates the key, writes the CSR with it, then hands it to
  * fc_port_hwkey_seal, which moves it into the hardware and checks a
  * signature made there (0), or fails (-1: the core keeps a software key).
- * fc_port_hwkey_pk sets up an RSA_ALT context that signs through the
- * hardware, as long as a sealed key exists (0), and fc_port_hwkey_forget
- * drops it. */
+ * fc_port_hwkey_pk sets up a context that signs through the hardware, as
+ * long as a sealed key exists (0), and fc_port_hwkey_forget drops it. */
+#define FC_HWKEY_ECDSA_P256 256
 struct mbedtls_pk_context;
 int fc_port_hwkey_bits(void);
 int fc_port_hwkey_seal(struct mbedtls_pk_context *pk);

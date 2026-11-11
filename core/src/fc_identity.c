@@ -1,9 +1,10 @@
 /*
  * Device identity: the device key, device name and PKCS#10 CSR.
  *
- * The key is ECDSA P-256 in storage, or RSA in hardware where the port has a
- * place for it (fc_port_hwkey_*): there the key is generated here, the CSR
- * written with it, and the port seals it; only the CSR stays in storage.
+ * The key is ECDSA P-256 in storage, or in hardware (ECDSA P-256 or RSA)
+ * where the port has a place for it (fc_port_hwkey_*): there the key is
+ * generated here, the CSR written with it, and the port seals it; only the
+ * CSR stays in storage.
  *
  * The device name must match what the Flight Control service derives from
  * the public key (pkg/crypto/key.go, HashPublicKey + identity.generateDeviceName):
@@ -154,18 +155,29 @@ static int load_hw(fc_identity_t *id)
     return 0;
 }
 
-/* First boot with a port that holds keys: RSA generated here, sealed there. */
+/* First boot with a port that holds keys: generated here, sealed there. */
 static int create_hw(fc_identity_t *id, int bits)
 {
-    fc_port_log(FC_LOG_WARN, "no device key stored: generating one (RSA-%d) for the hardware, this is a new device",
-                bits);
     mbedtls_pk_context pk;
     mbedtls_pk_init(&pk);
     int rc;
-    if ((rc = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA))) != 0 ||
-        (rc = mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk), mbedtls_ctr_drbg_random, fc_http_drbg(), (unsigned)bits,
-                                  RSA_EXPONENT)) != 0) {
-        fc_port_log(FC_LOG_ERROR, "RSA key generation failed (-0x%04x)", -rc);
+    if (bits == FC_HWKEY_ECDSA_P256) {
+        fc_port_log(FC_LOG_WARN,
+                    "no device key stored: generating one (ECDSA P-256) for the hardware, this is a new device");
+        if ((rc = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY))) == 0) {
+            rc = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(pk), mbedtls_ctr_drbg_random,
+                                     fc_http_drbg());
+        }
+    } else {
+        fc_port_log(FC_LOG_WARN,
+                    "no device key stored: generating one (RSA-%d) for the hardware, this is a new device", bits);
+        if ((rc = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA))) == 0) {
+            rc = mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk), mbedtls_ctr_drbg_random, fc_http_drbg(), (unsigned)bits,
+                                     RSA_EXPONENT);
+        }
+    }
+    if (rc != 0) {
+        fc_port_log(FC_LOG_ERROR, "key generation failed (-0x%04x)", -rc);
         mbedtls_pk_free(&pk);
         return -1;
     }

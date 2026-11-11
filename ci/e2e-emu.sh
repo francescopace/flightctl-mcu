@@ -351,7 +351,17 @@ fi
 if [[ "$SECURE" == 1 ]]; then
   wait_for 30 "chip reports Secure Boot and flash encryption (release)" \
     "ci.get('secureBoot') == 'true' and ci.get('flashEncryption') == 'release'"
-  wait_for 30 "device key in the encrypted store" "ci.get('deviceKey') == 'storage'"
+  if [[ "$CHIP" == esp32c5 ]]; then
+    # The C5 has an ECDSA peripheral: the key is in an eFuse block only it
+    # reads, and the certificate was issued for a request it signed.
+    wait_for 30 "device key in the ECDSA peripheral" "ci.get('deviceKey') == 'ecdsa'"
+    grep -q 'ECDSA: signature made by the peripheral verified' "$WORK/emu.log" || fail "device key not sealed"
+    grep -q 'eFuse read protection closed for the other key blocks: ESP_OK' "$WORK/emu.log" ||
+      fail "eFuse read protection left open"
+    echo "ok: key burned into eFuse and read-protected, read protection then closed"
+  else
+    wait_for 30 "device key in the encrypted store" "ci.get('deviceKey') == 'storage'"
+  fi
   grep -q 'provisioning moved to the encrypted store' "$WORK/emu.log" || fail "fc_creds not moved to the encrypted store"
   echo "ok: provisioning moved to the encrypted store, fc_creds erased"
 fi

@@ -11,7 +11,7 @@ chip offers against that:
 | **Flash encryption** (release mode) | The flash is encrypted with an AES-XTS key generated on the chip, which nothing can read back. JTAG is off. | Reading the firmware out of the flash chip. |
 | **NVS encryption** | The NVS partitions are encrypted with keys held in the `nvs_keys` partition, itself under flash encryption. | Reading the device key, its certificate and the enrollment credentials out of the flash. |
 | **Secure download mode** | The ROM serial loader can still write the flash, to provision the device again, but cannot read it or run code. | Using the USB port to dump memory or run code. |
-| **Device key in the DS peripheral** (RSA-3072; off, see below) | The device's TLS key is generated on the first boot and sealed into the Digital Signature peripheral, under an HMAC key burned into an eFuse block that software cannot read. The DS signs; nothing can read the key, not even the firmware. | Taking a device's identity from its memory, even with code running on it. |
+| **Device key in hardware** (ESP32-C5; off on the other chips, see below) | The device's TLS key is generated on the first boot and burned into an eFuse key block that only the chip's ECDSA peripheral reads. The peripheral signs; nothing can read the key, not even the firmware. | Taking a device's identity from its memory, even with code running on it. |
 | **Anti-rollback** | Each image carries a security version. Once a release is confirmed, the chip keeps its version in eFuse and refuses older ones, at update and at boot. | Putting back a signed firmware with a known vulnerability. |
 | **Secure Boot key rotation** | The bootloader can trust up to three keys. A release signed with the next key retires the previous one on each device that confirms it. | A Secure Boot key that is lost or exposed. |
 
@@ -61,18 +61,33 @@ the image.
 
 ## Device key in hardware
 
-**Off for now.** The DS peripheral signs only with RSA, and Flight Control
-1.3.1 cannot enroll a device with an RSA key: its internal CA copies the
-request's signature algorithm into the certificate (`internal_ca.go`), and
-with its ECDSA key Go refuses to sign ("requested SignatureAlgorithm does not
-match private key type"). Found by the end-to-end test. Until Flight Control
-fixes it (upstream item 9 in RESULTS.md) the secure variant keeps the device
-key in the encrypted store, and `CONFIG_FC_DEVICE_KEY_DS` stays off. With a
-CA that signs RSA keys it can be turned on.
+### ESP32-C5: the ECDSA peripheral
 
-On every chip with a DS peripheral (S2, S3, C3, C5, C6), with
-`CONFIG_FC_DEVICE_KEY_DS`, the device key lives there. On the first boot,
-with no key yet, the agent:
+The secure variant sets `CONFIG_FC_DEVICE_KEY_ECDSA`, which takes effect on
+chips with an ECDSA peripheral: the C5 among those built here. On the first
+boot, with no key yet, the agent:
+
+1. generates a P-256 key and the CSR with it;
+2. burns the key into a free eFuse key block, with the ECDSA purpose:
+   software cannot read that block, the peripheral signs with it;
+3. has the peripheral sign, and checks the signature with the public key;
+4. wipes its copy of the key and stores only the CSR.
+
+From then on TLS signs through the peripheral. The key is of the same kind
+as one kept in storage, and so is the device's name: Flight Control sees no
+difference. The device reports `deviceKey: "ecdsa"`.
+
+### Other chips: the DS peripheral, off for now
+
+The S2, S3, C3 and C6 have a Digital Signature peripheral instead, which
+signs only with RSA, and Flight Control 1.3.1 cannot enroll a device with an
+RSA key: its internal CA copies the request's signature algorithm into the
+certificate (`internal_ca.go`), and with its ECDSA key Go refuses to sign
+("requested SignatureAlgorithm does not match private key type"). Found by
+the end-to-end test. Until Flight Control fixes it (upstream item 9 in
+RESULTS.md) these chips keep the device key in the encrypted store, and
+`CONFIG_FC_DEVICE_KEY_DS` stays off. With a CA that signs RSA keys it can be
+turned on. Then, on the first boot, the agent:
 
 1. generates an RSA-3072 key (about 3 s on the C3) and the CSR with it;
 2. burns a random HMAC key into a free eFuse key block, with the DS purpose:
@@ -81,19 +96,25 @@ with no key yet, the agent:
    them with the CSR; the key itself is wiped;
 4. has the peripheral sign, and checks the signature with the public key.
 
-From then on TLS signs through the peripheral (RSA-PSS, as TLS 1.3 asks).
-Flight Control names a device after its RSA key as it does after an ECDSA
-one (`sha256` of the modulus). The device reports `deviceKey: "ds"`.
+TLS then signs through the peripheral (RSA-PSS, as TLS 1.3 asks). Flight
+Control names a device after its RSA key as it does after an ECDSA one
+(`sha256` of the modulus). The device reports `deviceKey: "ds"`.
 
-Limits:
+### Limits, with either peripheral
 
-- **One eFuse block per key.** A new key (a device that enrolls again after
-  its certificate expired) takes another block. With Secure Boot (one or more
-  blocks for the key digests) and flash encryption (one), two or three are
-  left for that. When none is, or anything above fails, the key is made in
-  software and kept in the encrypted store, as before (`deviceKey: "storage"`).
+- **One key in hardware per device.** Secure Boot normally stops any further
+  read protection of eFuse blocks on its first boot, because a read-protected
+  key digest would brick the device. A build with the device key in hardware
+  leaves it open (`CONFIG_SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS`) until the key
+  is burned, then closes it. A later key (a device that enrolls again after
+  its certificate expired) is therefore made in software and kept in the
+  encrypted store (`deviceKey: "storage"`), as when no block is free or
+  anything above fails. The end-to-end test does not go through this case.
+- **The key is in RAM once**, on the first boot, between its generation and
+  the burn.
 - **A key already in storage stays there**: devices keep their name.
-- **The ESP32** has no DS peripheral: its key stays in the encrypted store.
+- **The ESP32** has neither peripheral: its key stays in the encrypted store.
+- **Emulator only**, like the rest: no real chip has been burned.
 
 ## Anti-rollback
 
@@ -236,7 +257,8 @@ provisioned again: an OTA update cannot change the partition table.
 
 5. **Check it in Flight Control.** The device reports what its chip enforces in
    `customInfo`: `secureBoot: "true"`, `flashEncryption: "release"`,
-   `deviceKey: "storage"`, `secureBootKeys` and `secureVersion`.
+   `deviceKey` (`"ecdsa"` on the C5, `"storage"` elsewhere), `secureBootKeys`
+   and `secureVersion`.
 
 To provision a device again later (new endpoint, new enrollment certificate),
 write `fc_creds` again (`provision.py --port`): the next boot moves it into the
@@ -267,7 +289,11 @@ CI, with a throwaway Secure Boot key):
   use is refused, and a release signed with the second key alone retires the
   first (key rotation). CI's prebuilt images come without their keys.
 
-The device key stays in the encrypted store (`deviceKey: "storage"`).
+On the C5 the test also checks the device key: burned into eFuse, read
+protected, the peripheral's signature verified (`deviceKey: "ecdsa"`); every
+request after that, enrollment and certificate renewals included, is signed
+by the peripheral. On the C3 the key stays in the encrypted store
+(`deviceKey: "storage"`).
 
 Tried by hand in the emulator:
 
@@ -282,9 +308,8 @@ Tried by hand in the emulator:
 
 ## Not yet done
 
-- **Device key in hardware.** Blocked by Flight Control (above). The C5's
-  ECDSA peripheral, which keeps a P-256 key in eFuse, would avoid RSA; not
-  done yet.
+- **Device key in hardware on chips without an ECDSA peripheral.** Blocked by
+  Flight Control (above).
 - **Real boards.** Nothing has been burned, here or in CI: everything above
   was verified on emulated chips. Before a batch, burn one board per chip,
   then run a full OTA cycle on it.
