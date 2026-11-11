@@ -44,11 +44,14 @@ def main():
     bootloader = "bootloader/bootloader.bin"
     if extra:
         multi = "bootloader/bootloader-multikey.bin"
-        for i, key in enumerate(extra):
+        for key in extra:
+            # espsecure does not sign a file in place: through a second file
+            signed = multi + ".next"
             subprocess.run([sys.executable, "-m", "espsecure", "sign_data", "--version", "2", "--append_signatures",
-                            "--keyfile", key, "--output", multi, multi if i else bootloader],
+                            "--keyfile", key, "--output", signed, bootloader],
                            cwd=build, check=True, stdout=subprocess.DEVNULL)
-        bootloader = multi
+            os.replace(os.path.join(build, signed), os.path.join(build, multi))
+            bootloader = multi
     files[int(sdkconfig(build, "BOOTLOADER_OFFSET_IN_FLASH"), 16)] = bootloader
     # "keep": rewriting the flash settings in an image header would change
     # the signed bytes, and the ROM would refuse the bootloader.
