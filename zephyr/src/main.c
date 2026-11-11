@@ -79,6 +79,57 @@ static void wait_for_time(void)
 }
 #endif
 
+#ifdef CONFIG_WIFI
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/wifi_mgmt.h>
+
+static K_SEM_DEFINE(s_ip_up, 0, 1);
+static struct net_mgmt_event_callback s_ip_cb;
+
+static void on_ip(struct net_mgmt_event_callback *cb, uint64_t event, struct net_if *iface)
+{
+    if (event == NET_EVENT_IPV4_ADDR_ADD) {
+        k_sem_give(&s_ip_up);
+    }
+}
+
+/* Joins the network in the credentials (wifi_ssid, wifi_pass) and waits for
+ * an address. */
+static void wifi_up(const cJSON *creds)
+{
+    const char *ssid = str(creds, "wifi_ssid");
+    const char *pass = str(creds, "wifi_pass");
+    if (ssid == NULL) {
+        fc_port_log(FC_LOG_ERROR, "no WiFi network in the credentials (provision.py --wifi-ssid)");
+        k_sleep(K_FOREVER);
+    }
+    struct net_if *iface = net_if_get_default();
+    net_mgmt_init_event_callback(&s_ip_cb, on_ip, NET_EVENT_IPV4_ADDR_ADD);
+    net_mgmt_add_event_callback(&s_ip_cb);
+    struct wifi_connect_req_params p = {
+        .ssid = (const uint8_t *)ssid,
+        .ssid_length = (uint8_t)strlen(ssid),
+        .psk = (const uint8_t *)pass,
+        .psk_length = pass != NULL ? (uint8_t)strlen(pass) : 0,
+        .security = pass != NULL ? WIFI_SECURITY_TYPE_PSK : WIFI_SECURITY_TYPE_NONE,
+        .channel = WIFI_CHANNEL_ANY,
+        .band = WIFI_FREQ_BAND_2_4_GHZ,
+        .mfp = WIFI_MFP_OPTIONAL,
+    };
+    for (;;) {
+        fc_port_log(FC_LOG_INFO, "WiFi: joining \"%s\"", ssid);
+        if (net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &p, sizeof(p)) == 0 &&
+            k_sem_take(&s_ip_up, K_SECONDS(30)) == 0) {
+            fc_port_log(FC_LOG_INFO, "WiFi: connected");
+            return;
+        }
+        fc_port_log(FC_LOG_WARN, "WiFi: no connection yet, trying again");
+        k_sleep(K_SECONDS(5));
+    }
+}
+#endif
+
 /* Simulated hardware for WASM apps, as on the host: a temperature that swings
  * 30..46 C over two minutes, a 40 C threshold, an LED printed on change. */
 static int32_t sim_temp_mc(wasm_exec_env_t env)
@@ -133,6 +184,9 @@ int main(void)
         }
     }
 
+#ifdef CONFIG_WIFI
+    wifi_up(creds);
+#endif
     wait_for_time();
     fc_agent_config_t cfg = {
         .server_host = host,

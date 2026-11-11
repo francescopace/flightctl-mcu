@@ -287,6 +287,10 @@ wait_s=$(( expiry - $(date +%s) + 5 ))
 tx=$(custom netTxBytes)
 wait_for 90 "status accepted after the first certificate expired" "int(ci.get('netTxBytes', 0)) > $tx and st['summary']['status'] == 'Online'"
 
+# Where the device reports its heap (the Zephyr build): how low it has been,
+# after two apps, their updates and the certificate renewal.
+[[ -n "$(custom memMinFreeBytes)" ]] && echo "heap: free $(custom memFreeBytes), least free $(custom memMinFreeBytes)"
+
 log "server restart"
 # Kept connections die with the server: the agent must reconnect, report and
 # take new specs.

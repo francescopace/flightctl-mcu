@@ -166,6 +166,9 @@ def build_zephyr_partition(args, size):
     creds["server_host"] = host
     creds["server_port"] = int(port)
     creds["labels"] = dict(kv.split("=", 1) for kv in args.labels.split(",") if "=" in kv)
+    if args.wifi_ssid:  # boards with WiFi; native_sim uses the host's network
+        creds["wifi_ssid"] = args.wifi_ssid
+        creds["wifi_pass"] = args.wifi_password or ""
     body = json.dumps(creds, separators=(",", ":")).encode()
     data = b"FCC1" + len(body).to_bytes(4, "little") + body
     if len(data) > size:

@@ -1,0 +1,24 @@
+/*
+ * The Pico's 2 MB of flash: the application, then the credentials and the
+ * storage in the last 320 KB (where Zephyr's layout for MCUboot on this board
+ * puts its storage partition).
+ */
+/delete-node/ &code_partition;
+
+&flash0 {
+	partitions {
+		code_partition: partition@100 {
+			label = "code-partition";
+			reg = <0x00000100 0x001aff00>;
+			read-only;
+		};
+		fc_creds_partition: partition@1b0000 {
+			label = "fc_creds";
+			reg = <0x001b0000 0x00004000>;
+		};
+		fc_storage_partition: partition@1b4000 {
+			label = "fc_storage";
+			reg = <0x001b4000 0x0004c000>;
+		};
+	};
+};

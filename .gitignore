@@ -34,3 +34,4 @@ venv/
 .vscode/
 .idea/
 zephyr/build-*/
+third_party/zephyr-sdk/
