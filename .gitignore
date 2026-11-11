@@ -9,6 +9,7 @@ firmware/sdkconfig.local
 deploy/auto-approve/allowlist.yaml
 third_party/wamr/
 third_party/detools/
+third_party/zephyr-ws/
 wasm-apps/build/
 .ccache/
 # Never commit keys or enrollment material, wherever a tool writes them:
@@ -32,3 +33,4 @@ venv/
 *~
 .vscode/
 .idea/
+zephyr/build-*/

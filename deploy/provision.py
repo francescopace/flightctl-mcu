@@ -4,6 +4,7 @@
     deploy/provision.py --port /dev/cu.usbmodem1101      write it to a board
     deploy/provision.py --image flash.bin                put it into a merged flash image (emulator)
     deploy/provision.py --out creds.bin                  just the partition
+    deploy/provision.py --format zephyr --image flash.bin    for the Zephyr build (zephyr/)
 
 Contents (NVS namespace "fc"):
   ca, enroll_crt, enroll_key   from --secrets (default .secrets, see deploy/enrollment.sh)
@@ -19,6 +20,11 @@ Contents (NVS namespace "fc"):
                                (esp_prov or Espressif's provisioning app); the secret proves
                                they hold the device. See docs/PROVISIONING.md.
 
+--format zephyr writes the partition the Zephyr application reads instead: "FCC1", a length,
+and a JSON object with the same fields (no WiFi yet). Its place in the flash comes from the
+board's overlay, zephyr/boards/<--board>.overlay (default native_sim_native_64, whose flash
+image is the file given to zephyr.exe --flash=).
+
 The firmware is the same for every installation: change the credentials, not the build.
 The partition is generated with ESP-IDF's NVS partition generator: the pip package
 esp-idf-nvs-partition-gen when it is installed, else nvs_partition_gen.py in the espressif/idf
@@ -26,6 +32,7 @@ image ($IDF_IMAGE, default espressif/idf:v5.5.6). It holds the enrollment key: t
 like the key itself.
 """
 import argparse
+import json
 import os
 import re
 import shutil
@@ -129,8 +136,49 @@ def build_partition(args, size):
     return data
 
 
+def zephyr_partition(board):
+    """Offset and size of the fc_creds partition in the board's overlay."""
+    path = os.path.join(ROOT, "zephyr", "boards", f"{board}.overlay")
+    if not os.path.exists(path):
+        sys.exit(f"no {path}")
+    with open(path) as f:
+        m = re.search(r'label\s*=\s*"fc_creds";\s*reg\s*=\s*<\s*(\w+)\s+(\w+)\s*>', f.read())
+    if not m:
+        sys.exit(f"no fc_creds partition in {path}")
+    return int(m.group(1), 0), int(m.group(2), 0)
+
+
+def build_zephyr_partition(args, size):
+    """ "FCC1", the JSON's length (32 bits, little-endian), the JSON (zephyr/src/main.c)."""
+    secrets = os.path.abspath(args.secrets)
+    creds = {}
+    for key, name in (("ca", "ca.crt"), ("enroll_crt", "enroll.crt"), ("enroll_key", "enroll.key")):
+        if not os.path.exists(os.path.join(secrets, name)):
+            sys.exit(f"{secrets}/{name} missing (deploy/enrollment.sh creates it)")
+        with open(os.path.join(secrets, name)) as f:
+            creds[key] = f.read()
+    if os.path.exists(os.path.join(secrets, "signing.pub")):
+        with open(os.path.join(secrets, "signing.pub")) as f:
+            creds["signing_pub"] = f.read()
+    else:
+        print("warning: no signing.pub, the device will not check image signatures", file=sys.stderr)
+    host, port = args.server.rsplit(":", 1) if ":" in args.server else (args.server, "8443")
+    creds["server_host"] = host
+    creds["server_port"] = int(port)
+    creds["labels"] = dict(kv.split("=", 1) for kv in args.labels.split(",") if "=" in kv)
+    body = json.dumps(creds, separators=(",", ":")).encode()
+    data = b"FCC1" + len(body).to_bytes(4, "little") + body
+    if len(data) > size:
+        sys.exit(f"credentials are {len(data)} bytes, the partition holds {size}")
+    print(f"fc_creds (zephyr): {host}:{port}, labels {args.labels}, "
+          f"signing key {'yes' if 'signing_pub' in creds else 'no'}")
+    return data + b"\xff" * (size - len(data))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--format", choices=("esp-idf", "zephyr"), default="esp-idf")
+    p.add_argument("--board", default="native_sim_native_64", help="Zephyr board, as in zephyr/boards/")
     p.add_argument("--secrets", default=os.path.join(ROOT, ".secrets"))
     p.add_argument("--server")
     p.add_argument("--labels")
@@ -151,8 +199,14 @@ def main():
     if args.pop is not None and not 8 <= len(args.pop) <= 63:
         p.error("--pop: 8 to 63 characters (it is also the provisioning access point's password)")
 
-    offset, size = partition()
-    data = build_partition(args, size)
+    if args.format == "zephyr":
+        if args.port:
+            p.error("--format zephyr: --image or --out (writing to a board is not there yet)")
+        offset, size = zephyr_partition(args.board)
+        data = build_zephyr_partition(args, size)
+    else:
+        offset, size = partition()
+        data = build_partition(args, size)
     if args.out:
         with open(args.out, "wb") as f:
             f.write(data)

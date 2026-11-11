@@ -972,17 +972,25 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     fc_port_log(FC_LOG_INFO, "enrolled, starting management loop");
 
     pthread_t spec, status;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
+    /* One attribute object per thread, kept for as long as the thread runs:
+     * on Zephyr it owns the thread's stack. */
+    pthread_attr_t status_attr, spec_attr;
+    pthread_attr_init(&status_attr);
+    pthread_attr_init(&spec_attr);
     /* TLS handshakes (ECDSA, X.509 parsing) need a generous stack on MCUs. */
-#ifdef ESP_PLATFORM
-    pthread_attr_setstacksize(&attr, 24 * 1024);
+#if defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
+    size_t stack = 24 * 1024;
 #else
-    pthread_attr_setstacksize(&attr, 256 * 1024); /* 64-bit hosts need more */
+    size_t stack = 256 * 1024; /* 64-bit hosts need more */
 #endif
+    pthread_attr_setstacksize(&status_attr, stack);
+    pthread_attr_setstacksize(&spec_attr, stack);
     s_running = &a;
-    pthread_create(&status, &attr, status_thread, &a);
-    pthread_create(&spec, &attr, spec_thread, &a);
+    if (pthread_create(&status, &status_attr, status_thread, &a) != 0 ||
+        pthread_create(&spec, &spec_attr, spec_thread, &a) != 0) {
+        fc_port_log(FC_LOG_ERROR, "cannot start the agent's threads");
+        return -1;
+    }
     pthread_join(spec, NULL);
     return 0;
 }

@@ -161,6 +161,8 @@ Then implement `core/include/fc_port.h` for your platform:
 core/            agent, HTTP/TLS client, OCI client, WASM app manager (portable C)
 port/espidf/     ESP-IDF port
 port/host/       host port (simulated device)
+port/zephyr/     Zephyr port (in progress, docs/ZEPHYR.md)
+zephyr/          Zephyr application: build and run scripts, board settings
 host/            simulated device executable
 firmware/        ESP-IDF project: main app, build/flash/push scripts
 wasm-apps/       app SDK header, example apps (alarm, trend) and the build script
@@ -174,7 +176,7 @@ deploy/auto-approve/ enrollment approval from an allow list
 tests/unit/      unit tests of the C core (in-memory port)
 tests/python/    tests of the deploy scripts
 tests/fuzz/      libFuzzer targets and seed inputs
-third_party/     fetch scripts for WAMR and detools (neither is vendored)
+third_party/     fetch scripts for WAMR, detools and Zephyr (none is vendored)
 ci/              helpers for the GitHub Actions workflow
 docs/            roadmap, results, device security, provisioning, firmware deltas
 ```

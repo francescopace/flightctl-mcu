@@ -1,0 +1,18 @@
+# flightctl-mcu application options.
+
+config FC_SNTP_SERVER
+	string "SNTP server the device takes the time from"
+	default "pool.ntp.org"
+
+config FC_HEAP_SIZE
+	int "Size of the C heap (malloc), in bytes"
+	default 163840
+	help
+	  Everything the agent allocates: TLS sessions, JSON documents, WASM
+	  modules and their memory. The device reports how much of it is free.
+
+config FC_LOG_DEBUG
+	bool "Log the agent's debug messages"
+	default n
+
+source "Kconfig.zephyr"

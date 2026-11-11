@@ -33,7 +33,11 @@
 #define FC_APP_ABI_VERSION 1 /* wasm-apps/sdk/fc_app.h */
 #define MAX_WASM_SIZE   (64 * 1024)
 #define WASM_STACK      2048 /* WASM operand/frame stack per app */
+#if defined(__ZEPHYR__) && defined(CONFIG_ARCH_POSIX)
+#define THREAD_STACK    (64 * 1024) /* a 64-bit host's frames, and Zephyr gives a thread what it asks */
+#else
 #define THREAD_STACK    8192
+#endif
 #define RESTART_DELAY_S 5
 #define LAYER_WASM      "application/vnd.wasm.content.layer.v1+wasm"
 #define KV_APPS         "apps"
@@ -48,6 +52,7 @@ typedef struct {
     size_t wasm_len;
 
     pthread_t thread;
+    pthread_attr_t thread_attr; /* until the thread is joined: on Zephyr it owns the stack */
     int thread_running;
     volatile int stop;
 
@@ -193,12 +198,11 @@ static void app_start(app_t *a)
 {
     a->stop = 0;
     set_status(a, "Preparing", NULL);
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, THREAD_STACK);
-    a->thread_running = pthread_create(&a->thread, &attr, runner, a) == 0;
-    pthread_attr_destroy(&attr);
+    pthread_attr_init(&a->thread_attr);
+    pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK);
+    a->thread_running = pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
     if (!a->thread_running) {
+        pthread_attr_destroy(&a->thread_attr);
         set_status(a, "Error", "cannot start thread");
     }
 }
@@ -208,6 +212,7 @@ static void app_stop(app_t *a)
     if (a->thread_running) {
         a->stop = 1;
         pthread_join(a->thread, NULL);
+        pthread_attr_destroy(&a->thread_attr);
         a->thread_running = 0;
     }
     set_status(a, "Stopped", NULL);
