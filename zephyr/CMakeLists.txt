@@ -54,6 +54,10 @@ target_sources(app PRIVATE
     ${ROOT}/core/third_party/cjson/cJSON.c
     ${DETOOLS_SRCS}
     ${WAMR_RUNTIME_LIB_SOURCE})
+# Raspberry Pi Pico boards: the USB console's conveniences.
+if(CONFIG_SOC_FAMILY_RPI_PICO)
+    target_sources(app PRIVATE src/board_rp2.c)
+endif()
 # The C heap is the port's unless the build keeps Zephyr's.
 if(NOT CONFIG_COMMON_LIBC_MALLOC)
     target_sources(app PRIVATE ${ROOT}/port/zephyr/fc_heap_zephyr.c)

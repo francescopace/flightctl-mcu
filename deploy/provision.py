@@ -166,9 +166,16 @@ def build_zephyr_partition(args, size):
     creds["server_host"] = host
     creds["server_port"] = int(port)
     creds["labels"] = dict(kv.split("=", 1) for kv in args.labels.split(",") if "=" in kv)
-    if args.wifi_ssid:  # boards with WiFi; native_sim uses the host's network
-        creds["wifi_ssid"] = args.wifi_ssid
-        creds["wifi_pass"] = args.wifi_password or ""
+    # Boards with WiFi (native_sim uses the host's network): the network given
+    # here, else the one in firmware/sdkconfig.wifi, your desk's.
+    ssid, password, where = args.wifi_ssid, args.wifi_password, "given"
+    if not ssid and not args.board.startswith("native_sim"):
+        wifi = os.path.join(ROOT, "firmware", "sdkconfig.wifi")
+        ssid, password, where = sdkconfig_local("FC_WIFI_SSID", wifi), sdkconfig_local("FC_WIFI_PASSWORD", wifi), wifi
+    if ssid:
+        creds["wifi_ssid"] = ssid
+        creds["wifi_pass"] = password or ""
+        print(f"WiFi network: {where if where != 'given' else 'from the command line'}")
     body = json.dumps(creds, separators=(",", ":")).encode()
     data = b"FCC1" + len(body).to_bytes(4, "little") + body
     if len(data) > size:

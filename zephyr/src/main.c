@@ -159,19 +159,28 @@ static NativeSymbol s_natives[] = {
     {"led", (void *)sim_led, "(iii)", NULL},
 };
 
+/* Nothing can be done, and maybe no one was watching when it was first
+ * said: say it again every few seconds. */
+static void stop(const char *why)
+{
+    for (;;) {
+        fc_port_log(FC_LOG_ERROR, "%s", why);
+        k_sleep(K_SECONDS(10));
+    }
+}
+
 int main(void)
 {
     fc_port_log(FC_LOG_INFO, "flightctl-mcu on Zephyr, board %s", CONFIG_BOARD_TARGET);
     if (fc_port_zephyr_init() != 0) {
-        return 1;
+        stop("cannot mount the storage (the fc_storage partition)");
     }
     cJSON *creds = load_creds();
     const char *host = str(creds, "server_host");
     const cJSON *port = cJSON_GetObjectItem(creds, "server_port");
     if (host == NULL || str(creds, "ca") == NULL || str(creds, "enroll_crt") == NULL ||
         str(creds, "enroll_key") == NULL) {
-        fc_port_log(FC_LOG_ERROR, "no credentials: write the fc_creds partition (deploy/provision.py --format zephyr)");
-        return 1;
+        stop("no credentials: write the fc_creds partition (deploy/provision.py --format zephyr)");
     }
     /* {"k": "v", ...} to the {k, v, ..., NULL} the agent takes */
     static const char *labels[33];
@@ -201,5 +210,7 @@ int main(void)
         .wasm_natives = s_natives,
         .wasm_natives_count = sizeof(s_natives) / sizeof(s_natives[0]),
     };
-    return fc_agent_run(&cfg) == 0 ? 0 : 1;
+    fc_agent_run(&cfg);
+    stop("the agent stopped");
+    return 1;
 }
