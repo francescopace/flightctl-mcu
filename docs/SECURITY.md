@@ -31,8 +31,9 @@ secure build pushed to plain devices by mistake therefore changes nothing on
 them; a plain device can become a secure one only by flashing it over USB.
 Devices on firmware older than this check (v3.0) do not have it.
 
-The variant is tested on emulated chips (esp-emu) in CI; it has not been
-burned on a real board yet.
+The variant is tested on emulated chips (esp-emu, which runs the chip's real
+ROM) in CI. It has not been burned on a real board, and this project does not
+plan to: a burn cannot be undone.
 
 ## Two signing keys
 
@@ -284,8 +285,9 @@ Tried by hand in the emulator:
 - **Device key in hardware.** Blocked by Flight Control (above). The C5's
   ECDSA peripheral, which keeps a P-256 key in eFuse, would avoid RSA; not
   done yet.
-- **Real boards.** Nothing has been burned yet. Before a batch: one board per
-  chip, then a full OTA cycle.
+- **Real boards.** Nothing has been burned, here or in CI: everything above
+  was verified on emulated chips. Before a batch, burn one board per chip,
+  then run a full OTA cycle on it.
 - **ESP32 (classic).** Secure Boot v2 needs silicon revision 3
   (`CONFIG_ESP32_REV_MIN_3`, set by the variant). Not run anywhere yet: the
   emulator does not run the ESP32.
