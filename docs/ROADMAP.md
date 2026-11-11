@@ -2,7 +2,7 @@
 
 flightctl-mcu lets microcontrollers be managed by an unmodified [Flight Control](https://github.com/flightctl/flightctl): enrollment, monitoring, configuration, firmware OTA and WebAssembly apps, in the same fleets as Linux devices.
 
-The first milestone proved that this works on real hardware; the second closed the gaps that made it unsafe or costly to leave running. The next ones make it deployable in the field and not tied to one chip vendor.
+The first milestone proved that this works on real hardware; the second closed the gaps that made it unsafe or costly to leave running; the third made it deployable in the field (provisioning, Secure Boot, flash encryption, the device key in hardware), verified on emulated chips. The next one frees it from one chip vendor.
 
 ## Principles
 
@@ -36,7 +36,7 @@ The gaps that would stop anyone from leaving a device in the field. None of them
 | 1.5 | **Automatic enrollment approval** | Approving each device by hand does not scale past a lab. | `deploy/auto-approve/auto-approve.py` approves requests from an allow list (device name or MAC) with their labels, through the Flight Control CLI. The end-to-end test enrolls its device this way. |
 | 1.6 | **WASM app SDK** | Writing an app meant reading the agent source. | `wasm-apps/sdk/fc_app.h` documents the interface, with a version the device checks. A second example app (`trend`) runs in the end-to-end test. |
 
-## Milestone 2: field deployment
+## Milestone 2: field deployment (done, November 2026, on emulated chips)
 
 What burns eFuses (Secure Boot, flash encryption, anti-rollback, key revocation) is verified on emulated chips, which run the chip's real ROM, and not on boards: a burn cannot be undone.
 
