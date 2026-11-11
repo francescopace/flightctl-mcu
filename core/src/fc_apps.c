@@ -35,8 +35,10 @@
 #define WASM_STACK      2048 /* WASM operand/frame stack per app */
 #if defined(__ZEPHYR__) && defined(CONFIG_ARCH_POSIX)
 #define THREAD_STACK    (64 * 1024) /* a 64-bit host's frames, and Zephyr gives a thread what it asks */
-#else
+#elif defined(ESP_PLATFORM) || defined(__ZEPHYR__)
 #define THREAD_STACK    8192
+#else
+#define THREAD_STACK    (256 * 1024) /* a host: its threads cannot have less than 16 KB or so */
 #endif
 #define RESTART_DELAY_S 5
 #define LAYER_WASM      "application/vnd.wasm.content.layer.v1+wasm"
