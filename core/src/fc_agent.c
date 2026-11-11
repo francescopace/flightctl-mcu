@@ -282,6 +282,11 @@ static int put_status(agent_t *a)
     cJSON_AddItemToObject(dev, "status", build_status(a));
     char *body = cJSON_PrintUnformatted(dev);
     cJSON_Delete(dev);
+    if (body == NULL) {
+        /* out of memory: a missing node is skipped by cJSON, the print fails */
+        fc_port_log(FC_LOG_WARN, "status update: out of memory");
+        return -1;
+    }
 
     char path[128];
     snprintf(path, sizeof(path), API "/devices/%s/status", a->id.name);
@@ -470,6 +475,11 @@ static int request_renewal(agent_t *a)
         char *body = cJSON_PrintUnformatted(csr);
         cJSON_Delete(csr);
         free(b64);
+        if (body == NULL) {
+            fc_port_log(FC_LOG_WARN, "certificate renewal: out of memory");
+            a->csr_name[0] = '\0';
+            return -1;
+        }
         fc_port_log(FC_LOG_INFO, "renewing the management certificate (%s)", a->csr_name);
         rc = mgmt_request(a, a->status_sess, 60, "POST", API "/certificatesigningrequests", "application/json", body,
                           strlen(body), &r);
@@ -807,6 +817,10 @@ static int create_enrollment_request(agent_t *a)
     cJSON_AddStringToObject(spec, "osMode", "image");
     char *body = cJSON_PrintUnformatted(er);
     cJSON_Delete(er);
+    if (body == NULL) {
+        fc_port_log(FC_LOG_WARN, "enrollment request: out of memory");
+        return -1;
+    }
 
     fc_http_target_t t = enrollment_target(a, 60);
     fc_http_response_t r;

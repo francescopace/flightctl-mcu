@@ -283,7 +283,7 @@ if [[ "$SECURE" == 0 && "$PROV" == ble ]]; then
     (( i == 120 )) && { cat "$WORK/prov.log"; fail "BLE controller not up"; }
     sleep 2
   done
-  EMU_NET+=(--elf "$DEBUG_DIR/flightctl_mcu_fw.elf" --ble-hci tcp:localhost:9544)
+  EMU_NET+=(--elf "$DEBUG_DIR/flightctl_mcu_fw.elf" --ble-hci tcp:localhost:9544 --save-state)
 elif [[ "$SECURE" == 0 ]]; then
   EMU_NET=(--net "user,hostfwd=tcp::$PROV_PORT-:80" --wifi-fw-ap-password "$POP")
 fi
@@ -326,6 +326,28 @@ echo "device: $DEVICE"
 printf 'devices:\n  - name: %s\n    labels:\n      stage: emu\n' "$DEVICE" > "$WORK/allowlist.yaml"
 deploy/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
 wait_for 120 "device Online (debug build)" "st.get('summary', {}).get('status') == 'Online' and not ci.get('firmwareVersion', '').endswith('-release')"
+if [[ "$SECURE" == 0 && "$PROV" == ble ]]; then
+  # With its BLE backend the emulator runs at less than half speed, too slow
+  # for the test's 120 s certificates: the rest runs without it, on the flash
+  # as the device left it. This is also the boot of a device that has its
+  # network: no BLE, and its memory given back.
+  log "restart without BLE, on the flash the device wrote"
+  grep -q 'field provisioning: done' "$WORK/emu.log" || fail "agent started before provisioning ended"
+  seen=$(wc -l <"$WORK/emu.log")
+  kill -INT "$EMU_PID"
+  wait "$EMU_PID" 2>/dev/null || true
+  grep -q 'Flash state saved' "$WORK/emu.log" || fail "the emulator did not save its flash"
+  "$ESP_EMU" --chip "$CHIP" --firmware "$WORK/flash.bin" --net user --timeout 2400s >>"$WORK/emu.log" 2>&1 &
+  EMU_PID=$!
+  for i in $(seq 1 30); do
+    tail -n +"$((seen + 1))" "$WORK/emu.log" | grep -q 'got IP' && break
+    (( i == 30 )) && fail "no network after the restart"
+    sleep 2
+  done
+  tail -n +"$((seen + 1))" "$WORK/emu.log" | grep -q 'field provisioning over BLE' && fail "provisioning started again"
+  tail -n +"$((seen + 1))" "$WORK/emu.log" | grep -q 'BTDM memory released' || fail "BLE memory not given back at boot"
+  echo "ok: network kept, no BLE at boot, its memory given back"
+fi
 if [[ "$SECURE" == 1 ]]; then
   wait_for 30 "chip reports Secure Boot and flash encryption (release)" \
     "ci.get('secureBoot') == 'true' and ci.get('flashEncryption') == 'release'"

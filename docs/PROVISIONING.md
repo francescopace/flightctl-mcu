@@ -75,8 +75,9 @@ TARGET=esp32c3 VARIANT=ble firmware/build.sh
 Espressif's provisioning app (ESP BLE Prov) or `esp_prov --transport ble
 --service_name FC-xxxxxx`, with the same proof of possession and the same
 Security 1 session. NimBLE runs only while the device has no network: its
-heap is given back once provisioning is over, or at boot on a device that
-has its network. Its code stays, and the BLE controller's would take about
+heap (about 37 KB) is given back once provisioning is over, or at boot on a
+device that has its network. The agent starts only then, with either
+transport: an update needs that memory. Its code stays, and the BLE controller's would take about
 22 KB of IRAM, which is RAM on these chips and too much for an update (the
 agent's and the registry's TLS connections at once): the variant runs the
 controller from flash (`CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY`, slower BLE, only
@@ -98,6 +99,10 @@ the run, as for a batch.
 An extra CI job does it over BLE (`PROV=ble ci/e2e-emu.sh`, C3, ble variant):
 `ci/ble-prov.py` runs Google's Bumble as the emulator's BLE controller and as
 the installer's phone, and ESP-IDF's esp_prov code for the session. A wrong
-proof is refused there too.
+proof is refused there too. Once the device is online the test restarts the
+emulator without its BLE backend, on the flash the device wrote (with that
+backend it runs at less than half speed, too slow for the test's short-lived
+certificates): the device boots with its network and no BLE, and goes
+through the same updates as in the plain run.
 
 Not done: setting the Flight Control endpoint or labels in the field.

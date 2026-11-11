@@ -194,6 +194,7 @@ static void load_creds(creds_t *c)
 }
 static EventGroupHandle_t s_wifi;
 #define WIFI_UP BIT0
+#define PROV_OVER BIT1 /* field provisioning ended, its memory given back */
 
 static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -227,6 +228,7 @@ static void on_prov(void *arg, esp_event_base_t base, int32_t id, void *data)
     } else if (id == WIFI_PROV_END) {
         ESP_LOGI(TAG, "field provisioning: done");
         wifi_prov_mgr_deinit();
+        xEventGroupSetBits(s_wifi, PROV_OVER);
     }
 }
 
@@ -288,7 +290,9 @@ static void wifi_start(const creds_t *c)
             ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
             ESP_ERROR_CHECK(esp_wifi_start());
         }
-        xEventGroupWaitBits(s_wifi, WIFI_UP, pdFALSE, pdTRUE, portMAX_DELAY);
+        /* After provisioning, not during it: its service (the BLE stack
+         * above all) holds memory the agent needs for an update. */
+        xEventGroupWaitBits(s_wifi, fp == 2 ? WIFI_UP | PROV_OVER : WIFI_UP, pdFALSE, pdTRUE, portMAX_DELAY);
         return;
     }
 #endif
