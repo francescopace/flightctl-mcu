@@ -30,6 +30,11 @@
 # release signed with that key alone retires the first one; before that, a
 # third, spare key is revoked through the fleet's config.
 #
+# Halfway, the fleet moves to the registry's door with TLS and a password
+# (docs/REGISTRY.md): the release is downloaded again through it, and the rest
+# of the run pulls through it. Last, the device is decommissioned: it wipes
+# its key and certificate and does not enroll again.
+#
 # A valid image of the other security variant is refused too: a plain device
 # gets the secure release build (PREBUILT: port/espidf/build-<chip>-secure-release
 # must be there), a secure device the plain release build signed with its own
@@ -52,7 +57,9 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 source tools/local-ip.sh
 IP="${HOST_IP:-$(local_ip)}"
-REGISTRY="${REGISTRY:-$IP:5001}"
+REGISTRY="${REGISTRY:-$IP:5001}"            # where the test pushes: the plain door
+TLS_REGISTRY="${TLS_REGISTRY:-registry.$IP.nip.io:5443}"  # the same images, TLS and a password
+FLEET_REGISTRY="$REGISTRY"                  # what the fleet names
 CHIP="${CHIP:-esp32c3}"
 ROLLBACK="${ROLLBACK:-1}"
 SECURE="${SECURE:-0}"
@@ -120,7 +127,7 @@ apply_fleet() {
           inline:
             - path: /etc/flightctl-mcu/secure-boot.json
               content: '$3'"
-  flightctl apply -f - >/dev/null <<EOF2
+  tools/fleet/registry-config.py "$FLEET_REGISTRY" <<EOF2 | flightctl apply -f - >/dev/null
 apiVersion: flightctl.io/v1beta1
 kind: Fleet
 metadata:
@@ -132,11 +139,11 @@ spec:
   template:
     spec:
       os:
-        image: $REGISTRY/flightctl-mcu/fw:$1
+        image: $FLEET_REGISTRY/flightctl-mcu/fw:$1
       applications:
         - name: alarm
           appType: container
-          image: $REGISTRY/flightctl-mcu/alarm:$2
+          image: $FLEET_REGISTRY/flightctl-mcu/alarm:$2
           envVars:
             TICK_MS: "100"
       config:
@@ -394,6 +401,14 @@ wait_for 120 "unsigned app refused" "upd.get('status') == 'OutOfDate' and 'not s
 apply_fleet "release.$TAG" "v2.$TAG"
 wait_for 120 "back to the signed app" "upd.get('status') == 'UpToDate'"
 
+log "registry with TLS and a password"
+# The fleet gives the device the registry's CA and auth.json; the image
+# reference changes, so the release comes again, whole, over TLS.
+FLEET_REGISTRY="$TLS_REGISTRY"
+apply_fleet "release.$TAG" "v2.$TAG"
+wait_for 420 "release and app from the TLS door" \
+  "(st.get('os') or {}).get('image', '').startswith('$TLS_REGISTRY/') and upd.get('status') == 'UpToDate' and apps and apps[0]['status'] == 'Running'"
+
 if [[ "$SECURE" == 1 ]]; then
   log "firmware signed with another Secure Boot key refused"
   apply_fleet "otherkey.$TAG" "v2.$TAG"
@@ -476,5 +491,20 @@ if [[ -n "${NEXT_KEY:-}" ]]; then
   wait_for 300 "release signed with the next key confirmed, the first key revoked" \
     "upd.get('status') == 'UpToDate' and ci.get('secureBootKeys') == '1*'"
 fi
+
+log "decommission"
+# Last: the device wipes its key and certificate, restarts, and stays out.
+requests() { flightctl get enrollmentrequests -o name 2>/dev/null | wc -l; }
+before=$(requests)
+flightctl decommission "device/$DEVICE" >/dev/null
+wait_for 180 "device Decommissioned" "(st.get('lifecycle') or {}).get('status') == 'Decommissioned'"
+for i in $(seq 1 60); do
+  grep -q 'not enrolling' "$WORK/emu.log" && break
+  (( i == 60 )) && fail "the device did not come back decommissioned"
+  sleep 3
+done
+sleep 20
+(( $(requests) == before )) || fail "the decommissioned device asked to enroll"
+echo "ok: decommissioned, and not enrolling again"
 
 log "PASS"

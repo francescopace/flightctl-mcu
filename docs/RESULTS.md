@@ -195,6 +195,8 @@ Decommissioning, with `flightctl decommission`:
 
 The Pico's way back stopped short. `ERASE=1 port/zephyr/flash-pico.sh` put the board in its bootloader, but macOS did not mount the bootloader's drive, so the image was not written. The board stays in its bootloader until it is plugged in again.
 
+The ESP-IDF firmware does the same in the emulator: on the C3, the release (1.0 MB, whole) and the app came again through the TLS door, 25 s from the fleet's change to up to date, and at the end of the run the device was decommissioned and did not enroll again (`tests/e2e/e2e-emu.sh`).
+
 Also found: Flight Control serves inline content given in base64 percent-encoded (limitation 12 below).
 
 ## Problems found and fixed
