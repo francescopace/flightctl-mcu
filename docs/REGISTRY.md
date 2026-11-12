@@ -22,7 +22,7 @@ A key may also name a repository, as in `registry.example.com:5443/flightctl-mcu
 The device sends the credentials only when the registry asks for them with a 401, and never over plain HTTP. It supports two schemes:
 
 - **Basic**, which is what `registry:3` with a password file asks for.
-- **Bearer tokens**, the scheme of Harbor, Quay, GitLab and most hosted registries. The token comes from the realm named in the challenge, which must be on https. A realm on another host needs that host's CA as well.
+- **Bearer tokens**, the scheme of Harbor, Quay, GitLab and most hosted registries. The token comes from the realm named in the challenge, which must be on https. A realm on another host needs that host's CA as well. Tested against the unit tests' fake registry only, not yet against a real one.
 
 The credentials never appear in the device's errors or its log. A registry that refuses them shows up in `status.updated.info` as `HTTP 401`.
 

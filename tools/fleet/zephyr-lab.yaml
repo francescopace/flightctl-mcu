@@ -1,5 +1,8 @@
 # Apply with tools/fleet/apply.sh tools/fleet/zephyr-lab.yaml, which fills
-# in ${REGISTRY}.
+# in ${REGISTRY}. The lab's boards pull from the registry's door with TLS:
+#   REGISTRY=$(cat .secrets/registry/host) tools/fleet/apply.sh tools/fleet/zephyr-lab.yaml
+# Without REGISTRY the fleet points at the plain door, and every board
+# downloads its firmware again (docs/REGISTRY.md).
 # Example fleet: the boards with the Zephyr build (docs/ZEPHYR.md), whatever
 # the board. A device joins with the label app=zephyr-lab, given when it is
 # provisioned (--labels) or approved. (The boards with the ESP-IDF firmware

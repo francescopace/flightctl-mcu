@@ -17,8 +17,6 @@ anyone who can read the fleet can read them.
 import os
 import sys
 
-import yaml
-
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "registry"))
 import registry_client  # noqa: E402
 
@@ -41,6 +39,10 @@ def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     files = files_for(sys.argv[1])
+    if not files:
+        sys.stdout.write(sys.stdin.read())  # plain HTTP: the fleet as it is
+        return
+    import yaml
     docs = [d for d in yaml.safe_load_all(sys.stdin) if d is not None]
     for d in docs:
         if files and d.get("kind") == "Fleet":

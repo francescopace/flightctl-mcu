@@ -320,7 +320,7 @@ One thing the new labels give: a fleet can select on what a device says it is, `
    - Proposal: copy `os.catalogItemRef` too, as is done for the applications.
 12. **An inline file given in base64 reaches the device percent-encoded.**
    - The server keeps inline files as data URLs (`pkg/ignition/ignition_wrapper.go`: `SetFile`). For content already in base64 it sets the URL's encoding to ASCII, which percent-encodes the text. Building the rendered spec (`internal/tasks/device_render.go`: `ignitionConfigToRenderedConfig`) then cuts off the `data:...,` prefix and serves what is left as base64, escapes included. `aGk=` arrives as `aGk%3D`.
-   - The Linux agent decodes with Go's `base64.StdEncoding` (`api/core/v1beta1/types.go`: `decodeContents`), which refuses `%`. Base64 content whose length is not a multiple of three, which is most of it, cannot be written.
+   - The Linux agent decodes with Go's `base64.StdEncoding` (`api/core/v1beta1/types.go`: `decodeContents`), which refuses `%`. Base64 content whose length is not a multiple of three, which is most of it, should then fail to be written (read in the source, not tried with the Linux agent).
    - Found on 12 November 2026 with an `auth.json` for the registry ([REGISTRY.md](REGISTRY.md)), in the rendered spec of a device on 1.4.0. Content given as text is turned into proper base64 by the same code and arrives intact. This agent now undoes the escapes before decoding, and the tools give text.
    - Proposal: unescape the data URL's text (or use the URL's own decoding) before serving it as base64.
 
