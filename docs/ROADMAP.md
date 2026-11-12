@@ -25,6 +25,11 @@ What the Zephyr port does not have, and the ESP-IDF firmware has:
 - [ ] Protection of the device: MCUboot checks the firmware's signature in software, and the device key is in the storage partition in clear. No Secure Boot, no encryption.
 - [ ] The WiFi network given in the field: a Zephyr build gets it at the factory, with the credentials.
 
+What Flight Control offers and the agent does not answer yet:
+
+- [ ] The remote terminal: `flightctl console device/<name>` and the Terminal tab of the UI. Flight Control puts the session in the rendered spec (`consoles`), and the agent is to open a gRPC stream for it on the endpoint it already uses. That takes an HTTP/2 and gRPC client in the core, which speaks HTTP/1.1 only; a closed set of commands in place of a shell, which a microcontroller does not have (status, heap, apps, log, reboot); and a third TLS connection for as long as the session lasts, which the boards shortest of RAM may not have room for.
+- [ ] The device's log from the UI. Flight Control has no API for logs: the Log tab runs `journalctl` through the terminal's channel. So it comes after the terminal: a log kept in RAM (today it goes to the serial port only), shown by a command, and then an answer to the commands the UI sends, which holds only as long as the UI sends those.
+
 Towards a deployment:
 
 - [ ] A registry with TLS and authentication. Today it is plain HTTP: signatures protect the images from tampering, not from being read.
@@ -86,3 +91,4 @@ Checked against Flight Control 1.3.1 and 1.4.0:
 - mTLS with TLS 1.3 and ECDSA P-256. The device name is derived from the public key: `lower(base32hex_nopad(sha256(X || Y)))`.
 - A device is up to date when `status.config.renderedVersion` equals the rendered version served; the OS is out of date when `status.os.image` differs from `spec.os.image` as a string.
 - A device becomes `Unknown` after 5 minutes without contact.
+- `consoles` in the rendered spec (someone asked for a terminal on the device) is ignored: see the list above.
