@@ -6,82 +6,63 @@
 
 # flightctl-mcu
 
-A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers: a portable C core, with ports for ESP-IDF, Zephyr and POSIX systems ([target devices](#target-devices)). Devices too small for Linux enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. The devices need no Linux, and Flight Control runs unmodified.
+A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers: a portable C core, with ports for ESP-IDF, Zephyr and POSIX systems. Devices too small for Linux enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. Flight Control runs unmodified.
 
-It works end to end on real hardware, with signed images and certificate renewal. It is not production ready yet: see [Limitations](#limitations) and the [roadmap](docs/ROADMAP.md).
+It works end to end on real hardware, with signed images and certificate renewal. It is not production ready yet: see [Status](#status).
 
 ## Why
 
-Flight Control (upstream of Red Hat Edge Manager, [video overview](https://www.youtube.com/watch?v=BrLQr61dTik)) manages fleets of Linux edge devices: enrollment, monitoring, declarative config, OS images and container apps, with staged rollouts. Its agent is written in Go and expects a full Linux system with bootc, systemd and Podman.
+Flight Control (upstream of Red Hat Edge Manager, [video overview](https://www.youtube.com/watch?v=BrLQr61dTik)) manages fleets of Linux edge devices. Its agent is written in Go and expects bootc, systemd and Podman.
 
-The service itself is not tied to OpenShift. It installs with Helm on any Kubernetes cluster that supports the Gateway API (OpenShift and MicroShift included), or without Kubernetes on a single Fedora or RHEL host, as Podman quadlets. This repo uses kind on a laptop.
+A sensor node or a small controller on a production line is a microcontroller with a few hundred KB of RAM and an RTOS. It ends up managed by a vendor cloud, a custom MQTT backend, or nothing at all: the gateway that collects its data shows up in Flight Control, and the devices behind it don't.
 
-Plenty of devices in the field are not like that. A sensor node or a small controller on a production line is usually a microcontroller with a few hundred KB of RAM and an RTOS. These devices end up managed by something else: a vendor cloud, a custom MQTT backend, or nothing at all. So the gateway that collects their data shows up in Flight Control, and the devices behind it don't.
+Here the microcontroller speaks the Flight Control agent API itself. That API is a small HTTP+JSON protocol over mutual TLS: enroll, long-poll the device spec, report status. A C client for it fits in about 21 KB of flash. Flight Control then treats the board as a regular device, with the same fleets, label selectors, rollouts, RBAC and UI.
 
-The idea here is to have the microcontroller speak the Flight Control **agent API** itself. That API is a small HTTP+JSON protocol over mutual TLS:
-
-- an enrollment request;
-- long-polling the rendered device spec;
-- reporting status.
-
-A C client for it, with mbedTLS for TLS 1.3, fits in about 21 KB of flash. Once a board implements it, Flight Control treats it as a regular device: it shows up in fleets, label selectors and the UI, it takes part in rollouts, and the same RBAC applies.
-
-## How Flight Control concepts map to an MCU
+## What maps to what
 
 | Flight Control | On the microcontroller |
 |---|---|
-| Enrollment request + approval | P-256 key generated on the device, CSR, management certificate stored in flash |
-| Certificate signing request (renewal signer) | The device renews its management certificate for the same key before it expires |
-| `spec.config` (inline files) | Files kept in the device's storage (NVS on ESP-IDF, LittleFS on Zephyr). The firmware gets each file through a callback and can reject it. |
-| `spec.os.image` | Firmware image, pulled from an OCI registry into the inactive OTA slot. One image index covers every chip and board; each device picks its own. Its cosign signature is checked first. A release can carry deltas from earlier ones: a device on one of those downloads 1 to 12% of the image and rebuilds the rest from its own ([docs/DELTA.md](docs/DELTA.md)). |
-| `spec.applications` (`appType: container`) | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
-| `status` | Heap, flash, chip and firmware version, RSSI, temperature, app state, bytes on the wire (in `customInfo`) |
-| Fleet rollout (`BatchSequence`) | Works unchanged. The device reports a new version only after the new firmware has reached the server. |
+| Enrollment request and approval | P-256 key generated on the device, CSR, certificate stored in flash |
+| Certificate renewal | Same key, renewed before the certificate expires |
+| `spec.config` | Files in the device's storage. The firmware can reject each one. |
+| `spec.os.image` | Firmware pulled from an OCI registry into the inactive OTA slot, after its cosign signature is checked. One index covers every chip, and an update can be a [delta](docs/DELTA.md). |
+| `spec.applications` | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
+| `status` | Heap, flash, firmware version, RSSI, temperature, app state |
+| Fleet rollout | Works unchanged |
 
-## Architecture
+## How it works
 
 ```mermaid
 flowchart LR
-  subgraph cp["Control plane (any Kubernetes, or Podman on a Linux host)"]
-    FC["Flight Control<br/>fleets, rollouts, UI"]
-    REG["OCI registry<br/>firmware index, .wasm apps"]
+  subgraph cp["Control plane"]
+    FC["Flight Control"]
+    REG["OCI registry"]
   end
-  subgraph dev["Device (ESP-IDF, Zephyr, ...: no Linux needed)"]
-    AG["agent<br/>enroll / spec / status"]
-    OTA["OTA slots A/B<br/>bootloader rollback"]
-    WAMR["WAMR<br/>WASM apps"]
-    FW["firmware<br/>sensors, LED, ..."]
+  subgraph dev["Device"]
+    AG["agent"]
+    OTA["OTA slots"]
+    WAMR["WAMR"]
+    FW["firmware"]
   end
-  AG -- "mTLS: enroll, long-poll spec, PUT status" --> FC
-  AG -- "pull firmware, .wasm" --> REG
+  AG -- "mTLS" --> FC
+  AG -- "pull" --> REG
   AG --> OTA
   AG --> WAMR
-  WAMR -- "host functions" --> FW
+  WAMR --> FW
 ```
 
-The agent runs two threads:
-
-- **spec thread**: holds a long-poll on `GET /devices/{name}/rendered` and applies whatever comes back (config, firmware, apps).
-- **status thread**: sends `PUT /devices/{name}/status` every 60 seconds, and immediately when something changes.
-
-Everything that differs between platforms sits behind a small port layer:
+The agent runs two threads. One holds a long-poll on the rendered device spec and applies whatever comes back: config, firmware, apps. The other sends the status, periodically and at once when something changes. Firmware and `.wasm` apps come from the registry. Apps run in WAMR and reach the hardware only through host functions the firmware exports.
 
 ```mermaid
 flowchart TB
-  core["core/ - C11, pthreads, BSD sockets, mbedTLS 4, cJSON, WAMR<br/>agent, http client, OCI client, app manager, identity"]
-  port["core/include/fc_port.h - about 15 functions<br/>key/value store, system info, OTA, logging"]
-  esp["port/espidf<br/>NVS, esp_ota, temperature sensor"]
-  zephyr["port/zephyr<br/>LittleFS, MCUboot, Zephyr's sockets"]
-  host["port/host (Linux, macOS)<br/>files, fake OTA (a simulated device on your laptop)"]
-  other["port/your-rtos<br/>(not written yet)"]
-  core --> port
-  port --> esp
-  port --> zephyr
-  port --> host
-  port --> other
+  core["core/"] --> port["fc_port.h"]
+  port --> esp["port/espidf"]
+  port --> zephyr["port/zephyr"]
+  port --> host["port/host"]
+  port -.-> other["your RTOS"]
 ```
 
-The host port is not a mock. It runs the same agent against a real Flight Control server, which is how most of the protocol work was done without flashing anything.
+`core/` is C11 on pthreads, BSD sockets, mbedTLS 4, cJSON and WAMR. What differs between platforms is behind `core/include/fc_port.h`, about 20 functions: key/value storage, system info, OTA, logging. The host port is not a mock: it runs the same agent as a process on Linux or macOS against a real Flight Control server, which is how most of the protocol work was done without flashing anything.
 
 ### Firmware update with rollback
 
@@ -90,352 +71,82 @@ sequenceDiagram
   participant FC as Flight Control
   participant D as Device
   participant R as Registry
-  FC->>D: rendered spec, os.image = fw:v3
-  D->>R: GET index, then the manifest for this chip
-  D->>R: GET firmware blob, streamed into the inactive slot, sha256 checked
-  D->>FC: status: Updating / Rebooting (still reports the old version)
-  D->>D: reboot into fw:v3, image pending verification
-  alt v3 reaches Flight Control
-    D->>FC: status with the new version
-    D->>D: mark image valid
-  else no accepted status within 150 s
-    D->>D: rollback to the previous image, reboot
-    D->>FC: status: "fw:v3 failed to start and was rolled back"
-    Note over FC: rollout batch fails, the rest of the fleet keeps the old version
+  FC->>D: spec: fw v3
+  D->>R: pull v3
+  D->>FC: Updating
+  D->>D: reboot into v3
+  alt status accepted
+    D->>FC: running v3
+    D->>D: confirm v3
+  else no answer in 150 s
+    D->>D: roll back, reboot
+    D->>FC: v3 failed
   end
 ```
 
-## Target devices
+The image is streamed into the inactive slot and checked against its sha256. The device reports the new version only after the new firmware has reached the server. A broken image therefore fails its rollout batch, and the rest of the fleet keeps the old version.
 
-The agent is not tied to a chip or a vendor: it is a C core and a thin port for each system it runs on. What it asks of a device:
+## Where it runs
 
-- a CPU that [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) has a target for. In use here: Xtensa, RISC-V, Arm Cortex-M0+, and AArch64 and x86-64 on a host;
-- about 256 KB of RAM: the smallest board it runs on has 264 KB, and uses nearly all of it;
-- flash for two firmware slots and some storage, 2 MB at the least (images are 0.7 to 1.5 MB);
-- an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried: Ethernet and cellular are on the [roadmap](docs/ROADMAP.md);
-- a random generator and a way to learn the time (SNTP), for TLS;
-- mbedTLS 4.1 or later.
-
-Three stacks have a port today:
-
-| Stack | Devices | What works there |
+| Stack | Runs on | What works |
 |---|---|---|
-| **ESP-IDF** 6.0<br/>`port/espidf`, `firmware/` | Espressif's WiFi chips. Six run it: ESP32, S2, S3, C3, C5, C6. Another one ESP-IDF supports is mostly configuration. | Everything, and the most complete: also Secure Boot, flash encryption, keys in hardware, WiFi provisioning over SoftAP and BLE ([docs/SECURITY.md](docs/SECURITY.md), [docs/PROVISIONING.md](docs/PROVISIONING.md)). On six boards, and on emulated chips in CI. |
-| **Zephyr** 4.5<br/>`port/zephyr`, `zephyr/` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. Two run it: a Raspberry Pi Pico W (RP2040) and an ESP32-S3-DevKitC. Likely next, not tried: the Raspberry Pi Pico 2 W, boards with Ethernet such as ST's Nucleo-144 (F7, H7) or NXP's i.MX RT kits. | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([docs/ZEPHYR.md](docs/ZEPHYR.md)). On two boards, and as a Linux process (`native_sim`) in CI. A new board is two files. |
-| **Linux, macOS**<br/>`port/host` | Anything with POSIX threads and sockets: a gateway, a single-board computer, a container, your laptop. | Runs as a process. Enrollment, monitoring, config and WASM apps are real; a firmware update only saves the image to a file. It is the simulated device of the tests, and where the protocol work was done. A Linux device that can run bootc and Podman should run Flight Control's own agent instead. |
+| **ESP-IDF** 6.0 | ESP32, S2, S3, C3, C5, C6 | Everything, plus Secure Boot, flash encryption and WiFi provisioning over SoftAP and BLE. Six boards, and emulated chips in CI. |
+| **Zephyr** 4.5 | Raspberry Pi Pico W, ESP32-S3 | Enrollment, monitoring, config, WASM apps, firmware through MCUboot. A new board is two files. |
+| **Linux, macOS** | Any POSIX system | The simulated device of the tests. A firmware update only saves the image to a file. |
 
-Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs a port, which is about 15 functions: see [Adding another device](#adding-another-device). None is written.
+"Everything" is enrollment, monitoring, config, firmware OTA with rollback and WASM apps. The same `.wasm` file runs on all of them, whatever the CPU. A device needs about 256 KB of RAM, 2 MB of flash and a TCP/IP network.
 
-"Everything" means enrollment, monitoring, config, firmware OTA with rollback and WASM apps. The same `.wasm` file runs on every one of these, whatever the CPU.
+The requirements in full, the boards tried and how to add a chip, a board or an RTOS are in [docs/DEVICES.md](docs/DEVICES.md).
 
-### Boards tried
+## Try it
 
-With ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and on one of these boards, the S3 ([RESULTS.md](docs/RESULTS.md#esp-idf-603-on-a-board-esp32-s3)); the table is from the earlier run:
+[docs/QUICKSTART.md](docs/QUICKSTART.md) sets up Flight Control on kind and a local registry, then enrolls a device: an Espressif board, or a simulated one on your machine if you have no board. For a Zephyr board, the build and flash steps are in [docs/ZEPHYR.md](docs/ZEPHYR.md).
 
-| Chip | Core | Status | Free heap with an app running |
-|---|---|---|---|
-| ESP32-S3 | Xtensa LX7 | everything works | ~118 KB |
-| ESP32-C3 | RISC-V | everything works; also tested in the emulator in CI | ~57 KB |
-| ESP32-C5 | RISC-V | everything works; also tested in the emulator in CI | ~59 KB |
-| ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~73 KB |
-| ESP32-C6 | RISC-V | everything except rollback, which was not exercised | ~163 KB |
-| ESP32-S2 | Xtensa LX7 | everything works, using the PSRAM in the package (S2FNR2, as on the Lolin S2 Mini): internal RAM alone is not enough for TLS; no serial log on the S2 Mini, because the console is on UART0 | ~28 KB internal + 2 MB PSRAM |
+## Documentation
 
-The S2 Mini and the C6 DevKitC flash only over their native USB port, started in download mode (plug them in holding BOOT).
-
-PSRAM is not used, so a single image runs on every board variant of a chip. The exception is the S2, which needs its PSRAM (see the table).
-
-Firmware images are 1.06–1.25 MB, leaving 25–36% of a 1.6 MB OTA slot free. Most of that size is the WiFi stack and mbedTLS. The agent itself is about 21 KB and WAMR about 71 KB.
-
-With Zephyr 4.5 and firmware updates through MCUboot ([docs/ZEPHYR.md](docs/ZEPHYR.md)):
-
-| Board | Core | Status | Free heap with an app running |
-|---|---|---|---|
-| Raspberry Pi Pico W (RP2040) | Arm Cortex-M0+ | everything works | ~31 KB |
-| ESP32-S3 | Xtensa LX7 | everything except rollback, which was not exercised | ~49 KB |
-
-## Adding another device
-
-### Another ESP32 chip
-
-If ESP-IDF supports the chip, it is mostly configuration:
-
-1. Build for it: `TARGET=esp32c61 FW_VERSION=v1 firmware/build.sh`. The build directory is `firmware/build-<target>`.
-2. Put board-specific defaults in `firmware/sdkconfig.defaults.<target>`. For example the LED pin: see `sdkconfig.defaults.esp32c3` or `sdkconfig.defaults.esp32`.
-3. If the chip has no temperature sensor, `port/espidf` already falls back to a simulated one (`SOC_TEMP_SENSOR_SUPPORTED`).
-4. `firmware/fw-push.py` picks up every `build-*` directory, so the chip ends up in the next firmware index on its own.
-
-Per-device differences, such as a different LED pin on a clone board, don't need a separate build. Set a label on the device (`led-gpio=38`, `led-order=rgb`, `led-ws2812=false`) and the fleet template passes it into the config.
-
-### Another Zephyr board
-
-If Zephyr supports the board and it meets [the list above](#target-devices), it is two files in `zephyr/boards/`, as for the two boards that are there:
-
-1. `<board>.overlay`: the `fc_creds` (16 KB) and `fc_storage` partitions, usually carved out of the board's storage partition, and the nodes Zephyr leaves off (the WiFi chip, the random generator).
-2. `<board>.conf`: the network driver, MCUboot's image manager, and the memory the board can give: the kernel heap (thread stacks come from it), the C heap, the agent's stacks.
-3. Build with `BOARD=<board> zephyr/build.sh`, write the credentials with `deploy/provision.py --format zephyr --board <board files>`. Firmware updates need MCUboot: the script builds with it for a board named `.../mcuboot` and for Espressif's, and for any other with `MCUBOOT=1`.
-
-A CPU family that is new here needs its WAMR target named in `zephyr/CMakeLists.txt`, and a chip without a random generator needs an entropy driver (the Pico W has one in `port/zephyr`). What each of the two boards took is in [docs/ZEPHYR.md](docs/ZEPHYR.md).
-
-### Another RTOS (NuttX, RT-Thread, ThreadX, ...)
-
-The core needs:
-
-- POSIX threads (mutex, condition variable, threads with a configurable stack);
-- BSD sockets, reachable through `mbedtls_net_*`;
-- `time()` that returns the real time (certificates are validated);
-- mbedTLS 4.1 or later (TLS 1.3; its cryptography is PSA only);
-- a platform layer for WAMR. WAMR already has one for Zephyr, NuttX, RT-Thread and RIOT, among others.
-
-Then implement `core/include/fc_port.h` for your platform:
-
-| Function | What it does |
+| | |
 |---|---|
-| `fc_port_kv_get/set/del` | Persistent key/value storage: device key, certificate, config files, WASM modules |
-| `fc_port_sysinfo`, `fc_port_custom_info` | Hardware and OS facts for `status.systemInfo` |
-| `fc_port_write_file` | Where `spec.config` files end up |
-| `fc_port_fw_platform` | The `platform.architecture` to pick from a firmware index, e.g. `esp32c3` |
-| `fc_port_ota_begin/write/end` | Write an image into the inactive slot and make it the next boot image |
-| `fc_port_ota_pending_verify/confirm/rollback`, `fc_port_reboot` | Confirm a new image or go back. On Zephyr this is MCUboot's test and confirm. |
-| `fc_port_log` | Logging |
+| [QUICKSTART.md](docs/QUICKSTART.md) | From nothing to an enrolled device with firmware, config and an app |
+| [DEVICES.md](docs/DEVICES.md) | Requirements, boards tried, adding a chip, a board or an RTOS |
+| [APPS.md](docs/APPS.md) | Writing a WASM app |
+| [ZEPHYR.md](docs/ZEPHYR.md) | The Zephyr port: Pico W, ESP32-S3, `native_sim` |
+| [SECURITY.md](docs/SECURITY.md) | Secure Boot, flash encryption, keys in hardware, the factory procedure |
+| [PROVISIONING.md](docs/PROVISIONING.md) | Credentials over USB, WiFi over SoftAP or BLE |
+| [DELTA.md](docs/DELTA.md) | Firmware updates as deltas |
+| [TESTING.md](docs/TESTING.md) | Unit tests, fuzzing, end-to-end tests, what CI runs |
+| [RESULTS.md](docs/RESULTS.md) | Measurements, problems found, gaps in Flight Control |
+| [ROADMAP.md](docs/ROADMAP.md) | Milestones and what comes next |
+| [DEPENDENCIES.md](docs/DEPENDENCIES.md) | Versions, where each is set, licenses |
 
-`port/espidf/fc_port_espidf.c` (about 300 lines), `port/zephyr/fc_port_zephyr.c` and `port/host/fc_port_host.c` are the three references. The firmware wiring in `firmware/main/` covers WiFi, time sync, the demo app and its host functions; it is ESP-IDF specific and would be rewritten for another platform.
+## Status
+
+Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), rollback, certificate renewal.
+
+Not there yet:
+
+- The registry is plain HTTP without authentication. Signatures protect images from tampering, not from reading.
+- Secure Boot and flash encryption (the `secure` variant) are tested in the emulator only. Without them the device key is in flash in clear.
+- WiFi is the only link tried.
+- Flight Control cannot revoke an enrollment certificate.
+- Apps must be WASM OCI artifacts. Podman-style images with a `.wasm` inside a tarball are not supported.
+
+The work also found gaps in Flight Control for this class of device, such as a fixed 5-minute disconnect timeout. They are written up in [docs/RESULTS.md](docs/RESULTS.md#flight-control-limitations-found-upstream-proposals), with the [current limitations](docs/RESULTS.md#current-limitations) in full.
 
 ## Repository layout
 
 ```
-core/            agent, HTTP/TLS client, OCI client, WASM app manager (portable C)
-port/espidf/     ESP-IDF port
-port/host/       host port (simulated device)
-port/zephyr/     Zephyr port (docs/ZEPHYR.md): native_sim, Raspberry Pi Pico W, ESP32-S3
-zephyr/          Zephyr application: build and run scripts, board settings
-host/            simulated device executable
-firmware/        ESP-IDF project: main app, build/flash/push scripts
-wasm-apps/       app SDK header, example apps (alarm, trend) and the build script
-deploy/kind/     Flight Control on kind
-deploy/registry/ local OCI registry
-deploy/fleet/    example fleet
-deploy/provision.py  writes a device's credentials partition (fc_creds)
-deploy/soak/         soak test: samples the fleet's status into a CSV, reports per device
-deploy/signing/  signing key and signer for firmware and apps (cosign format)
-deploy/auto-approve/ enrollment approval from an allow list
-tests/unit/      unit tests of the C core (in-memory port)
-tests/python/    tests of the deploy scripts
-tests/fuzz/      libFuzzer targets and seed inputs
-third_party/     fetch scripts for WAMR, detools and Zephyr (none is vendored), and patches/ for what is fetched
-ci/              helpers for the GitHub Actions workflow
-docs/            roadmap, results, device security, provisioning, firmware deltas, dependencies
-```
-
-## Try it
-
-You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), esptool, oras, Python 3 with PyYAML, and for WASM apps clang plus `wasm-ld` (`brew install lld`). The ESP-IDF toolchain runs in the `espressif/idf:v6.0.3` container, so you don't install it.
-
-The scripts were written on macOS (Apple Silicon). CI runs the host agent, the firmware build and the kind setup on Linux too.
-
-The walk below is for an Espressif board with the ESP-IDF firmware, the most complete of the three ports. For a board with the Zephyr build, steps 3 and 4 are in [docs/ZEPHYR.md](docs/ZEPHYR.md) and the fleet is `deploy/fleet/zephyr-lab.yaml`; with no board at all, the simulated device at the end runs on your machine.
-
-**1. Control plane.** Flight Control on kind, reachable from your LAN at `<your-ip>.nip.io`, and a plain-HTTP OCI registry on port 5001. If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and set its agent endpoint in `firmware/sdkconfig.local` (step 2).
-
-```bash
-deploy/kind/up.sh
-```
-
-```bash
-deploy/registry/up.sh
-```
-
-```bash
-flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t "$(kubectl create token flightctl-admin -n flightctl --duration=24h)"
-```
-
-The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
-
-Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, so narrow that to what does not change ([why](docs/RESULTS.md#flight-control-140)):
-
-```bash
-deploy/fleet/apply.sh deploy/fleet/labelsync-custom-info.yaml
-```
-
-**2. Credentials.** The enrollment credentials go to `.secrets/`, which is git-ignored:
-
-```bash
-deploy/enrollment.sh
-```
-
-Create the key that signs firmware and apps. The device gets its public half, and from then on installs only images signed with it. The push scripts sign with it automatically:
-
-```bash
-deploy/signing/keygen.sh
-```
-
-**3. Build and flash a board (ESP-IDF).** The firmware has no credentials in it, so one build serves every installation. `flash.sh` detects the chip on the port:
-
-```bash
-third_party/fetch-wamr.sh
-```
-
-```bash
-third_party/fetch-detools.sh
-```
-
-```bash
-TARGET=esp32c3 FW_VERSION=v1 firmware/build.sh
-```
-
-```bash
-firmware/flash.sh /dev/cu.usbmodem1101
-```
-
-That is a debug build. `VARIANT=release` builds with `-Os` and quieter logs, about 15% smaller, in `firmware/build-<chip>-release`; push those with `fw-push.py --variant release`.
-
-Nothing above touches the chip's eFuses. The `secure` variant does: Secure Boot v2, flash encryption and NVS encryption, for devices in the field. It is never built by default, only with `VARIANT=secure` and a Secure Boot key of your own, in its own directory (`firmware/build-<chip>-secure`). Its first boot burns the chip's eFuses for good; read [docs/SECURITY.md](docs/SECURITY.md) first, which also has the factory procedure. `flash.sh` will not flash it without being told, and a device takes over the air only firmware of its own variant: a plain device refuses a secure build, and the reverse.
-
-**4. Provision it.** `provision.py` writes the board's `fc_creds` partition: the CA, the enrollment credentials, the signing key, the agent endpoint (by default `agent-api.<your-ip>.nip.io:8443`) and the labels. Pass the WiFi as well:
-
-```bash
-deploy/provision.py --port /dev/cu.usbmodem1101 --wifi-ssid <ssid> --wifi-password <password>
-```
-
-When the site's network is not known yet, pass `--pop <secret>` instead of the WiFi: the device then opens an access point (or, built with `VARIANT=ble`, advertises over Bluetooth) where an installer gives it the network, with Espressif's provisioning app or `esp_prov` (see [docs/PROVISIONING.md](docs/PROVISIONING.md)).
-
-`--image` writes the same partition into a merged flash image instead (the emulator uses it), `--out` into a file. During development you can also build the WiFi and the endpoint into the firmware, from `firmware/sdkconfig.wifi` and `firmware/sdkconfig.local` (see the `.example` files); a provisioned value wins. `LOCAL=0 firmware/build.sh` leaves those two files out, for images that leave your desk.
-
-**5. Approve it.** A few seconds after boot the board asks to enroll:
-
-```bash
-flightctl get enrollmentrequests
-```
-
-```bash
-flightctl approve -l stage=canary enrollmentrequest/<name>
-```
-
-For more than a few boards, list them in `deploy/auto-approve/allowlist.yaml` (start from `allowlist.example.yaml`), by device name or MAC address with their labels, and let the script approve them as they show up:
-
-```bash
-deploy/auto-approve/auto-approve.py deploy/auto-approve/allowlist.yaml --watch 10
-```
-
-**6. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/idf-lab.yaml`, or edit them there. (The fleet of the boards with the Zephyr build is `deploy/fleet/zephyr-lab.yaml`: the two ports are released apart for now.)
-
-```bash
-firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v3.0
-```
-
-```bash
-wasm-apps/build.sh alarm v2.2
-```
-
-```bash
-deploy/fleet/apply.sh
-```
-
-The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest.
-
-**No board?** Run the simulated device on your machine:
-
-```bash
-cmake -S . -B build/host -G Ninja && cmake --build build/host
-```
-
-```bash
-build/host/fc-host-agent --server agent-api.<your-ip>.nip.io:8443 --ca .secrets/ca.crt --enroll-cert .secrets/enroll.crt --enroll-key .secrets/enroll.key --signing-key .secrets/signing.pub --label site=lab
-```
-
-## Writing a WASM app
-
-Apps include [wasm-apps/sdk/fc_app.h](wasm-apps/sdk/fc_app.h), which is the interface between an app and the device, with a version number. An app exports `tick(now_ms)`, which the device calls every `TICK_MS` milliseconds. That value comes from the app's `envVars` in the fleet and defaults to 100. The app reaches the hardware only through host functions:
-
-- from the agent, on every device: `fc_set_state()`, shown in Flight Control as `customInfo["app.<name>"]`, and `fc_log()`;
-- from the firmware: `fc_temp_mc()`, `fc_threshold_mc()` (from the fleet config) and `fc_led(r, g, b)`.
-
-`FC_APP_ABI()` declares the interface version the app was built for, so an older device refuses it with a clear error instead of failing later.
-
-There are two examples:
-
-- [alarm](wasm-apps/alarm/alarm.c): the LED logic of the temperature alarm, a few hundred bytes. It uses only blue, dim for the pre-alarm and blinking for the alarm, so boards with a single-colour LED look the same as RGB ones.
-- [trend](wasm-apps/trend/trend.c): no LED. It smooths the temperature and reports whether it is rising or falling, and how fast.
-
-Build and push with `wasm-apps/build.sh <app> <version>`. Keep its link flags: exporting `__heap_base` and `__data_end` lets WAMR shrink the 64 KB WebAssembly memory page to what the module actually uses. Without that, an app does not fit on a C3.
-
-## Limitations
-
-What is done:
-
-- **Signed images.** Firmware and apps are signed in cosign's format (`cosign verify --key` accepts them). A device with a signing key in its firmware refuses anything unsigned or signed with another key.
-- **Certificate renewal.** The device renews its management certificate before it expires, as the Linux agent does. If it was offline for longer than the certificate's lifetime, it enrolls again as a new device, keeping its apps and config.
-- **Kept connections.** HTTP keep-alive, one connection per agent thread: a simulated device idles at about 220 KB/hour, against 560 KB/hour with a connection per request. The firmware's heartbeat status goes out every 2 minutes; what is left is mostly that status. Status updates triggered by apps are grouped (one every 15 s at most), so an app whose state flaps cannot flood the network.
-
-What is not:
-
-- **Security**:
-  - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
-  - The device key is in flash in clear, except in the `secure` variant (see [docs/SECURITY.md](docs/SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
-- **Provisioning**: credentials are written over USB (`deploy/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [docs/PROVISIONING.md](docs/PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
-- **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
-
-Some of what we ran into points at gaps in Flight Control for this class of device:
-
-- a fixed 5-minute disconnect timeout;
-- no way for a device to say it only runs WASM apps;
-- `matchExpressions` in fleet selectors is silently ignored;
-- rollout success is judged on `renderedVersion` only.
-
-These are written up, with measurements, in [docs/RESULTS.md](docs/RESULTS.md). What comes next is in [docs/ROADMAP.md](docs/ROADMAP.md).
-
-## CI
-
-GitHub Actions runs on every push that touches code. It builds once and tests what it built: the end-to-end jobs take the host agent, the firmware images and the WASM apps from the build jobs.
-
-- **Builds**: the simulated device on Linux, the firmware for every supported chip in debug and release profiles (with `ccache`), and the example WASM apps. The firmware has no credentials in it.
-- **Unit tests** ([ci/unit.sh](ci/unit.sh), under a second): the C core on an in-memory port, with AddressSanitizer and UBSan (HTTP framing, OCI references, index and signatures, device identity against an independently computed name, rendered specs, certificate renewal answers, re-enrollment), and the deploy scripts' logic in Python (cosign payloads and signatures, the provisioning partition, the allow list).
-- **Fuzzing** ([ci/fuzz.sh](ci/fuzz.sh)): the HTTP response reader, the OCI manifest and signature handling, and the agent's handling of rendered specs and certificates. 30 seconds per target on every push, 20 minutes per target every night ([fuzz-nightly.yml](.github/workflows/fuzz-nightly.yml)), with the corpus kept from one night to the next. Crashes found so far are kept as seed inputs in `tests/fuzz/corpus`.
-- **End-to-end test** ([ci/e2e.sh](ci/e2e.sh)): the job deploys Flight Control 1.4.0 on kind and a registry on the runner. The simulated device then goes through:
-  - enrollment, approved by the allow-list script;
-  - Online status;
-  - inline config;
-  - a signed WASM app install, and `cosign verify` on its signature;
-  - an in-place update from v1 to v2;
-  - a config change;
-  - an unsigned app, which it must refuse;
-  - an update while the registry is down, which must complete once it is back;
-  - the app's removal, then the second example app;
-  - the renewal of its management certificate (the server issues 2-minute certificates for the test), and a status accepted after the first one expired;
-  - a server restart, after which it must reconnect and take a new spec;
-  - the server down until its certificate expired, after which it must enroll again, under a new name, with its config.
-- **Firmware in the emulator** ([ci/e2e-emu.sh](ci/e2e-emu.sh)): the real firmware for the C3 and the C5 runs in Espressif's [esp-emu](https://github.com/espressif/esp-emulator), whose WiFi access point NATs to the runner, against Flight Control on kind. It provisions the debug image for the test cluster, then goes through enrollment, a signed update to the release image with a reboot into the other slot, a signed app and an unsigned one, certificate renewal, and the rollback of a broken image that cannot reach the server (built with a 30-second confirmation window instead of 150). The same runs for the `secure` variant (`SECURE=1`): the first boot burns the emulated eFuses and encrypts the flash, the device reports Secure Boot and flash encryption on, and a firmware signed with another Secure Boot key is refused even though its cosign signature is valid. Each device also refuses a valid firmware of the other variant: the plain one gets the secure build.
-
-You can run both tests against a cluster you already have:
-
-```bash
-SKIP_DEPLOY=1 ci/e2e.sh
-```
-
-```bash
-SKIP_DEPLOY=1 CHIP=esp32c5 ci/e2e-emu.sh
-```
-
-The emulator test needs `esp-emu` on the PATH or in `~/.local/bin`. In CI it does not rebuild the firmware: it provisions the images the firmware job built. To try a build in the emulator by hand, provision its merged image for the emulator's access point and run it:
-
-```bash
-deploy/provision.py --image firmware/build-esp32c3/merged-binary.bin --wifi-ssid myssid --wifi-password mypassword
-```
-
-```bash
-esp-emu --chip esp32c3 --firmware firmware/build-esp32c3/merged-binary.bin --net user
+core/         portable C: agent, HTTP/TLS client, OCI client, WASM app manager
+port/         the ports: espidf, zephyr, host
+firmware/     ESP-IDF project, with its build, flash and push scripts
+zephyr/       Zephyr application and board settings
+host/         simulated device executable
+wasm-apps/    app SDK header, example apps, build script
+deploy/       Flight Control on kind, registry, example fleets, provisioning, signing
+tests/        unit tests, tests of the deploy scripts, fuzz targets
+ci/           the scripts the GitHub Actions workflow runs
+third_party/  fetch scripts for WAMR, detools and Zephyr (none is vendored)
 ```
 
 ## License
 
-Apache 2.0, see [LICENSE](LICENSE).
-
-## Third-party code
-
-Versions, and where each is set: [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
-
-- [cJSON](https://github.com/DaveGamble/cJSON) (MIT), vendored in `core/third_party/cjson`
-- [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) (Apache 2.0 with LLVM exception), fetched at build time
-- [mbedTLS](https://github.com/Mbed-TLS/mbedtls) (Apache 2.0), from ESP-IDF, Zephyr or your system
-- [detools](https://github.com/eerimoq/detools) (BSD 2-Clause), with the heatshrink decoder it includes, fetched at build time
-- Espressif's [network_provisioning](https://components.espressif.com/components/espressif/network_provisioning) (Apache 2.0), fetched by ESP-IDF's component manager at the version `firmware/dependencies.lock.<chip>` pins
+Apache 2.0, see [LICENSE](LICENSE). Third-party code and its licenses are in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md#licenses).

@@ -58,6 +58,14 @@ latest; cosign 2 and 3 both accept the signatures `deploy/signing/sign.py`
 makes), and the Python packages `esp_prov` needs (protobuf, cryptography,
 bumble).
 
+## Licenses
+
+- [cJSON](https://github.com/DaveGamble/cJSON) (MIT), vendored in `core/third_party/cjson`
+- [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) (Apache 2.0 with LLVM exception), fetched at build time
+- [mbedTLS](https://github.com/Mbed-TLS/mbedtls) (Apache 2.0), from ESP-IDF, Zephyr or your system
+- [detools](https://github.com/eerimoq/detools) (BSD 2-Clause), with the heatshrink decoder it includes, fetched at build time
+- Espressif's [network_provisioning](https://components.espressif.com/components/espressif/network_provisioning) (Apache 2.0), fetched by ESP-IDF's component manager at the version `firmware/dependencies.lock.<chip>` pins
+
 ## Updating one
 
 Change the version where the table says, then run what covers it:

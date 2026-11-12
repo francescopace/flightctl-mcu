@@ -18,7 +18,7 @@ Checks that were never made:
 - [ ] The way back from a firmware that does not work, on the ESP32-S3 (both ports) and on the C6. It is tested in the emulator and, for Zephyr, on the Pico W.
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`deploy/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
 - [ ] The Zephyr builds for boards in CI. They need the ARM and Xtensa toolchains; CI builds and tests `native_sim` only.
-- [ ] A wired board. Nothing in the core is about WiFi, and Zephyr on `native_sim` already runs without it, but WiFi is the only link tried on hardware: a Zephyr board with Ethernet is two files ([ZEPHYR.md](ZEPHYR.md)).
+- [ ] A wired board. Nothing in the core is about WiFi, and Zephyr on `native_sim` already runs without it, but WiFi is the only link tried on hardware: a Zephyr board with Ethernet is two files ([DEVICES.md](DEVICES.md#another-zephyr-board)).
 
 What the Zephyr port does not have, and the ESP-IDF firmware has:
 

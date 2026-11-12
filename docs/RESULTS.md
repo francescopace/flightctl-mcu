@@ -276,10 +276,10 @@ Limitations 1, 3, 8 and 9 are unchanged in the source of 1.4.0 (read, not tried 
 ## Current limitations
 
 - **Security**:
-  - The registry is plain HTTP without authentication. Signatures protect the images from tampering, not from being read.
-  - No Secure Boot v2 and no flash encryption: the device key is stored in NVS unencrypted.
-- **Provisioning over USB only.** Credentials, endpoint and WiFi live in an `fc_creds` partition written with `deploy/provision.py`, so the firmware is the same everywhere; there is no provisioning over BLE or SoftAP, and one enrollment certificate serves a whole installation.
-- **App formats**: only the WASM OCI artifact. Podman "compat" images (with the `.wasm` in a tar.gz layer) are not supported.
-- **Hardware coverage**: automatic rollback was not exercised on the C6. Milestone 1 ran on all six boards (firmware v3.0) and in the emulator for the C3, C5 and S3.
+  - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
+  - The device key is in flash in clear, except in the `secure` variant (see [SECURITY.md](SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
+- **Provisioning**: credentials are written over USB (`deploy/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
+- **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
+- **Hardware coverage**: automatic rollback was not exercised on the C6, nor on the ESP32-S3 with the Zephyr build ([DEVICES.md](DEVICES.md#boards-tried)).
 
 What comes next is in the [roadmap](ROADMAP.md).
