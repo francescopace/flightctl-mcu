@@ -147,6 +147,19 @@ int fc_port_write_file(const char *path, const void *data, size_t len)
     return put(s_files, path, data, len);
 }
 
+int fc_port_read_file(const char *path, char **out, size_t *len)
+{
+    entry_t *e = find(s_files, path, 0);
+    if (e == NULL) {
+        return -1;
+    }
+    *out = malloc(e->len + 1);
+    memcpy(*out, e->data, e->len);
+    (*out)[e->len] = '\0';
+    *len = e->len;
+    return 0;
+}
+
 const char *fc_port_fw_platform(void)
 {
     return "test";

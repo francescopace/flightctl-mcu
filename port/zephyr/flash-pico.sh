@@ -7,6 +7,9 @@
 # down, or, when it runs this firmware with the console on USB (port/zephyr/build.sh
 # -S cdc-acm-console) or one built with the Pico SDK, PORT=/dev/cu.usbmodemXXXX
 # sends it there. macOS only for now (the drive's path).
+# ERASE=1 also writes the storage partition (fc_storage) as erased flash: the
+# device key, apps, config and a decommissioned mark go, and the device
+# enrolls again as a new one. Without it the storage stays as it was.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-build-pico-usb}"
@@ -36,6 +39,18 @@ else
   cp "$BIN" "$WORK/flash.bin"
 fi
 "$ROOT/tools/provision.py" --format zephyr --board "$BOARD_FILES" --secrets "$SECRETS" --image "$WORK/flash.bin" "$@"
+if [[ -n "${ERASE:-}" ]]; then
+  python3 - "$ROOT/port/zephyr/boards/$BOARD_FILES.overlay" "$WORK/flash.bin" <<'PY'
+import re, sys
+m = re.search(r'label\s*=\s*"fc_storage";\s*reg\s*=\s*<\s*(\w+)\s+(\w+)\s*>', open(sys.argv[1]).read())
+end = int(m.group(1), 16) + int(m.group(2), 16)
+with open(sys.argv[2], "r+b") as f:
+    f.seek(0, 2)
+    assert f.tell() <= end, "the image runs past fc_storage"
+    f.write(b"\xff" * (end - f.tell()))
+print(f"storage erased up to {end:#x}")
+PY
+fi
 python3 "$ROOT/third_party/zephyr-ws/zephyr/scripts/build/uf2conv.py" "$WORK/flash.bin" -c -b 0x10000000 -f 0xe48bff56 \
   -o "$WORK/flash.uf2" >/dev/null
 # Ask for the bootloader until the drive is there: a board that restarts in

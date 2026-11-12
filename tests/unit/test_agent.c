@@ -44,9 +44,15 @@ int fc_apps_init(const void *natives, int n_natives)
     return 0;
 }
 
+static int s_apps_applied, s_apps_removed_all;
+
 int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *retry)
 {
     *retry = 0;
+    s_apps_applied++;
+    if (cJSON_IsArray(applications) && cJSON_GetArraySize(applications) == 0) {
+        s_apps_removed_all++;
+    }
     return 0;
 }
 
@@ -75,6 +81,7 @@ static void new_agent(void)
     pthread_cond_init(&s_a.status_wake, NULL);
     fc_identity_load(&s_a.id);
     s_fw_fetches = 0;
+    s_apps_applied = s_apps_removed_all = 0;
 }
 
 static void apply(const char *version, const char *spec)
@@ -112,6 +119,19 @@ static void inline_config_is_written_and_the_version_kept(void)
     CHECK_STR(s_a.rendered_version, "3");
     CHECK_STR(stub_kv("rendered.ver"), "3");
     CHECK_STR(s_a.update_error, "");
+}
+
+/* Flight Control 1.4.0 serves base64 content percent-encoded: "aGk=" as
+ * "aGk%3D". */
+static void percent_encoded_base64_is_decoded(void)
+{
+    new_agent();
+    apply("3", "{\"config\":[{\"name\":\"a\",\"inline\":["
+               "{\"path\":\"/etc/a\",\"content\":\"aGk%3D\",\"contentEncoding\":\"base64\"},"
+               "{\"path\":\"/etc/b\",\"content\":\"aGk%2\",\"contentEncoding\":\"base64\"}]}]}");
+    CHECK_STR(stub_file("/etc/a"), "hi");
+    CHECK(stub_file("/etc/b") == NULL);
+    CHECK_CONTAINS(s_a.update_error, "/etc/b: invalid base64");
 }
 
 static void a_rejected_config_keeps_the_old_version(void)
@@ -411,12 +431,123 @@ static void the_last_firmware_download_is_in_os_last_delta(void)
     s_delta_outcome = s_delta_reason = "";
 }
 
+/* ---- decommissioning ------------------------------------------------------------ */
+
+static const cJSON *decom_condition(cJSON *st)
+{
+    const cJSON *c;
+    cJSON_ArrayForEach(c, cJSON_GetObjectItem(st, "conditions")) {
+        if (strcmp(cJSON_GetStringValue(cJSON_GetObjectItem(c, "type")), "DeviceDecommissioning") == 0) {
+            return c;
+        }
+    }
+    return NULL;
+}
+
+static const char *lifecycle(cJSON *st)
+{
+    return cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(st, "lifecycle"), "status"));
+}
+
+/* The spec that asks for it has the device out of its fleet: no apps, no
+ * config. None of it is applied. */
+static void a_decommissioning_spec_is_not_applied(void)
+{
+    new_agent();
+    apply("3", "{\"config\":[]}");
+    apply("4", "{\"decommissioning\":{\"target\":\"Unenroll\"},\"applications\":[],"
+               "\"config\":[{\"name\":\"a\",\"inline\":[{\"path\":\"/etc/a.json\",\"content\":\"{}\"}]}]}");
+    CHECK(stub_file("/etc/a.json") == NULL);
+    CHECK_INT(s_apps_applied, 1); /* the first spec only */
+    CHECK_STR(s_a.rendered_version, "3");
+    CHECK_INT(s_a.decom, DECOM_STARTED);
+    CHECK_STR(s_a.decom_target, "Unenroll");
+    cJSON *st = build_status(&s_a);
+    CHECK_STR(lifecycle(st), "Decommissioning");
+    cJSON_Delete(st);
+}
+
+static void decommissioning_reports_started_then_completed_then_wipes(void)
+{
+    new_agent();
+    fc_port_kv_set("mgmt.crt", "cert", 4);
+    fc_port_kv_set("rendered.ver", "7", 1);
+    fc_port_kv_set("app:alarm", "wasm", 4);
+    cJSON *st = build_status(&s_a);
+    CHECK(decom_condition(st) == NULL);
+    CHECK_STR(lifecycle(st), "Enrolled");
+    cJSON_Delete(st);
+
+    apply("8", "{\"decommissioning\":{\"target\":\"Unenroll\"}}");
+    decommission_step(&s_a); /* the last status accepted did not carry it yet */
+    CHECK(stub_kv("decommission") == NULL);
+
+    st = build_status(&s_a);
+    CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(decom_condition(st), "reason")), "Started");
+    CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(decom_condition(st), "status")), "True");
+    cJSON_Delete(st);
+    /* Started accepted: then Completed. */
+    decommission_step(&s_a);
+    CHECK_INT(s_a.decom, DECOM_COMPLETED);
+    CHECK_STR(stub_kv("mgmt.crt"), "cert"); /* still needed for the next status */
+    CHECK_INT(stub_reboots, 0);
+    /* A restart now (power, the network gone) is a device as before: the
+     * server still has Decommissioning, and the spec asks again. */
+    CHECK(stub_kv("decommission") == NULL);
+    CHECK_INT(decommissioned_at_boot(), 0);
+
+    st = build_status(&s_a);
+    CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(decom_condition(st), "reason")), "Completed");
+    cJSON_Delete(st);
+    /* Completed accepted: wiped. */
+    decommission_step(&s_a);
+    CHECK(stub_kv("mgmt.crt") == NULL);
+    CHECK(stub_kv("device.key") == NULL);
+    CHECK(stub_kv("rendered.ver") == NULL);
+    CHECK_INT(stub_reboots, 1);
+    CHECK_STR(stub_kv("app:alarm"), "wasm"); /* Unenroll: the apps stay */
+    CHECK_STR(stub_kv("decommission"), "Unenroll");
+    CHECK_INT(s_apps_removed_all, 0);
+}
+
+static void a_factory_reset_also_removes_the_apps(void)
+{
+    new_agent();
+    apply("2", "{\"decommissioning\":{\"target\":\"FactoryReset\"}}");
+    CHECK_STR(s_a.decom_target, "FactoryReset");
+    cJSON_Delete(build_status(&s_a));
+    decommission_step(&s_a);
+    CHECK_INT(s_apps_removed_all, 1);
+    cJSON_Delete(build_status(&s_a));
+    decommission_step(&s_a);
+    CHECK_STR(stub_kv("decommission"), "FactoryReset");
+
+    new_agent(); /* an unknown target is an Unenroll */
+    apply("2", "{\"decommissioning\":{\"target\":\"Recycle\"}}");
+    CHECK_STR(s_a.decom_target, "Unenroll");
+    apply("3", "{\"decommissioning\":\"Unenroll\"}"); /* not an object: ignored */
+}
+
+static void a_decommissioned_device_does_not_enroll_at_boot(void)
+{
+    new_agent();
+    fc_port_kv_set("mgmt.crt", "cert", 4);
+    CHECK_INT(decommissioned_at_boot(), 0);
+    CHECK_STR(stub_kv("mgmt.crt"), "cert");
+
+    fc_port_kv_set("decommission", "Unenroll", 8);
+    CHECK_INT(decommissioned_at_boot(), 1);
+    CHECK(stub_kv("mgmt.crt") == NULL); /* a wipe cut short by a reboot is finished */
+    CHECK(stub_kv("device.key") == NULL);
+}
+
 int main(void)
 {
     fc_http_global_init();
     RUN(x509_dates_convert_to_epoch);
     RUN(inline_config_is_written_and_the_version_kept);
     RUN(a_rejected_config_keeps_the_old_version);
+    RUN(percent_encoded_base64_is_decoded);
     RUN(only_inline_config_is_supported);
     RUN(a_deeply_nested_spec_is_refused_without_crashing);
     RUN(the_current_firmware_is_not_downloaded_again);
@@ -429,6 +560,10 @@ int main(void)
     RUN(counters_are_read_again_only_when_due);
     RUN(a_status_with_nothing_new_is_the_same);
     RUN(the_last_firmware_download_is_in_os_last_delta);
+    RUN(a_decommissioning_spec_is_not_applied);
+    RUN(decommissioning_reports_started_then_completed_then_wipes);
+    RUN(a_factory_reset_also_removes_the_apps);
+    RUN(a_decommissioned_device_does_not_enroll_at_boot);
     free(s_a.mgmt_cert_pem);
     fc_identity_free(&s_a.id);
     stub_reset();

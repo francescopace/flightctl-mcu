@@ -15,7 +15,9 @@ OUT="$DIR/build/$APP-$VER"
 [[ -f "$OUT/$APP.wasm" ]] || { echo "no $OUT/$APP.wasm: build it with wasm-apps/build.sh $APP $VER" >&2; exit 1; }
 cd "$OUT"
 printf '{"architecture":"wasm","os":"wasip1"}' > config.json
-oras push --plain-http --disable-path-validation ${ORAS_ARGS:-} \
+# Plain HTTP, or TLS with credentials (tools/registry/registry_client.py).
+read -r -a REG_ARGS <<< "$(python3 "$DIR/../tools/registry/registry_client.py" oras-args "$REG")"
+oras push "${REG_ARGS[@]}" --disable-path-validation ${ORAS_ARGS:-} \
   --config config.json:application/vnd.wasm.config.v0+json \
   "$REG/flightctl-mcu/$APP:$TAG" "$APP.wasm:application/vnd.wasm.content.layer.v1+wasm" | tail -1
 KEY="${SIGNING_KEY:-$DIR/../.secrets/signing.key}"

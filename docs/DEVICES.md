@@ -92,7 +92,7 @@ Then implement `core/include/fc_port.h` for your platform:
 |---|---|
 | `fc_port_kv_get/set/del` | Persistent key/value storage: device key, certificate, config files, WASM modules |
 | `fc_port_sysinfo`, `fc_port_custom_info` | Hardware and OS facts for `status.systemInfo` |
-| `fc_port_write_file` | Where `spec.config` files end up |
+| `fc_port_write_file`, `fc_port_read_file` | Where `spec.config` files end up, and reading them back (the registry's CA and credentials, [REGISTRY.md](REGISTRY.md)) |
 | `fc_port_fw_platform` | The `platform.architecture` to pick from a firmware index, e.g. `esp32c3` |
 | `fc_port_ota_begin/write/end` | Write an image into the inactive slot and make it the next boot image |
 | `fc_port_ota_pending_verify/confirm/rollback`, `fc_port_reboot` | Confirm a new image or go back. On Zephyr this is MCUboot's test and confirm. |

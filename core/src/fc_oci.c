@@ -2,7 +2,11 @@
  * Pulls artifacts from an OCI registry: firmware (streamed into the inactive
  * OTA slot) and small layers such as WASM modules (into RAM).
  *
- *   ref = host[:port]/repo[:tag|@sha256:...]   (plain HTTP registry)
+ *   ref = host[:port]/repo[:tag|@sha256:...]
+ *
+ * The registry is reached over TLS when the fleet gives the device its CA,
+ * and with the credentials of an auth.json when it asks for them (see
+ * "registry access" below); otherwise over plain HTTP.
  *
  * The reference may name an image index (one manifest per chip, selected by
  * platform.architecture == fc_port_fw_platform()) or a single manifest. The
@@ -25,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "cJSON.h"
 #include "fc_crypto.h"
@@ -59,6 +64,14 @@ typedef struct {
     int port;
     char repo[128];
     char ref[96]; /* tag or digest */
+    char hostport[134]; /* host[:port] as the reference has it: certs.d and auth.json are keyed by it */
+    int port_given;
+    /* Registry access, for one pull (reg_open, reg_close). */
+    char *ca_pem;        /* the registry's CA: TLS; NULL: plain HTTP */
+    char *basic;         /* base64 of user:password, from an auth.json; NULL: none */
+    char *authorization; /* the header sent, once the registry has asked */
+    char *challenge;     /* the registry's last WWW-Authenticate */
+    fc_http_session_t *sess;
 } oci_ref_t;
 
 static int parse_ref(const char *s, oci_ref_t *r)
@@ -69,11 +82,13 @@ static int parse_ref(const char *s, oci_ref_t *r)
         return -1;
     }
     memcpy(r->host, s, (size_t)(slash - s));
+    memcpy(r->hostport, s, (size_t)(slash - s));
     char *colon = strchr(r->host, ':');
     r->port = 80;
     if (colon) {
         *colon = '\0';
         r->port = atoi(colon + 1);
+        r->port_given = 1;
     }
     const char *path = slash + 1;
     const char *at = strchr(path, '@');
@@ -118,21 +133,383 @@ static int digest_of(const void *data, size_t len, char out[72])
     return finish_hex(&s, out);
 }
 
+/* ---- registry access ------------------------------------------------------
+ * As containers have it on Linux, and with the files the Linux agent reads,
+ * given to the device as config files in the fleet:
+ *  - TLS when the device has the registry's CA, in
+ *    /etc/containers/certs.d/<host:port>/ca.crt or, for any port of that
+ *    host, certs.d/<host>/ca.crt (Flight Control refuses ':' in the path of
+ *    a config file); plain HTTP otherwise.
+ *  - Credentials from the first auth.json of AUTH_FILES with an entry for
+ *    the registry (podman's format: {"auths":{"<host:port>":{"auth":
+ *    "<base64 of user:password>"}}}; a key may also name a repository).
+ *    They are sent only when the registry asks for them, as Basic or for a
+ *    Bearer token, and never over plain HTTP.
+ * Nothing about the credentials goes into errors or the log. */
+#define CERTS_DIR "/etc/containers/certs.d/"
+static const char *const AUTH_FILES[] = {"/etc/ostree/auth.json", "/etc/containers/auth.json",
+                                         "/root/.config/containers/auth.json"};
+#define MAX_TOKEN 8192
+
+/* The CA for host[:port]: certs.d/<host:port>/ca.crt, else certs.d/<host>/ca.crt. */
+static char *read_ca(const char *hostport)
+{
+    char path[200], *pem = NULL;
+    size_t len = 0;
+    snprintf(path, sizeof(path), CERTS_DIR "%s/ca.crt", hostport);
+    if (fc_port_read_file(path, &pem, &len) == 0) {
+        return pem;
+    }
+    const char *colon = strchr(hostport, ':');
+    if (colon == NULL) {
+        return NULL;
+    }
+    snprintf(path, sizeof(path), CERTS_DIR "%.*s/ca.crt", (int)(colon - hostport), hostport);
+    return fc_port_read_file(path, &pem, &len) == 0 ? pem : NULL;
+}
+
+/* An auth.json key, without a scheme or a trailing slash, is for this
+ * registry and repository: host:port, or host:port/<a prefix of the repo
+ * ending at a slash>. Returns its length, 0 if it is not. */
+static size_t auth_key_matches(const char *key, const oci_ref_t *r)
+{
+    if (strncmp(key, "https://", 8) == 0) {
+        key += 8;
+    } else if (strncmp(key, "http://", 7) == 0) {
+        key += 7;
+    }
+    size_t klen = strlen(key);
+    while (klen > 0 && key[klen - 1] == '/') {
+        klen--;
+    }
+    size_t hl = strlen(r->hostport);
+    if (klen < hl || strncmp(key, r->hostport, hl) != 0) {
+        return 0;
+    }
+    if (klen == hl) {
+        return klen;
+    }
+    if (key[hl] != '/') {
+        return 0;
+    }
+    const char *ns = key + hl + 1;
+    size_t nl = klen - hl - 1, rl = strlen(r->repo);
+    return nl <= rl && strncmp(r->repo, ns, nl) == 0 && (nl == rl || r->repo[nl] == '/') ? klen : 0;
+}
+
+/* The credentials for `r` in auth.json `json`, as base64 user:password. */
+static char *auth_from(const char *json, const oci_ref_t *r)
+{
+    cJSON *doc = cJSON_Parse(json);
+    const cJSON *e, *best = NULL;
+    size_t best_len = 0;
+    cJSON_ArrayForEach(e, cJSON_GetObjectItem(doc, "auths")) {
+        size_t n = e->string != NULL ? auth_key_matches(e->string, r) : 0;
+        if (n > best_len) {
+            best = e;
+            best_len = n;
+        }
+    }
+    char *out = NULL;
+    const char *auth = cJSON_GetStringValue(cJSON_GetObjectItem(best, "auth"));
+    const char *user = cJSON_GetStringValue(cJSON_GetObjectItem(best, "username"));
+    const char *pass = cJSON_GetStringValue(cJSON_GetObjectItem(best, "password"));
+    if (auth != NULL && auth[0]) {
+        out = strdup(auth);
+    } else if (user != NULL && pass != NULL) {
+        size_t ul = strlen(user), pl = strlen(pass), olen = 0;
+        unsigned char *plain = malloc(ul + pl + 2);
+        size_t cap = ((ul + pl + 1 + 2) / 3) * 4 + 1;
+        out = malloc(cap);
+        if (plain != NULL && out != NULL) {
+            memcpy(plain, user, ul);
+            plain[ul] = ':';
+            memcpy(plain + ul + 1, pass, pl);
+            if (mbedtls_base64_encode((unsigned char *)out, cap, &olen, plain, ul + pl + 1) != 0) {
+                free(out);
+                out = NULL;
+            }
+            memset(plain, 0, ul + pl + 1);
+        } else {
+            free(out);
+            out = NULL;
+        }
+        free(plain);
+    }
+    cJSON_Delete(doc);
+    return out;
+}
+
+static void reg_close(oci_ref_t *r)
+{
+    free(r->ca_pem);
+    if (r->basic != NULL) {
+        memset(r->basic, 0, strlen(r->basic));
+    }
+    free(r->basic);
+    free(r->authorization);
+    free(r->challenge);
+    fc_http_session_free(r->sess);
+    r->ca_pem = r->basic = r->authorization = r->challenge = NULL;
+    r->sess = NULL;
+}
+
+/* Parses `image` and gets what reaching its registry takes. */
+static int reg_open(const char *image, oci_ref_t *r, char *err, size_t err_len)
+{
+    if (parse_ref(image, r) != 0) {
+        snprintf(err, err_len, "invalid image reference %s", image);
+        return -1;
+    }
+    r->ca_pem = read_ca(r->hostport);
+    if (r->ca_pem != NULL && !r->port_given) {
+        r->port = 443;
+    }
+    for (size_t i = 0; i < sizeof(AUTH_FILES) / sizeof(AUTH_FILES[0]) && r->basic == NULL; i++) {
+        char *json = NULL;
+        size_t len = 0;
+        if (fc_port_read_file(AUTH_FILES[i], &json, &len) == 0) {
+            r->basic = auth_from(json, r);
+            memset(json, 0, len);
+            free(json);
+        }
+    }
+    r->sess = fc_http_session_new();
+    return 0;
+}
+
 static fc_http_target_t target(const oci_ref_t *r, const char *accept)
 {
-    fc_http_target_t t = {.host = r->host, .port = r->port, .plain = 1, .accept = accept, .timeout_s = TIMEOUT_S};
+    fc_http_target_t t = {.host = r->host,
+                          .port = r->port,
+                          .plain = r->ca_pem == NULL,
+                          .ca_pem = r->ca_pem,
+                          .authorization = r->authorization,
+                          .accept = accept,
+                          .timeout_s = TIMEOUT_S,
+                          .session = r->sess};
     return t;
 }
 
+/* A parameter of a WWW-Authenticate challenge: name="value" or name=token. */
+static int challenge_param(const char *ch, const char *name, char *out, size_t len)
+{
+    size_t nl = strlen(name);
+    const char *p = strchr(ch, ' '); /* past the scheme */
+    while (p != NULL && *p) {
+        while (*p == ' ' || *p == ',' || *p == '\t') {
+            p++;
+        }
+        const char *eq = strchr(p, '=');
+        if (eq == NULL) {
+            return 0;
+        }
+        int match = (size_t)(eq - p) == nl && strncasecmp(p, name, nl) == 0;
+        p = eq + 1;
+        size_t n = 0;
+        if (*p == '"') {
+            for (p++; *p && *p != '"'; p++) {
+                if (*p == '\\' && p[1]) {
+                    p++;
+                }
+                if (match && n + 1 < len) {
+                    out[n++] = *p;
+                }
+            }
+            if (*p == '"') {
+                p++;
+            }
+        } else {
+            for (; *p && *p != ','; p++) {
+                if (match && n + 1 < len) {
+                    out[n++] = *p;
+                }
+            }
+        }
+        if (match) {
+            out[n] = '\0';
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void url_encode(const char *in, char *out, size_t len)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    size_t n = 0;
+    for (; *in && n + 4 < len; in++) {
+        unsigned char ch = (unsigned char)*in;
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' ||
+            ch == '_' || ch == '.' || ch == '~') {
+            out[n++] = (char)ch;
+        } else {
+            out[n++] = '%';
+            out[n++] = hex[ch >> 4];
+            out[n++] = hex[ch & 15];
+        }
+    }
+    out[n] = '\0';
+}
+
+static char *header_value(const char *scheme, const char *cred)
+{
+    size_t n = strlen(scheme) + 1 + strlen(cred) + 1;
+    char *h = malloc(n);
+    if (h != NULL) {
+        snprintf(h, n, "%s %s", scheme, cred);
+    }
+    return h;
+}
+
+/* A Bearer token from the challenge's realm, with the credentials if any
+ * (anonymous otherwise, as for a public repository). */
+static int bearer_token(oci_ref_t *r, char *err, size_t err_len)
+{
+    char realm[256], service[128] = "", scope[192] = "";
+    if (!challenge_param(r->challenge, "realm", realm, sizeof(realm))) {
+        snprintf(err, err_len, "registry %s: a token is asked for, and no realm given", r->hostport);
+        return -1;
+    }
+    challenge_param(r->challenge, "service", service, sizeof(service));
+    if (!challenge_param(r->challenge, "scope", scope, sizeof(scope))) {
+        snprintf(scope, sizeof(scope), "repository:%s:pull", r->repo);
+    }
+    if (strncmp(realm, "https://", 8) != 0) {
+        snprintf(err, err_len, "registry %s: its token service is not on https", r->hostport);
+        return -1;
+    }
+    char thost[134], hp[134];
+    const char *h = realm + 8, *slash = strchr(h, '/');
+    size_t hl = slash ? (size_t)(slash - h) : strlen(h);
+    if (hl == 0 || hl >= sizeof(hp)) {
+        snprintf(err, err_len, "registry %s: bad token realm", r->hostport);
+        return -1;
+    }
+    memcpy(hp, h, hl);
+    hp[hl] = '\0';
+    snprintf(thost, sizeof(thost), "%s", hp);
+    int tport = 443;
+    char *colon = strchr(thost, ':');
+    if (colon != NULL) {
+        *colon = '\0';
+        tport = atoi(colon + 1);
+    }
+    int same = strcmp(hp, r->hostport) == 0 || (strcmp(thost, r->host) == 0 && tport == r->port);
+    char *ca = same ? r->ca_pem : read_ca(hp);
+    if (ca == NULL) {
+        snprintf(err, err_len, "registry %s: no CA for its token service (" CERTS_DIR "%s/ca.crt)", r->hostport,
+                 thost);
+        return -1;
+    }
+    char path[700], es[200], esc[300];
+    url_encode(service, es, sizeof(es));
+    url_encode(scope, esc, sizeof(esc));
+    const char *rpath = slash ? slash : "/";
+    snprintf(path, sizeof(path), "%s%sservice=%s&scope=%s", rpath, strchr(rpath, '?') ? "&" : "?", es, esc);
+    char *basic = r->basic != NULL ? header_value("Basic", r->basic) : NULL;
+    fc_http_target_t t = {.host = thost,
+                          .port = tport,
+                          .ca_pem = ca,
+                          .authorization = basic,
+                          .accept = "application/json",
+                          .timeout_s = TIMEOUT_S,
+                          .session = same ? r->sess : NULL};
+    fc_http_response_t resp;
+    int rc = fc_http_request(&t, "GET", path, NULL, NULL, 0, &resp);
+    if (basic != NULL) {
+        memset(basic, 0, strlen(basic));
+        free(basic);
+    }
+    if (!same) {
+        free(ca);
+    }
+    if (rc != 0 || resp.status != 200) {
+        snprintf(err, err_len, "registry %s: token service %s: HTTP %d%s", r->hostport, hp, resp.status,
+                 resp.status == 401 ? (r->basic ? " (credentials refused)" : " (no credentials for it)") : "");
+        fc_http_free(&resp);
+        return -1;
+    }
+    cJSON *j = cJSON_Parse(resp.body);
+    fc_http_free(&resp);
+    const char *tok = cJSON_GetStringValue(cJSON_GetObjectItem(j, "token"));
+    if (tok == NULL) {
+        tok = cJSON_GetStringValue(cJSON_GetObjectItem(j, "access_token"));
+    }
+    if (tok == NULL || tok[0] == '\0' || strlen(tok) > MAX_TOKEN) {
+        snprintf(err, err_len, "registry %s: token service %s gave no token", r->hostport, hp);
+        cJSON_Delete(j);
+        return -1;
+    }
+    r->authorization = header_value("Bearer", tok);
+    cJSON_Delete(j);
+    return r->authorization != NULL ? 0 : -1;
+}
+
+/* The registry answered 401 with r->challenge: get what it asks for. */
+static int reg_authenticate(oci_ref_t *r, char *err, size_t err_len)
+{
+    free(r->authorization);
+    r->authorization = NULL;
+    if (r->challenge == NULL) {
+        snprintf(err, err_len, "registry %s: HTTP 401 without a challenge", r->hostport);
+        return -1;
+    }
+    if (r->ca_pem == NULL) {
+        snprintf(err, err_len,
+                 "registry %s asks for credentials: they go over TLS only, and the device has no CA for it "
+                 "(" CERTS_DIR "%s/ca.crt)",
+                 r->hostport, r->host);
+        return -1;
+    }
+    if (strncasecmp(r->challenge, "Bearer", 6) == 0) {
+        return bearer_token(r, err, err_len);
+    }
+    if (strncasecmp(r->challenge, "Basic", 5) != 0) {
+        snprintf(err, err_len, "registry %s: authentication %.16s is not supported", r->hostport, r->challenge);
+        return -1;
+    }
+    if (r->basic == NULL) {
+        snprintf(err, err_len, "registry %s asks for credentials, and no auth.json has any for it", r->hostport);
+        return -1;
+    }
+    r->authorization = header_value("Basic", r->basic);
+    return r->authorization != NULL ? 0 : -1;
+}
+
+/* GET, authenticating once if the registry asks. 1: failed for a reason
+ * written in `err`; otherwise as fc_http_request. */
+static int reg_get(oci_ref_t *r, const char *path, const char *accept, fc_http_response_t *resp, char *err,
+                   size_t err_len)
+{
+    for (int attempt = 0;; attempt++) {
+        fc_http_target_t t = target(r, accept);
+        int rc = fc_http_request(&t, "GET", path, NULL, NULL, 0, resp);
+        if (rc != 0 || resp->status != 401 || attempt > 0) {
+            return rc;
+        }
+        free(r->challenge);
+        r->challenge = resp->www_authenticate;
+        resp->www_authenticate = NULL;
+        fc_http_free(resp);
+        if (reg_authenticate(r, err, err_len) != 0) {
+            resp->status = 401;
+            return 1;
+        }
+    }
+}
+
 /* GET a manifest; checks its digest when fetched by digest. */
-static cJSON *get_manifest(const oci_ref_t *r, const char *ref, char digest[72], char *err, size_t err_len)
+static cJSON *get_manifest(oci_ref_t *r, const char *ref, char digest[72], char *err, size_t err_len)
 {
     char path[320];
     snprintf(path, sizeof(path), "/v2/%s/manifests/%s", r->repo, ref);
-    fc_http_target_t t = target(r, ACCEPT_MANIFESTS);
     fc_http_response_t resp;
-    if (fc_http_request(&t, "GET", path, NULL, NULL, 0, &resp) != 0 || resp.status != 200) {
-        snprintf(err, err_len, "registry %s:%d: GET manifest %s: HTTP %d", r->host, r->port, ref, resp.status);
+    int rc = reg_get(r, path, ACCEPT_MANIFESTS, &resp, err, err_len);
+    if (rc != 0 || resp.status != 200) {
+        if (rc != 1) {
+            snprintf(err, err_len, "registry %s: GET manifest %s: HTTP %d", r->hostport, ref, resp.status);
+        }
         fc_http_free(&resp);
         return NULL;
     }
@@ -151,14 +528,13 @@ static cJSON *get_manifest(const oci_ref_t *r, const char *ref, char digest[72],
 }
 
 /* Small blob into RAM, sha256 checked. Caller frees. */
-static char *get_small_blob(const oci_ref_t *r, const char *digest, size_t *len)
+static char *get_small_blob(oci_ref_t *r, const char *digest, size_t *len)
 {
-    char path[320];
+    char path[320], err[160];
     snprintf(path, sizeof(path), "/v2/%s/blobs/%s", r->repo, digest);
-    fc_http_target_t t = target(r, "application/octet-stream");
     fc_http_response_t resp;
     char got[72];
-    if (fc_http_request(&t, "GET", path, NULL, NULL, 0, &resp) != 0 || resp.status != 200 ||
+    if (reg_get(r, path, "application/octet-stream", &resp, err, sizeof(err)) != 0 || resp.status != 200 ||
         resp.body_len > MAX_SIG_PAYLOAD) {
         fc_http_free(&resp);
         return NULL;
@@ -173,7 +549,7 @@ static char *get_small_blob(const oci_ref_t *r, const char *digest, size_t *len)
 
 /* One cosign signature layer: the payload must name `digest` and the
  * signature over it must verify with the key. */
-static int check_signature_layer(const oci_ref_t *r, mbedtls_pk_context *pk, const cJSON *layer, const char *digest)
+static int check_signature_layer(oci_ref_t *r, mbedtls_pk_context *pk, const cJSON *layer, const char *digest)
 {
     const char *pdigest = cJSON_GetStringValue(cJSON_GetObjectItem(layer, "digest"));
     const char *sig_b64 =
@@ -206,7 +582,7 @@ static int check_signature_layer(const oci_ref_t *r, mbedtls_pk_context *pk, con
 }
 
 /* Is the manifest or index with this digest signed with the signing key? */
-static int verify_signature(const oci_ref_t *r, const char *image, const char *digest, char *err, size_t err_len)
+static int verify_signature(oci_ref_t *r, const char *image, const char *digest, char *err, size_t err_len)
 {
     if (s_signing_key == NULL) {
         return 0;
@@ -254,10 +630,6 @@ static int resolve_layer(const char *image, const char *arch, const char *layer_
 {
     if (layers_out != NULL) {
         *layers_out = NULL;
-    }
-    if (parse_ref(image, r) != 0) {
-        snprintf(err, err_len, "invalid image reference %s", image);
-        return -1;
     }
     char top_digest[72], mdigest[72];
     cJSON *top = get_manifest(r, r->ref, top_digest, err, err_len);
@@ -352,7 +724,7 @@ static int sink(const void *data, size_t len, void *ctx)
     return 0;
 }
 
-static int fetch_blob(const oci_ref_t *r, const char *blob_digest, long blob_size, fc_http_data_cb on_data,
+static int fetch_blob(oci_ref_t *r, const char *blob_digest, long blob_size, fc_http_data_cb on_data,
                       void *ctx, int progress, char *err, size_t err_len)
 {
     sink_t s = {.next = on_data, .next_ctx = ctx, .total = blob_size, .last_pct = -10, .progress = progress};
@@ -362,7 +734,19 @@ static int fetch_blob(const oci_ref_t *r, const char *blob_digest, long blob_siz
     fc_http_target_t t = target(r, "application/octet-stream");
     int status;
     long total;
+    /* One connection to the registry at a time: a device short of RAM may
+     * not hold two TLS sessions to it. */
+    fc_http_session_close(r->sess);
     int rc = fc_http_get_stream(&t, path, sink, &s, &status, &total);
+    if (rc != 0 && status == 401 && s.done == 0 && r->challenge != NULL) {
+        /* A token that ran out since the manifests: get another, once. */
+        if (reg_authenticate(r, err, err_len) != 0) {
+            return -1;
+        }
+        fc_http_session_close(r->sess);
+        t = target(r, "application/octet-stream");
+        rc = fc_http_get_stream(&t, path, sink, &s, &status, &total);
+    }
     char got[72];
     int hashed = finish_hex(&s.sha, got) == 0;
     if (rc != 0 || s.done != blob_size) {
@@ -543,7 +927,7 @@ static int delta_sink(const void *data, size_t len, void *ctx)
  * 0: done; 1: not this way (`why` says it), the slot is untouched and the
  * whole image can still be downloaded; -1: the image is there and the device
  * refuses it (`err` set). */
-static int fetch_firmware_delta(const oci_ref_t *r, const char *delta_digest, long delta_size, long from_size,
+static int fetch_firmware_delta(oci_ref_t *r, const char *delta_digest, long delta_size, long from_size,
                                 const char *full_digest, long full_size, char *why, size_t why_len, char *err,
                                 size_t err_len)
 {
@@ -578,14 +962,14 @@ static int fetch_firmware_delta(const oci_ref_t *r, const char *delta_digest, lo
     return ota_commit(c.ota, err, err_len);
 }
 
-int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, char *err, size_t err_len)
+static int fetch_firmware(oci_ref_t *rp, const char *image, char *digest, size_t digest_len, char *err,
+                          size_t err_len)
 {
-    oci_ref_t r;
     char blob_digest[72];
     long blob_size;
     cJSON *layers = NULL;
     const char *platform = fc_port_fw_platform();
-    if (resolve_layer(image, platform, NULL, &r, blob_digest, &blob_size, digest, digest_len, err, err_len,
+    if (resolve_layer(image, platform, NULL, rp, blob_digest, &blob_size, digest, digest_len, err, err_len,
                       &layers) != 0) {
         return -1;
     }
@@ -597,7 +981,7 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
     if (has_delta) {
         fc_port_log(FC_LOG_INFO, "firmware %s (%s): %ld bytes, as a delta of %ld from the running image", image,
                     platform, blob_size, delta_size);
-        int rc = fetch_firmware_delta(&r, delta_digest, delta_size, from_size, blob_digest, blob_size, why,
+        int rc = fetch_firmware_delta(rp, delta_digest, delta_size, from_size, blob_digest, blob_size, why,
                                       sizeof(why), err, err_len);
         if (rc == 0) {
             fc_port_log(FC_LOG_INFO, "firmware came as a delta: %ld of %ld bytes", delta_size, blob_size);
@@ -615,7 +999,7 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
         return -1;
     }
     char ferr[120];
-    if (fetch_blob(&r, blob_digest, blob_size, ota_sink, ota, 1, ferr, sizeof(ferr)) != 0) {
+    if (fetch_blob(rp, blob_digest, blob_size, ota_sink, ota, 1, ferr, sizeof(ferr)) != 0) {
         snprintf(err, err_len, "firmware %s", ferr);
         fc_port_ota_end(ota, 0);
         return -1;
@@ -626,6 +1010,17 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
     }
     set_delta_outcome(has_delta ? "Fallback" : "NotUsed", has_delta ? why : "");
     return 0;
+}
+
+int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, char *err, size_t err_len)
+{
+    oci_ref_t r;
+    if (reg_open(image, &r, err, err_len) != 0) {
+        return -1;
+    }
+    int rc = fetch_firmware(&r, image, digest, digest_len, err, err_len);
+    reg_close(&r);
+    return rc;
 }
 
 typedef struct {
@@ -644,14 +1039,13 @@ static int mem_sink(const void *data, size_t len, void *ctx)
     return 0;
 }
 
-int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_type, size_t max_size,
-                       unsigned char **out, size_t *out_len, char *digest, size_t digest_len,
+static int fetch_layer(oci_ref_t *rp, const char *image, const char *arch, const char *layer_type,
+                       size_t max_size, unsigned char **out, size_t *out_len, char *digest, size_t digest_len,
                        char *err, size_t err_len)
 {
-    oci_ref_t r;
     char blob_digest[72];
     long blob_size;
-    if (resolve_layer(image, arch, layer_type, &r, blob_digest, &blob_size, digest, digest_len, err, err_len,
+    if (resolve_layer(image, arch, layer_type, rp, blob_digest, &blob_size, digest, digest_len, err, err_len,
                       NULL) != 0) {
         return -1;
     }
@@ -665,7 +1059,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         return -1;
     }
     char ferr[120];
-    if (fetch_blob(&r, blob_digest, blob_size, mem_sink, &m, 0, ferr, sizeof(ferr)) != 0) {
+    if (fetch_blob(rp, blob_digest, blob_size, mem_sink, &m, 0, ferr, sizeof(ferr)) != 0) {
         snprintf(err, err_len, "%s: %s", image, ferr);
         free(m.buf);
         return -1;
@@ -673,4 +1067,17 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
     *out = m.buf;
     *out_len = m.len;
     return 0;
+}
+
+int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_type, size_t max_size,
+                       unsigned char **out, size_t *out_len, char *digest, size_t digest_len,
+                       char *err, size_t err_len)
+{
+    oci_ref_t r;
+    if (reg_open(image, &r, err, err_len) != 0) {
+        return -1;
+    }
+    int rc = fetch_layer(&r, image, arch, layer_type, max_size, out, out_len, digest, digest_len, err, err_len);
+    reg_close(&r);
+    return rc;
 }

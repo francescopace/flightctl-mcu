@@ -297,13 +297,18 @@ One thing the new labels give: a fleet can select on what a device says it is, `
    - The fleet accepts `spec.os.catalogItemRef` and keeps it in its template version, but the device gets `os: {}`: building the device's spec from the template copies `os.image` only (`internal/tasks/desired_spec.go`: `assembleDesiredSpec`). The device is reported `UpToDate` and its firmware never changes, with no error.
    - Tried on the Pico W on 12 November 2026, with a catalog for the Zephyr firmware and the `alarm` app. The app's `catalogItemRef` works: the server turned version `2.0.1-pico` into `…/alarm:v2.pico`, and the agent got the image reference as before (and refused it, signed with another key). Unchanged on `main` the same day.
    - Proposal: copy `os.catalogItemRef` too, as is done for the applications.
+12. **An inline file given in base64 reaches the device percent-encoded.**
+   - The server keeps inline files as data URLs (`pkg/ignition/ignition_wrapper.go`: `SetFile`). For content already in base64 it sets the URL's encoding to ASCII, which percent-encodes the text. Building the rendered spec (`internal/tasks/device_render.go`: `ignitionConfigToRenderedConfig`) then cuts off the `data:...,` prefix and serves what is left as base64, escapes included. `aGk=` arrives as `aGk%3D`.
+   - The Linux agent decodes with Go's `base64.StdEncoding` (`api/core/v1beta1/types.go`: `decodeContents`), which refuses `%`. Base64 content whose length is not a multiple of three, which is most of it, cannot be written.
+   - Found on 12 November 2026 with an `auth.json` for the registry ([REGISTRY.md](REGISTRY.md)), in the rendered spec of a device on 1.4.0. Content given as text is turned into proper base64 by the same code and arrives intact. This agent now undoes the escapes before decoding, and the tools give text.
+   - Proposal: unescape the data URL's text (or use the URL's own decoding) before serving it as base64.
 
 Limitations 1, 3, 8 and 9 are unchanged in the source of 1.4.0 (read, not tried again).
 
 ## Current limitations
 
 - **Security**:
-  - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
+  - The registry can be reached over TLS with a password ([REGISTRY.md](REGISTRY.md)), but only with a CA the fleet gives the device: there is no public CA bundle, and blobs redirected to another host are not followed. Over plain HTTP, signatures make the registry safe against tampering, not against reading.
   - The device key is in flash in clear, except in the `secure` variant (see [SECURITY.md](SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
 - **Provisioning**: credentials are written over USB (`tools/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.

@@ -284,6 +284,13 @@ int fc_port_write_file(const char *path, const void *data, size_t len)
     return fc_port_kv_set(key, data, len);
 }
 
+int fc_port_read_file(const char *path, char **out, size_t *len)
+{
+    char key[300];
+    snprintf(key, sizeof(key), "file:%s", path);
+    return fc_port_kv_get(key, out, len);
+}
+
 const char *fc_port_fw_platform(void)
 {
     return CONFIG_IDF_TARGET;

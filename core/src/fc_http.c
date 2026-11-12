@@ -155,6 +155,12 @@ void fc_http_session_close(fc_http_session_t *s)
     }
 }
 
+void fc_http_session_free(fc_http_session_t *s)
+{
+    fc_http_session_close(s);
+    free(s);
+}
+
 static int conn_open(conn_t *c, const fc_http_target_t *t)
 {
     memset(c, 0, sizeof(*c));
@@ -292,7 +298,7 @@ static int send_request(conn_t *c, const fc_http_target_t *t, const char *method
                      "Accept: %s\r\n"
                      "Connection: %s\r\n"
                      "%s%s%s"
-                     "Content-Length: %zu\r\n\r\n",
+                     "Content-Length: %zu\r\n",
                      method, path, t->host, t->port, t->accept ? t->accept : "application/json",
                      keep_alive ? "keep-alive" : "close",
                      content_type ? "Content-Type: " : "", content_type ? content_type : "",
@@ -301,6 +307,22 @@ static int send_request(conn_t *c, const fc_http_target_t *t, const char *method
         return -1;
     }
     if (conn_write_all(c, head, (size_t)n) != 0) {
+        return -1;
+    }
+    /* Apart from the rest: a registry's token can be a few KB. Never over
+     * plain HTTP (the caller does not ask for that; this is the last check). */
+    if (t->authorization != NULL) {
+        if (c->plain) {
+            fc_port_log(FC_LOG_ERROR, "%s %s: credentials are not sent over plain HTTP", method, path);
+            return -1;
+        }
+        if (conn_write_all(c, "Authorization: ", 15) != 0 ||
+            conn_write_all(c, t->authorization, strlen(t->authorization)) != 0 ||
+            conn_write_all(c, "\r\n", 2) != 0) {
+            return -1;
+        }
+    }
+    if (conn_write_all(c, "\r\n", 2) != 0) {
         return -1;
     }
     return body && body_len ? conn_write_all(c, body, body_len) : 0;
@@ -414,7 +436,7 @@ static int header_has(const char *line, const char *word)
 /* Parses the status line and the headers we care about; *hdr_end must point
  * at the "\r\n\r\n" terminator, which is overwritten with NUL. */
 static int parse_headers(char *raw, char *hdr_end, int *status, int *chunked, long *content_length,
-                         int *conn_close)
+                         int *conn_close, char **www_auth)
 {
     if (strncmp(raw, "HTTP/1.", 7) != 0) {
         return -1;
@@ -432,6 +454,18 @@ static int parse_headers(char *raw, char *hdr_end, int *status, int *chunked, lo
             *content_length = atol(line + 15);
         } else if (strncasecmp(line, "Connection:", 11) == 0 && header_has(line, "close")) {
             *conn_close = 1;
+        } else if (www_auth != NULL && *www_auth == NULL && strncasecmp(line, "WWW-Authenticate:", 17) == 0) {
+            const char *v = line + 17;
+            while (*v == ' ' || *v == '\t') {
+                v++;
+            }
+            const char *eol = strstr(v, "\r\n");
+            size_t n = eol ? (size_t)(eol - v) : strlen(v);
+            *www_auth = malloc(n + 1);
+            if (*www_auth != NULL) {
+                memcpy(*www_auth, v, n);
+                (*www_auth)[n] = '\0';
+            }
         }
     }
     return 0;
@@ -457,7 +491,8 @@ static int read_response(conn_t *c, const fc_http_target_t *t, const char *metho
         if (!have_headers) {
             char *hdr_end = strstr(raw, "\r\n\r\n");
             if (hdr_end != NULL) {
-                if (parse_headers(raw, hdr_end, &resp->status, &chunked, &content_length, &conn_close_hdr) != 0) {
+                if (parse_headers(raw, hdr_end, &resp->status, &chunked, &content_length, &conn_close_hdr,
+                                  &resp->www_authenticate) != 0) {
                     break;
                 }
                 have_headers = 1;
@@ -602,6 +637,8 @@ void fc_http_free(fc_http_response_t *resp)
 {
     free(resp->body);
     resp->body = NULL;
+    free(resp->www_authenticate);
+    resp->www_authenticate = NULL;
 }
 
 /* ---- streamed GET --------------------------------------------------------- */
@@ -639,7 +676,7 @@ int fc_http_get_stream(const fc_http_target_t *t, const char *path, fc_http_data
         hdr_end = strstr(buf, "\r\n\r\n");
     }
     int chunked, conn_close_hdr;
-    if (parse_headers(buf, hdr_end, status, &chunked, total, &conn_close_hdr) != 0) {
+    if (parse_headers(buf, hdr_end, status, &chunked, total, &conn_close_hdr, NULL) != 0) {
         goto out;
     }
     if (*status != 200) {

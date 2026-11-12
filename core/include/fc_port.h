@@ -57,6 +57,9 @@ void fc_port_metrics(void *obj);
 /* Writes a config file delivered through spec.config. `path` is the absolute
  * path from the device spec; the port maps it onto its own storage. */
 int fc_port_write_file(const char *path, const void *data, size_t len);
+/* Reads one back, as fc_port_kv_get does: *out is allocated (NUL terminated)
+ * and the caller frees it. Returns -1 if it was never written. */
+int fc_port_read_file(const char *path, char **out, size_t *len);
 
 /* ---- Firmware update (A/B slots with rollback) ----------------------------
  * fc_port_fw_platform: the platform.architecture this firmware matches in a

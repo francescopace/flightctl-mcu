@@ -1,6 +1,7 @@
 /*
  * Fuzzes image reference parsing and the manifest/index walk, including the
- * signature check: every registry answer is the fuzz input.
+ * signature check: every registry answer is the fuzz input. Also what a
+ * registry's 401 says (WWW-Authenticate) and the auth.json of a fleet.
  */
 #include "../../core/src/fc_oci.c"
 
@@ -10,6 +11,7 @@ static size_t s_size;
 int fc_http_request(const fc_http_target_t *t, const char *method, const char *path, const char *content_type,
                     const char *body, size_t body_len, fc_http_response_t *resp)
 {
+    memset(resp, 0, sizeof(*resp));
     resp->status = 200;
     resp->body = malloc(s_size + 1);
     memcpy(resp->body, s_data, s_size);
@@ -30,6 +32,20 @@ void fc_http_free(fc_http_response_t *resp)
 {
     free(resp->body);
     resp->body = NULL;
+    free(resp->www_authenticate);
+    resp->www_authenticate = NULL;
+}
+
+fc_http_session_t *fc_http_session_new(void)
+{
+    return malloc(1);
+}
+
+void fc_http_session_close(fc_http_session_t *s) {}
+
+void fc_http_session_free(fc_http_session_t *s)
+{
+    free(s);
 }
 
 static const char KEY[] = "-----BEGIN PUBLIC KEY-----\n"
@@ -46,6 +62,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     ref[size] = '\0';
     oci_ref_t r;
     parse_ref(ref, &r);
+    char v[256];
+    challenge_param(ref, "realm", v, sizeof(v));
+    challenge_param(ref, "scope", v, sizeof(v));
+    parse_ref("reg:5443/team/app:v1", &r);
+    char *basic = auth_from(ref, &r);
+    free(basic);
     free(ref);
 
     char digest[80], err[160];

@@ -13,7 +13,8 @@ accepts it and the device checks the same thing:
 
 What gets signed is the digest of what the reference points to (the
 multi-chip index for firmware), so the signature covers every manifest and
-layer below it. Plain HTTP registry, stdlib and the openssl CLI only.
+layer below it. The registry is reached as tools/registry/registry_client.py says
+(plain HTTP, or TLS with credentials); stdlib and the openssl CLI only.
 """
 import base64
 import hashlib
@@ -24,6 +25,9 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "registry"))
+import registry_client  # noqa: E402
 
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
@@ -37,9 +41,7 @@ def sha(data):
 
 
 def request(method, url, data=None, headers=None):
-    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
-    with urllib.request.urlopen(req) as r:
-        return r.status, r.headers, r.read()
+    return registry_client.request(method, url, data, headers)
 
 
 def push_blob(base, repo, data):
@@ -126,7 +128,7 @@ def signature_tag(digest):
 
 def sign(ref, key):
     host, repo, target = split_ref(ref)
-    base = f"http://{host}"
+    base = registry_client.base_url(host)
     digest = resolve(base, repo, target)
     payload = payload_for(host, repo, digest)
     der = der_signature(payload, key)

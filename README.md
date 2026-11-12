@@ -27,6 +27,8 @@ Here the microcontroller speaks the Flight Control agent API itself. That API is
 | `spec.config` | Files in the device's storage. The firmware can reject each one. |
 | `spec.os.image` | Firmware pulled from an OCI registry into the inactive OTA slot, after its cosign signature is checked. One index covers every chip, and an update can be a [delta](docs/DELTA.md). |
 | `spec.applications` | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
+| Registry credentials and CA (`auth.json`, `certs.d`) | The same files as on Linux, as config: TLS and a password to the [registry](docs/REGISTRY.md) |
+| Decommission | Key and certificate wiped; the device does not enroll again until its storage is erased |
 | `status` | Heap, flash, firmware version, RSSI, temperature, app state |
 | Fleet rollout | Works unchanged |
 
@@ -113,6 +115,7 @@ The requirements in full, the boards tried and how to add a chip, a board or an 
 | [SECURITY.md](docs/SECURITY.md) | Secure Boot, flash encryption, keys in hardware, the factory procedure |
 | [PROVISIONING.md](docs/PROVISIONING.md) | Credentials over USB, WiFi over SoftAP or BLE |
 | [DELTA.md](docs/DELTA.md) | Firmware updates as deltas |
+| [REGISTRY.md](docs/REGISTRY.md) | The registry: TLS, credentials, the local one |
 | [TESTING.md](docs/TESTING.md) | Unit tests, fuzzing, end-to-end tests, what CI runs |
 | [RESULTS.md](docs/RESULTS.md) | Measurements, problems found, gaps in Flight Control |
 | [ROADMAP.md](docs/ROADMAP.md) | Milestones and what comes next |
@@ -124,7 +127,7 @@ Tested on real boards and in CI: enrollment, monitoring, config, signed firmware
 
 Not there yet:
 
-- The registry is plain HTTP without authentication. Signatures protect images from tampering, not from reading.
+- The device trusts only the registry CA its fleet gives it: no public CA bundle, and no blobs redirected to another host ([REGISTRY.md](docs/REGISTRY.md)).
 - Secure Boot and flash encryption (the `secure` variant) are tested in the emulator only. Without them the device key is in flash in clear.
 - WiFi is the only link tried.
 - Flight Control cannot revoke an enrollment certificate.

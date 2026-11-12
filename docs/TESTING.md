@@ -5,19 +5,21 @@ GitHub Actions runs on every push that touches code. It builds once and tests wh
 - **Builds**: the simulated device on Linux, the firmware for every supported chip in debug and release profiles (with `ccache`), and the example WASM apps. The firmware has no credentials in it.
 - **Unit tests** ([tests/unit.sh](../tests/unit.sh), under a second): the C core on an in-memory port, with AddressSanitizer and UBSan (HTTP framing, OCI references, index and signatures, device identity against an independently computed name, rendered specs, certificate renewal answers, re-enrollment), and the tools' logic in Python (cosign payloads and signatures, the provisioning partition, the allow list).
 - **Fuzzing** ([tests/fuzz.sh](../tests/fuzz.sh)): the HTTP response reader, the OCI manifest and signature handling, and the agent's handling of rendered specs and certificates. 30 seconds per target on every push, 20 minutes per target every night ([fuzz-nightly.yml](../.github/workflows/fuzz-nightly.yml)), with the corpus kept from one night to the next. Crashes found so far are kept as seed inputs in `tests/fuzz/corpus`.
-- **End-to-end test** ([tests/e2e/e2e.sh](../tests/e2e/e2e.sh)): the job deploys Flight Control 1.4.0 on kind and a registry on the runner. The simulated device then goes through:
+- **End-to-end test** ([tests/e2e/e2e.sh](../tests/e2e/e2e.sh)): the job deploys Flight Control 1.4.0 on kind and a registry on the runner, and the device pulls through its door with TLS and a password ([REGISTRY.md](REGISTRY.md)). The simulated device then goes through:
   - enrollment, approved by the allow-list script;
   - Online status;
+  - the registry's CA without the password, which it must report as missing credentials;
   - inline config;
   - a signed WASM app install, and `cosign verify` on its signature;
   - an in-place update from v1 to v2;
   - a config change;
   - an unsigned app, which it must refuse;
-  - an update while the registry is down, which must complete once it is back;
+  - an update while the registry is down, which must complete once it is back (the TLS door stopped);
   - the app's removal, then the second example app;
   - the renewal of its management certificate (the server issues 2-minute certificates for the test), and a status accepted after the first one expired;
   - a server restart, after which it must reconnect and take a new spec;
-  - the server down until its certificate expired, after which it must enroll again, under a new name, with its config.
+  - the server down until its certificate expired, after which it must enroll again, under a new name, with its config;
+  - last, its decommissioning: Started, then Completed, the key and certificate wiped, and no new enrollment once it is restarted.
 - **Firmware in the emulator** ([tests/e2e/e2e-emu.sh](../tests/e2e/e2e-emu.sh)): the real firmware for the C3 and the C5 runs in Espressif's [esp-emu](https://github.com/espressif/esp-emulator), whose WiFi access point NATs to the runner, against Flight Control on kind. It provisions the debug image for the test cluster, then goes through enrollment, a signed update to the release image with a reboot into the other slot, a signed app and an unsigned one, certificate renewal, and the rollback of a broken image that cannot reach the server (built with a 30-second confirmation window instead of 150). The same runs for the `secure` variant (`SECURE=1`): the first boot burns the emulated eFuses and encrypts the flash, the device reports Secure Boot and flash encryption on, and a firmware signed with another Secure Boot key is refused even though its cosign signature is valid. Each device also refuses a valid firmware of the other variant: the plain one gets the secure build. Five runs in all: the C3 and the C5, plain and secure, and the C3 with its WiFi network given over BLE instead of SoftAP ([PROVISIONING.md](PROVISIONING.md#what-the-ci-checks)).
 - **Zephyr** ([port/zephyr/build.sh](../port/zephyr/build.sh)): the Zephyr application built for `native_sim`, then the end-to-end test of the simulated device with that build as the device (`DEVICE_KIND=zephyr tests/e2e/e2e.sh`). The builds for boards are not in CI: they need the ARM and Xtensa toolchains.
 

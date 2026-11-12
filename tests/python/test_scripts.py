@@ -26,6 +26,7 @@ sign = load("sign", "tools/signing/sign.py")
 provision = load("provision", "tools/provision.py")
 soak = load("soak", "tools/soak/collect.py")
 approve = load("auto_approve", "tools/auto-approve/auto-approve.py")
+registry = load("registry_client", "tools/registry/registry_client.py")
 
 
 class SignTest(unittest.TestCase):
@@ -161,6 +162,64 @@ class AutoApproveTest(unittest.TestCase):
     def test_empty_list(self):
         allow = self.allow("")
         self.assertIsNone(approve.labels_for(self.request("dev1"), allow))
+
+
+class RegistryTest(unittest.TestCase):
+    """The tools follow the devices' rule: TLS when there is a CA, credentials
+    by registry and repository."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.saved = {k: os.environ.get(k) for k in ("REGISTRY_CA", "REGISTRY_AUTH_FILE")}
+        for k in self.saved:
+            os.environ.pop(k, None)
+        registry.SECRETS = self.dir.name
+        with open(os.path.join(self.dir.name, "host"), "w") as f:
+            f.write("reg.example:5443\n")
+        with open(os.path.join(self.dir.name, "ca.crt"), "w") as f:
+            f.write("CA")
+        with open(os.path.join(self.dir.name, "auth.json"), "w") as f:
+            json.dump({"auths": {"reg.example:5443": {"auth": "dTpw"},
+                                 "https://reg.example:5443/team": {"username": "t", "password": "q"}}}, f)
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            if v is not None:
+                os.environ[k] = v
+        self.dir.cleanup()
+
+    def test_tls_only_for_the_registry_with_a_ca(self):
+        self.assertEqual(registry.base_url("reg.example:5443"), "https://reg.example:5443")
+        self.assertEqual(registry.base_url("10.0.0.1:5001"), "http://10.0.0.1:5001")
+        self.assertEqual(registry.oras_args("10.0.0.1:5001"), ["--plain-http"])
+        self.assertEqual(registry.oras_args("reg.example:5443")[:2], ["--ca-file", os.path.join(self.dir.name, "ca.crt")])
+
+    def test_credentials_by_registry_and_repository(self):
+        self.assertEqual(registry.basic_for("reg.example:5443", "flightctl-mcu/fw"), "dTpw")
+        self.assertEqual(base64.b64decode(registry.basic_for("reg.example:5443", "team/app")), b"t:q")
+        self.assertEqual(registry.basic_for("reg.example:5443", "teams/app"), "dTpw")
+        self.assertIsNone(registry.basic_for("other:5443", "app"))
+
+    def test_challenges(self):
+        scheme, params = registry._challenge('Bearer realm="https://r/token",service="r",scope="repository:a:pull,push"')
+        self.assertEqual(scheme, "bearer")
+        self.assertEqual(params["scope"], "repository:a:pull,push")
+        self.assertEqual(registry._challenge('Basic realm="x"')[0], "basic")
+
+
+class RegistryConfigTest(unittest.TestCase):
+    def test_ca_and_credentials_go_into_the_fleet(self):
+        mod = load("registry_config", "tools/fleet/registry-config.py")
+        with tempfile.TemporaryDirectory() as d:
+            for name, text in (("host", "reg.example:5443"), ("ca.crt", "CA"), ("auth.json", '{"auths":{}}')):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write(text)
+            mod.registry_client.SECRETS = d
+            files = mod.files_for("reg.example:5443")
+            self.assertEqual([f["path"] for f in files],
+                             ["/etc/containers/certs.d/reg.example/ca.crt", "/etc/containers/auth.json"])
+            self.assertTrue(all(":" not in f["path"] for f in files))  # Flight Control refuses ':' there
+            self.assertEqual(mod.files_for("10.0.0.1:5001"), [])
 
 
 if __name__ == "__main__":

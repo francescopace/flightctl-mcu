@@ -67,6 +67,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         snprintf(a.csr_name, sizeof(a.csr_name), "fuzzdevice-0000");
         handle_csr(&a, json);
     } else {
+        /* A spec may ask for decommissioning: that only marks it (the wipe
+         * waits for a status accepted, and there is no server here). */
+        a.decom = DECOM_NONE;
         apply_rendered(&a, json);
         cJSON_Delete(build_status(&a));
     }

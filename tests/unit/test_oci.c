@@ -50,9 +50,52 @@ static route_t *route(const char *path)
     return NULL;
 }
 
+/* Credentials: when s_require is set, every request must carry it as its
+ * Authorization header, or gets a 401 with s_challenge. A Bearer challenge
+ * points at /token on the same host, which gives s_token for s_token_basic
+ * (any Authorization when that is NULL). */
+static const char *s_require, *s_challenge, *s_token, *s_token_basic;
+static fc_http_target_t s_last;       /* the last request's target */
+static char s_last_host[128], s_last_auth[256];
+static int s_last_ca, s_with_auth_plain;
+
+static void note(const fc_http_target_t *t)
+{
+    s_last = *t;
+    snprintf(s_last_host, sizeof(s_last_host), "%s", t->host);
+    snprintf(s_last_auth, sizeof(s_last_auth), "%s", t->authorization ? t->authorization : "");
+    s_last_ca = t->ca_pem != NULL && strstr(t->ca_pem, "registry CA") != NULL;
+    if (t->plain && t->authorization != NULL) {
+        s_with_auth_plain++;
+    }
+}
+
+static int denied(const fc_http_target_t *t)
+{
+    return s_require != NULL && (t->authorization == NULL || strcmp(t->authorization, s_require) != 0);
+}
+
 int fc_http_request(const fc_http_target_t *t, const char *method, const char *path, const char *content_type,
                     const char *body, size_t body_len, fc_http_response_t *resp)
 {
+    note(t);
+    memset(resp, 0, sizeof(*resp));
+    if (strncmp(path, "/token?", 7) == 0) {
+        int ok = s_token != NULL && (s_token_basic == NULL || (t->authorization != NULL &&
+                                                               strcmp(t->authorization, s_token_basic) == 0));
+        char json[256];
+        snprintf(json, sizeof(json), "{\"token\":\"%s\"}", ok ? s_token : "");
+        resp->status = ok ? 200 : 401;
+        resp->body = strdup(ok ? json : "");
+        resp->body_len = strlen(resp->body);
+        return 0;
+    }
+    if (denied(t)) {
+        resp->status = 401;
+        resp->body = strdup("");
+        resp->www_authenticate = s_challenge ? strdup(s_challenge) : NULL;
+        return 0;
+    }
     route_t *r = route(path);
     resp->status = r ? 200 : 404;
     resp->body = malloc(r ? r->len + 1 : 1);
@@ -64,6 +107,12 @@ int fc_http_request(const fc_http_target_t *t, const char *method, const char *p
 int fc_http_get_stream(const fc_http_target_t *t, const char *path, fc_http_data_cb on_data, void *ctx, int *status,
                        long *total)
 {
+    note(t);
+    if (denied(t)) {
+        *status = 401;
+        *total = -1;
+        return -1;
+    }
     route_t *r = route(path);
     *status = r ? 200 : 404;
     *total = r ? (long)r->len : -1;
@@ -74,6 +123,20 @@ void fc_http_free(fc_http_response_t *resp)
 {
     free(resp->body);
     resp->body = NULL;
+    free(resp->www_authenticate);
+    resp->www_authenticate = NULL;
+}
+
+fc_http_session_t *fc_http_session_new(void)
+{
+    return malloc(1);
+}
+
+void fc_http_session_close(fc_http_session_t *s) {}
+
+void fc_http_session_free(fc_http_session_t *s)
+{
+    free(s);
 }
 
 /* Pushes a blob; returns its digest. */
@@ -491,6 +554,166 @@ static void the_outcome_written_by_an_older_firmware_is_read(void)
     CHECK(stub_kv("fw.download") == NULL);
 }
 
+/* ---- registry access ---------------------------------------------------------- */
+
+#define CA "-----BEGIN CERTIFICATE-----\nregistry CA\n-----END CERTIFICATE-----\n"
+
+static void reg_auth_reset(void)
+{
+    stub_reset();
+    reg_reset();
+    fc_oci_set_signing_key(NULL);
+    s_require = s_challenge = s_token = s_token_basic = NULL;
+    s_with_auth_plain = 0;
+}
+
+static void a_registry_is_reached_over_tls_when_the_device_has_its_ca(void)
+{
+    reg_auth_reset();
+    char md[72], err[160] = "";
+    unsigned char *out = NULL;
+    size_t len = 0;
+    push_image("app", "v1", "WASM", "application/vnd.wasm.content.layer.v1+wasm", md);
+    CHECK_INT(fetch("reg:5001/app:v1", err, sizeof(err), &out, &len), 0);
+    CHECK_INT(s_last.plain, 1); /* no CA: plain HTTP, as before */
+    free(out);
+
+    fc_port_write_file("/etc/containers/certs.d/reg:5001/ca.crt", CA, strlen(CA));
+    CHECK_INT(fetch("reg:5001/app:v1", err, sizeof(err), &out, &len), 0);
+    CHECK_INT(s_last.plain, 0);
+    CHECK_INT(s_last_ca, 1);
+    free(out);
+
+    /* Without a port, TLS is on 443; the CA is keyed by the host alone. */
+    fc_port_write_file("/etc/containers/certs.d/reg/ca.crt", CA, strlen(CA));
+    CHECK_INT(fetch("reg/app:v1", err, sizeof(err), &out, &len), 0);
+    CHECK_INT(s_last.port, 443);
+    free(out);
+    /* A CA for the host is for any port of it: the form a fleet can give
+     * (Flight Control refuses ':' in a config file's path). */
+    CHECK_INT(fetch("reg:7000/app:v1", err, sizeof(err), &out, &len), 0);
+    CHECK_INT(s_last.plain, 0);
+    CHECK_INT(s_last.port, 7000);
+    free(out);
+    CHECK_INT(fetch("other:5001/app:v1", err, sizeof(err), &out, &len), 0);
+    CHECK_INT(s_last.plain, 1);
+    free(out);
+}
+
+static void basic_credentials_are_sent_when_asked(void)
+{
+    reg_auth_reset();
+    char md[72], err[160] = "";
+    unsigned char *out = NULL;
+    size_t len = 0;
+    push_image("team/app", "v1", "WASM", "application/vnd.wasm.content.layer.v1+wasm", md);
+    s_require = "Basic dTpw"; /* u:p */
+    s_challenge = "Basic realm=\"registry\"";
+    fc_port_write_file("/etc/containers/certs.d/reg:5443/ca.crt", CA, strlen(CA));
+    CHECK(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "no auth.json");
+
+    const char *auth = "{\"auths\":{\"other:5443\":{\"auth\":\"bm8=\"},\"reg:5443\":{\"auth\":\"dTpw\"}}}";
+    fc_port_write_file("/etc/containers/auth.json", auth, strlen(auth));
+    err[0] = '\0';
+    CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
+    CHECK_STR(s_last_auth, "Basic dTpw"); /* the blob too */
+    free(out);
+
+    /* A key for the repository wins over the registry's; username and
+     * password are taken too. */
+    auth = "{\"auths\":{\"https://reg:5443\":{\"auth\":\"bm8=\"},"
+           "\"reg:5443/team\":{\"username\":\"u\",\"password\":\"p\"}}}";
+    fc_port_write_file("/etc/ostree/auth.json", auth, strlen(auth));
+    CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    /* ...but not for another repository that only starts the same. */
+    push_image("teams/app", "v1", "WASM", "application/vnd.wasm.content.layer.v1+wasm", md);
+    auth = "{\"auths\":{\"reg:5443/team\":{\"auth\":\"dTpw\"}}}";
+    fc_port_write_file("/etc/ostree/auth.json", auth, strlen(auth));
+    fc_port_write_file("/etc/containers/auth.json", "{}", 2);
+    CHECK(fetch("reg:5443/teams/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_INT(s_with_auth_plain, 0);
+}
+
+static void credentials_never_go_over_plain_http(void)
+{
+    reg_auth_reset();
+    char md[72], err[200] = "";
+    unsigned char *out = NULL;
+    size_t len = 0;
+    push_image("app", "v1", "WASM", "application/vnd.wasm.content.layer.v1+wasm", md);
+    s_require = "Basic dTpzZWNyZXQ="; /* u:secret */
+    s_challenge = "Basic realm=\"registry\"";
+    const char *auth = "{\"auths\":{\"reg:5001\":{\"auth\":\"dTpzZWNyZXQ=\"}}}";
+    fc_port_write_file("/etc/containers/auth.json", auth, strlen(auth));
+    CHECK(fetch("reg:5001/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_INT(s_with_auth_plain, 0);
+    CHECK_CONTAINS(err, "/etc/containers/certs.d/reg/ca.crt");
+    CHECK(strstr(err, "dTpzZWNyZXQ=") == NULL);
+
+    /* With TLS, refused credentials are said so, without them. */
+    fc_port_write_file("/etc/containers/certs.d/reg:5001/ca.crt", CA, strlen(CA));
+    s_require = "Basic other";
+    err[0] = '\0';
+    CHECK(fetch("reg:5001/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK(strstr(err, "dTpzZWNyZXQ=") == NULL);
+    CHECK_CONTAINS(err, "HTTP 401");
+}
+
+static void a_bearer_token_is_asked_for(void)
+{
+    reg_auth_reset();
+    char md[72], err[200] = "";
+    unsigned char *out = NULL;
+    size_t len = 0;
+    push_image("app", "v1", "WASM", "application/vnd.wasm.content.layer.v1+wasm", md);
+    fc_port_write_file("/etc/containers/certs.d/reg:5443/ca.crt", CA, strlen(CA));
+    s_require = "Bearer T0K3N";
+    s_challenge = "Bearer realm=\"https://reg:5443/token\",service=\"reg\",scope=\"repository:app:pull\"";
+    s_token = "T0K3N";
+    /* A public repository: an anonymous token. */
+    CHECK_INT(fetch("reg:5443/app:v1", err, sizeof(err), &out, &len), 0);
+    CHECK_STR(s_last_auth, "Bearer T0K3N");
+    free(out);
+    /* A private one: the token for the credentials. */
+    s_token_basic = "Basic dTpw";
+    CHECK(fetch("reg:5443/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "no credentials");
+    const char *auth = "{\"auths\":{\"reg:5443\":{\"auth\":\"dTpw\"}}}";
+    fc_port_write_file("/etc/containers/auth.json", auth, strlen(auth));
+    CHECK_INT(fetch("reg:5443/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    /* The token service elsewhere needs its own CA, and https. */
+    s_challenge = "Bearer realm=\"https://auth.example:8443/token\",service=\"reg\"";
+    CHECK(fetch("reg:5443/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "certs.d/auth.example/ca.crt");
+    fc_port_write_file("/etc/containers/certs.d/auth.example/ca.crt", CA, strlen(CA));
+    CHECK_INT(fetch("reg:5443/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    s_challenge = "Bearer realm=\"http://reg:5443/token\"";
+    CHECK(fetch("reg:5443/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "not on https");
+    CHECK_INT(s_with_auth_plain, 0);
+}
+
+static void challenges_are_parsed(void)
+{
+    char v[64];
+    const char *ch = "Bearer realm=\"https://r/t\",service=\"a \\\"b\\\"\", scope=repository:x:pull";
+    CHECK_INT(challenge_param(ch, "realm", v, sizeof(v)), 1);
+    CHECK_STR(v, "https://r/t");
+    CHECK_INT(challenge_param(ch, "service", v, sizeof(v)), 1);
+    CHECK_STR(v, "a \"b\"");
+    CHECK_INT(challenge_param(ch, "SCOPE", v, sizeof(v)), 1);
+    CHECK_STR(v, "repository:x:pull");
+    CHECK_INT(challenge_param(ch, "error", v, sizeof(v)), 0);
+    CHECK_INT(challenge_param("Basic", "realm", v, sizeof(v)), 0);
+    char e[64];
+    url_encode("repository:a/b:pull", e, sizeof(e));
+    CHECK_STR(e, "repository%3Aa%2Fb%3Apull");
+}
+
 int main(void)
 {
     stub_ec_key(&s_key);
@@ -509,6 +732,11 @@ int main(void)
     RUN(a_bad_delta_falls_back_to_the_whole_image);
     RUN(an_image_the_device_refuses_is_not_downloaded_again);
     RUN(the_outcome_written_by_an_older_firmware_is_read);
+    RUN(a_registry_is_reached_over_tls_when_the_device_has_its_ca);
+    RUN(basic_credentials_are_sent_when_asked);
+    RUN(credentials_never_go_over_plain_http);
+    RUN(a_bearer_token_is_asked_for);
+    RUN(challenges_are_parsed);
     reg_reset();
     mbedtls_pk_free(&s_key);
     mbedtls_pk_free(&s_other);

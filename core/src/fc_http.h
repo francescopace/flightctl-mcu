@@ -15,6 +15,7 @@ typedef struct {
     const char *key_pem;  /* client private key, NUL terminated */
     int hw_key;           /* 1: the client key is in hardware, key_pem unused */
     const char *accept;   /* Accept header; NULL: application/json */
+    const char *authorization; /* Authorization header's value; NULL: none */
     int timeout_s;        /* read timeout (no data for this long) */
     fc_http_session_t *session; /* NULL: one connection per request */
 } fc_http_target_t;
@@ -23,6 +24,7 @@ typedef struct {
     int status;   /* HTTP status, or -1 on transport error */
     char *body;   /* NUL terminated, caller frees with fc_http_free */
     size_t body_len;
+    char *www_authenticate; /* the WWW-Authenticate header of a 401, or NULL */
 } fc_http_response_t;
 
 int fc_http_global_init(void);
@@ -30,6 +32,8 @@ int fc_http_global_init(void);
 fc_http_session_t *fc_http_session_new(void);
 /* Closes the connection, if open; the session can still be used. */
 void fc_http_session_close(fc_http_session_t *s);
+/* Closes it and frees it. */
+void fc_http_session_free(fc_http_session_t *s);
 
 /* Performs one request and buffers the response (max 512 KB). With
  * t->session the connection is reused when possible (a request on a
@@ -44,7 +48,7 @@ int fc_http_request(const fc_http_target_t *t, const char *method,
 void fc_http_free(fc_http_response_t *resp);
 
 /* GET with the body streamed to `on_data` (Content-Length bodies only), for
- * downloads larger than RAM. *status gets the HTTP status; on_data is called
+ * downloads larger than RAM, on a connection of its own. *status gets the HTTP status; on_data is called
  * only for 200 responses and may return non-zero to abort. *total gets the
  * Content-Length. Returns 0 if the whole body was delivered. */
 typedef int (*fc_http_data_cb)(const void *data, size_t len, void *ctx);

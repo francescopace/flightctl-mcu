@@ -32,6 +32,9 @@
 #define KV_OS_PENDING_DIGEST "os.pend.digest"
 #define KV_PREV_RENDERED     "rendered.prev"  /* rendered version before the update */
 #define KV_OS_FAILED         "os.failed"      /* image that was rolled back */
+/* Decommissioned: the target asked for. Kept when everything else is wiped,
+ * so the device does not enroll again on its own at the next boot. */
+#define KV_DECOMMISSIONED    "decommission"
 
 #define API "/api/v1"
 #define RENDERED_ANNOTATION "device-controller/renderedVersion"
@@ -75,6 +78,12 @@
 #define METRICS_SECOND_READ_S 300
 #define CLOCK_SET_AFTER 1735689600 /* 2025-01-01: before that, the clock is not set */
 
+/* Decommissioning, as the Linux agent does it: the DeviceDecommissioning
+ * condition Started, then Completed, and then the device key and the
+ * management certificate are wiped. Each step waits for the server to have
+ * the one before (a status accepted). */
+enum { DECOM_NONE, DECOM_STARTED, DECOM_COMPLETED };
+
 typedef struct {
     const fc_agent_config_t *cfg;
     fc_identity_t id;
@@ -114,7 +123,19 @@ typedef struct {
     char *metrics;          /* counters for customInfo, as a JSON object (status thread) */
     time_t metrics_at;
     int metrics_reads;
+    /* Decommissioning: requested by the spec thread, carried on by the
+     * status thread. decom_reported is the step in the last status built. */
+    int decom;
+    int decom_reported;
+    int decom_since_step;
+    char decom_target[16];
+    char decom_since[32];
 } agent_t;
+
+static int hex_digit(char c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
 
 static void rfc3339_now(char *buf, size_t len)
 {
@@ -266,6 +287,24 @@ static cJSON *build_status(agent_t *a)
     cJSON_AddStringToObject(c, "lastTransitionTime", a->cond_since);
     cJSON_AddItemToArray(conds, c);
 
+    a->decom_reported = a->decom;
+    if (a->decom != DECOM_NONE) {
+        if (a->decom_since_step != a->decom) {
+            a->decom_since_step = a->decom;
+            snprintf(a->decom_since, sizeof(a->decom_since), "%s", now);
+        }
+        int done = a->decom == DECOM_COMPLETED;
+        cJSON *d = cJSON_CreateObject();
+        cJSON_AddStringToObject(d, "type", "DeviceDecommissioning");
+        cJSON_AddStringToObject(d, "status", "True");
+        cJSON_AddStringToObject(d, "reason", done ? "Completed" : "Started");
+        cJSON_AddStringToObject(d, "message", done ? "Device completed decommissioning and will wipe its management "
+                                                     "certificate"
+                                                   : "Device started decommissioning");
+        cJSON_AddStringToObject(d, "lastTransitionTime", a->decom_since);
+        cJSON_AddItemToArray(conds, d);
+    }
+
     cJSON *sys = cJSON_AddObjectToObject(st, "systemInfo");
     cJSON_AddStringToObject(sys, "architecture", si.architecture);
     cJSON_AddStringToObject(sys, "operatingSystem", si.operating_system);
@@ -335,12 +374,95 @@ static cJSON *build_status(agent_t *a)
     cJSON_AddStringToObject(sum, "info", failed ? a->update_error : "Device is running");
 
     cJSON *life = cJSON_AddObjectToObject(st, "lifecycle");
-    cJSON_AddStringToObject(life, "status", "Enrolled");
+    /* The server sets Decommissioning when asked, and keeps the lifecycle
+     * the agent reports: Enrolled here would undo it until Started. */
+    cJSON_AddStringToObject(life, "status", a->decom != DECOM_NONE ? "Decommissioning" : "Enrolled");
     pthread_mutex_unlock(&a->lock);
     return st;
 }
 
 static void request_status(agent_t *a);
+
+/* ---- decommissioning ----------------------------------------------------- */
+
+/* What makes this device known to Flight Control. Apps, config files and the
+ * firmware stay: Unenroll leaves the device running, unmanaged. */
+static void decommission_wipe(void)
+{
+    fc_port_kv_del(KV_MGMT_CERT);
+    fc_port_kv_del(KV_RENDERED);
+    fc_port_kv_del(KV_PREV_RENDERED);
+    fc_port_kv_del(KV_OS_PENDING);
+    fc_port_kv_del(KV_OS_PENDING_DIGEST);
+    fc_identity_forget();
+}
+
+/* Spec thread: the rendered spec asks for it. Nothing else in that spec is
+ * applied (the server has taken the device out of its fleet, and the spec
+ * would remove its apps). */
+static void request_decommission(agent_t *a, const cJSON *decom)
+{
+    const char *target = cJSON_GetStringValue(cJSON_GetObjectItem(decom, "target"));
+    pthread_mutex_lock(&a->lock);
+    int first = a->decom == DECOM_NONE;
+    if (first) {
+        /* Unenroll is the one the CLI and the UI send; FactoryReset also
+         * removes the apps. Anything else is taken as Unenroll. */
+        snprintf(a->decom_target, sizeof(a->decom_target), "%s",
+                 target != NULL && strcmp(target, "FactoryReset") == 0 ? "FactoryReset" : "Unenroll");
+        a->decom = DECOM_STARTED;
+    }
+    pthread_mutex_unlock(&a->lock);
+    if (first) {
+        fc_port_log(FC_LOG_WARN, "decommissioning requested (%s): the device key and the management certificate "
+                                 "will be wiped", a->decom_target);
+        request_status(a);
+    }
+}
+
+/* Status thread, after a status was accepted: the step it carried is known to
+ * the server, go on to the next. A failure leaves the step as it is, to be
+ * done again after the next status. */
+static void decommission_step(agent_t *a)
+{
+    if (a->decom_reported == DECOM_STARTED) {
+        if (strcmp(a->decom_target, "FactoryReset") == 0) {
+            cJSON *none = cJSON_CreateArray();
+            char err[160];
+            int retry;
+            fc_apps_apply(none, err, sizeof(err), &retry);
+            cJSON_Delete(none);
+        }
+        pthread_mutex_lock(&a->lock);
+        a->decom = DECOM_COMPLETED;
+        pthread_mutex_unlock(&a->lock);
+        request_status(a);
+    } else if (a->decom_reported == DECOM_COMPLETED) {
+        /* Only now: a restart before the server has Completed must not leave
+         * it at Decommissioning for good. The spec asks again then. */
+        if (fc_port_kv_set(KV_DECOMMISSIONED, a->decom_target, strlen(a->decom_target)) != 0) {
+            fc_port_log(FC_LOG_WARN, "decommissioning: cannot store it, trying again");
+            return;
+        }
+        fc_port_log(FC_LOG_WARN, "decommissioned: wiping the device key and the management certificate");
+        decommission_wipe();
+        fc_port_reboot();
+    }
+}
+
+/* At boot: a device that was decommissioned does not enroll again. Its
+ * storage has to be erased first (it holds the marker). */
+static int decommissioned_at_boot(void)
+{
+    char target[16] = "";
+    kv_load_str(KV_DECOMMISSIONED, target, sizeof(target));
+    if (target[0] == '\0') {
+        return 0;
+    }
+    decommission_wipe(); /* again: a reboot may have cut it short */
+    fc_port_log(FC_LOG_WARN, "decommissioned (%s): not enrolling. To enroll it again, erase its storage", target);
+    return 1;
+}
 
 static int put_status(agent_t *a)
 {
@@ -388,6 +510,7 @@ static int put_status(agent_t *a)
         fc_port_log(FC_LOG_INFO, "firmware %s confirmed", a->os_image);
         request_status(a); /* now report the new rendered version */
     }
+    decommission_step(a);
     return 0;
 }
 
@@ -666,20 +789,48 @@ static void *status_thread(void *arg)
             fc_port_log(FC_LOG_ERROR, "firmware %s could not reach Flight Control: rolling back", a->os_image);
             fc_port_ota_rollback();
         }
-        renew_cert_if_due(a);
+        pthread_mutex_lock(&a->lock);
+        int decommissioning = a->decom != DECOM_NONE;
+        pthread_mutex_unlock(&a->lock);
+        /* A decommissioning device is refused a certificate, and must not
+         * come back as a new one. */
+        if (!decommissioning) {
+            renew_cert_if_due(a);
+        }
         int ok = put_status(a) == 0;
         last_put = time(NULL);
         if (ok) {
             last_ok = last_put;
         } else {
             fc_port_log(FC_LOG_WARN, "status update failed, retrying");
-            reenroll_if_expired(a);
+            if (!decommissioning) {
+                reenroll_if_expired(a);
+            }
         }
     }
     return NULL;
 }
 
 /* ---- spec -------------------------------------------------------------- */
+
+/* Flight Control 1.4.0 keeps an inline file given in base64 as a data URL
+ * with its text percent-encoded, and serves that text as the base64: the
+ * padding comes as "%3D". '%' is not in the base64 alphabet, so the escapes
+ * are undone first (in place). */
+static void percent_decode(char *s)
+{
+    char *out = s;
+    for (const char *p = s; *p; p++) {
+        int hi, lo;
+        if (p[0] == '%' && (hi = hex_digit(p[1])) >= 0 && (lo = hex_digit(p[2])) >= 0) {
+            *out++ = (char)(hi * 16 + lo);
+            p += 2;
+        } else {
+            *out++ = *p;
+        }
+    }
+    *out = '\0';
+}
 
 static int apply_inline_file(agent_t *a, const cJSON *file, char *err, size_t err_len)
 {
@@ -695,13 +846,19 @@ static int apply_inline_file(agent_t *a, const cJSON *file, char *err, size_t er
     unsigned char *buf = NULL;
     if (enc != NULL && strcmp(enc, "base64") == 0) {
         buf = malloc(len + 1);
+        char *text = strdup(content);
         size_t out_len = 0;
-        if (buf == NULL ||
-            mbedtls_base64_decode(buf, len, &out_len, (const unsigned char *)content, len) != 0) {
+        if (text != NULL) {
+            percent_decode(text);
+        }
+        if (buf == NULL || text == NULL ||
+            mbedtls_base64_decode(buf, len, &out_len, (const unsigned char *)text, strlen(text)) != 0) {
             free(buf);
+            free(text);
             snprintf(err, err_len, "%s: invalid base64", path);
             return -1;
         }
+        free(text);
         buf[out_len] = '\0';
         data = (const char *)buf;
         len = out_len;
@@ -731,6 +888,13 @@ static void apply_rendered(agent_t *a, const char *json)
     const cJSON *spec = cJSON_GetObjectItem(dev, "spec");
     char err[160] = "";
 
+    const cJSON *decom = cJSON_GetObjectItem(spec, "decommissioning");
+    if (cJSON_IsObject(decom)) {
+        request_decommission(a, decom);
+        cJSON_Delete(dev);
+        return;
+    }
+
     const cJSON *provider;
     cJSON_ArrayForEach(provider, cJSON_GetObjectItem(spec, "config")) {
         const cJSON *inline_files = cJSON_GetObjectItem(provider, "inline");
@@ -748,6 +912,12 @@ static void apply_rendered(agent_t *a, const char *json)
             }
         }
     }
+
+    /* Downloads below may open a TLS connection to the registry: the spec's
+     * own, idle while this runs, is closed first, so a board short of RAM
+     * holds two at most (this and the status thread's). The next long-poll
+     * opens it again. */
+    fc_http_session_close(a->spec_sess);
 
     /* WASM apps: replaced without reboot; a failed download keeps the old one. */
     char aerr[160] = "";
@@ -859,6 +1029,14 @@ static void *spec_thread(void *arg)
         if (r.status == 200) {
             apply_rendered(a, r.body);
             request_status(a);
+            pthread_mutex_lock(&a->lock);
+            int decommissioning = a->decom != DECOM_NONE;
+            pthread_mutex_unlock(&a->lock);
+            if (decommissioning) {
+                /* No spec matters any more: the status thread finishes. */
+                fc_http_free(&r);
+                return NULL;
+            }
         } else if (r.status == 204) {
             fc_port_log(FC_LOG_DEBUG, "spec unchanged (%s)", known);
         } else {
@@ -1010,6 +1188,13 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     pthread_mutex_init(&a.lock, NULL);
     pthread_cond_init(&a.status_wake, NULL);
 
+    if (decommissioned_at_boot()) {
+        /* Unmanaged: the apps go on (Unenroll), nothing talks to the server. */
+        fc_agent_apps_start(cfg);
+        for (;;) {
+            sleep(3600);
+        }
+    }
     if (fc_http_global_init() != 0 || fc_identity_load(&a.id) != 0) {
         return -1;
     }
@@ -1067,6 +1252,9 @@ int fc_agent_run(const fc_agent_config_t *cfg)
         fc_port_log(FC_LOG_ERROR, "cannot start the agent's threads (two stacks of %u KB)", (unsigned)(stack / 1024));
         return -1;
     }
+    /* The spec thread ends when the device is decommissioned; the status
+     * thread then finishes it and restarts the device. */
     pthread_join(spec, NULL);
+    pthread_join(status, NULL);
     return 0;
 }

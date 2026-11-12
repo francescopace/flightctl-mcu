@@ -80,7 +80,7 @@ static int read_file(const char *path, char **out, size_t *len)
  * cut leaves the old value or the new one. */
 static int write_file(const char *path, const void *data, size_t len)
 {
-    char tmp[128];
+    char tmp[192];
     if (snprintf(tmp, sizeof(tmp), "%s~", path) >= (int)sizeof(tmp)) {
         return -1;
     }
@@ -134,10 +134,19 @@ int fc_port_kv_del(const char *key)
     return rc == 0 || rc == -ENOENT ? 0 : -1;
 }
 
+/* Long enough for a registry's CA, /etc/containers/certs.d/<host:port>/ca.crt */
+#define FILE_PATH_MAX 160
+
 int fc_port_write_file(const char *path, const void *data, size_t len)
 {
-    char p[96];
+    char p[FILE_PATH_MAX];
     return file_path(FILE_DIR, path, p, sizeof(p)) == 0 ? write_file(p, data, len) : -1;
+}
+
+int fc_port_read_file(const char *path, char **out, size_t *len)
+{
+    char p[FILE_PATH_MAX];
+    return file_path(FILE_DIR, path, p, sizeof(p)) == 0 ? read_file(p, out, len) : -1;
 }
 
 /* ---- system ----------------------------------------------------------------- */

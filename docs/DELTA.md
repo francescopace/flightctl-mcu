@@ -82,7 +82,7 @@ images, and what it rebuilds is the signed image, byte for byte.
 ## A delta is not trusted until the end
 
 The device decodes a delta before it can check its digest, which comes with
-the last byte, over a registry that is plain HTTP. What stands between a
+the last byte, possibly over a registry that is plain HTTP. What stands between a
 hostile delta and the device:
 
 - the decoder reads only inside the running image and writes at most the new

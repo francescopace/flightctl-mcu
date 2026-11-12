@@ -4,8 +4,11 @@
 # a WASM app install, an update v1 -> v2 without restart, a config change,
 # the rejection of an unsigned app, an update while the registry is down,
 # the app removal, the renewal of the management certificate (the server is
-# told to issue 2-minute certificates for the test) and a server restart. Apps are signed with a throwaway key; when cosign is
-# installed, it checks that signature too.
+# told to issue 2-minute certificates for the test), a server restart and,
+# last, the device's decommissioning. Apps are signed with a throwaway key;
+# when cosign is installed, it checks that signature too. The device pulls
+# from the registry's door with TLS and a password (tools/registry/up.sh),
+# first without the password, which it must report.
 #
 #   tests/e2e/e2e.sh                 deploy Flight Control on kind + registry, then test
 #   SKIP_DEPLOY=1 tests/e2e/e2e.sh   test against the cluster and registry already running
@@ -21,7 +24,9 @@ source tools/local-ip.sh
 IP="${HOST_IP:-$(local_ip)}"
 API="https://api.$IP.nip.io:8443"
 AGENT="agent-api.$IP.nip.io:8443"
-REGISTRY="${REGISTRY:-$IP:5001}"
+# The door with TLS and a password; the plain one serves the same images.
+REGISTRY="${REGISTRY:-registry.$IP.nip.io:5443}"
+PLAIN_REGISTRY="${PLAIN_REGISTRY:-$IP:5001}"
 TAG="e2e$(date +%s)"
 WORK="$(mktemp -d)"
 echo "work dir: $WORK"
@@ -116,7 +121,7 @@ EOF
             TICK_MS: "100"
 EOF
     fi
-  } | flightctl apply -f - >/dev/null
+  } | tools/fleet/registry-config.py "$REGISTRY" | flightctl apply -f - >/dev/null
 }
 
 rendered() {
@@ -160,8 +165,9 @@ NO_SIGN=1 ORAS_ARGS="--annotation io.flightctl-mcu.e2e=unsigned-$TAG" \
   wasm-apps/push.sh alarm v2 "v2.$TAG-unsigned" "$REGISTRY" >/dev/null
 wasm-apps/push.sh trend v1 "v1.$TAG" "$REGISTRY" >/dev/null
 if command -v cosign >/dev/null; then
+  # Through the plain door: the same storage, so the same signature.
   cosign verify --key "$WORK/signing/signing.pub" --insecure-ignore-tlog --allow-http-registry \
-    "$REGISTRY/flightctl-mcu/alarm:v2.$TAG" >/dev/null 2>&1 || fail "cosign does not accept the signature"
+    "$PLAIN_REGISTRY/flightctl-mcu/alarm:v2.$TAG" >/dev/null 2>&1 || fail "cosign does not accept the signature"
   echo "ok: cosign verifies the signature"
 fi
 
@@ -184,6 +190,12 @@ await_device() {
 # state stays in $WORK/data (host agent) or in its flash image (Zephyr).
 start_agent() {
   local before; before=$(starts)
+  run_device
+  await_device "$before" 60
+}
+
+# run_device: starts the device in the background (AGENT_PID).
+run_device() {
   if [[ "$DEVICE_KIND" == zephyr ]]; then
     if [[ ! -f "$ZFLASH" ]]; then
       mkdir -p "$(dirname "$ZFLASH")"
@@ -200,7 +212,6 @@ start_agent() {
       --data-dir "$WORK/data" --label app=e2e --label site=ci -v >>"$WORK/agent.log" 2>&1 &
   fi
   AGENT_PID=$!
-  await_device "$before" 60
 }
 
 # config_stored <threshold> <nth write> <ok message> <failure>: the device
@@ -230,6 +241,11 @@ tools/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
 wait_for 120 "device Online" "st.get('summary', {}).get('status') == 'Online'"
 wait_for 30 "status accepted with system info" "st['systemInfo'].get('agentVersion', '').startswith('flightctl-mcu')"
 
+log "registry with TLS: no credentials, then the fleet's"
+# The CA alone: the registry asks for a password the device does not have.
+REGISTRY_AUTH_FILE="$WORK/no-auth.json" apply_fleet 40 "v1.$TAG"
+wait_for 180 "missing credentials reported" "st['updated']['status'] == 'OutOfDate' and 'asks for credentials' in st['updated'].get('info', '')"
+
 log "fleet: config + app v1"
 apply_fleet 40 "v1.$TAG"
 wait_for 180 "app v1 running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v1')"
@@ -256,10 +272,10 @@ wait_for 180 "unsigned app rejected" "st['updated']['status'] == 'OutOfDate' and
 wait_for 10 "signed app still running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v2')"
 
 log "registry down during an update"
-docker stop fc-registry >/dev/null
+docker stop fc-registry-tls >/dev/null
 apply_fleet 35 "v1.$TAG"
 wait_for 120 "download failure reported" "st['updated']['status'] == 'OutOfDate' and 'registry' in st['updated'].get('info', '')"
-docker start fc-registry >/dev/null
+docker start fc-registry-tls >/dev/null
 wait_for 180 "update done once the registry is back" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v1') and st['updated']['status'] == 'UpToDate'"
 
 log "app removal"
@@ -347,6 +363,33 @@ if [[ "$DEVICE_KIND" == zephyr ]]; then
 else
   grep -q '"threshold_c": 30' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "config lost across re-enrollment"
   echo "ok: config kept"
+fi
+
+log "decommission"
+# Started, then Completed, then the device wipes its key and certificate and
+# restarts. It does not enroll again: that takes erasing its storage.
+flightctl decommission "device/$DEVICE" >/dev/null
+wait_for 120 "device Decommissioned" "st.get('lifecycle', {}).get('status') == 'Decommissioned'"
+if [[ "$DEVICE_KIND" != zephyr ]]; then
+  for i in $(seq 1 30); do
+    kill -0 "$AGENT_PID" 2>/dev/null || break
+    (( i == 30 )) && fail "the device did not restart after decommissioning"
+    sleep 2
+  done
+  run_device   # the host agent exits to restart; the Zephyr build reboots
+fi
+for i in $(seq 1 60); do
+  grep -q "decommissioned (Unenroll): not enrolling" "$WORK/agent.log" && break
+  (( i == 60 )) && fail "the device did not come back decommissioned"
+  sleep 2
+done
+starts_before=$(starts)
+sleep 15
+(( $(starts) == starts_before )) || fail "the decommissioned device started enrolling again"
+echo "ok: decommissioned, and not enrolling again"
+if [[ "$DEVICE_KIND" != zephyr ]]; then
+  [[ ! -f "$WORK/data/mgmt.crt" && ! -f "$WORK/data/device.key" ]] || fail "key or certificate left behind"
+  echo "ok: key and certificate wiped"
 fi
 
 log "PASS"

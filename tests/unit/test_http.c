@@ -132,6 +132,42 @@ static void body_until_close_without_length(void)
     fc_http_free(&r);
 }
 
+static void a_challenge_is_kept(void)
+{
+    fc_http_response_t r;
+    int keep;
+    CHECK_INT(READ("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n"
+                   "Www-Authenticate:  Bearer realm=\"https://r/token\",service=\"r\"\r\n\r\n", &r, &keep), 0);
+    CHECK_INT(r.status, 401);
+    CHECK_STR(r.www_authenticate, "Bearer realm=\"https://r/token\",service=\"r\"");
+    fc_http_free(&r);
+    CHECK(r.www_authenticate == NULL);
+    CHECK_INT(READ("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", &r, &keep), 0);
+    CHECK(r.www_authenticate == NULL);
+    fc_http_free(&r);
+}
+
+/* What goes out: the Authorization header, but never in the clear. */
+static void credentials_are_not_sent_over_plain_http(void)
+{
+    FILE *f = tmpfile();
+    conn_t c;
+    memset(&c, 0, sizeof(c));
+    c.plain = 1;
+    c.net.fd = fileno(f);
+    fc_http_target_t t = {.host = "reg", .port = 5001, .plain = 1, .authorization = "Basic dTpw"};
+    CHECK_INT(send_request(&c, &t, "GET", "/v2/", NULL, NULL, 0, 0), -1);
+    char buf[1024] = "";
+    fflush(f);
+    lseek(fileno(f), 0, SEEK_SET);
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    buf[n] = '\0';
+    CHECK(strstr(buf, "dTpw") == NULL);
+    t.authorization = NULL;
+    CHECK_INT(send_request(&c, &t, "GET", "/v2/", NULL, NULL, 0, 0), 0);
+    fclose(f);
+}
+
 static void truncated_and_malformed_responses_fail(void)
 {
     fc_http_response_t r;
@@ -164,6 +200,8 @@ int main(void)
     RUN(no_content_has_no_body);
     RUN(body_until_close_without_length);
     RUN(truncated_and_malformed_responses_fail);
+    RUN(a_challenge_is_kept);
+    RUN(credentials_are_not_sent_over_plain_http);
     RUN(cert_id_tells_certificates_apart);
     return TEST_RESULT();
 }

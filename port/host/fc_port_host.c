@@ -133,18 +133,30 @@ void fc_port_custom_info(void *obj)
 
 void fc_port_metrics(void *obj) {}
 
-int fc_port_write_file(const char *path, const void *data, size_t len)
+/* The absolute path flattened into a single file name under files/. */
+static void file_key(const char *path, char key[300])
 {
-    /* Flatten the absolute path into a single file name under files/. */
     char name[256];
     size_t j = 0;
     for (const char *c = path; *c && j < sizeof(name) - 1; c++) {
         name[j++] = (*c == '/') ? '_' : *c;
     }
     name[j] = '\0';
+    snprintf(key, 300, "files/%s", name);
+}
+
+int fc_port_write_file(const char *path, const void *data, size_t len)
+{
     char key[300];
-    snprintf(key, sizeof(key), "files/%s", name);
+    file_key(path, key);
     return fc_port_kv_set(key, data, len);
+}
+
+int fc_port_read_file(const char *path, char **out, size_t *len)
+{
+    char key[300];
+    file_key(path, key);
+    return fc_port_kv_get(key, out, len);
 }
 
 /* OTA on the host: the image lands in <data_dir>/ota-next.bin and "reboot"

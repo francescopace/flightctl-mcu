@@ -4,7 +4,8 @@
     tools/fw-push.py [--variant NAME] [--delta-from TAG ...] <registry>/flightctl-mcu/fw:v2 [esp32s3 esp32c3 ...]
     tools/fw-push.py ... <registry>/flightctl-mcu/fw:v2 rpi_pico_w=port/zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin
 
-Layout (OCI 1.1, plain HTTP registry, stdlib only):
+Layout (OCI 1.1; the registry reached as tools/registry/registry_client.py says;
+stdlib only):
   index (tag)      artifactType application/vnd.flightctl-mcu.firmware.v1
     manifest       platform {os: esp-idf, architecture: <chip>}
       layer        application/vnd.espressif.app-image  (build-<chip>/flightctl_mcu_fw.bin)
@@ -37,6 +38,9 @@ import sys
 import tempfile
 import urllib.request
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "registry"))
+import registry_client  # noqa: E402
+
 ARTIFACT_TYPE = "application/vnd.flightctl-mcu.firmware.v1"
 LAYER_TYPE = "application/vnd.espressif.app-image"
 ZEPHYR_LAYER_TYPE = "application/vnd.zephyr.mcuboot-image"
@@ -57,9 +61,7 @@ def sha(data):
 
 
 def request(method, url, data=None, headers=None):
-    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
-    with urllib.request.urlopen(req) as r:
-        return r.status, r.headers, r.read()
+    return registry_client.request(method, url, data, headers)
 
 
 def push_blob(base, repo, data):
@@ -150,7 +152,7 @@ def main():
     ref = args[0]
     host, rest = ref.split("/", 1)
     repo, tag = rest.rsplit(":", 1)
-    base = f"http://{host}"
+    base = registry_client.base_url(host)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     fw_dir = f"{root}/port/espidf"
     chips = args[1:] or sorted(

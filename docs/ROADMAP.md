@@ -28,12 +28,10 @@ What Flight Control offers and the agent does not answer yet:
 
 - [ ] The remote terminal: `flightctl console device/<name>` and the Terminal tab of the UI. Flight Control puts the session in the rendered spec (`consoles`), and the agent is to open a gRPC stream for it on the endpoint it already uses. That takes an HTTP/2 and gRPC client in the core, which speaks HTTP/1.1 only; a closed set of commands in place of a shell, which a microcontroller does not have (status, heap, apps, log, reboot); and a third TLS connection for as long as the session lasts, which the boards shortest of RAM may not have room for.
 - [ ] The device's log from the UI. Flight Control has no API for logs: the Log tab runs `journalctl` through the terminal's channel. So it comes after the terminal: a log kept in RAM (today it goes to the serial port only), shown by a command, and then an answer to the commands the UI sends, which holds only as long as the UI sends those.
-- [ ] Decommission: the action of the same name in the UI, or `flightctl decommission`. The server puts `decommissioning` in the spec (target `Unenroll`), and the Linux agent reports the `DeviceDecommissioning` condition as started, wipes its key and certificate, and reports it completed. This agent ignores the field, so the device never completes it. On a microcontroller: erase the device key and the management certificate from flash, report the condition, and stop talking to the service (no new enrollment by itself, which would bring the device back under a new name).
 - [ ] Real CPU and storage figures for the alerts. Flight Control raises alerts from what the status reports (resources, apps, disconnection), and Alertmanager is installed with it. The agent reports memory from the heap, but CPU and disk are always `Healthy`. CPU: the idle task's share of time; disk: the storage partition and the space for apps.
 
 Towards a deployment:
 
-- [ ] A registry with TLS and authentication. Today it is plain HTTP: signatures protect the images from tampering, not from being read.
 - [ ] Fleets kept in Git: Import Fleet in the UI, a `ResourceSync` on the server's side. Today `tools/fleet/apply.sh` applies them and fills in `${REGISTRY}`, which a fleet in Git would have to spell out.
 - [ ] Apps from the software catalog (Flight Control 1.4, `v1alpha1`): versions, channels and upgrade paths in the UI, with the registry's address written once. The server resolves the reference to an image before the agent sees it, so the agent needs nothing; tried on the Pico W ([RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals), limitation 11). The firmware waits for upstream item 9.
 - [ ] Known vulnerabilities in the firmware, in the UI's security overview. Flight Control asks Trustify (or Quay with Clair) about the OS image digest each device reports, which these devices already report. It takes an SBOM per release (ESP-IDF or Zephyr, mbedTLS, WAMR, detools, the agent), uploaded to Trustify. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
@@ -68,6 +66,8 @@ Each milestone has a tag; what was measured and what went wrong is in [RESULTS.m
 - A status with nothing new is the same as the last one: Flight Control 1.4 logs an event at every change in the status (item 8 below), and that was one per device at every status. The counters in `customInfo` (heap, traffic, uptime, RSSI, temperature) are read at the start, five minutes later and then once an hour, and the time of the `Updating` condition changes only with it ([RESULTS.md](RESULTS.md#flight-control-140)).
 - How the last firmware came is in `status.os.lastDelta`, the field Flight Control 1.4 has for it, no longer in `customInfo`.
 - The way back from a firmware that does not work, on the ESP32-S3 with both ports ([RESULTS.md](RESULTS.md#the-way-back-on-the-esp32-s3-both-ports)).
+- Decommission, from the UI or `flightctl decommission`: the device reports the `DeviceDecommissioning` condition Started, then Completed, wipes its key and management certificate, and does not enroll again until its storage is erased ([QUICKSTART.md](QUICKSTART.md#7-take-it-out)).
+- A registry with TLS and a password: the device takes the registry's CA and an `auth.json` from its fleet, as config files in the paths containers use on Linux, and sends the credentials only over TLS, as Basic or for a Bearer token ([REGISTRY.md](REGISTRY.md)). The local registry has a second door with both, which the end-to-end test pulls from.
 
 ## Upstream track (Flight Control)
 
@@ -82,6 +82,7 @@ Raised as proposals, in parallel with the milestones. Details in [RESULTS.md](RE
 7. Devices with RSA keys cannot enroll: the internal CA copies the request's signature algorithm, which fails with its ECDSA key.
 8. Since 1.4, `customInfo` is copied into the device's labels by default, and any change in the status logs an event: a device that reports counters writes one at every status. These devices now change them once an hour.
 9. A fleet's `spec.os.catalogItemRef` (software catalog, 1.4) does not reach the device: it gets `os: {}` and stays on its firmware, reported up to date. Apps from the catalog work.
+10. An inline config file given in base64 reaches the device percent-encoded (`%3D` for the padding), which the Linux agent's decoder refuses.
 
 Items 1, 3, 6 and 7 are as they were in the source of 1.4.0.
 

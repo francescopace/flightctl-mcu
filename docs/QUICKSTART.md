@@ -10,7 +10,7 @@ The walk below is for an Espressif board with the ESP-IDF firmware, the most com
 
 ## 1. Control plane
 
-Flight Control on kind, reachable from your LAN at `<your-ip>.nip.io`, and a plain-HTTP OCI registry on port 5001. If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and set its agent endpoint in `port/espidf/sdkconfig.local` (step 2).
+Flight Control on kind, reachable from your LAN at `<your-ip>.nip.io`, and an OCI registry with two doors to the same images: plain HTTP on port 5001, and TLS with a password at `registry.<your-ip>.nip.io:5443` ([REGISTRY.md](REGISTRY.md)). If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and set its agent endpoint in `port/espidf/sdkconfig.local` (step 2).
 
 ```bash
 tools/kind/up.sh
@@ -117,6 +117,26 @@ tools/fleet/apply.sh
 ```
 
 The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest.
+
+This is the plain door. For the one with TLS and a password, push to `$(cat .secrets/registry/host)` and apply with `REGISTRY=$(cat .secrets/registry/host)`. `apply.sh` then adds the registry's CA and the password to the fleet as config files. The devices must already run firmware that knows TLS, which this one does; see [REGISTRY.md](REGISTRY.md#moving-a-fleet-from-plain-http-to-tls).
+
+## 7. Take it out
+
+```bash
+flightctl decommission device/<name>
+```
+
+The device reports that it started, then that it completed. It then wipes its key and management certificate and restarts. Flight Control shows it as `Decommissioned`, and it can be deleted:
+
+```bash
+flightctl delete device/<name>
+```
+
+The device keeps running its apps and config, but it no longer talks to Flight Control. It also does not enroll again by itself, even after a restart. To bring it back as a new device, erase its storage and flash it again:
+
+- ESP-IDF: `esptool -p <port> erase-flash`, then steps 3 and 4 again.
+- Zephyr on an ESP32: `ERASE=1 port/zephyr/flash-esp32.sh`.
+- Pico W: `ERASE=1 port/zephyr/flash-pico.sh`.
 
 ## Without a board
 
