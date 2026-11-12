@@ -1,5 +1,7 @@
 # Apply with deploy/fleet/apply.sh, which fills in ${REGISTRY}.
-# Example fleet: every MCU with the "line temperature alarm" app.
+# Example fleet: the boards with the ESP-IDF firmware, running the "line
+# temperature alarm" app. (The ones with the Zephyr build are in
+# zephyr-lab.yaml: the two are released apart for now.)
 # Change threshold_c and re-apply: devices pick it up on the next long-poll,
 # without reboot. Fields: threshold_c, hysteresis_c, sample_ms, led_gpio, led_ws2812.
 # Per-device LED: label the device led-gpio=<n> (default -1 = board default)
@@ -8,7 +10,7 @@
 apiVersion: flightctl.io/v1beta1
 kind: Fleet
 metadata:
-  name: alarm-lab
+  name: idf-lab
 spec:
   selector:
     # Flight Control 1.3 fleets select on matchLabels only (matchExpressions
@@ -29,7 +31,7 @@ spec:
   template:
     metadata:
       labels:
-        fleet: alarm-lab
+        fleet: idf-lab
     spec:
       # Multi-chip OCI index (firmware/fw-push.py): each device picks its chip.
       os:

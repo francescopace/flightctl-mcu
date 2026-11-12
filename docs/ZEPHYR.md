@@ -279,6 +279,18 @@ What it took, beyond the board's two files in `zephyr/boards/`:
   a reset: the port took it for an error and warned at every request, before
   the core opened another connection as it should.
 
+The two boards are in one fleet (`deploy/fleet/zephyr-lab.yaml`), served by
+one release with an image for each:
+
+```bash
+firmware/fw-push.py --delta-from z2 <registry>/flightctl-mcu/fw:z3 rpi_pico_w=zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin esp32s3_devkitc=zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
+```
+
+Each took its own image from it, as a delta: 20 KB on the Pico W (2.9%), 9 KB
+on the ESP32-S3 (1.0%). Both must hold the public half of the key the
+release is signed with: the Pico W had been provisioned with another, and
+refused the fleet's app until its credentials were written again.
+
 Not tried: the way back from a firmware that does not reach Flight Control
 (as on the Pico), and Secure Boot or flash encryption under Zephyr. Not in
 CI: the build needs the Xtensa toolchain.

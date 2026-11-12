@@ -117,7 +117,7 @@ Certificate renewal was not run on the board, whose certificate is valid for a y
 
 ### Firmware v3.0 on all six boards
 
-Flashed over USB once (the partition table gained `fc_creds`), provisioned with `deploy/provision.py`, then updated over the air to the signed v3.0 index by the `alarm-lab` fleet:
+Flashed over USB once (the partition table gained `fc_creds`), provisioned with `deploy/provision.py`, then updated over the air to the signed v3.0 index by the `alarm-lab` fleet (`idf-lab` since 12 November 2026):
 
 | Chip | Free heap | Minimum | Largest internal block | TLS handshakes |
 |---|---|---|---|---|
@@ -229,6 +229,8 @@ Not run on the board: the way back from a broken image, the secure variant (it b
 What changed for a deployment is the **label sync**. 1.4 installs `LabelSyncMapping` resources, and one of them copies every entry of `customInfo` into the device's labels (`custominfo.flightctl.io/<key>`). These devices report counters there: free heap, traffic, uptime. With the default, each status update rewrote the device's labels and logged two events ("label reconciliation was requested", "updated successfully (labels)"): 227 of 400 events on the test cluster, while the tests ran.
 
 `deploy/fleet/labelsync-custom-info.yaml` replaces that mapping with one that copies only what stays the same between firmware updates (device class, board, firmware and OS version, security state). The labels then stop changing, and so does the second event. The first is still logged whenever `customInfo` changes, which for these devices is at every status: the service asks for a reconciliation before it knows nothing will come of it. Stopping that needs the counters out of `customInfo`, or a quieter service (limitation 10 below).
+
+The labels a mapping makes are its own: editing a device without them, to change another label, is refused (409, "cannot edit a managed label owned by a mapping"). An edit must carry them as they are.
 
 One thing the new labels give: a fleet can select on what a device says it is, `custominfo.flightctl.io/deviceClass=zephyr` for instance, which is part of what limitation 4 asks for.
 

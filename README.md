@@ -6,7 +6,7 @@
 
 # flightctl-mcu
 
-A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers. ESP32 boards enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. The devices don't run Linux, and Flight Control runs unmodified.
+A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers. Boards running ESP-IDF or Zephyr (the ESP32 family, the Raspberry Pi Pico W) enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. The devices don't run Linux, and Flight Control runs unmodified.
 
 It works end to end on real hardware, with signed images and certificate renewal. It is not production ready yet: see [Limitations](#limitations) and the [roadmap](docs/ROADMAP.md).
 
@@ -46,7 +46,7 @@ flowchart LR
     FC["Flight Control<br/>fleets, rollouts, UI"]
     REG["OCI registry<br/>firmware index, .wasm apps"]
   end
-  subgraph dev["ESP32 (ESP-IDF, no Linux)"]
+  subgraph dev["Microcontroller (ESP-IDF or Zephyr, no Linux)"]
     AG["agent<br/>enroll / spec / status"]
     OTA["OTA slots A/B<br/>bootloader rollback"]
     WAMR["WAMR<br/>WASM apps"]
@@ -122,6 +122,13 @@ The S2 Mini and the C6 DevKitC flash only over their native USB port, started in
 
 Firmware images are 1.06–1.25 MB, leaving 25–36% of a 1.6 MB OTA slot free. Most of that size is the WiFi stack and mbedTLS. The agent itself is about 21 KB and WAMR about 71 KB.
 
+The Zephyr port ([docs/ZEPHYR.md](docs/ZEPHYR.md)) was tried on two real boards, with Zephyr 4.5 and firmware updates through MCUboot:
+
+| Board | Core | Status | Free heap with an app running |
+|---|---|---|---|
+| Raspberry Pi Pico W (RP2040) | Arm Cortex-M0+ | everything works | ~31 KB |
+| ESP32-S3 | Xtensa LX7 | everything except rollback, which was not exercised | ~49 KB |
+
 ## Adding another microcontroller
 
 ### Another ESP32 chip
@@ -157,7 +164,7 @@ Then implement `core/include/fc_port.h` for your platform:
 | `fc_port_ota_pending_verify/confirm/rollback`, `fc_port_reboot` | Confirm a new image or go back. On Zephyr this is MCUboot's test and confirm. |
 | `fc_port_log` | Logging |
 
-`port/espidf/fc_port_espidf.c` (about 300 lines) and `port/host/fc_port_host.c` are the two references. The firmware wiring in `firmware/main/` covers WiFi, time sync, the demo app and its host functions; it is ESP-IDF specific and would be rewritten for another platform.
+`port/espidf/fc_port_espidf.c` (about 300 lines), `port/zephyr/fc_port_zephyr.c` and `port/host/fc_port_host.c` are the three references. The firmware wiring in `firmware/main/` covers WiFi, time sync, the demo app and its host functions; it is ESP-IDF specific and would be rewritten for another platform.
 
 ## Repository layout
 
@@ -273,7 +280,7 @@ For more than a few boards, list them in `deploy/auto-approve/allowlist.yaml` (s
 deploy/auto-approve/auto-approve.py deploy/auto-approve/allowlist.yaml --watch 10
 ```
 
-**6. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/alarm-lab.yaml`, or edit them there.
+**6. Give it firmware, config and an app.** Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `deploy/fleet/idf-lab.yaml`, or edit them there. (The fleet of the boards with the Zephyr build is `deploy/fleet/zephyr-lab.yaml`: the two ports are released apart for now.)
 
 ```bash
 firmware/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v3.0
