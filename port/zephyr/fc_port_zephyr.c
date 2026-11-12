@@ -130,6 +130,10 @@ int fc_port_kv_del(const char *key)
     if (file_path(KV_DIR, key, p, sizeof(p)) != 0) {
         return -1;
     }
+    struct fs_dirent st;
+    if (fs_stat(p, &st) != 0) {
+        return 0; /* not there: LittleFS would log an error for the unlink */
+    }
     int rc = fs_unlink(p);
     return rc == 0 || rc == -ENOENT ? 0 : -1;
 }

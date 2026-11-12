@@ -176,6 +176,27 @@ Not run on the board: the secure variant (it burns eFuses), the other five chips
 
 Neither tried the image again. To have the board back as it was, the Zephyr build's storage (its key and credentials, at 0x7b0000, where the ESP-IDF layout does not reach) was saved before the ESP-IDF build was flashed and written back after; the board came back as the same device.
 
+### The registry with TLS, and decommissioning, on boards
+
+12 and 13 November 2026, against Flight Control 1.4.0. The boards were the `zephyr-lab` fleet: the Pico W and the ESP32-S3, both with the Zephyr build. They first took the new firmware (z7) through the registry's plain door, as a delta of 35 KB (Pico) and 47 KB (S3) from z6. The fleet then moved to the door with TLS and a password ([REGISTRY.md](REGISTRY.md)), in two steps:
+
+| | Pico W (RP2040, 264 KB of RAM) | ESP32-S3 |
+|---|---|---|
+| App over TLS: the CA and `auth.json` from the fleet, then the `alarm` app | running about 6 s after the config was written, no restart | the same |
+| Firmware over TLS, whole (its reference had changed) | 729 KB in 24 s, restarted, confirmed (`lastDelta: NotUsed`) | 886 KB, the same |
+| Firmware over TLS, as a delta (z8 from z7) | (offline, see below) | 17 KB (`Applied`) |
+
+The RAM used during a download over TLS was not measured. The counters in `customInfo` are read once an hour, and the reboot that follows a firmware download clears the low-water mark. The Pico, the board shortest of RAM, completed both downloads.
+
+Decommissioning, with `flightctl decommission`:
+
+- **Pico.** It reported Started and, 2.5 s later, Completed. It then wiped its key and certificate and restarted, and Flight Control showed it `Decommissioned`. After the restart it logged that it was decommissioned and not enrolling, and kept running its app. No enrollment request came from it.
+- **S3.** The same, in 2.4 s. It was then erased and flashed again (`ERASE=1 port/zephyr/flash-esp32.sh`) and enrolled as a new device. It was approved into `zephyr-lab` and took z7, then z8, from the TLS door. The old record was deleted.
+
+The Pico's way back stopped short. `ERASE=1 port/zephyr/flash-pico.sh` put the board in its bootloader, but macOS did not mount the bootloader's drive, so the image was not written. The board stays in its bootloader until it is plugged in again.
+
+Also found: Flight Control serves inline content given in base64 percent-encoded (limitation 12 below).
+
 ## Problems found and fixed
 
 1. **The rollout moved on while the canary was rebooting.**
