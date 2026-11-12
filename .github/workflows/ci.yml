@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  MBEDTLS_VERSION: v3.6.7
+  MBEDTLS_VERSION: v4.1.1
   FLIGHTCTL_VERSION: v1.3.1
   ESP_EMU_VERSION: 0.51.0
 
@@ -78,7 +78,7 @@ jobs:
   firmware:
     name: firmware (${{ matrix.target }}${{ matrix.profile == 'secure' && ', secure' || '' }})
     runs-on: ubuntu-latest
-    container: espressif/idf:v5.5.6
+    container: espressif/idf:v6.0.3
     env:
       # Build variants and directories of the profile: secure, secure-release, build-<chip>-secure
       V: ${{ matrix.profile == 'secure' && 'secure' || '' }}

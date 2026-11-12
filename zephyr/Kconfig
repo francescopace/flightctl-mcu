@@ -20,14 +20,17 @@ config FC_AGENT_STACK_SIZE
 	  and, on the Pico, the console's stack report).
 
 config FC_ENTROPY_RP2_ROSC
-	bool "Entropy for TLS from the RP2040's ring oscillator"
+	bool "Entropy from the RP2040's ring oscillator"
 	depends on SOC_SERIES_RP2040
+	depends on DT_HAS_FLIGHTCTL_RP2040_ROSC_RNG_ENABLED
 	default y
+	select ENTROPY_HAS_DRIVER
+	select ENTROPY_NEEDS_PRNG
 	help
-	  The RP2040 has no random generator and Zephyr 4.3 no entropy driver
-	  for it. With this, mbedTLS takes its entropy from the chip's ring
-	  oscillator (port/zephyr/fc_entropy_rp2.c); set
-	  CONFIG_MBEDTLS_ENTROPY_POLL_ZEPHYR=n with it.
+	  The RP2040 has no random generator and Zephyr no entropy driver for
+	  it. This is one (port/zephyr/fc_entropy_rp2.c), for the node the
+	  board overlay adds and chooses as zephyr,entropy: the chip's ring
+	  oscillator, from which Zephyr and PSA seed their generators.
 
 config FC_FW_VERSION
 	string "Firmware version, logged at boot"

@@ -7,8 +7,6 @@
 
 #include <stdlib.h>
 
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/entropy.h"
 #include "delta_vectors.h"
 #include "port_stub.h"
 #include "test.h"
@@ -116,14 +114,6 @@ static void push_image(const char *repo, const char *tag, const char *layer, con
 
 static mbedtls_pk_context s_key, s_other;
 static char s_pub[512];
-static mbedtls_ctr_drbg_context s_drbg;
-
-static void gen_key(mbedtls_pk_context *pk)
-{
-    mbedtls_pk_init(pk);
-    mbedtls_pk_setup(pk, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
-    mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(*pk), mbedtls_ctr_drbg_random, &s_drbg);
-}
 
 /* Stores a cosign signature (tag sha256-<hex>.sig) for `digest`, signed with
  * `pk`, whose payload names `named` (normally the same digest). */
@@ -138,8 +128,8 @@ static void sign(const char *repo, const char *digest, const char *named, mbedtl
     push_blob(repo, payload, strlen(payload), pdigest);
     unsigned char hash[32], sig[MBEDTLS_PK_SIGNATURE_MAX_SIZE];
     size_t sig_len = 0, b64_len = 0;
-    mbedtls_sha256((const unsigned char *)payload, strlen(payload), hash, 0);
-    mbedtls_pk_sign(pk, MBEDTLS_MD_SHA256, hash, 32, sig, sizeof(sig), &sig_len, mbedtls_ctr_drbg_random, &s_drbg);
+    fc_sha256(payload, strlen(payload), hash);
+    mbedtls_pk_sign(pk, MBEDTLS_MD_SHA256, hash, 32, sig, sizeof(sig), &sig_len);
     unsigned char b64[256];
     mbedtls_base64_encode(b64, sizeof(b64), &b64_len, sig, sig_len);
     char json[1024], tag[96], mdigest[72];
@@ -471,13 +461,8 @@ static void an_image_the_device_refuses_is_not_downloaded_again(void)
 
 int main(void)
 {
-    mbedtls_entropy_context entropy;
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&s_drbg);
-    mbedtls_ctr_drbg_seed(&s_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
-    psa_crypto_init();
-    gen_key(&s_key);
-    gen_key(&s_other);
+    stub_ec_key(&s_key);
+    stub_ec_key(&s_other);
     mbedtls_pk_write_pubkey_pem(&s_key, (unsigned char *)s_pub, sizeof(s_pub));
 
     RUN(references_are_parsed);
@@ -494,7 +479,5 @@ int main(void)
     reg_reset();
     mbedtls_pk_free(&s_key);
     mbedtls_pk_free(&s_other);
-    mbedtls_ctr_drbg_free(&s_drbg);
-    mbedtls_entropy_free(&entropy);
     return TEST_RESULT();
 }

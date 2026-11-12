@@ -182,12 +182,9 @@ static void a_refused_firmware_is_not_downloaded_again(void)
 static char *issue_cert(const char *subject_key_pem, const char *from, const char *to)
 {
     mbedtls_pk_context ca, subj;
-    mbedtls_pk_init(&ca);
+    stub_ec_key(&ca);
     mbedtls_pk_init(&subj);
-    mbedtls_pk_setup(&ca, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
-    mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(ca), mbedtls_ctr_drbg_random, fc_http_drbg());
-    mbedtls_pk_parse_key(&subj, (const unsigned char *)subject_key_pem, strlen(subject_key_pem) + 1, NULL, 0,
-                         mbedtls_ctr_drbg_random, fc_http_drbg());
+    mbedtls_pk_parse_key(&subj, (const unsigned char *)subject_key_pem, strlen(subject_key_pem) + 1, NULL, 0);
     mbedtls_x509write_cert w;
     mbedtls_x509write_crt_init(&w);
     mbedtls_x509write_crt_set_md_alg(&w, MBEDTLS_MD_SHA256);
@@ -199,7 +196,7 @@ static char *issue_cert(const char *subject_key_pem, const char *from, const cha
     mbedtls_x509write_crt_set_serial_raw(&w, serial, sizeof(serial));
     mbedtls_x509write_crt_set_validity(&w, from, to);
     char *pem = calloc(1, 2048);
-    mbedtls_x509write_crt_pem(&w, (unsigned char *)pem, 2048, mbedtls_ctr_drbg_random, fc_http_drbg());
+    mbedtls_x509write_crt_pem(&w, (unsigned char *)pem, 2048);
     mbedtls_x509write_crt_free(&w);
     mbedtls_pk_free(&ca);
     mbedtls_pk_free(&subj);

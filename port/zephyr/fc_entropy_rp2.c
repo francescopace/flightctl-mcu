@@ -1,20 +1,25 @@
 /*
- * Entropy for mbedTLS on the RP2040, which has no random generator and, in
- * Zephyr 4.3, no entropy driver: the chip's ring oscillator. Its frequency
- * wanders with temperature, voltage and noise, and the RANDOMBIT register
- * samples it. One sample is far from one bit of entropy, so each bit handed
- * out is sixteen samples folded together, taken a few microseconds apart;
- * mbedTLS then hashes what it gathers before seeding its generator.
+ * Zephyr's entropy device on the RP2040, which has no random generator and,
+ * in Zephyr, no entropy driver (the one for Raspberry Pi chips is for the
+ * RP2350): the chip's ring oscillator. Its frequency wanders with
+ * temperature, voltage and noise, and the RANDOMBIT register samples it. One
+ * sample is far from one bit of entropy, so each bit handed out is sixteen
+ * samples folded together, taken a few microseconds apart. It is slow (a
+ * byte takes 0.4 ms), and it says so (ENTROPY_NEEDS_PRNG): Zephyr and PSA
+ * seed their generators from it and do not draw from it directly.
  *
  * Not a certified source: much better than the test generator this replaces,
  * whose output can be predicted, and not measured beyond the check below.
  */
+#define DT_DRV_COMPAT flightctl_rp2040_rosc_rng
+
+#include <zephyr/device.h>
+#include <zephyr/drivers/entropy.h>
 #include <zephyr/kernel.h>
 
 #include <hardware/structs/rosc.h>
 
 #include "fc_port.h"
-#include "mbedtls/entropy.h"
 
 #define SAMPLES_PER_BIT 16
 
@@ -45,21 +50,25 @@ static int rosc_alive(void)
     return ones > 128 && ones < 896;
 }
 
-/* mbedTLS's hardware entropy source (MBEDTLS_ENTROPY_HARDWARE_ALT). */
-int mbedtls_hardware_poll(void *data, unsigned char *output, size_t len, size_t *olen)
+static int rosc_get_entropy(const struct device *dev, uint8_t *buf, uint16_t len)
 {
     static int checked;
-    ARG_UNUSED(data);
+    ARG_UNUSED(dev);
     if (!checked) {
         if (!rosc_alive()) {
             fc_port_log(FC_LOG_ERROR, "entropy: the ring oscillator gives no random bits");
-            return MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
+            return -EIO;
         }
         checked = 1;
     }
-    for (size_t i = 0; i < len; i++) {
-        output[i] = rosc_byte();
+    for (uint16_t i = 0; i < len; i++) {
+        buf[i] = rosc_byte();
     }
-    *olen = len;
     return 0;
 }
+
+static DEVICE_API(entropy, rosc_entropy_api) = {
+    .get_entropy = rosc_get_entropy,
+};
+
+DEVICE_DT_INST_DEFINE(0, NULL, NULL, NULL, NULL, PRE_KERNEL_1, CONFIG_ENTROPY_INIT_PRIORITY, &rosc_entropy_api);

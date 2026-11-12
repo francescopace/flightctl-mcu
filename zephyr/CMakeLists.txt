@@ -57,6 +57,13 @@ target_sources(app PRIVATE
 if(CONFIG_FC_ENTROPY_RP2_ROSC)
     target_sources(app PRIVATE ${ROOT}/port/zephyr/fc_entropy_rp2.c)
 endif()
+# Infineon's WiFi driver (the Pico W's) keeps 20 packet buffers. Zephyr 4.5
+# made them 2400 bytes each, 16 KB more than a board with 264 KB of RAM can
+# give: 1600, what they were up to Zephyr 4.3 and what the board ran with, is
+# an Ethernet frame and the chip's header.
+if(CONFIG_WIFI_AIROC)
+    zephyr_compile_definitions(AIROC_WIFI_PACKET_POOL_SIZE=1600)
+endif()
 # Raspberry Pi Pico boards: the USB console's conveniences.
 if(CONFIG_SOC_FAMILY_RPI_PICO)
     target_sources(app PRIVATE src/board_rp2.c)
@@ -68,6 +75,9 @@ endif()
 target_include_directories(app PRIVATE
     ${ROOT}/core/include ${ROOT}/core/src ${ROOT}/core/third_party/cjson ${ROOT}/port/zephyr
     ${DETOOLS} ${DETOOLS}/heatshrink)
+# WAMR 2.4.5's Zephyr port includes <autoconf.h> and <version.h>, which Zephyr
+# generates under zephyr/ and no longer puts on the include path as they are.
+target_include_directories(app PRIVATE ${ZEPHYR_BINARY_DIR}/include/generated/zephyr)
 target_compile_definitions(app PRIVATE
     CJSON_NESTING_LIMIT=32
     DETOOLS_CONFIG_FILE_IO=0 DETOOLS_CONFIG_COMPRESSION_NONE=0 DETOOLS_CONFIG_COMPRESSION_LZMA=0

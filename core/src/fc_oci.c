@@ -27,12 +27,12 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "fc_crypto.h"
 #include "fc_delta.h"
 #include "fc_http.h"
 #include "fc_port.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/pk.h"
-#include "mbedtls/sha256.h"
 
 #define ACCEPT_MANIFESTS "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json"
 #define INDEX_TYPE       "application/vnd.oci.image.index.v1+json"
@@ -96,11 +96,25 @@ static void sha256_hex(const unsigned char h[32], char out[72])
     }
 }
 
-static void digest_of(const void *data, size_t len, char out[72])
+/* The digest of what was hashed, or "" if it could not be computed: no
+ * digest is equal to that. */
+static int finish_hex(fc_sha256_t *s, char out[72])
 {
     unsigned char h[32];
-    mbedtls_sha256(data, len, h, 0);
+    if (fc_sha256_finish(s, h) != 0) {
+        out[0] = '\0';
+        return -1;
+    }
     sha256_hex(h, out);
+    return 0;
+}
+
+static int digest_of(const void *data, size_t len, char out[72])
+{
+    fc_sha256_t s;
+    fc_sha256_start(&s);
+    fc_sha256_update(&s, data, len);
+    return finish_hex(&s, out);
 }
 
 static fc_http_target_t target(const oci_ref_t *r, const char *accept)
@@ -121,8 +135,8 @@ static cJSON *get_manifest(const oci_ref_t *r, const char *ref, char digest[72],
         fc_http_free(&resp);
         return NULL;
     }
-    digest_of(resp.body, resp.body_len, digest);
-    if (strncmp(ref, "sha256:", 7) == 0 && strcmp(ref, digest) != 0) {
+    if (digest_of(resp.body, resp.body_len, digest) != 0 ||
+        (strncmp(ref, "sha256:", 7) == 0 && strcmp(ref, digest) != 0)) {
         snprintf(err, err_len, "manifest %s: digest mismatch", ref);
         fc_http_free(&resp);
         return NULL;
@@ -148,8 +162,7 @@ static char *get_small_blob(const oci_ref_t *r, const char *digest, size_t *len)
         fc_http_free(&resp);
         return NULL;
     }
-    digest_of(resp.body, resp.body_len, got);
-    if (strcmp(got, digest) != 0) {
+    if (digest_of(resp.body, resp.body_len, got) != 0 || strcmp(got, digest) != 0) {
         fc_http_free(&resp);
         return NULL;
     }
@@ -178,8 +191,10 @@ static int check_signature_layer(const oci_ref_t *r, mbedtls_pk_context *pk, con
         return -1;
     }
     unsigned char hash[32];
-    mbedtls_sha256((const unsigned char *)payload, len, hash, 0);
-    int rc = mbedtls_pk_verify(pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sig_len);
+    int rc = fc_sha256(payload, len, hash);
+    if (rc == 0) {
+        rc = mbedtls_pk_verify(pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sig_len);
+    }
     cJSON *p = rc == 0 ? cJSON_Parse(payload) : NULL;
     const char *named = cJSON_GetStringValue(cJSON_GetObjectItem(
         cJSON_GetObjectItem(cJSON_GetObjectItem(p, "critical"), "image"), "docker-manifest-digest"));
@@ -312,7 +327,7 @@ static int resolve_layer(const char *image, const char *arch, const char *layer_
 
 /* Streams a blob to `on_data`, checking its sha256. */
 typedef struct {
-    mbedtls_sha256_context sha;
+    fc_sha256_t sha;
     fc_http_data_cb next;
     void *next_ctx;
     long done, total;
@@ -323,7 +338,7 @@ typedef struct {
 static int sink(const void *data, size_t len, void *ctx)
 {
     sink_t *s = ctx;
-    mbedtls_sha256_update(&s->sha, data, len);
+    fc_sha256_update(&s->sha, data, len);
     if (s->next(data, len, s->next_ctx) != 0) {
         return -1;
     }
@@ -340,24 +355,20 @@ static int fetch_blob(const oci_ref_t *r, const char *blob_digest, long blob_siz
                       void *ctx, int progress, char *err, size_t err_len)
 {
     sink_t s = {.next = on_data, .next_ctx = ctx, .total = blob_size, .last_pct = -10, .progress = progress};
-    mbedtls_sha256_init(&s.sha);
-    mbedtls_sha256_starts(&s.sha, 0);
+    fc_sha256_start(&s.sha);
     char path[320];
     snprintf(path, sizeof(path), "/v2/%s/blobs/%s", r->repo, blob_digest);
     fc_http_target_t t = target(r, "application/octet-stream");
     int status;
     long total;
     int rc = fc_http_get_stream(&t, path, sink, &s, &status, &total);
-    unsigned char h[32];
-    mbedtls_sha256_finish(&s.sha, h);
-    mbedtls_sha256_free(&s.sha);
     char got[72];
-    sha256_hex(h, got);
+    int hashed = finish_hex(&s.sha, got) == 0;
     if (rc != 0 || s.done != blob_size) {
         snprintf(err, err_len, "download failed (HTTP %d, %ld/%ld bytes)", status, s.done, blob_size);
         return -1;
     }
-    if (strcmp(got, blob_digest) != 0) {
+    if (!hashed || strcmp(got, blob_digest) != 0) {
         snprintf(err, err_len, "digest mismatch: got %.19s...", got);
         return -1;
     }
@@ -434,24 +445,24 @@ static int running_image_digest(size_t size, char out[72])
     if (buf == NULL) {
         return -1;
     }
-    mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
-    mbedtls_sha256_starts(&sha, 0);
+    fc_sha256_t sha;
+    fc_sha256_start(&sha);
     int rc = 0;
     for (size_t off = 0; off < size && rc == 0;) {
         size_t n = size - off < 1024 ? size - off : 1024;
         rc = fc_port_fw_read(off, buf, n);
-        mbedtls_sha256_update(&sha, buf, rc == 0 ? n : 0);
+        fc_sha256_update(&sha, buf, rc == 0 ? n : 0);
         off += n;
     }
-    unsigned char h[32];
-    mbedtls_sha256_finish(&sha, h);
-    mbedtls_sha256_free(&sha);
+    char digest[72];
+    if (finish_hex(&sha, digest) != 0) {
+        rc = -1;
+    }
     free(buf);
     if (rc != 0) {
         return -1;
     }
-    sha256_hex(h, s_running_digest);
+    memcpy(s_running_digest, digest, 72);
     s_running_size = size;
     memcpy(out, s_running_digest, 72);
     return 0;
@@ -498,7 +509,7 @@ static int find_delta(const cJSON *layers, long full_size, char delta_digest[72]
 
 typedef struct {
     void *ota;
-    mbedtls_sha256_context sha;
+    fc_sha256_t sha;
     fc_delta_t *delta;
 } delta_ctx_t;
 
@@ -510,7 +521,7 @@ static int delta_read(size_t off, void *buf, size_t len, void *ctx)
 static int delta_write(const void *data, size_t len, void *ctx)
 {
     delta_ctx_t *c = ctx;
-    mbedtls_sha256_update(&c->sha, data, len);
+    fc_sha256_update(&c->sha, data, len);
     return fc_port_ota_write(c->ota, data, len);
 }
 
@@ -538,20 +549,16 @@ static int fetch_firmware_delta(const oci_ref_t *r, const char *delta_digest, lo
         snprintf(why, why_len, "out of memory");
         return 1;
     }
-    mbedtls_sha256_init(&c.sha);
-    mbedtls_sha256_starts(&c.sha, 0);
+    fc_sha256_start(&c.sha);
     int ok = fetch_blob(r, delta_digest, delta_size, delta_sink, &c, 1, why, why_len) == 0;
     /* Even after a failed download: it frees the decoder. */
     if (fc_delta_end(c.delta) != 0 && ok) {
         snprintf(why, why_len, "the delta does not apply");
         ok = 0;
     }
-    unsigned char h[32];
     char got[72];
-    mbedtls_sha256_finish(&c.sha, h);
-    mbedtls_sha256_free(&c.sha);
-    sha256_hex(h, got);
-    if (ok && strcmp(got, full_digest) != 0) {
+    int hashed = finish_hex(&c.sha, got) == 0;
+    if (ok && (!hashed || strcmp(got, full_digest) != 0)) {
         snprintf(why, why_len, "the rebuilt image is not %.19s...", full_digest);
         ok = 0;
     }

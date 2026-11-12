@@ -12,6 +12,11 @@ CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
 CONFIG_MBEDTLS_SSL_TLS1_3_KEXM_EPHEMERAL=y
 CONFIG_MBEDTLS_HAVE_TIME_DATE=y
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+# The device writes its certificate request (ESP-IDF 6 leaves X.509 writing
+# out unless asked); it writes no certificates.
+CONFIG_MBEDTLS_X509_CREATE_C=y
+CONFIG_MBEDTLS_X509_CSR_WRITE_C=y
+# CONFIG_MBEDTLS_X509_CRT_WRITE_C is not set
 # The agent trusts only the CA it is provisioned with, never ESP-IDF's
 # bundle of public root CAs (the linker already left it out: no size change).
 # CONFIG_MBEDTLS_CERTIFICATE_BUNDLE is not set
@@ -28,3 +33,7 @@ CONFIG_WAMR_INTERP_FAST=y
 # CONFIG_WAMR_ENABLE_LIBC_WASI is not set
 # CONFIG_WAMR_ENABLE_LIBC_BUILTIN is not set
 # CONFIG_WAMR_ENABLE_LIB_PTHREAD is not set
+
+# Field provisioning (firmware/main/main.c) runs protocomm's security 1:
+# X25519 and the proof of possession. ESP-IDF 6 builds it only on request.
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=y

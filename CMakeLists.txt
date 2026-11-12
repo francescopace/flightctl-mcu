@@ -7,9 +7,10 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 
-# mbedTLS 3.6 matches the version bundled with ESP-IDF 5.5.
-# macOS: brew install mbedtls@3, then -DMbedTLS_DIR=$(brew --prefix mbedtls@3)/lib/cmake/MbedTLS
-find_package(MbedTLS 3.6 REQUIRED)
+# mbedTLS 4.1, the long-term support branch that ESP-IDF 6.0 and Zephyr 4.5
+# have, or later. Its cryptography is PSA only (TF-PSA-Crypto).
+# macOS: brew install mbedtls
+find_package(MbedTLS 4.1 REQUIRED)
 find_package(Threads REQUIRED)
 
 # WAMR (third_party/fetch-wamr.sh): fast interpreter only, no WASI/libc,
@@ -70,7 +71,7 @@ target_include_directories(fc_core PUBLIC core/include core/third_party/cjson PR
 # Same cJSON nesting limit as the firmware (firmware/components/fc_core).
 target_compile_definitions(fc_core PUBLIC CJSON_NESTING_LIMIT=32)
 target_include_directories(fc_core PRIVATE ${WAMR_ROOT_DIR}/core/iwasm/include)
-target_link_libraries(fc_core PUBLIC vmlib MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::mbedcrypto Threads::Threads)
+target_link_libraries(fc_core PUBLIC vmlib MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::tfpsacrypto Threads::Threads)
 
 add_executable(fc-host-agent host/main.c port/host/fc_port_host.c)
 target_link_libraries(fc-host-agent PRIVATE fc_core)
@@ -90,7 +91,7 @@ if(FC_FUZZ)
         target_compile_options(${name} PRIVATE ${FUZZ_FLAGS})
         target_compile_definitions(${name} PRIVATE CJSON_NESTING_LIMIT=32)
         target_link_options(${name} PRIVATE ${FUZZ_FLAGS})
-        target_link_libraries(${name} PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::mbedcrypto Threads::Threads)
+        target_link_libraries(${name} PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::tfpsacrypto Threads::Threads)
     endfunction()
     fc_fuzzer(fuzz_http ${CJSON})
     fc_fuzzer(fuzz_oci port/host/fc_port_host.c ${CJSON} ${DELTA_SRCS})
@@ -116,7 +117,7 @@ if(FC_UNIT)
             target_compile_options(${name} PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=undefined -g)
             target_link_options(${name} PRIVATE -fsanitize=address,undefined)
         endif()
-        target_link_libraries(${name} PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::mbedcrypto Threads::Threads)
+        target_link_libraries(${name} PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::tfpsacrypto Threads::Threads)
         add_test(NAME ${name} COMMAND ${name})
     endfunction()
     fc_unit(test_http core/third_party/cjson/cJSON.c)

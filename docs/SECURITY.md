@@ -65,6 +65,10 @@ the image.
 
 ## Device key in hardware
 
+Either peripheral signs through ESP-IDF's PSA drivers: the key TLS is given
+is a PSA key that only names the eFuse block (ECDSA) or points to the
+encrypted parameters (DS), and holds no key material.
+
 ### ESP32-C5: the ECDSA peripheral
 
 The secure variant sets `CONFIG_FC_DEVICE_KEY_ECDSA`, which takes effect on

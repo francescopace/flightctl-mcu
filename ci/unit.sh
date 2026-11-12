@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Unit tests: the C tests (tests/unit, with AddressSanitizer and UBSan) and the
 # Python tests of the deploy scripts (tests/python). Needs cmake, ninja, a C
-# compiler with sanitizers, mbedTLS 3.6 (MbedTLS_DIR) and python3 with PyYAML.
+# compiler with sanitizers, mbedTLS 4 (MbedTLS_DIR) and python3 with PyYAML.
 # Usage: ci/unit.sh [cmake args...]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

@@ -10,7 +10,7 @@ Start it before the emulator: it listens on port 9544. It scans for a device
 advertising FC-..., connects, and maps the provisioning endpoints from the
 characteristics' user descriptions, as esp_prov does. With --wrong-pop it
 first checks that a session with that proof is refused. Needs bumble,
-protobuf and cryptography, and $IDF_PATH (for tools/esp_prov); ci/ble-prov.sh
+protobuf and cryptography, $ESP_PROV_DIR (esp_prov) and $IDF_PATH (protocomm); ci/ble-prov.sh
 runs it in the espressif/idf image.
 """
 import argparse
@@ -18,7 +18,7 @@ import asyncio
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.environ["IDF_PATH"], "tools", "esp_prov"))
+sys.path.insert(0, os.environ["ESP_PROV_DIR"])
 import esp_prov  # noqa: E402
 import security  # noqa: E402
 

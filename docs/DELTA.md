@@ -126,5 +126,6 @@ MCUboot (`fw-push.py ... PLATFORM=zephyr.signed.bin`).
   build).
 - **Tried on one board**, a Raspberry Pi Pico W with Zephyr and MCUboot
   ([ZEPHYR.md](ZEPHYR.md)): a delta of 8.6 KB rebuilt a 734 KB image from the
-  running one in 10 s, download included. Not on an ESP32 board: emulator
-  only.
+  running one in 10 s, download included; and a delta took the board from
+  its Zephyr 4.3 build to the 4.5 one (232 KB, a third of the image). Not on
+  an ESP32 board: emulator only.

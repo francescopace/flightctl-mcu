@@ -5,16 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "mbedtls/ctr_drbg.h"
 #include "mbedtls/pk.h"
-#include "mbedtls/rsa.h"
 #include "mbedtls/x509_csr.h"
 #include "port_stub.h"
 #include "psa/crypto.h"
 #include "test.h"
 
 int fc_http_global_init(void);
-mbedtls_ctr_drbg_context *fc_http_drbg(void);
 
 /* A test key, not a secret: its private scalar, from which the test builds
  * the PEM the device would store. The name was computed independently
@@ -52,15 +49,17 @@ static int make_vector_key(void)
     unsigned char d[32];
     mbedtls_pk_context pk;
     mbedtls_pk_init(&pk);
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_EXPORT);
+    psa_key_id_t id = PSA_KEY_ID_NULL;
     int rc = unhex(VECTOR_D, d, sizeof(d));
     if (rc == 0) {
-        rc = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
+        rc = (int)psa_import_key(&attr, d, sizeof(d), &id);
     }
     if (rc == 0) {
-        rc = mbedtls_ecp_read_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(pk), d, sizeof(d));
-    }
-    if (rc == 0) {
-        rc = mbedtls_ecp_keypair_calc_public(mbedtls_pk_ec(pk), mbedtls_ctr_drbg_random, fc_http_drbg());
+        rc = mbedtls_pk_copy_from_psa(id, &pk);
+        psa_destroy_key(id);
     }
     if (rc == 0) {
         rc = mbedtls_pk_write_key_pem(&pk, (unsigned char *)s_vector_key, sizeof(s_vector_key));
@@ -126,21 +125,29 @@ static void forgetting_the_key_makes_a_new_device(void)
 
 static void an_rsa_key_gives_the_known_name(void)
 {
-    unsigned char n[256], e[] = {0x01, 0x00, 0x01};
-    CHECK_INT(unhex(RSA_N, n, sizeof(n)), 0);
+    /* RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }:
+     * the modulus has its top bit set, so its INTEGER starts with a zero. */
+    unsigned char der[4 + 4 + 1 + 256 + 5] = {0x30, 0x82, 0x01, 0x0a, 0x02, 0x82, 0x01, 0x01, 0x00};
+    static const unsigned char e[] = {0x02, 0x03, 0x01, 0x00, 0x01};
+    CHECK_INT(unhex(RSA_N, der + 9, 256), 0);
+    memcpy(der + 9 + 256, e, sizeof(e));
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attr, PSA_KEY_TYPE_RSA_PUBLIC_KEY);
+    psa_key_id_t id = PSA_KEY_ID_NULL;
+    CHECK_INT(psa_import_key(&attr, der, sizeof(der), &id), 0);
     mbedtls_pk_context pk;
     mbedtls_pk_init(&pk);
-    CHECK_INT(mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA)), 0);
-    CHECK_INT(mbedtls_rsa_import_raw(mbedtls_pk_rsa(pk), n, sizeof(n), NULL, 0, NULL, 0, NULL, 0, e, sizeof(e)), 0);
+    CHECK_INT(mbedtls_pk_copy_from_psa(id, &pk), 0);
+    psa_destroy_key(id);
     char name[64];
     CHECK_INT(fc_identity_name_of(&pk, name, sizeof(name)), 0);
     CHECK_STR(name, RSA_NAME);
     mbedtls_pk_free(&pk);
 }
 
-/* Name of the key in a CSR, and whether `pk` signs for that key. PKCS#1
- * v1.5: upstream mbedTLS does not sign RSA-PSS through an RSA_ALT context
- * (ESP-IDF's does, which TLS 1.3 needs; the firmware checks it at sealing). */
+/* Name of the key in a CSR, and whether `pk` signs for that key. With an RSA
+ * key, PKCS#1 v1.5: what the stub's key allows (TLS 1.3 needs RSA-PSS, which
+ * the firmware checks at sealing). */
 static int csr_key_signs(const char *csr_pem, mbedtls_pk_context *pk, char *name)
 {
     mbedtls_x509_csr csr;
@@ -152,8 +159,7 @@ static int csr_key_signs(const char *csr_pem, mbedtls_pk_context *pk, char *name
         rc = fc_identity_name_of(&csr.pk, name, 64);
     }
     if (rc == 0) {
-        rc = mbedtls_pk_sign(pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sizeof(sig), &sig_len,
-                             mbedtls_ctr_drbg_random, fc_http_drbg());
+        rc = mbedtls_pk_sign(pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sizeof(sig), &sig_len);
     }
     if (rc == 0) {
         rc = mbedtls_pk_verify(&csr.pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sig_len);
@@ -176,7 +182,7 @@ static void a_new_key_goes_to_the_hardware(int bits)
     /* The CSR is for the sealed key, and names the device. */
     mbedtls_pk_context hw;
     mbedtls_pk_init(&hw);
-    CHECK_INT(fc_port_hwkey_pk(&hw), 0);
+    CHECK_INT(fc_port_hwkey_pk(&hw, NULL), 0);
     char name[64] = "";
     CHECK_INT(csr_key_signs(id.csr_pem, &hw, name), 0);
     CHECK_STR(name, id.name);
@@ -213,7 +219,7 @@ static void a_new_ecdsa_key_goes_to_the_hardware(void)
     mbedtls_x509_csr csr;
     mbedtls_x509_csr_init(&csr);
     CHECK_INT(mbedtls_x509_csr_parse(&csr, (const unsigned char *)id.csr_pem, strlen(id.csr_pem) + 1), 0);
-    CHECK_INT(mbedtls_pk_get_type(&csr.pk), MBEDTLS_PK_ECKEY);
+    CHECK(PSA_KEY_TYPE_IS_ECC(mbedtls_pk_get_key_type(&csr.pk)));
     CHECK_INT((int)mbedtls_pk_get_bitlen(&csr.pk), 256);
     mbedtls_x509_csr_free(&csr);
     fc_identity_free(&id);

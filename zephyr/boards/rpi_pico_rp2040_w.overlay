@@ -8,17 +8,32 @@
 &flash0 {
 	partitions {
 		code_partition: partition@100 {
+			compatible = "zephyr,mapped-partition";
 			label = "code-partition";
 			reg = <0x00000100 0x001aff00>;
 			read-only;
 		};
 		fc_creds_partition: partition@1b0000 {
+			compatible = "zephyr,mapped-partition";
 			label = "fc_creds";
 			reg = <0x001b0000 0x00004000>;
 		};
 		fc_storage_partition: partition@1b4000 {
+			compatible = "zephyr,mapped-partition";
 			label = "fc_storage";
 			reg = <0x001b4000 0x0004c000>;
 		};
+	};
+};
+
+/ {
+	chosen {
+		zephyr,entropy = &fc_rosc_rng;
+	};
+
+	/* The ring oscillator as the entropy device (port/zephyr/fc_entropy_rp2.c). */
+	fc_rosc_rng: fc-rosc-rng {
+		compatible = "flightctl,rp2040-rosc-rng";
+		status = "okay";
 	};
 };

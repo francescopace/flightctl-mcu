@@ -64,7 +64,7 @@ Everything that differs between platforms sits behind a small port layer:
 
 ```mermaid
 flowchart TB
-  core["core/ - C11, pthreads, BSD sockets, mbedTLS 3.6, cJSON, WAMR<br/>agent, http client, OCI client, app manager, identity"]
+  core["core/ - C11, pthreads, BSD sockets, mbedTLS 4, cJSON, WAMR<br/>agent, http client, OCI client, app manager, identity"]
   port["core/include/fc_port.h - about 15 functions<br/>key/value store, system info, OTA, logging"]
   esp["port/espidf<br/>NVS, esp_ota, temperature sensor"]
   host["port/host<br/>files, fake OTA (a simulated device on your laptop)"]
@@ -101,7 +101,7 @@ sequenceDiagram
 
 ## Supported microcontrollers
 
-Tested on real boards with ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open):
+Tested on real boards with ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and not yet on these boards:
 
 | Chip | Core | Status | Free heap with an app running |
 |---|---|---|---|
@@ -138,7 +138,7 @@ The core needs:
 - POSIX threads (mutex, condition variable, threads with a configurable stack);
 - BSD sockets, reachable through `mbedtls_net_*`;
 - `time()` that returns the real time (certificates are validated);
-- mbedTLS 3.6 with TLS 1.3 and PSA crypto;
+- mbedTLS 4.1 or later (TLS 1.3; its cryptography is PSA only);
 - a platform layer for WAMR. WAMR already has one for Zephyr, NuttX, RT-Thread and RIOT, among others.
 
 Then implement `core/include/fc_port.h` for your platform:
@@ -183,7 +183,7 @@ docs/            roadmap, results, device security, provisioning, firmware delta
 
 ## Try it
 
-You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), esptool, oras, Python 3 with PyYAML, and for WASM apps clang plus `wasm-ld` (`brew install lld`). The ESP-IDF toolchain runs in the `espressif/idf:v5.5.6` container, so you don't install it.
+You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), esptool, oras, Python 3 with PyYAML, and for WASM apps clang plus `wasm-ld` (`brew install lld`). The ESP-IDF toolchain runs in the `espressif/idf:v6.0.3` container, so you don't install it.
 
 The scripts were written on macOS (Apple Silicon). CI runs the host agent, the firmware build and the kind setup on Linux too.
 
@@ -282,7 +282,7 @@ The fleet selects devices labelled `app=alarm` (the firmware requests that label
 **No board?** Run the simulated device on your machine:
 
 ```bash
-cmake -S . -B build/host -G Ninja -DMbedTLS_DIR=$(brew --prefix mbedtls@3)/lib/cmake/MbedTLS && cmake --build build/host
+cmake -S . -B build/host -G Ninja && cmake --build build/host
 ```
 
 ```bash
@@ -378,6 +378,7 @@ Apache 2.0, see [LICENSE](LICENSE).
 
 ## Third-party code
 
-- [cJSON](https://github.com/DaveGamble/cJSON) (MIT), vendored in `core/third_party/cjson` for the host build and the fuzzers; the firmware uses ESP-IDF's copy
+- [cJSON](https://github.com/DaveGamble/cJSON) (MIT), vendored in `core/third_party/cjson`
 - [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) (Apache 2.0 with LLVM exception), fetched at build time
-- [mbedTLS](https://github.com/Mbed-TLS/mbedtls) (Apache 2.0), from ESP-IDF or your system
+- [mbedTLS](https://github.com/Mbed-TLS/mbedtls) (Apache 2.0), from ESP-IDF, Zephyr or your system
+- Espressif's [network_provisioning](https://components.espressif.com/components/espressif/network_provisioning) (Apache 2.0), fetched by ESP-IDF's component manager at the version `firmware/dependencies.lock.<chip>` pins

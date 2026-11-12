@@ -25,7 +25,7 @@ if [[ -n "${SECURE_VERSION:-}" ]]; then
 fi
 if [[ "$VARIANT" == secure* && ! -f /keys/secure_boot_signing_key.pem ]]; then
   mkdir -p /keys
-  espsecure.py generate_signing_key --version 2 --scheme rsa3072 /keys/secure_boot_signing_key.pem >/dev/null
+  espsecure generate-signing-key --version 2 --scheme rsa3072 /keys/secure_boot_signing_key.pem >/dev/null
 fi
 SDKCONFIG_DEFAULTS="$DEFAULTS" idf.py -B "$BUILD" -D IDF_TARGET="$TARGET" \
   -D SDKCONFIG="$BUILD/sdkconfig" -D FW_VERSION="$VERSION${VARIANT:+-$VARIANT}" build merge-bin

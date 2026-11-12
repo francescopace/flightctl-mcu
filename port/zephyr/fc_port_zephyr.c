@@ -31,7 +31,7 @@ FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(s_lfs);
 static struct fs_mount_t s_mnt = {
     .type = FS_LITTLEFS,
     .fs_data = &s_lfs,
-    .storage_dev = (void *)FIXED_PARTITION_ID(fc_storage_partition),
+    .storage_dev = (void *)PARTITION_ID(fc_storage_partition),
     .mnt_point = MNT,
 };
 
@@ -299,16 +299,16 @@ const char *fc_port_fw_platform(void)
 #include <zephyr/dfu/flash_img.h>
 #include <zephyr/dfu/mcuboot.h>
 
-#include "mbedtls/sha256.h"
+#include "fc_crypto.h"
 
-#define SLOT_RUNNING FIXED_PARTITION_ID(slot0_partition)
-#define SLOT_NEXT    FIXED_PARTITION_ID(slot1_partition)
+#define SLOT_RUNNING PARTITION_ID(slot0_partition)
+#define SLOT_NEXT    PARTITION_ID(slot1_partition)
 typedef struct {
     struct flash_img_context img;
     /* Of what was given, to compare with what the slot holds: a flash driver
-     * may report a write it did not do (the RP2040's did, for short ones:
-     * third_party/patches). */
-    mbedtls_sha256_context sha;
+     * may report a write it did not do (the RP2040's did, for short ones, in
+     * Zephyr 4.3: docs/ZEPHYR.md). */
+    fc_sha256_t sha;
     size_t size, written;
 } ota_t;
 
@@ -332,8 +332,7 @@ int fc_port_ota_begin(size_t size, void **handle)
         free(o);
         return -1;
     }
-    mbedtls_sha256_init(&o->sha);
-    mbedtls_sha256_starts(&o->sha, 0);
+    fc_sha256_start(&o->sha);
     o->size = size;
     *handle = o;
     return 0;
@@ -350,7 +349,7 @@ int fc_port_ota_write(void *handle, const void *data, size_t len)
         fc_port_log(FC_LOG_ERROR, "ota: flash write at %u: %d", (unsigned)o->written, rc);
         return -1;
     }
-    mbedtls_sha256_update(&o->sha, data, len);
+    fc_sha256_update(&o->sha, data, len);
     o->written += len;
     return 0;
 }
@@ -359,22 +358,21 @@ int fc_port_ota_write(void *handle, const void *data, size_t len)
 static int slot_matches(ota_t *o)
 {
     uint8_t want[32], got[32], buf[256];
-    mbedtls_sha256_finish(&o->sha, want);
     const struct flash_area *fa;
-    if (flash_area_open(SLOT_NEXT, &fa) != 0) {
+    if (fc_sha256_finish(&o->sha, want) != 0 || flash_area_open(SLOT_NEXT, &fa) != 0) {
         return -1;
     }
-    mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
-    mbedtls_sha256_starts(&sha, 0);
+    fc_sha256_t sha;
+    fc_sha256_start(&sha);
     int rc = 0;
     for (size_t off = 0; off < o->size && rc == 0; off += sizeof(buf)) {
         size_t n = o->size - off < sizeof(buf) ? o->size - off : sizeof(buf);
         rc = flash_area_read(fa, (off_t)off, buf, n);
-        mbedtls_sha256_update(&sha, buf, n);
+        fc_sha256_update(&sha, buf, n);
     }
-    mbedtls_sha256_finish(&sha, got);
-    mbedtls_sha256_free(&sha);
+    if (fc_sha256_finish(&sha, got) != 0) {
+        rc = -1;
+    }
     flash_area_close(fa);
     return rc == 0 && memcmp(want, got, sizeof(want)) == 0 ? 0 : -1;
 }
@@ -397,7 +395,7 @@ int fc_port_ota_end(void *handle, int commit)
             rc = 0;
         }
     }
-    mbedtls_sha256_free(&o->sha);
+    fc_sha256_abort(&o->sha);
     free(o);
     return rc;
 }
@@ -477,7 +475,7 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     return -1;
 }
 
-int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk, const struct mbedtls_pk_context *pub)
 {
     return -1;
 }

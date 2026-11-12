@@ -4,6 +4,7 @@ firmware/build-*/
 sdkconfig
 sdkconfig.old
 managed_components/
+firmware/dependencies.lock
 firmware/sdkconfig.wifi
 firmware/sdkconfig.local
 deploy/auto-approve/allowlist.yaml

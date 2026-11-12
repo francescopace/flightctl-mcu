@@ -245,7 +245,7 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     return -1;
 }
 
-int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk, const struct mbedtls_pk_context *pub)
 {
     return -1;
 }

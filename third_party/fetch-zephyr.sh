@@ -3,22 +3,20 @@
 # into third_party/zephyr-ws (a west workspace, git-ignored). Needs west: this
 # machine's, or the one in the Zephyr build image (zephyr/build.sh uses the
 # same image).
-# v4.3 is the last release with mbedTLS 3.6, which the agent core is written
-# for (ESP-IDF 5.5 has the same); from v4.4 Zephyr ships mbedTLS 4, whose API
-# is PSA only.
+# v4.5 has mbedTLS 4.1.1, the same as ESP-IDF 6.0.3: the agent core is
+# written for mbedTLS 4, whose cryptography is PSA only (TF-PSA-Crypto, a
+# module of its own).
 set -euo pipefail
-ZEPHYR_TAG="${ZEPHYR_TAG:-v4.3.2}"
-ZEPHYR_COMMIT="${ZEPHYR_COMMIT:-28af05ca658cbacf745fd5b099566311c58ccb1d}"
+ZEPHYR_TAG="${ZEPHYR_TAG:-v4.5.0}"
+ZEPHYR_COMMIT="${ZEPHYR_COMMIT:-41d10b59730406bbab4ca9f1fbbe9e96aafb4966}"
 ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.29.1}"
 # mbedtls: TLS. littlefs: storage. mcuboot, zcbor: firmware slots. The rest:
 # the Raspberry Pi Pico W (RP2040, CYW43439 WiFi).
-MODULES="${ZEPHYR_MODULES:-mbedtls littlefs mcuboot zcbor cmsis cmsis_6 hal_rpi_pico hal_infineon picolibc}"
+MODULES="${ZEPHYR_MODULES:-mbedtls tf-psa-crypto littlefs mcuboot zcbor cmsis cmsis_6 hal_rpi_pico hal_infineon picolibc}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WS="$ROOT/third_party/zephyr-ws"
-patch_tree() { "$ROOT/third_party/patch-zephyr.sh"; }
 if [[ -d "$WS/zephyr/.git" && "$(git -C "$WS/zephyr" rev-parse HEAD)" == "$ZEPHYR_COMMIT" && -f "$WS/.fetched" ]]; then
   echo "Zephyr $ZEPHYR_TAG already in $WS"
-  patch_tree
   exit 0
 fi
 if ! command -v west >/dev/null; then
@@ -41,6 +39,5 @@ filter="-.*"
 for m in $MODULES; do filter="$filter,+$m"; done
 west config manifest.project-filter -- "$filter"
 west update --narrow -o=--depth=1
-patch_tree
 touch "$WS/.fetched"
 echo "Zephyr $ZEPHYR_TAG in $WS"

@@ -15,12 +15,12 @@
 #include <unistd.h>
 
 #include "cJSON.h"
+#include "fc_crypto.h"
 #include "fc_http.h"
 #include "fc_identity.h"
 #include "fc_oci.h"
 #include "fc_port.h"
 #include "mbedtls/base64.h"
-#include "mbedtls/ctr_drbg.h"
 #include "mbedtls/x509_crt.h"
 
 #define KV_MGMT_CERT "mgmt.crt"
@@ -67,8 +67,6 @@
 #define CERT_EXPIRED_GRACE_S 60
 #define CLOCK_SET_AFTER 1735689600 /* 2025-01-01: before that, the clock is not set */
 
-mbedtls_ctr_drbg_context *fc_http_drbg(void);
-
 typedef struct {
     const fc_agent_config_t *cfg;
     fc_identity_t id;
@@ -114,7 +112,7 @@ static void rfc3339_now(char *buf, size_t len)
 static void make_boot_id(char *out)
 {
     unsigned char b[16];
-    mbedtls_ctr_drbg_random(fc_http_drbg(), b, sizeof(b));
+    fc_random(b, sizeof(b));
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
     sprintf(out, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
@@ -454,7 +452,7 @@ static int request_renewal(agent_t *a)
     int rc;
     if (a->csr_name[0] == '\0') {
         unsigned char rnd[4];
-        mbedtls_ctr_drbg_random(fc_http_drbg(), rnd, sizeof(rnd));
+        fc_random(rnd, sizeof(rnd));
         snprintf(a->csr_name, sizeof(a->csr_name), "%s-%02x%02x%02x%02x", a->id.name, rnd[0], rnd[1], rnd[2],
                  rnd[3]);
         size_t plen = strlen(a->id.csr_pem), blen = 0;

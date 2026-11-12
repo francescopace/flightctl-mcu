@@ -14,7 +14,7 @@ on:
         default: "20"
 
 env:
-  MBEDTLS_VERSION: v3.6.7
+  MBEDTLS_VERSION: v4.1.1
 
 jobs:
   fuzz:

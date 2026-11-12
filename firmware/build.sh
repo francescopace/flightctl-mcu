@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the firmware in the espressif/idf container (no local ESP-IDF needed).
-# Runs as root: IDF 5.5 writes /opt/esp/root_managed_components; on macOS the
+# Runs as root: ESP-IDF writes /opt/esp/root_managed_components; on macOS the
 # bind-mounted build output still ends up owned by the host user.
 # One build directory per chip: firmware/build-<target>.
 # Chip-specific settings go in sdkconfig.defaults.<target> (loaded automatically).
@@ -21,7 +21,7 @@
 # for development (WiFi, endpoint, labels) that a provisioned device overrides.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v5.5.6}"
+IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.0.3}"
 TARGET="${TARGET:-esp32s3}"
 VARIANT="${VARIANT:-}"
 BUILD_DIR="${BUILD_DIR:-build-$TARGET${VARIANT:+-$VARIANT}}"

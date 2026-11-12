@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # CI: builds the host agent (simulated device) on Linux against an installed
-# mbedTLS 3.6 (MBEDTLS_DIR, the CMake package directory), and smoke-tests it.
+# mbedTLS 4 (MBEDTLS_DIR, the CMake package directory), and smoke-tests it.
 # The binary links mbedTLS statically, so the e2e job can run it as it is.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

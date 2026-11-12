@@ -15,18 +15,18 @@
 #include "esp_mac.h"
 #include "esp_wifi.h"
 #if CONFIG_FC_FIELD_PROVISIONING
-#include "wifi_provisioning/manager.h"
+#include "network_provisioning/manager.h"
 #if CONFIG_FC_FIELD_PROVISIONING_BLE
-#include "wifi_provisioning/scheme_ble.h"
+#include "network_provisioning/scheme_ble.h"
 /* BLE: advertised as FC-xxxxxx; the Bluetooth memory is given back when
  * provisioning is over, or right away on a device that has its network. */
-#define PROV_SCHEME wifi_prov_scheme_ble
-#define PROV_SCHEME_HANDLER WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
+#define PROV_SCHEME network_prov_scheme_ble
+#define PROV_SCHEME_HANDLER NETWORK_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
 #define PROV_HOW "over BLE as"
 #else
-#include "wifi_provisioning/scheme_softap.h"
-#define PROV_SCHEME wifi_prov_scheme_softap
-#define PROV_SCHEME_HANDLER WIFI_PROV_EVENT_HANDLER_NONE
+#include "network_provisioning/scheme_softap.h"
+#define PROV_SCHEME network_prov_scheme_softap
+#define PROV_SCHEME_HANDLER NETWORK_PROV_EVENT_HANDLER_NONE
 #define PROV_HOW "on access point"
 #endif
 #endif
@@ -219,15 +219,15 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
  * (or the flash) starts provisioning again. */
 static void on_prov(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
-    if (id == WIFI_PROV_CRED_RECV) {
+    if (id == NETWORK_PROV_WIFI_CRED_RECV) {
         ESP_LOGI(TAG, "field provisioning: network \"%s\" received", (const char *)((wifi_sta_config_t *)data)->ssid);
-    } else if (id == WIFI_PROV_CRED_FAIL) {
+    } else if (id == NETWORK_PROV_WIFI_CRED_FAIL) {
         ESP_LOGW(TAG, "field provisioning: cannot join that network (%s), waiting for another",
-                 *(wifi_prov_sta_fail_reason_t *)data == WIFI_PROV_STA_AUTH_ERROR ? "wrong password" : "not found");
-        wifi_prov_mgr_reset_sm_state_on_failure();
-    } else if (id == WIFI_PROV_END) {
+                 *(network_prov_wifi_sta_fail_reason_t *)data == NETWORK_PROV_WIFI_STA_AUTH_ERROR ? "wrong password" : "not found");
+        network_prov_mgr_reset_wifi_sm_state_on_failure();
+    } else if (id == NETWORK_PROV_END) {
         ESP_LOGI(TAG, "field provisioning: done");
-        wifi_prov_mgr_deinit();
+        network_prov_mgr_deinit();
         xEventGroupSetBits(s_wifi, PROV_OVER);
     }
 }
@@ -236,31 +236,31 @@ static void on_prov(void *arg, esp_event_base_t base, int32_t id, void *data)
  * 2: provisioning started (the manager runs WiFi); 0: neither. */
 static int field_provisioning(const creds_t *c)
 {
-    wifi_prov_mgr_config_t cfg = {
+    network_prov_mgr_config_t cfg = {
         .scheme = PROV_SCHEME,
         .scheme_event_handler = PROV_SCHEME_HANDLER,
     };
-    ESP_ERROR_CHECK(wifi_prov_mgr_init(cfg));
+    ESP_ERROR_CHECK(network_prov_mgr_init(cfg));
     bool done = false;
-    wifi_prov_mgr_is_provisioned(&done);
+    network_prov_mgr_is_wifi_provisioned(&done);
     if (done) {
-        wifi_prov_mgr_deinit();
+        network_prov_mgr_deinit();
         return 1; /* the driver starts with the stored network */
     }
     if (c->pop == NULL) {
-        wifi_prov_mgr_deinit();
+        network_prov_mgr_deinit();
         return 0;
     }
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     char name[16];
     snprintf(name, sizeof(name), "FC-%02X%02X%02X", mac[3], mac[4], mac[5]);
-    esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, on_prov, NULL);
+    esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID, on_prov, NULL);
     ESP_LOGW(TAG, "no WiFi network: field provisioning " PROV_HOW " %s", name);
 #if CONFIG_FC_FIELD_PROVISIONING_BLE
-    ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, c->pop, name, NULL));
+    ESP_ERROR_CHECK(network_prov_mgr_start_provisioning(NETWORK_PROV_SECURITY_1, c->pop, name, NULL));
 #else
-    ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, c->pop, name, c->pop));
+    ESP_ERROR_CHECK(network_prov_mgr_start_provisioning(NETWORK_PROV_SECURITY_1, c->pop, name, c->pop));
 #endif
     return 2;
 }

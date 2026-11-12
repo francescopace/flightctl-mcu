@@ -15,7 +15,6 @@ BOARD="${BOARD:-native_sim/native/64}"
 BUILD_DIR="${BUILD_DIR:-build-${BOARD//\//_}}"
 WS="$ROOT/third_party/zephyr-ws"
 [[ -d "$WS/zephyr" ]] || { echo "no Zephyr tree: run third_party/fetch-zephyr.sh" >&2; exit 1; }
-"$ROOT/third_party/patch-zephyr.sh"
 # The arguments of west build, then, after "--", those of CMake.
 WEST_ARGS=(); CMAKE_ARGS=()
 while (( $# )); do

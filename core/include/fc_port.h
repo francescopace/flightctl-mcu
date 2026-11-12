@@ -18,7 +18,7 @@ extern "C" {
 typedef struct {
     char architecture[32];     /* e.g. "arm64", "xtensa-esp32s3" */
     char operating_system[32]; /* e.g. "darwin", "esp-idf" */
-    char os_version[32];       /* e.g. "v5.5.6" */
+    char os_version[32];       /* e.g. "v6.0.3" */
     char hostname[64];
     char hw_id[32];            /* MAC or serial, used as default alias */
     int cpu_count;
@@ -88,12 +88,14 @@ void fc_port_reboot(void);
  * fc_port_hwkey_seal, which moves it into the hardware and checks a
  * signature made there (0), or fails (-1: the core keeps a software key).
  * fc_port_hwkey_pk sets up a context that signs through the hardware, as
- * long as a sealed key exists (0), and fc_port_hwkey_forget drops it. */
+ * long as a sealed key exists (0), and fc_port_hwkey_forget drops it. `pub`
+ * is the key's public half, which the caller has from the CSR or from the
+ * certificate: hardware that only signs (the DS peripheral) cannot give it. */
 #define FC_HWKEY_ECDSA_P256 256
 struct mbedtls_pk_context;
 int fc_port_hwkey_bits(void);
 int fc_port_hwkey_seal(struct mbedtls_pk_context *pk);
-int fc_port_hwkey_pk(struct mbedtls_pk_context *pk);
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk, const struct mbedtls_pk_context *pub);
 void fc_port_hwkey_forget(void);
 
 void fc_port_log(fc_log_level_t level, const char *fmt, ...)

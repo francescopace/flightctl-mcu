@@ -1,0 +1,7 @@
+# Components that are not part of ESP-IDF, fetched by its component manager
+# from components.espressif.com at the versions and hashes that
+# firmware/dependencies.lock.<chip> pins. WiFi provisioning (SoftAP, BLE) left
+# ESP-IDF with v6.0.
+dependencies:
+  idf: ">=6.0"
+  espressif/network_provisioning: "1.4.0"

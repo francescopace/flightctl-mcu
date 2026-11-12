@@ -9,15 +9,19 @@ idf_component_register(
          ${ROOT}/core/src/fc_oci.c
          ${ROOT}/core/src/fc_apps.c
          ${ROOT}/core/src/fc_delta.c
+         ${ROOT}/core/third_party/cjson/cJSON.c
          ${DETOOLS}/detools.c
          ${DETOOLS}/heatshrink/heatshrink_decoder.c
          ${ROOT}/port/espidf/fc_port_espidf.c
-    INCLUDE_DIRS ${ROOT}/core/include
+    INCLUDE_DIRS ${ROOT}/core/include ${ROOT}/core/third_party/cjson
     PRIV_INCLUDE_DIRS ${ROOT}/core/src ${DETOOLS} ${DETOOLS}/heatshrink
-    REQUIRES mbedtls pthread wamr json
+    REQUIRES mbedtls pthread wamr
     PRIV_REQUIRES soc nvs_flash bootloader_support esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update efuse)
-# cJSON is ESP-IDF's (component json), built with the nesting limit set in
-# firmware/CMakeLists.txt; the host build and the fuzzers use core/third_party.
+# cJSON is the core's copy, as in the host build (ESP-IDF 6 no longer has
+# one), with the agent's nesting limit: cJSON parses recursively, and its
+# default of 1000 levels overflowed the agent's 24 KB thread stacks
+# (RESULTS.md, problem 14).
+target_compile_definitions(${COMPONENT_LIB} PUBLIC CJSON_NESTING_LIMIT=32)
 # The firmware's security variant, read from an update before it is installed
 # (fc_port_espidf.c): unreferenced, so kept explicitly.
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u fc_fw_desc")

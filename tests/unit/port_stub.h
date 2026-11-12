@@ -18,6 +18,11 @@ extern size_t stub_fw_len;
 extern int stub_hwkey_bits;       /* > 0: a "hardware" key store, for RSA keys of this size or FC_HWKEY_ECDSA_P256 */
 extern int stub_hwkey_seal_fails; /* 1: sealing fails */
 extern int stub_hwkey_seals;      /* keys sealed since stub_reset */
+
+/* A new ECDSA P-256 key pair in `pk` (initialized here), for a test to sign with. */
+struct mbedtls_pk_context;
+int stub_ec_key(struct mbedtls_pk_context *pk);
+
 void stub_reset(void);
 const char *stub_kv(const char *key);     /* NULL if missing */
 const char *stub_file(const char *path);  /* NULL if never written */

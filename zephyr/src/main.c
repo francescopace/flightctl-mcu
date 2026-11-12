@@ -28,7 +28,7 @@
 static cJSON *load_creds(void)
 {
     const struct flash_area *fa;
-    if (flash_area_open(FIXED_PARTITION_ID(fc_creds_partition), &fa) != 0) {
+    if (flash_area_open(PARTITION_ID(fc_creds_partition), &fa) != 0) {
         return NULL;
     }
     uint8_t hdr[8];

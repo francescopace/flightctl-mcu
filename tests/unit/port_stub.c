@@ -10,7 +10,7 @@
 #include <string.h>
 
 #include "mbedtls/pk.h"
-#include "mbedtls/rsa.h"
+#include "psa/crypto.h"
 
 #define MAX_ENTRIES 64
 
@@ -214,21 +214,25 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
     fputc('\n', stderr);
 }
 
-/* "Hardware" key store: the sealed key is kept here, out of the identity's
- * storage, and signs through an RSA_ALT context as the DS peripheral does. */
-static mbedtls_pk_context s_hw;
-static int s_hw_sealed;
-static unsigned char s_hw_ec[256]; /* an ECDSA key "in hardware", as DER at the end */
-static size_t s_hw_ec_len;
+/* "Hardware" key store: the sealed key is a PSA key that cannot be exported,
+ * out of the identity's storage, and signs through a PK context that wraps
+ * it, as the keys of the ESP32's peripherals do. */
+static psa_key_id_t s_hw = PSA_KEY_ID_NULL;
 
-/* Blinding only, in a test. */
-static int stub_rng(void *ctx, unsigned char *buf, size_t len)
+int stub_ec_key(struct mbedtls_pk_context *pk)
 {
-    (void)ctx;
-    for (size_t i = 0; i < len; i++) {
-        buf[i] = (unsigned char)rand();
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_bits(&attr, 256);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_EXPORT);
+    psa_key_id_t id = PSA_KEY_ID_NULL;
+    mbedtls_pk_init(pk);
+    if (psa_crypto_init() != PSA_SUCCESS || psa_generate_key(&attr, &id) != PSA_SUCCESS) {
+        return -1;
     }
-    return 0;
+    int rc = mbedtls_pk_copy_from_psa(id, pk);
+    psa_destroy_key(id);
+    return rc;
 }
 
 int fc_port_hwkey_bits(void)
@@ -241,56 +245,28 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     if (stub_hwkey_seal_fails) {
         return -1;
     }
-    if (stub_hwkey_bits == FC_HWKEY_ECDSA_P256 && mbedtls_pk_get_type(pk) == MBEDTLS_PK_ECKEY) {
-        fc_port_hwkey_forget();
-        int len = mbedtls_pk_write_key_der(pk, s_hw_ec, sizeof(s_hw_ec));
-        if (len <= 0) {
-            return -1;
-        }
-        s_hw_ec_len = (size_t)len;
-        s_hw_sealed = 1;
-        stub_hwkey_seals++;
-        return 0;
-    }
-    if (stub_hwkey_bits == FC_HWKEY_ECDSA_P256 || mbedtls_pk_get_type(pk) != MBEDTLS_PK_RSA) {
+    psa_key_type_t type = mbedtls_pk_get_key_type(pk);
+    int wanted = stub_hwkey_bits == FC_HWKEY_ECDSA_P256 ? PSA_KEY_TYPE_IS_ECC(type) : PSA_KEY_TYPE_IS_RSA(type);
+    if (!wanted) {
         return -1;
     }
     fc_port_hwkey_forget();
-    mbedtls_pk_setup(&s_hw, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
-    if (mbedtls_rsa_copy(mbedtls_pk_rsa(s_hw), mbedtls_pk_rsa(*pk)) != 0) {
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    if (mbedtls_pk_get_psa_attributes(pk, PSA_KEY_USAGE_SIGN_HASH, &attr) != 0 ||
+        mbedtls_pk_import_into_psa(pk, &attr, &s_hw) != 0) {
         return -1;
     }
-    s_hw_sealed = 1;
     stub_hwkey_seals++;
     return 0;
 }
 
-static int hw_sign(void *ctx, int (*f_rng)(void *, unsigned char *, size_t), void *p_rng, mbedtls_md_type_t md_alg,
-                   unsigned int hashlen, const unsigned char *hash, unsigned char *sig)
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk, const struct mbedtls_pk_context *pub)
 {
-    return mbedtls_rsa_pkcs1_sign((mbedtls_rsa_context *)ctx, f_rng, p_rng, md_alg, hashlen, hash, sig);
-}
-
-static size_t hw_len(void *ctx)
-{
-    return mbedtls_rsa_get_len((mbedtls_rsa_context *)ctx);
-}
-
-int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
-{
-    if (!s_hw_sealed) {
-        return -1;
-    }
-    if (s_hw_ec_len > 0) {
-        return mbedtls_pk_parse_key(pk, s_hw_ec + sizeof(s_hw_ec) - s_hw_ec_len, s_hw_ec_len, NULL, 0, stub_rng, NULL);
-    }
-    return mbedtls_pk_setup_rsa_alt(pk, mbedtls_pk_rsa(s_hw), NULL, hw_sign, hw_len);
+    return s_hw == PSA_KEY_ID_NULL ? -1 : mbedtls_pk_wrap_psa(pk, s_hw);
 }
 
 void fc_port_hwkey_forget(void)
 {
-    mbedtls_pk_free(&s_hw);
-    mbedtls_pk_init(&s_hw);
-    s_hw_sealed = 0;
-    s_hw_ec_len = 0;
+    psa_destroy_key(s_hw);
+    s_hw = PSA_KEY_ID_NULL;
 }

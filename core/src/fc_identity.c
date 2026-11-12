@@ -18,19 +18,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "fc_crypto.h"
 #include "fc_port.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/ecp.h"
+#include "mbedtls/asn1.h"
 #include "mbedtls/pk.h"
-#include "mbedtls/rsa.h"
-#include "mbedtls/sha256.h"
 #include "mbedtls/x509_csr.h"
 
 #define KV_DEVICE_KEY "device.key"
 #define KV_DEVICE_CSR "device.csr" /* only with the key in hardware */
-#define RSA_EXPONENT  65537
-
-mbedtls_ctr_drbg_context *fc_http_drbg(void);
 
 static void base32hex_lower(const unsigned char *in, size_t len, char *out)
 {
@@ -52,58 +47,75 @@ static void base32hex_lower(const unsigned char *in, size_t len, char *out)
     out[o] = '\0';
 }
 
-static void sha256_name(const unsigned char *a, size_t al, const unsigned char *b, size_t bl, char *name)
+static int sha256_name(const unsigned char *a, size_t al, const unsigned char *b, size_t bl, char *name)
 {
     unsigned char hash[32];
-    mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
-    mbedtls_sha256_starts(&sha, 0);
-    mbedtls_sha256_update(&sha, a, al);
-    mbedtls_sha256_update(&sha, b, bl);
-    mbedtls_sha256_finish(&sha, hash);
-    mbedtls_sha256_free(&sha);
+    fc_sha256_t sha;
+    fc_sha256_start(&sha);
+    fc_sha256_update(&sha, a, al);
+    fc_sha256_update(&sha, b, bl);
+    if (fc_sha256_finish(&sha, hash) != 0) {
+        return -1;
+    }
     base32hex_lower(hash, sizeof(hash), name);
+    return 0;
 }
 
 int fc_identity_name_of(mbedtls_pk_context *pk, char *name, size_t name_len)
 {
-    unsigned char raw[512];
-    size_t olen = 0;
-    if (name_len < 53) {
+    /* The public key as PSA exports it: for RSA the DER of
+     * RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }
+     * (RSA-4096: 526 bytes), for a curve the point 0x04 || X || Y. */
+    unsigned char raw[600];
+    size_t len = 0;
+    if (name_len < 53 || mbedtls_pk_write_pubkey_psa(pk, raw, sizeof(raw), &len) != 0) {
         return -1;
     }
-    if (mbedtls_pk_get_type(pk) == MBEDTLS_PK_RSA) {
-        const mbedtls_rsa_context *rsa = mbedtls_pk_rsa(*pk);
-        mbedtls_mpi n;
-        mbedtls_mpi_init(&n);
+    psa_key_type_t type = mbedtls_pk_get_key_type(pk);
+    if (PSA_KEY_TYPE_IS_RSA(type)) {
+        unsigned char *n = raw;
         size_t nl = 0;
-        int rc = mbedtls_rsa_export((mbedtls_rsa_context *)rsa, &n, NULL, NULL, NULL, NULL);
-        if (rc == 0) {
-            nl = mbedtls_mpi_size(&n); /* minimal big-endian: no leading zeros */
-            rc = nl > sizeof(raw) ? -1 : mbedtls_mpi_write_binary(&n, raw, nl);
-        }
-        mbedtls_mpi_free(&n);
-        if (rc != 0) {
+        if (mbedtls_asn1_get_tag(&n, raw + len, &nl, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0 ||
+            mbedtls_asn1_get_tag(&n, raw + len, &nl, MBEDTLS_ASN1_INTEGER) != 0) {
             return -1;
         }
-        sha256_name(raw, nl, NULL, 0, name);
-        return 0;
+        while (nl > 0 && *n == 0) { n++; nl--; } /* minimal big-endian: no leading zeros */
+        return sha256_name(n, nl, NULL, 0, name);
     }
-    if (!mbedtls_pk_can_do(pk, MBEDTLS_PK_ECKEY)) {
+    if (!PSA_KEY_TYPE_IS_ECC(type) || len != 65 || raw[0] != 0x04) {
         return -1;
     }
-    int rc = mbedtls_ecp_write_public_key(mbedtls_pk_ec(*pk), MBEDTLS_ECP_PF_UNCOMPRESSED,
-                                          &olen, raw, sizeof(raw));
-    if (rc != 0 || olen != 65) {
-        return -1;
-    }
-
     const unsigned char *x = raw + 1, *y = raw + 33;
     size_t xl = 32, yl = 32;
     while (xl > 0 && *x == 0) { x++; xl--; }
     while (yl > 0 && *y == 0) { y++; yl--; }
-    sha256_name(x, xl, y, yl, name);
-    return 0;
+    return sha256_name(x, xl, y, yl, name);
+}
+
+/* A new key pair, ECDSA P-256 or RSA of `bits`, in `pk`. It is generated in
+ * PSA and copied out, so `pk` holds it by itself and it can be written as PEM
+ * or handed to the port. */
+static int generate_key(int bits, mbedtls_pk_context *pk)
+{
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    if (bits == FC_HWKEY_ECDSA_P256) {
+        psa_set_key_type(&attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+        psa_set_key_bits(&attr, 256);
+    } else {
+        psa_set_key_type(&attr, PSA_KEY_TYPE_RSA_KEY_PAIR); /* public exponent 65537 */
+        psa_set_key_bits(&attr, (size_t)bits);
+    }
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_EXPORT);
+    psa_key_id_t id = PSA_KEY_ID_NULL;
+    if (fc_crypto_init() != 0) {
+        return -1;
+    }
+    int rc = (int)psa_generate_key(&attr, &id);
+    if (rc == 0) {
+        rc = mbedtls_pk_copy_from_psa(id, pk);
+        psa_destroy_key(id);
+    }
+    return rc;
 }
 
 static int write_csr(mbedtls_pk_context *pk, const char *name, char **out)
@@ -117,7 +129,7 @@ static int write_csr(mbedtls_pk_context *pk, const char *name, char **out)
     int rc = -1;
     *out = malloc(2048); /* an RSA-4096 CSR is about 1.7 KB */
     if (*out != NULL && mbedtls_x509write_csr_set_subject_name(&csr, subject) == 0 &&
-        mbedtls_x509write_csr_pem(&csr, (unsigned char *)*out, 2048, mbedtls_ctr_drbg_random, fc_http_drbg()) == 0) {
+        mbedtls_x509write_csr_pem(&csr, (unsigned char *)*out, 2048) == 0) {
         rc = 0;
     } else {
         fc_port_log(FC_LOG_ERROR, "CSR generation failed");
@@ -138,13 +150,14 @@ static int load_hw(fc_identity_t *id)
     }
     mbedtls_pk_context hw;
     mbedtls_pk_init(&hw);
-    int ok = fc_port_hwkey_pk(&hw) == 0;
-    mbedtls_pk_free(&hw);
     mbedtls_x509_csr csr;
     mbedtls_x509_csr_init(&csr);
-    if (!ok || mbedtls_x509_csr_parse(&csr, (unsigned char *)csr_pem, len + 1) != 0 ||
-        fc_identity_name_of(&csr.pk, id->name, sizeof(id->name)) != 0) {
-        fc_port_log(FC_LOG_ERROR, "device key in hardware: %s", ok ? "stored CSR is invalid" : "not available");
+    int parsed = fc_crypto_init() == 0 && mbedtls_x509_csr_parse(&csr, (unsigned char *)csr_pem, len + 1) == 0 &&
+                 fc_identity_name_of(&csr.pk, id->name, sizeof(id->name)) == 0;
+    int ok = parsed && fc_port_hwkey_pk(&hw, &csr.pk) == 0;
+    mbedtls_pk_free(&hw);
+    if (!ok) {
+        fc_port_log(FC_LOG_ERROR, "device key in hardware: %s", parsed ? "not available" : "stored CSR is invalid");
         mbedtls_x509_csr_free(&csr);
         free(csr_pem);
         return -2;
@@ -164,19 +177,11 @@ static int create_hw(fc_identity_t *id, int bits)
     if (bits == FC_HWKEY_ECDSA_P256) {
         fc_port_log(FC_LOG_WARN,
                     "no device key stored: generating one (ECDSA P-256) for the hardware, this is a new device");
-        if ((rc = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY))) == 0) {
-            rc = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(pk), mbedtls_ctr_drbg_random,
-                                     fc_http_drbg());
-        }
     } else {
         fc_port_log(FC_LOG_WARN,
                     "no device key stored: generating one (RSA-%d) for the hardware, this is a new device", bits);
-        if ((rc = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA))) == 0) {
-            rc = mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk), mbedtls_ctr_drbg_random, fc_http_drbg(), (unsigned)bits,
-                                     RSA_EXPONENT);
-        }
     }
-    if (rc != 0) {
+    if ((rc = generate_key(bits, &pk)) != 0) {
         fc_port_log(FC_LOG_ERROR, "key generation failed (-0x%04x)", -rc);
         mbedtls_pk_free(&pk);
         return -1;
@@ -221,8 +226,7 @@ int fc_identity_load(fc_identity_t *id)
         fc_port_log(FC_LOG_ERROR, "device key in hardware failed: using a key in storage instead");
     }
     if (pem != NULL) {
-        rc = mbedtls_pk_parse_key(&pk, (unsigned char *)pem, pem_len + 1, NULL, 0,
-                                  mbedtls_ctr_drbg_random, fc_http_drbg());
+        rc = fc_crypto_init() != 0 ? -1 : mbedtls_pk_parse_key(&pk, (unsigned char *)pem, pem_len + 1, NULL, 0);
         if (rc != 0) {
             fc_port_log(FC_LOG_ERROR, "stored device key is invalid (-0x%04x)", -rc);
             free(pem);
@@ -231,9 +235,7 @@ int fc_identity_load(fc_identity_t *id)
     } else {
         /* First boot, or the storage was erased: either way a new device. */
         fc_port_log(FC_LOG_WARN, "no device key stored: generating one (ECDSA P-256), this is a new device");
-        if ((rc = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY))) != 0 ||
-            (rc = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(pk),
-                                      mbedtls_ctr_drbg_random, fc_http_drbg())) != 0) {
+        if ((rc = generate_key(FC_HWKEY_ECDSA_P256, &pk)) != 0) {
             fc_port_log(FC_LOG_ERROR, "key generation failed (-0x%04x)", -rc);
             goto fail;
         }

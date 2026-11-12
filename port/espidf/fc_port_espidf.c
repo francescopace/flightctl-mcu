@@ -30,8 +30,8 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "fc_crypto.h"
 #include "fc_port.h"
-#include "mbedtls/sha256.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -127,7 +127,7 @@ static void nvs_key(const char *key, char out[16])
         return;
     }
     unsigned char h[32];
-    mbedtls_sha256((const unsigned char *)key, strlen(key), h, 0);
+    fc_sha256(key, strlen(key), h);
     snprintf(out, 16, "h_%02x%02x%02x%02x%02x%02x", h[0], h[1], h[2], h[3], h[4], h[5]);
 }
 
@@ -561,10 +561,10 @@ static void hwkey_sealed(void)
 #include "esp_ds.h"
 #include "esp_efuse.h"
 #include "esp_random.h"
+#include "mbedtls/asn1.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/platform_util.h"
-#include "mbedtls/rsa.h"
-#include "rsa_sign_alt.h"
+#include "psa_crypto_driver_esp_rsa_ds.h"
 
 #define KV_DS "hwkey.ds"
 
@@ -574,16 +574,10 @@ typedef struct {
     esp_ds_data_t data;
 } ds_blob_t;
 
-static int esp_rng(void *ctx, unsigned char *buf, size_t len)
-{
-    esp_fill_random(buf, len);
-    return 0;
-}
-
 static pthread_mutex_t s_ds_lock = PTHREAD_MUTEX_INITIALIZER;
-static ds_blob_t *s_ds;            /* the sealed key in use */
-static esp_ds_data_ctx_t s_ds_ctx;
-static mbedtls_rsa_context s_ds_rsa; /* holds the padding mode mbedTLS asks for */
+static ds_blob_t *s_ds;                       /* the sealed key in use */
+static esp_ds_data_ctx_t s_ds_ctx;            /* what the PSA key points to */
+static psa_key_id_t s_ds_key = PSA_KEY_ID_NULL; /* signs with it, through ESP-IDF's DS driver */
 
 int fc_port_hwkey_bits(void)
 {
@@ -591,8 +585,9 @@ int fc_port_hwkey_bits(void)
                                                                       : CONFIG_FC_DEVICE_KEY_DS_BITS;
 }
 
-/* Makes `b` the key that esp_ds_rsa_sign uses. Once per boot: the DS
- * context takes a lock that is never given back, as nothing else uses DS. */
+/* Makes `b` the key that signs: a PSA key whose material is a pointer to the
+ * encrypted parameters, kept for the rest of this boot. PKCS#1 v1.5 and, for
+ * TLS 1.3, RSA-PSS, as ESP-IDF's own TLS layer sets it up. */
 static int ds_activate(ds_blob_t *b)
 {
     if (s_ds != NULL) {
@@ -601,72 +596,126 @@ static int ds_activate(ds_blob_t *b)
     s_ds_ctx.esp_ds_data = &b->data;
     s_ds_ctx.efuse_key_id = (uint8_t)b->block;
     s_ds_ctx.rsa_length_bits = (uint16_t)b->bits;
-    if (esp_ds_init_data_ctx(&s_ds_ctx) != ESP_OK) {
+    esp_rsa_ds_opaque_key_t key = {.ds_data_ctx = &s_ds_ctx};
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attr, PSA_KEY_TYPE_RSA_KEY_PAIR);
+    psa_set_key_bits(&attr, b->bits);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_SIGN_HASH);
+    psa_set_key_algorithm(&attr, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_ANY_HASH));
+    psa_set_key_enrollment_algorithm(&attr, PSA_ALG_RSA_PSS(PSA_ALG_ANY_HASH));
+    psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_ESP_RSA_DS_VOLATILE);
+    if (fc_crypto_init() != 0 ||
+        psa_import_key(&attr, (const uint8_t *)&key, sizeof(key), &s_ds_key) != PSA_SUCCESS) {
+        s_ds_key = PSA_KEY_ID_NULL;
         return -1;
     }
-    mbedtls_rsa_init(&s_ds_rsa);
     s_ds = b;
     return 0;
 }
 
-/* DS operands for an RSA key (little-endian words): the private exponent,
- * the modulus, Rb = 2^(2*bits) mod N and M' = -N^-1 mod 2^32. */
-static int ds_operands(mbedtls_rsa_context *rsa, esp_ds_p_data_t *p)
+/* Big numbers as the DS peripheral takes them: little-endian 32-bit words. */
+#define DS_WORDS (ESP_DS_SIGNATURE_MAX_BIT_LEN / 32)
+
+/* The next INTEGER of a DER structure at *p, as `words` little-endian words. */
+static int der_integer_le(unsigned char **p, const unsigned char *end, uint32_t *out, size_t words)
 {
-    size_t bits = mbedtls_rsa_get_bitlen(rsa);
-    mbedtls_mpi n, d, r, t;
-    mbedtls_mpi_init(&n);
-    mbedtls_mpi_init(&d);
-    mbedtls_mpi_init(&r);
-    mbedtls_mpi_init(&t);
-    int rc = mbedtls_rsa_export(rsa, &n, NULL, NULL, &d, NULL);
-    if (rc == 0) {
-        rc = mbedtls_mpi_lset(&t, 1);
+    size_t len = 0;
+    if (mbedtls_asn1_get_tag(p, end, &len, MBEDTLS_ASN1_INTEGER) != 0) {
+        return -1;
     }
-    if (rc == 0) {
-        rc = mbedtls_mpi_shift_l(&t, 2 * bits);
+    const unsigned char *v = *p;
+    *p += len;
+    while (len > 0 && *v == 0) {
+        v++;
+        len--;
     }
-    if (rc == 0) {
-        rc = mbedtls_mpi_mod_mpi(&r, &t, &n);
+    if (len > words * 4) {
+        return -1;
     }
-    if (rc == 0) {
-        rc = mbedtls_mpi_write_binary_le(&d, (unsigned char *)p->Y, bits / 8);
+    memset(out, 0, words * 4);
+    for (size_t i = 0; i < len; i++) {
+        out[i / 4] |= (uint32_t)v[len - 1 - i] << (8 * (i % 4));
     }
-    if (rc == 0) {
-        rc = mbedtls_mpi_write_binary_le(&n, (unsigned char *)p->M, bits / 8);
+    return 0;
+}
+
+/* r = 2^(2 * 32 * words) mod n, for an odd n with its top bit set: doubling
+ * 1 that many times, taking n off whenever the value reaches it. */
+static void ds_rb(const uint32_t *n, size_t words, uint32_t *r)
+{
+    memset(r, 0, words * 4);
+    r[0] = 1;
+    for (size_t i = 0; i < 2 * 32 * words; i++) {
+        uint32_t carry = 0;
+        for (size_t w = 0; w < words; w++) {
+            uint32_t next = r[w] >> 31;
+            r[w] = (r[w] << 1) | carry;
+            carry = next;
+        }
+        int ge = carry != 0;
+        if (!ge) {
+            ge = 1;
+            for (size_t w = words; w-- > 0;) {
+                if (r[w] != n[w]) {
+                    ge = r[w] > n[w];
+                    break;
+                }
+            }
+        }
+        if (ge) {
+            uint32_t borrow = 0;
+            for (size_t w = 0; w < words; w++) {
+                uint64_t d = (uint64_t)r[w] - n[w] - borrow;
+                r[w] = (uint32_t)d;
+                borrow = (uint32_t)(d >> 63);
+            }
+        }
     }
-    if (rc == 0) {
-        rc = mbedtls_mpi_write_binary_le(&r, (unsigned char *)p->Rb, bits / 8);
+}
+
+/* DS operands for an RSA key (little-endian words): the private exponent,
+ * the modulus, Rb = 2^(2*bits) mod N and M' = -N^-1 mod 2^32. The key comes
+ * as the DER of RSAPrivateKey ::= SEQUENCE { version, n, e, d, ... }. */
+static int ds_operands(mbedtls_pk_context *pk, size_t bits, esp_ds_p_data_t *p)
+{
+    size_t words = bits / 32, cap = 2400; /* an RSA-4096 key is about 2350 bytes */
+    unsigned char *der = malloc(cap);
+    uint32_t *e = malloc(DS_WORDS * 4);
+    int rc = -1;
+    int len = der != NULL && e != NULL ? mbedtls_pk_write_key_der(pk, der, cap) : -1;
+    if (len > 0) {
+        unsigned char *q = der + cap - len; /* written at the end of the buffer */
+        const unsigned char *end = der + cap;
+        size_t l = 0;
+        uint32_t version[1];
+        if (mbedtls_asn1_get_tag(&q, end, &l, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) == 0 &&
+            der_integer_le(&q, end, version, 1) == 0 && der_integer_le(&q, end, (uint32_t *)p->M, words) == 0 &&
+            der_integer_le(&q, end, e, DS_WORDS) == 0 && der_integer_le(&q, end, (uint32_t *)p->Y, words) == 0 &&
+            (p->M[0] & 1) != 0 && (p->M[words - 1] >> 31) != 0) {
+            ds_rb((const uint32_t *)p->M, words, (uint32_t *)p->Rb);
+            uint32_t n0 = p->M[0], inv = n0; /* n0 * inv = 1 mod 2^3, and twice the bits each round */
+            for (int i = 0; i < 5; i++) {
+                inv *= 2u - n0 * inv;
+            }
+            p->M_prime = (uint32_t)(0u - inv);
+            p->length = (uint32_t)(words - 1);
+            rc = 0;
+        }
     }
-    if (rc == 0) {
-        rc = mbedtls_mpi_lset(&t, 1);
+    if (der != NULL) {
+        mbedtls_platform_zeroize(der, cap);
     }
-    if (rc == 0) {
-        rc = mbedtls_mpi_shift_l(&t, 32);
-    }
-    if (rc == 0) {
-        rc = mbedtls_mpi_inv_mod(&r, &n, &t);
-    }
-    if (rc == 0) {
-        uint32_t inv = 0;
-        rc = mbedtls_mpi_write_binary_le(&r, (unsigned char *)&inv, sizeof(inv));
-        p->M_prime = (uint32_t)(0u - inv);
-        p->length = (uint32_t)(bits / 32 - 1);
-    }
-    mbedtls_mpi_free(&n);
-    mbedtls_mpi_free(&d);
-    mbedtls_mpi_free(&r);
-    mbedtls_mpi_free(&t);
+    free(der);
+    free(e);
     return rc;
 }
 
 int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
 {
-    if (mbedtls_pk_get_type(pk) != MBEDTLS_PK_RSA) {
+    if (!PSA_KEY_TYPE_IS_RSA(mbedtls_pk_get_key_type(pk))) {
         return -1;
     }
-    mbedtls_rsa_context *rsa = mbedtls_pk_rsa(*pk);
-    size_t bits = mbedtls_rsa_get_bitlen(rsa);
+    size_t bits = mbedtls_pk_get_bitlen(pk);
     if (bits % 32 != 0 || bits > ESP_DS_SIGNATURE_MAX_BIT_LEN) {
         ESP_LOGE(TAG, "DS: RSA-%u not supported", (unsigned)bits);
         return -1;
@@ -678,7 +727,7 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     esp_ds_p_data_t *p = calloc(1, sizeof(*p));
     ds_blob_t *b = calloc(1, sizeof(*b));
     uint8_t key[32], iv[ESP_DS_IV_LEN];
-    int rc = (p == NULL || b == NULL) ? -1 : ds_operands(rsa, p);
+    int rc = (p == NULL || b == NULL) ? -1 : ds_operands(pk, bits, p);
     if (rc == 0) {
         esp_fill_random(key, sizeof(key));
         esp_fill_random(iv, sizeof(iv));
@@ -703,22 +752,22 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     }
     pthread_mutex_unlock(&s_ds_lock);
     /* A signature made by the peripheral, checked with the public key,
-     * before the software copy of the key is gone. */
+     * before the software copy of the key is gone. RSA-PSS: what TLS 1.3
+     * signs with. */
     if (rc == 0) {
         mbedtls_pk_context hw;
         mbedtls_pk_init(&hw);
         unsigned char hash[32], sig[ESP_DS_SIGNATURE_MAX_BIT_LEN / 8];
         size_t sig_len = 0;
         esp_fill_random(hash, sizeof(hash));
-        rc = fc_port_hwkey_pk(&hw);
+        rc = fc_port_hwkey_pk(&hw, pk);
         if (rc == 0) {
-            rc = mbedtls_pk_sign_ext(MBEDTLS_PK_RSASSA_PSS, &hw, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sizeof(sig),
-                                     &sig_len, esp_rng, NULL);
+            rc = mbedtls_pk_sign_ext(MBEDTLS_PK_SIGALG_RSA_PSS, &hw, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig,
+                                     sizeof(sig), &sig_len);
         }
         int signed_ok = rc == 0;
         if (rc == 0) {
-            const mbedtls_pk_rsassa_pss_options pss = {MBEDTLS_MD_SHA256, MBEDTLS_RSA_SALT_LEN_ANY};
-            rc = mbedtls_pk_verify_ext(MBEDTLS_PK_RSASSA_PSS, &pss, pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig,
+            rc = mbedtls_pk_verify_ext(MBEDTLS_PK_SIGALG_RSA_PSS, pk, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig,
                                        sig_len);
         }
         mbedtls_pk_free(&hw);
@@ -740,7 +789,7 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     return rc == 0 ? 0 : -1;
 }
 
-int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk, const struct mbedtls_pk_context *pub)
 {
     pthread_mutex_lock(&s_ds_lock);
     int rc = 0;
@@ -756,10 +805,20 @@ int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
         }
     }
     pthread_mutex_unlock(&s_ds_lock);
-    if (rc != 0) {
+    /* A context that wraps a PSA key asks the key for its public half, and
+     * the DS peripheral has none to give. With the caller's copy already in
+     * the context it is not asked: what ESP-IDF's TLS layer does too
+     * (esp_tls_mbedtls.c), through fields mbedTLS 4.1 keeps private. */
+    size_t pub_len = pub != NULL ? pub->MBEDTLS_PRIVATE(pub_raw_len) : 0;
+    if (rc != 0 || pub_len == 0 || pub_len > sizeof(pk->MBEDTLS_PRIVATE(pub_raw)) ||
+        !PSA_KEY_TYPE_IS_RSA(mbedtls_pk_get_key_type(pub))) {
         return -1;
     }
-    return mbedtls_pk_setup_rsa_alt(pk, &s_ds_rsa, NULL, esp_ds_rsa_sign, esp_ds_get_keylen) == 0 ? 0 : -1;
+    memcpy(pk->MBEDTLS_PRIVATE(pub_raw), pub->MBEDTLS_PRIVATE(pub_raw), pub_len);
+    pk->MBEDTLS_PRIVATE(pub_raw_len) = pub_len;
+    pk->MBEDTLS_PRIVATE(bits) = pub->MBEDTLS_PRIVATE(bits);
+    pk->MBEDTLS_PRIVATE(psa_type) = PSA_KEY_TYPE_RSA_PUBLIC_KEY;
+    return mbedtls_pk_wrap_psa(pk, s_ds_key) == 0 ? 0 : -1;
 }
 
 /* The eFuse block stays used: a key block can be burned only once. */
@@ -775,49 +834,86 @@ static const char *hwkey_info(void)
 #elif CONFIG_FC_DEVICE_KEY_ECDSA
 /* The device key in the ECDSA peripheral (ESP32-C5, H2, P4): a P-256 key in
  * an eFuse key block that only the peripheral reads. */
-#include "ecdsa/ecdsa_alt.h"
 #include "esp_random.h"
-#include "mbedtls/ecdsa.h"
-#include "mbedtls/ecp.h"
+#include "mbedtls/asn1.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/platform_util.h"
+#include "psa_crypto_driver_esp_ecdsa.h"
 
 #define KV_ECDSA "hwkey.ecdsa"
 
 static pthread_mutex_t s_ecdsa_lock = PTHREAD_MUTEX_INITIALIZER;
-static int s_ecdsa_blk = -1; /* eFuse block (esp_efuse_block_t) of the key in use */
-
-static int esp_rng(void *ctx, unsigned char *buf, size_t len)
-{
-    esp_fill_random(buf, len);
-    return 0;
-}
+static int s_ecdsa_blk = -1;                       /* eFuse block (esp_efuse_block_t) of the key in use */
+static psa_key_id_t s_ecdsa_key = PSA_KEY_ID_NULL; /* signs with the key in s_ecdsa_key_blk ... */
+static int s_ecdsa_key_blk = -1;                   /* ... through ESP-IDF's ECDSA driver */
 
 int fc_port_hwkey_bits(void)
 {
     return FC_HWKEY_ECDSA_P256;
 }
 
-/* A context that signs with the key in `blk`: it holds no private key. */
+/* A context that signs with the key in `blk`: it holds no private key, only
+ * a PSA key that names the block, kept for the rest of this boot. */
 static int ecdsa_pk(mbedtls_pk_context *pk, int blk)
 {
     if (blk < EFUSE_BLK_KEY0 || blk >= EFUSE_BLK_KEY_MAX ||
         esp_efuse_get_key_purpose((esp_efuse_block_t)blk) != ESP_EFUSE_KEY_PURPOSE_ECDSA_KEY) {
         return -1;
     }
-    esp_ecdsa_pk_conf_t conf = {
-        .grp_id = MBEDTLS_ECP_DP_SECP256R1,
-        .efuse_block = (uint8_t)blk,
-#if SOC_ECDSA_SUPPORT_EXPORT_PUBKEY
-        .load_pubkey = true,
+    pthread_mutex_lock(&s_ecdsa_lock);
+    if (s_ecdsa_key != PSA_KEY_ID_NULL && s_ecdsa_key_blk != blk) {
+        psa_destroy_key(s_ecdsa_key);
+        s_ecdsa_key = PSA_KEY_ID_NULL;
+    }
+    if (s_ecdsa_key == PSA_KEY_ID_NULL) {
+        esp_ecdsa_opaque_key_t key = {.curve = ESP_ECDSA_CURVE_SECP256R1, .efuse_block = (uint8_t)blk};
+        psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+        psa_set_key_type(&attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+        psa_set_key_bits(&attr, 256);
+        psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_SIGN_HASH);
+#if CONFIG_MBEDTLS_ECDSA_DETERMINISTIC && SOC_ECDSA_SUPPORT_DETERMINISTIC_MODE
+        psa_set_key_algorithm(&attr, PSA_ALG_DETERMINISTIC_ECDSA(PSA_ALG_SHA_256));
+#else
+        psa_set_key_algorithm(&attr, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
 #endif
-    };
-    return esp_ecdsa_set_pk_context(pk, &conf) == 0 ? 0 : -1;
+        psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_ESP_ECDSA_VOLATILE);
+        if (fc_crypto_init() != 0 ||
+            psa_import_key(&attr, (const uint8_t *)&key, sizeof(key), &s_ecdsa_key) != PSA_SUCCESS) {
+            s_ecdsa_key = PSA_KEY_ID_NULL;
+        }
+        s_ecdsa_key_blk = blk;
+    }
+    psa_key_id_t id = s_ecdsa_key;
+    pthread_mutex_unlock(&s_ecdsa_lock);
+    return id != PSA_KEY_ID_NULL && mbedtls_pk_wrap_psa(pk, id) == 0 ? 0 : -1;
+}
+
+/* The private scalar of a P-256 key, big-endian, from the DER of
+ * ECPrivateKey ::= SEQUENCE { version INTEGER, privateKey OCTET STRING, ... }. */
+static int ecdsa_scalar(mbedtls_pk_context *pk, uint8_t d[32])
+{
+    unsigned char der[160];
+    int len = mbedtls_pk_write_key_der(pk, der, sizeof(der));
+    int rc = -1;
+    if (len > 0) {
+        unsigned char *q = der + sizeof(der) - len; /* written at the end of the buffer */
+        const unsigned char *end = der + sizeof(der);
+        size_t l = 0;
+        int version = 0;
+        if (mbedtls_asn1_get_tag(&q, end, &l, MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) == 0 &&
+            mbedtls_asn1_get_int(&q, end, &version) == 0 &&
+            mbedtls_asn1_get_tag(&q, end, &l, MBEDTLS_ASN1_OCTET_STRING) == 0 && l == 32) {
+            memcpy(d, q, 32);
+            rc = 0;
+        }
+    }
+    mbedtls_platform_zeroize(der, sizeof(der));
+    return rc;
 }
 
 int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
 {
-    if (mbedtls_pk_get_type(pk) != MBEDTLS_PK_ECKEY || mbedtls_pk_get_bitlen(pk) != 256) {
+    if (!PSA_KEY_TYPE_IS_ECC(mbedtls_pk_get_key_type(pk)) || mbedtls_pk_get_bitlen(pk) != 256) {
         return -1;
     }
     esp_efuse_block_t blk = hwkey_free_block(true);
@@ -825,8 +921,7 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
         return -1;
     }
     uint8_t d[32];
-    size_t len = 0;
-    int rc = mbedtls_ecp_write_key_ext(mbedtls_pk_ec(*pk), &len, d, sizeof(d)) == 0 && len == sizeof(d) ? 0 : -1;
+    int rc = ecdsa_scalar(pk, d);
     if (rc == 0) {
         /* The peripheral takes the scalar little-endian. From here on the
          * key exists in this block, and in `pk` until the caller frees it. */
@@ -846,12 +941,12 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     if (rc == 0) {
         mbedtls_pk_context hw;
         mbedtls_pk_init(&hw);
-        unsigned char hash[32], sig[MBEDTLS_ECDSA_MAX_LEN];
+        unsigned char hash[32], sig[MBEDTLS_PK_SIGNATURE_MAX_SIZE];
         size_t sig_len = 0;
         esp_fill_random(hash, sizeof(hash));
         rc = ecdsa_pk(&hw, blk);
         if (rc == 0) {
-            rc = mbedtls_pk_sign(&hw, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sizeof(sig), &sig_len, esp_rng, NULL);
+            rc = mbedtls_pk_sign(&hw, MBEDTLS_MD_SHA256, hash, sizeof(hash), sig, sizeof(sig), &sig_len);
         }
         int signed_ok = rc == 0;
         if (rc == 0) {
@@ -877,7 +972,7 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     return rc == 0 ? 0 : -1;
 }
 
-int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk, const struct mbedtls_pk_context *pub)
 {
     pthread_mutex_lock(&s_ecdsa_lock);
     if (s_ecdsa_blk < 0) {
@@ -919,7 +1014,7 @@ int fc_port_hwkey_seal(struct mbedtls_pk_context *pk)
     return -1;
 }
 
-int fc_port_hwkey_pk(struct mbedtls_pk_context *pk)
+int fc_port_hwkey_pk(struct mbedtls_pk_context *pk, const struct mbedtls_pk_context *pub)
 {
     return -1;
 }

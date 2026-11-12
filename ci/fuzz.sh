@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the libFuzzer targets (tests/fuzz) and runs each for a while.
 # Needs clang with libFuzzer (Linux: apt clang; macOS: brew install llvm) and
-# mbedTLS 3.6. Usage: [FUZZ_SECONDS=60] [CC=clang] ci/fuzz.sh [cmake args...]
+# mbedTLS 4. Usage: [FUZZ_SECONDS=60] [CC=clang] ci/fuzz.sh [cmake args...]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

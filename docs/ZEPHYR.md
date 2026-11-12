@@ -56,20 +56,21 @@ flash file across restarts.
 | | |
 |---|---|
 | Kernel, threads, clock | Zephyr, through its POSIX layer: the core uses pthreads and `clock_gettime` as elsewhere. |
-| TLS, X.509 | Zephyr's mbedTLS module, 3.6, the version ESP-IDF 5.5 has. |
+| TLS, X.509 | Zephyr's mbedTLS module, 4.1, the version ESP-IDF 6.0 has; its cryptography is PSA's (TF-PSA-Crypto). |
 | Network | Zephyr's sockets; `port/zephyr/fc_net_zephyr.c` gives mbedTLS its `mbedtls_net_*` functions on them. On `native_sim` the sockets are the host's (no TAP interface to set up). |
 | Storage | LittleFS on the `fc_storage` flash partition: one file per key, written through a rename. |
 | Credentials | The `fc_creds` partition: `"FCC1"`, a length and a JSON object with the fields of the ESP-IDF firmware's partition (`deploy/provision.py --format zephyr`). |
-| C heap | `port/zephyr/fc_heap_zephyr.c`, a heap the port owns, so that the device can report how much is free (`memFreeBytes`, `memMinFreeBytes`); Zephyr 4.3's malloc does not say. |
+| C heap | `port/zephyr/fc_heap_zephyr.c`, a heap the port owns, so that the device can report how much is free (`memFreeBytes`, `memMinFreeBytes`); Zephyr's malloc does not say. |
 | WASM | WAMR's Zephyr platform, fast interpreter, as in the other builds. |
 | Firmware updates | MCUboot's two slots (boards built with it): the image is streamed into the second, read back, and asked for as a test; MCUboot checks its signature, swaps the slots, and swaps them back unless the agent confirms the image once it has reached Flight Control. `native_sim` has no MCUboot and no updates. |
 | Firmware deltas | detools, in the core as elsewhere; the port reads the running image from the first slot. |
 
-## Why Zephyr 4.3
+## Zephyr 4.5
 
-`third_party/fetch-zephyr.sh` pins v4.3.2. From v4.4 Zephyr ships mbedTLS 4,
-whose API is PSA only; the core is written for 3.6, which ESP-IDF 5.5 also
-has. Moving both ports to mbedTLS 4 is a job of its own.
+`third_party/fetch-zephyr.sh` pins v4.5.0, which has mbedTLS 4.1.1, the same
+as ESP-IDF 6.0.3: the core is written for mbedTLS 4, whose cryptography is
+PSA only. (The port was first made on Zephyr 4.3, the last release with
+mbedTLS 3.6, when the core was written for that.)
 
 ## What the port taught the core
 
@@ -113,7 +114,7 @@ BOARD=rpi_pico/rp2040/w BUILD_DIR=build-pico-usb zephyr/build.sh -S cdc-acm-cons
 zephyr/flash-pico.sh .secrets
 ```
 
-The first fetches the ARM toolchain (2.3 GB) and the WiFi chip's firmware;
+The first fetches the ARM toolchain (1.9 GB) and the WiFi chip's firmware;
 the last writes one UF2 with the application and the credentials (the WiFi
 network is the one in `firmware/sdkconfig.wifi`, or `--wifi-ssid`) and prints
 the console. The board must be in its bootloader: plugged in with BOOTSEL
@@ -135,7 +136,7 @@ firmware/fw-push.py <registry>/flightctl-mcu/fw:v2 rpi_pico_w=zephyr/build-pico-
 
 The board `rpi_pico/rp2040/w/mcuboot` is Zephyr's layout for MCUboot on the
 Pico: the bootloader in the first 64 KB, two slots of 832 KB (the application
-is 734 KB), and the last 320 KB for the credentials and the storage, where
+is 723 KB), and the last 320 KB for the credentials and the storage, where
 the build without MCUboot has them too. The build makes MCUboot and the
 application together (sysbuild) and signs the application with
 `.secrets/mcuboot-signing.pem`, an ECDSA P-256 key made the first time:
@@ -144,7 +145,8 @@ the application and the credentials; after that a release is the signed
 image, pushed for the platform the board's configuration names
 (`CONFIG_FC_FW_PLATFORM`), and `spec.os.image` in the fleet, as on ESP32.
 
-Seen on the board, from one release to the next:
+Seen on the board, from one release to the next (with Zephyr 4.3; the last
+two rows with 4.5):
 
 | | |
 |---|---|
@@ -152,6 +154,8 @@ Seen on the board, from one release to the next:
 | The same after a restart | still the new firmware: the confirmation is kept |
 | A firmware that cannot reach Flight Control | given up after its 30 s (150 by default): the device restarts, MCUboot puts the previous firmware back, and that one reports the failure and does not try the image again |
 | A delta (8.6 KB for the 734 KB image, 1.2%) | downloaded and the image rebuilt from the running one in 10 s; then as a whole image. `firmwareDownload: delta 8 of 717 KB` |
+| From the Zephyr 4.3 build to the 4.5 one (and mbedTLS 3.6 to 4.1) | over the air, by the MCUboot already on the board: a delta of 232 KB for the 723 KB image (33%: little of the code is where it was). The device kept its identity, certificate and app |
+| A delta between two 4.5 builds (7.5 KB, 1.0%) | downloaded in 9 s; confirmed, and still the new firmware after a restart |
 
 Not done: MCUboot's own protection against older images (the device takes
 any image signed with the key), and MCUboot's console (it logs on the UART
@@ -167,7 +171,9 @@ Memory, of 264 KB: 111 KB of static data in this build (the WiFi driver's and
 the network stack's buffers, the USB console), 45 KB of kernel heap (thread
 stacks, and 14 KB the WiFi driver and USB take), 110 KB of C heap. With both
 TLS connections open and the app running, 34 KB of that heap were free, and
-24 KB at the least. It fits because the stacks are sized from what was
+24 KB at the least; with Zephyr 4.5 and mbedTLS 4, 31 KB and 22.5 KB. (Zephyr
+4.5 gives the WiFi driver's twenty packet buffers 2400 bytes each, 16 KB more
+than there is: the build keeps them at 1600, as they were.) It fits because the stacks are sized from what was
 measured on the board: the agent's threads use 5.6 KB at most (installing an
 app) and get 10 KB, not the 24 KB the core asks for by default; the main
 thread uses 3 KB and gets 8 KB.
@@ -175,18 +181,21 @@ thread uses 3 KB and gets 8 KB.
 Open on this board:
 
 - **The entropy source is not a certified one** (below).
+- **The console on USB loses the end of long lines** with Zephyr 4.5's USB
+  stack: lines were seen cut after 64 bytes. Not looked into.
 - **Never run there**: certificate renewal, days of uptime.
 
 What the board taught the port:
 
 - **Flash writes of less than a page did nothing** on this board with Zephyr
   4.3.2: they reported success, and the data was not there. LittleFS lost
-  what it wrote, and MCUboot could not mark a slot. The cause is in Zephyr's
-  code for the RP2040's flash: the function that selects the chip is called
-  with a value that always means "not selected". Four lines, fixed by
-  `third_party/patches/hal_rpi_pico-flash-short-writes.patch`, which the fetch
-  and build scripts apply. LittleFS still writes whole pages here
-  (`CONFIG_FS_LITTLEFS_PROG_SIZE=256`), as it was tried.
+  what it wrote, and MCUboot could not mark a slot. The cause was in Zephyr's
+  code for the RP2040's flash: the function that selects the chip was called
+  with a value that always means "not selected". Four lines, which this
+  repository patched while it was on Zephyr 4.3; Zephyr has them right from
+  4.4. LittleFS still writes whole pages here
+  (`CONFIG_FS_LITTLEFS_PROG_SIZE=256`), as it was tried, and the port still
+  reads a firmware slot back before it asks MCUboot to try it.
 - **A stack that cannot be had becomes a 1 KB stack.** Zephyr takes a
   thread's stack from the kernel heap when its size is set; if that fails the
   thread keeps the default. The core now checks, and says so instead of
@@ -195,13 +204,13 @@ What the board taught the port:
   logged at the next boot: Zephyr's default is to stop for ever, silently
   when the console is on USB.
 - **Entropy from the ring oscillator.** The RP2040 has no random generator
-  and Zephyr 4.3 no entropy driver for it. TLS and the device key take their
-  entropy from the chip's ring oscillator, sixteen samples folded into each
-  bit (`port/zephyr/fc_entropy_rp2.c`), and the port refuses to start TLS if
-  the oscillator gives the same bit every time. It is what the Pico SDK does
-  too, and it is not a certified source. The rest of Zephyr (TCP sequence
-  numbers, DNS query ids) still uses the test generator, which is
-  predictable.
+  and Zephyr no entropy driver for it (its driver for Raspberry Pi chips is
+  for the RP2350). The port has one (`port/zephyr/fc_entropy_rp2.c`, the node
+  in the board's overlay): the chip's ring oscillator, sixteen samples folded
+  into each bit, which gives nothing if the oscillator returns the same bit
+  every time. PSA (TLS, the device key) and the rest of Zephyr (TCP sequence
+  numbers, DNS query ids) seed their generators from it. It is what the Pico
+  SDK does too, and it is not a certified source.
 - **The chip joins any access point of the network, not the nearest.** On a
   network carried by three access points, the board joined a far one (-75
   dBm, against -42 for the near one) on 4 boots of 20, and on each of those

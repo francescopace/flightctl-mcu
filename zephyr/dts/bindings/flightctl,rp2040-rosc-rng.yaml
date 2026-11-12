@@ -1,0 +1,8 @@
+# The RP2040's ring oscillator as Zephyr's entropy device
+# (port/zephyr/fc_entropy_rp2.c). The board overlay has the node and makes it
+# the chosen zephyr,entropy.
+description: Random bits from the RP2040's ring oscillator
+
+compatible: "flightctl,rp2040-rosc-rng"
+
+include: base.yaml

@@ -41,10 +41,13 @@ for an installer:
 - with Espressif's provisioning app (ESP SoftAP Prov, iOS and Android): join
   `FC-xxxxxx` with the proof of possession as its password, then pick the
   site's network;
-- with ESP-IDF's `esp_prov`, from a laptop on that access point:
+- with Espressif's `esp_prov`, from a laptop on that access point. It comes
+  with the `network_provisioning` component (the firmware's WiFi provisioning
+  since ESP-IDF 6, which no longer has it); `ci/esp-prov.sh` fetches it and
+  runs it:
 
   ```bash
-  python $IDF_PATH/tools/esp_prov/esp_prov.py --transport softap --service_name 192.168.4.1:80 --sec_ver 1 --pop <secret> --ssid <site network> --passphrase <password>
+  ci/esp-prov.sh 192.168.4.1:80 --pop <secret> --ssid <site network> --passphrase <password>
   ```
 
 The session is ESP-IDF's provisioning Security 1: an X25519 key exchange,
@@ -98,7 +101,7 @@ the run, as for a batch.
 
 An extra CI job does it over BLE (`PROV=ble ci/e2e-emu.sh`, C3, ble variant):
 `ci/ble-prov.py` runs Google's Bumble as the emulator's BLE controller and as
-the installer's phone, and ESP-IDF's esp_prov code for the session. A wrong
+the installer's phone, and Espressif's esp_prov code for the session. A wrong
 proof is refused there too. Once the device is online the test restarts the
 emulator without its BLE backend, on the flash the device wrote (with that
 backend it runs at less than half speed, too slow for the test's short-lived

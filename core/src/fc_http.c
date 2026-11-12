@@ -18,14 +18,12 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 
+#include "fc_crypto.h"
 #include "fc_port.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/entropy.h"
 #include "mbedtls/error.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
-#include "psa/crypto.h"
 
 #define FC_HTTP_MAX_RESPONSE (512 * 1024)
 #define FC_HTTP_MAX_HEADER   4096
@@ -66,8 +64,6 @@ static int count_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_
     return rc;
 }
 
-static mbedtls_entropy_context s_entropy;
-static mbedtls_ctr_drbg_context s_drbg;
 static int s_inited;
 
 int fc_http_global_init(void)
@@ -80,27 +76,15 @@ int fc_http_global_init(void)
      * the process (POSIX hosts; lwIP has no signals). */
     signal(SIGPIPE, SIG_IGN);
 #endif
-    /* TLS 1.3 in mbedTLS 3.x runs on PSA crypto. */
-    if (psa_crypto_init() != PSA_SUCCESS) {
-        fc_port_log(FC_LOG_ERROR, "psa_crypto_init failed");
-        return -1;
-    }
-    mbedtls_entropy_init(&s_entropy);
-    mbedtls_ctr_drbg_init(&s_drbg);
-    const char *pers = "flightctl-mcu";
-    int rc = mbedtls_ctr_drbg_seed(&s_drbg, mbedtls_entropy_func, &s_entropy,
-                                   (const unsigned char *)pers, strlen(pers));
-    if (rc != 0) {
-        fc_port_log(FC_LOG_ERROR, "ctr_drbg_seed: -0x%04x", -rc);
+    /* TLS, keys and the random generator are all PSA's: one that does not
+     * start (no entropy, for one) is found here, with a line in the log. */
+    unsigned char probe[4];
+    if (fc_random(probe, sizeof(probe)) != 0) {
+        fc_port_log(FC_LOG_ERROR, "the cryptography does not start (PSA: no random numbers)");
         return -1;
     }
     s_inited = 1;
     return 0;
-}
-
-mbedtls_ctr_drbg_context *fc_http_drbg(void)
-{
-    return &s_drbg;
 }
 
 static void log_mbedtls(const char *what, int rc)
@@ -201,7 +185,6 @@ static int conn_open(conn_t *c, const fc_http_target_t *t)
         mbedtls_ssl_conf_min_tls_version(&c->conf, MBEDTLS_SSL_VERSION_TLS1_3);
         mbedtls_ssl_conf_authmode(&c->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
         mbedtls_ssl_conf_ca_chain(&c->conf, &c->ca, NULL);
-        mbedtls_ssl_conf_rng(&c->conf, mbedtls_ctr_drbg_random, &s_drbg);
         mbedtls_ssl_conf_read_timeout(&c->conf, (uint32_t)t->timeout_s * 1000);
         if (t->cert_pem != NULL) {
             if ((rc = mbedtls_x509_crt_parse(&c->own, (const unsigned char *)t->cert_pem,
@@ -210,13 +193,12 @@ static int conn_open(conn_t *c, const fc_http_target_t *t)
                 return -1;
             }
             if (t->hw_key) {
-                if (fc_port_hwkey_pk(&c->key) != 0) {
+                if (fc_port_hwkey_pk(&c->key, &c->own.pk) != 0) {
                     fc_port_log(FC_LOG_ERROR, "device key in hardware unavailable");
                     return -1;
                 }
             } else if ((rc = mbedtls_pk_parse_key(&c->key, (const unsigned char *)t->key_pem,
-                                                  strlen(t->key_pem) + 1, NULL, 0, mbedtls_ctr_drbg_random,
-                                                  &s_drbg)) != 0) {
+                                                  strlen(t->key_pem) + 1, NULL, 0)) != 0) {
                 log_mbedtls("parse client key", rc);
                 return -1;
             }

@@ -6,7 +6,7 @@
 # Run after third_party/fetch-zephyr.sh. Uses west: this machine's, or the one
 # in the Zephyr build image.
 set -euo pipefail
-ZEPHYR_SDK_VERSION="${ZEPHYR_SDK_VERSION:-0.17.4}" # what Zephyr v4.3 asks for (SDK_VERSION)
+ZEPHYR_SDK_VERSION="${ZEPHYR_SDK_VERSION:-1.0.1}" # what Zephyr v4.5 asks for (SDK_VERSION)
 ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.29.1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WS="$ROOT/third_party/zephyr-ws"
