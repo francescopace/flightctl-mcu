@@ -47,10 +47,10 @@ What burns eFuses (Secure Boot, flash encryption, anti-rollback, key revocation)
 
 ## Milestone 3: beyond Espressif
 
-- **Zephyr port** of `port/`: done for what there is to try it on. On `native_sim` the agent passes the simulated device's end-to-end test against Flight Control, in CI, with the core unchanged ([ZEPHYR.md](ZEPHYR.md)). On a real Raspberry Pi Pico W (264 KB of RAM) it enrolls over WiFi, stays online, runs a signed WASM app and updates its firmware through MCUboot: a whole image, a delta, and the way back from an image that does not reach Flight Control. The board is a test bench, not a target (its entropy is the ring oscillator's, not a certified source). Not in CI: the Pico builds, which need the ARM toolchain.
+- **Zephyr port** of `port/`: done for what there is to try it on. On `native_sim` the agent passes the simulated device's end-to-end test against Flight Control, in CI, with the core unchanged ([ZEPHYR.md](ZEPHYR.md)). On a real Raspberry Pi Pico W (264 KB of RAM) it enrolls over WiFi, stays online, runs a signed WASM app and updates its firmware through MCUboot: a whole image, a delta, and the way back from an image that does not reach Flight Control. The board is a test bench, not a target (its entropy is the ring oscillator's, not a certified source). On a real ESP32-S3, the chip the ESP-IDF firmware also runs on, it enrolls, runs the app and updates its firmware, whole and as a delta; the way back was not tried there. Not in CI: the builds for boards, which need the ARM and Xtensa toolchains.
 - **Other links**: Ethernet, cellular (NB-IoT, LTE-M).
-- **Current foundations**: done. The core is written for mbedTLS 4, whose cryptography is PSA only, and both ports build on the releases that have it: ESP-IDF 6.0 and Zephyr 4.5, with the same mbedTLS 4.1.1 (before: mbedTLS 3.6, ESP-IDF 5.5, Zephyr 4.3). Device keys in hardware go through ESP-IDF's PSA drivers. Checked by the same tests as before, on the emulated chips and on the Pico W; not on ESP32 boards.
-- **Delta firmware updates**: done. A release can carry deltas from earlier releases (`fw-push.py --delta-from`); a device running one of those downloads the delta, 1 to 12% of the image in the cases measured, and rebuilds the new image from its own, checked against the signed digest; otherwise, or if anything fails, it downloads the image. detools' format (bsdiff, heatshrink), as in Espressif's `esp_delta_ota`, applied in the core, so the next ports get it too. See [DELTA.md](DELTA.md). On ESP32 chips emulator only, like Milestone 2; tried on a Raspberry Pi Pico W with Zephyr.
+- **Current foundations**: done. The core is written for mbedTLS 4, whose cryptography is PSA only, and both ports build on the releases that have it: ESP-IDF 6.0 and Zephyr 4.5, with the same mbedTLS 4.1.1 (before: mbedTLS 3.6, ESP-IDF 5.5, Zephyr 4.3). Device keys in hardware go through ESP-IDF's PSA drivers. The tests now run against Flight Control 1.4.0 (1.3.1 before), whose agent API is the same ([RESULTS.md](RESULTS.md#flight-control-140)); the other versions are in [DEPENDENCIES.md](DEPENDENCIES.md). Checked by the same tests as before, on the emulated chips, on the Pico W and on one ESP32 board, an S3 (enrollment, config, app, firmware whole and as a delta); not on the other five.
+- **Delta firmware updates**: done. A release can carry deltas from earlier releases (`fw-push.py --delta-from`); a device running one of those downloads the delta, 1 to 12% of the image in the cases measured, and rebuilds the new image from its own, checked against the signed digest; otherwise, or if anything fails, it downloads the image. detools' format (bsdiff, heatshrink), as in Espressif's `esp_delta_ota`, applied in the core, so the next ports get it too. See [DELTA.md](DELTA.md). Tried on a Raspberry Pi Pico W with Zephyr and on an ESP32-S3 with both ports; the other ESP32 chips emulator only, like Milestone 2.
 
 ## Later
 
@@ -67,6 +67,9 @@ Raised as proposals, in parallel with the milestones. Details in [RESULTS.md](RE
 5. No free-form status per app, full status on every update (most of the remaining idle traffic), `os.image` compared as a string.
 6. Enrollment certificates cannot be revoked: the server checks only their signer and expiry.
 7. Devices with RSA keys cannot enroll: the internal CA copies the request's signature algorithm, which fails with its ECDSA key.
+8. Since 1.4, `customInfo` is copied into the device's labels by default, and any change in it logs an event: a device that reports counters there writes one at every status.
+
+Items 1, 3, 6 and 7 are as they were in the source of 1.4.0.
 
 Work on the agent that waits for these:
 
@@ -81,7 +84,7 @@ Work on the agent that waits for these:
 
 ## Reference: agent API as used
 
-Checked against Flight Control 1.3.1:
+Checked against Flight Control 1.3.1 and 1.4.0:
 
 - `POST/GET enrollmentrequests`, `POST/GET certificatesigningrequests`;
 - `GET devices/{name}/rendered?knownRenderedVersion=`, a long-poll of about 4 minutes that returns `204` when nothing changed;

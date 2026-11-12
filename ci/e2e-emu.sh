@@ -186,13 +186,13 @@ else
   SUFFIX="-e2e"
   if [[ -z "${SECURE_BOOT_KEY:-}" ]]; then
     export SECURE_BOOT_KEY="$WORK/secure_boot_test.pem"
-    python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$SECURE_BOOT_KEY" >/dev/null
+    python3 -m espsecure generate-signing-key --version 2 --scheme rsa3072 "$SECURE_BOOT_KEY" >/dev/null
   fi
   if [[ "$SECURE" == 1 ]]; then
     NEXT_KEY="$WORK/secure_boot_next.pem"
     SPARE_KEY="$WORK/secure_boot_spare.pem"
     for k in "$NEXT_KEY" "$SPARE_KEY"; do
-      python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$k" >/dev/null
+      python3 -m espsecure generate-signing-key --version 2 --scheme rsa3072 "$k" >/dev/null
     done
     SV=1
   else
@@ -211,7 +211,7 @@ elif [[ -z "${PREBUILT:-}" ]]; then
   build "build-$CHIP-e2e-release" e2e-release release
   VARIANT_DIR="firmware/build-$CHIP-e2e-release-signed"
   mkdir -p "$VARIANT_DIR"
-  python3 -m espsecure sign_data --version 2 --keyfile "$SECURE_BOOT_KEY" \
+  python3 -m espsecure sign-data --version 2 --keyfile "$SECURE_BOOT_KEY" \
     --output "$VARIANT_DIR/flightctl_mcu_fw.bin" "firmware/build-$CHIP-e2e-release/flightctl_mcu_fw.bin" >/dev/null
 fi
 DEBUG_DIR="firmware/build-$CHIP$SUFFIX${DEBUG_V:+-$DEBUG_V}"
@@ -249,8 +249,8 @@ if [[ "$SECURE" == 1 ]]; then
   # cosign-signed like any other: only Secure Boot can stop it.
   OTHER_DIR="firmware/build-$CHIP$SUFFIX-$RELEASE_V-otherkey"
   mkdir -p "$OTHER_DIR"
-  python3 -m espsecure generate_signing_key --version 2 --scheme rsa3072 "$WORK/other_key.pem" >/dev/null
-  python3 -m espsecure sign_data --version 2 --keyfile "$WORK/other_key.pem" \
+  python3 -m espsecure generate-signing-key --version 2 --scheme rsa3072 "$WORK/other_key.pem" >/dev/null
+  python3 -m espsecure sign-data --version 2 --keyfile "$WORK/other_key.pem" \
     --output "$OTHER_DIR/flightctl_mcu_fw.bin" "$RELEASE_DIR/flightctl_mcu_fw-unsigned.bin" >/dev/null
   firmware/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}$RELEASE_V-otherkey" "$REGISTRY/flightctl-mcu/fw:otherkey.$TAG" "$CHIP" >/dev/null
   rm -rf "$OTHER_DIR"
@@ -268,7 +268,7 @@ if [[ -n "${NEXT_KEY:-}" ]]; then
   # Key rotation: the release build signed with the next key only
   NEXT_DIR="firmware/build-$CHIP-e2e-$RELEASE_V-nextkey"
   mkdir -p "$NEXT_DIR"
-  python3 -m espsecure sign_data --version 2 --keyfile "$NEXT_KEY" \
+  python3 -m espsecure sign-data --version 2 --keyfile "$NEXT_KEY" \
     --output "$NEXT_DIR/flightctl_mcu_fw.bin" "$RELEASE_DIR/flightctl_mcu_fw-unsigned.bin" >/dev/null
   firmware/fw-push.py --variant "e2e-$RELEASE_V-nextkey" "$REGISTRY/flightctl-mcu/fw:nextkey.$TAG" "$CHIP" >/dev/null
   rm -rf "$NEXT_DIR"

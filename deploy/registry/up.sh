@@ -9,5 +9,5 @@ docker rm -f fc-registry >/dev/null 2>&1 || true
 docker run -d --name fc-registry --restart unless-stopped \
   -p "0.0.0.0:${PORT}:5000" -v fc-registry:/var/lib/registry \
   -e REGISTRY_STORAGE_DELETE_ENABLED=true \
-  docker.io/library/registry:2
+  docker.io/library/registry:3
 echo "registry on http://$(local_ip):${PORT}"

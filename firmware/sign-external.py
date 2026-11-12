@@ -49,7 +49,7 @@ def sign(image, pub_key, sign_cmd, append):
             f.write(hashlib.sha256(body).digest())
         cmd = sign_cmd.replace("{digest}", shlex.quote(digest)).replace("{signature}", shlex.quote(signature))
         subprocess.run(cmd, shell=True, check=True)
-        # espsecure's API: its command line (5.1) wants a private key file
+        # espsecure's API: its command line wants a private key file
         # even with a pre-calculated signature. It checks the signature
         # against the public key before it appends the block.
         out = os.path.join(tmp, "signed.bin")

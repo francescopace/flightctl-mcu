@@ -1,6 +1,6 @@
 # Results
 
-What has been built and measured so far: Espressif microcontrollers managed by **Flight Control 1.3.1** (upstream of Red Hat Edge Manager), with no Linux on the device and **no changes to the server**. The server ran on kind on a Mac.
+What has been built and measured so far: Espressif microcontrollers managed by **Flight Control 1.3.1** (upstream of Red Hat Edge Manager), with no Linux on the device and **no changes to the server**. The server ran on kind on a Mac. Since 12 November 2026 the server is **Flight Control 1.4.0** ([below](#flight-control-140)); the figures up to there are with 1.3.1.
 
 The work is split in milestones (see the [roadmap](ROADMAP.md)): the proof of concept (milestone 0, 5–6 November 2026) and the production foundations (milestone 1, 8 November 2026). Figures are from milestone 0 unless a section says otherwise.
 
@@ -144,6 +144,24 @@ Five of the six boards came back with a new device key, hence a new name, and we
 
 The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole sequence for the C3 and the C5, in CI too. Since the credentials moved out of the firmware (`fc_creds` partition), it tests the same images CI builds for the boards, provisioned for the test cluster: it boots the debug build, updates it over the air to the release build (72 KB free on the C3, against 58 KB for the debug build), and tries a broken build that cannot reach the server, which is rolled back once its confirmation window ends (150 s by default, 30 s in the test build).
 
+### ESP-IDF 6.0.3 on a board (ESP32-S3)
+
+12 November 2026, against Flight Control 1.4.0: the first run of the ESP-IDF 6 firmware (mbedTLS 4.1.1, cryptography through PSA) outside the emulator. One board, an ESP32-S3-DevKitC, erased, flashed over USB with the debug build (v4.0-dev) and provisioned with `deploy/provision.py`:
+
+| Step | Result |
+|---|---|
+| Enrollment | key generated on the chip, TLS 1.3 with the enrollment certificate, management certificate for a year |
+| Config and WASM app | config file written, the signed `alarm` app installed and running |
+| Firmware, whole image | 1181 KB downloaded in 5 s into the other slot, restarted, confirmed |
+| Firmware, as a delta | the release build (v4.0, 1000 KB) from a delta of 511 KB, rebuilt from the running image in 13 s, restarted, confirmed |
+| Memory (release build, app running) | 145 KB of heap free, 124 KB at the lowest |
+
+The delta is half of the image because it goes from the debug build to the release one, compiled differently; between two builds of the same kind it is 1 to 12% ([DELTA.md](DELTA.md)).
+
+Unplanned, and as designed: the board was first approved while the end-to-end test had the server issuing 2-minute certificates, the server restarted, the certificate expired, and at its next start the board dropped that identity and enrolled again under a new key (problem 13).
+
+Not run on the board: the way back from a broken image, the secure variant (it burns eFuses), the other five chips.
+
 ## Problems found and fixed
 
 1. **The rollout moved on while the canary was rebooting.**
@@ -199,6 +217,21 @@ The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole
     - Fix: the firmware builds only the ESP-IDF components it needs (`set(COMPONENTS main)`; the build fails if `json` comes back), and cJSON's nesting limit is 32 instead of 1000 (real documents use fewer than 10). The same config is now rejected with an error in Flight Control. Side effect: a clean firmware build takes under a minute instead of three.
     - Later, WiFi provisioning in the field needed ESP-IDF's `json` component: the firmware now links only ESP-IDF's cJSON, built with the same limit of 32 (`firmware/CMakeLists.txt`), and no longer ours.
 
+## Flight Control 1.4.0
+
+12 November 2026. The service on kind was upgraded in place from 1.3.1 with the Helm chart, with a Raspberry Pi Pico W enrolled and online: it stayed enrolled, came back `Online` and `UpToDate` by itself, and its free heap dipped from 22 to 17 KB at the lowest while the server restarted.
+
+- **The agent API is the same.** No path changed between the two releases, and the schemas only gained optional fields: `status.systemInfoStatus`, `status.os.lastDelta` and `deltaSize`, `spec.os.deltaImage` in the rendered spec, `systemInfo.osMode`. The agent sends none and ignores the last.
+- **Every end-to-end test passes unchanged**: the simulated device, Zephyr on `native_sim`, and the firmware in the emulator (C3 with SoftAP and with BLE provisioning, C3 and C5 secure). One run of the secure C3 failed at the step back to long-lived certificates and passed when run again; the first ran next to three other builds on the same machine, which is the likely cause (an emulator short of CPU, whose clock falls behind the server's) and was not proven.
+- **Flight Control now has deltas of its own**, for bootc images, made by the service. They are another mechanism: these devices find theirs in the release's index ([DELTA.md](DELTA.md)). `status.os.lastDelta` would be the place to report the outcome, instead of `customInfo`.
+- **cosign 3**, which GitHub's installer now gives, accepts the signatures `deploy/signing/sign.py` makes, as cosign 2 does.
+
+What changed for a deployment is the **label sync**. 1.4 installs `LabelSyncMapping` resources, and one of them copies every entry of `customInfo` into the device's labels (`custominfo.flightctl.io/<key>`). These devices report counters there: free heap, traffic, uptime. With the default, each status update rewrote the device's labels and logged two events ("label reconciliation was requested", "updated successfully (labels)"): 227 of 400 events on the test cluster, while the tests ran.
+
+`deploy/fleet/labelsync-custom-info.yaml` replaces that mapping with one that copies only what stays the same between firmware updates (device class, board, firmware and OS version, security state). The labels then stop changing, and so does the second event. The first is still logged whenever `customInfo` changes, which for these devices is at every status: the service asks for a reconciliation before it knows nothing will come of it. Stopping that needs the counters out of `customInfo`, or a quieter service (limitation 10 below).
+
+One thing the new labels give: a fleet can select on what a device says it is, `custominfo.flightctl.io/deviceClass=zephyr` for instance, which is part of what limitation 4 asks for.
+
 ## Flight Control limitations found (upstream proposals)
 
 1. **`matchExpressions` in the fleet selector is accepted but ignored.**
@@ -231,6 +264,12 @@ The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole
    - The internal CA builds the certificate with the request's signature algorithm (`internal/crypto/internal_ca.go`: `SignatureAlgorithm: csr.SignatureAlgorithm`). An RSA request asks for SHA256WithRSA, the CA's key is ECDSA, and Go's `x509.CreateCertificate` refuses: "requested SignatureAlgorithm does not match private key type". Approving the request fails with a 400.
    - It matters for keys in hardware: the ESP32 DS peripheral signs only with RSA.
    - Proposal: leave `SignatureAlgorithm` unset in the template, so the CA signs with its own algorithm whatever the device key.
+10. **Since 1.4, a change in `customInfo` is a label event.**
+   - The default `custom-info` mapping copies all of `customInfo` into labels, and the service logs "label reconciliation was requested" at every change in it, even when no label changes ([above](#flight-control-140)).
+   - `customInfo` is the only free-form place in the status, so a constrained device's counters end up there (limitation 5).
+   - Proposal: ask for a reconciliation only when a mapping's inputs changed, and do not copy all of `customInfo` by default; or give counters a place of their own.
+
+Limitations 1, 3, 8 and 9 are unchanged in the source of 1.4.0 (read, not tried again).
 
 ## Current limitations
 

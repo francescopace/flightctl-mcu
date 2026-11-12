@@ -1,6 +1,10 @@
-# flightctl-mcu
-
 [![ci](https://github.com/francescopace/flightctl-mcu/actions/workflows/ci.yml/badge.svg)](https://github.com/francescopace/flightctl-mcu/actions/workflows/ci.yml)
+[![fuzz-nightly](https://github.com/francescopace/flightctl-mcu/actions/workflows/fuzz-nightly.yml/badge.svg)](https://github.com/francescopace/flightctl-mcu/actions/workflows/fuzz-nightly.yml)
+[![ESP-IDF 6.0](https://img.shields.io/badge/ESP--IDF-6.0-E7352C?logo=espressif&logoColor=white)](docs/DEPENDENCIES.md#esp-idf-port)
+[![Zephyr 4.5](https://img.shields.io/badge/Zephyr-4.5-7929D2)](docs/DEPENDENCIES.md#zephyr-port)
+[![mbedTLS 4.1](https://img.shields.io/badge/mbedTLS-4.1-0091BD)](docs/DEPENDENCIES.md)
+
+# flightctl-mcu
 
 A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers. ESP32 boards enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. The devices don't run Linux, and Flight Control runs unmodified.
 
@@ -101,7 +105,7 @@ sequenceDiagram
 
 ## Supported microcontrollers
 
-Tested on real boards with ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and not yet on these boards:
+Tested on real boards with ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and on one of these boards, the S3 ([RESULTS.md](docs/RESULTS.md#esp-idf-603-on-a-board-esp32-s3)); the table is from the earlier run:
 
 | Chip | Core | Status | Free heap with an app running |
 |---|---|---|---|
@@ -161,7 +165,7 @@ Then implement `core/include/fc_port.h` for your platform:
 core/            agent, HTTP/TLS client, OCI client, WASM app manager (portable C)
 port/espidf/     ESP-IDF port
 port/host/       host port (simulated device)
-port/zephyr/     Zephyr port (in progress, docs/ZEPHYR.md)
+port/zephyr/     Zephyr port (docs/ZEPHYR.md): native_sim, Raspberry Pi Pico W, ESP32-S3
 zephyr/          Zephyr application: build and run scripts, board settings
 host/            simulated device executable
 firmware/        ESP-IDF project: main app, build/flash/push scripts
@@ -178,7 +182,7 @@ tests/python/    tests of the deploy scripts
 tests/fuzz/      libFuzzer targets and seed inputs
 third_party/     fetch scripts for WAMR, detools and Zephyr (none is vendored), and patches/ for what is fetched
 ci/              helpers for the GitHub Actions workflow
-docs/            roadmap, results, device security, provisioning, firmware deltas
+docs/            roadmap, results, device security, provisioning, firmware deltas, dependencies
 ```
 
 ## Try it
@@ -202,6 +206,12 @@ flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t 
 ```
 
 The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
+
+Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, so narrow that to what does not change ([why](docs/RESULTS.md#flight-control-140)):
+
+```bash
+deploy/fleet/apply.sh deploy/fleet/labelsync-custom-info.yaml
+```
 
 **2. Credentials.** The enrollment credentials go to `.secrets/`, which is git-ignored:
 
@@ -337,7 +347,7 @@ GitHub Actions runs on every push that touches code. It builds once and tests wh
 - **Builds**: the simulated device on Linux, the firmware for every supported chip in debug and release profiles (with `ccache`), and the example WASM apps. The firmware has no credentials in it.
 - **Unit tests** ([ci/unit.sh](ci/unit.sh), under a second): the C core on an in-memory port, with AddressSanitizer and UBSan (HTTP framing, OCI references, index and signatures, device identity against an independently computed name, rendered specs, certificate renewal answers, re-enrollment), and the deploy scripts' logic in Python (cosign payloads and signatures, the provisioning partition, the allow list).
 - **Fuzzing** ([ci/fuzz.sh](ci/fuzz.sh)): the HTTP response reader, the OCI manifest and signature handling, and the agent's handling of rendered specs and certificates. 30 seconds per target on every push, 20 minutes per target every night ([fuzz-nightly.yml](.github/workflows/fuzz-nightly.yml)), with the corpus kept from one night to the next. Crashes found so far are kept as seed inputs in `tests/fuzz/corpus`.
-- **End-to-end test** ([ci/e2e.sh](ci/e2e.sh)): the job deploys Flight Control 1.3.1 on kind and a registry on the runner. The simulated device then goes through:
+- **End-to-end test** ([ci/e2e.sh](ci/e2e.sh)): the job deploys Flight Control 1.4.0 on kind and a registry on the runner. The simulated device then goes through:
   - enrollment, approved by the allow-list script;
   - Online status;
   - inline config;
@@ -378,7 +388,10 @@ Apache 2.0, see [LICENSE](LICENSE).
 
 ## Third-party code
 
+Versions, and where each is set: [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+
 - [cJSON](https://github.com/DaveGamble/cJSON) (MIT), vendored in `core/third_party/cjson`
 - [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) (Apache 2.0 with LLVM exception), fetched at build time
 - [mbedTLS](https://github.com/Mbed-TLS/mbedtls) (Apache 2.0), from ESP-IDF, Zephyr or your system
+- [detools](https://github.com/eerimoq/detools) (BSD 2-Clause), with the heatshrink decoder it includes, fetched at build time
 - Espressif's [network_provisioning](https://components.espressif.com/components/espressif/network_provisioning) (Apache 2.0), fetched by ESP-IDF's component manager at the version `firmware/dependencies.lock.<chip>` pins

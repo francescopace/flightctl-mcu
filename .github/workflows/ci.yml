@@ -20,7 +20,7 @@ concurrency:
 
 env:
   MBEDTLS_VERSION: v4.1.1
-  FLIGHTCTL_VERSION: v1.3.1
+  FLIGHTCTL_VERSION: v1.4.0
   ESP_EMU_VERSION: 0.51.0
 
 jobs:
@@ -31,9 +31,9 @@ jobs:
     # apps, fuzzers), ninja and PyYAML, so nothing is installed here. (The
     # runners' apt mirror was unreachable for hours once, and every job that
     # installed a package failed.)
-    container: ghcr.io/zephyrproject-rtos/ci-base:v0.29.1
+    container: ghcr.io/zephyrproject-rtos/ci-base:v0.30.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: git config --global --add safe.directory '*'
       - name: clang and lld on the PATH
         run: echo "$(dirname "$(ls /usr/lib/llvm-*/bin/clang | tail -1)")" >> "$GITHUB_PATH"
@@ -50,11 +50,11 @@ jobs:
           NO_PUSH=1 wasm-apps/build.sh trend v1
       - name: host agent
         run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} ci/build-host.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wasm-apps
           path: wasm-apps/build/*/*.wasm
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: host-agent
           path: build/host/fc-host-agent
@@ -62,14 +62,14 @@ jobs:
         run: CC=clang ci/unit.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
       # Last, so a finding does not stop the artifacts above. Starts from the
       # corpus of the nightly runs (read only here).
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: build/fuzz/corpus_*
           key: fuzz-corpus-
           restore-keys: fuzz-corpus-
       - name: fuzzing, 30 seconds per target
         run: FUZZ_SECONDS=30 CC=clang ci/fuzz.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: fuzz-findings
@@ -95,10 +95,10 @@ jobs:
           - { target: esp32c3, profile: secure }
           - { target: esp32c5, profile: secure }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: git config --global --add safe.directory '*'
       - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .ccache
           key: ccache-${{ matrix.target }}-${{ matrix.profile }}-${{ github.sha }}
@@ -123,7 +123,7 @@ jobs:
         if: matrix.target == 'esp32c3' && matrix.profile == 'plain'
         shell: bash
         run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ble
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: firmware-${{ matrix.target }}${{ env.S }}
           path: |
@@ -141,20 +141,20 @@ jobs:
     name: Zephyr (native_sim)
     runs-on: ubuntu-latest
     # Zephyr's own build image: west, CMake, the host compiler native_sim uses.
-    container: ghcr.io/zephyrproject-rtos/ci-base:v0.29.1
+    container: ghcr.io/zephyrproject-rtos/ci-base:v0.30.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: git config --global --add safe.directory '*'
       - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
       # The Zephyr tree (about 900 MB) changes only with the pinned version.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: third_party/zephyr-ws
           key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh') }}
       - run: third_party/fetch-zephyr.sh
       - name: build
         run: zephyr/build.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: zephyr-native-sim
           path: zephyr/build-native_sim_native_64/zephyr/zephyr.exe
@@ -166,7 +166,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: tools
         run: |
           kind version && helm version --short && kubectl version --client
@@ -175,15 +175,15 @@ jobs:
           sudo chmod +x /usr/local/bin/flightctl
           # PyYAML comes with the runner: install it only if that changes.
           python3 -c 'import yaml' || { sudo apt-get update && sudo apt-get install -y python3-yaml; }
-      - uses: oras-project/setup-oras@v1
+      - uses: oras-project/setup-oras@v2
       - name: Zephyr build from the Zephyr job (not rebuilt)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: zephyr-native-sim
           path: zephyr/build-native_sim_native_64/zephyr
       - run: chmod +x zephyr/build-native_sim_native_64/zephyr/zephyr.exe
       - name: WASM apps from the WASM job (not rebuilt)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wasm-apps
           path: wasm-apps/build
@@ -204,7 +204,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: tools
         run: |
           kind version && helm version --short && kubectl version --client
@@ -213,16 +213,16 @@ jobs:
           sudo chmod +x /usr/local/bin/flightctl
           # PyYAML comes with the runner: install it only if that changes.
           python3 -c 'import yaml' || { sudo apt-get update && sudo apt-get install -y python3-yaml; }
-      - uses: oras-project/setup-oras@v1
-      - uses: sigstore/cosign-installer@v3 # e2e checks that cosign accepts our signatures
+      - uses: oras-project/setup-oras@v2
+      - uses: sigstore/cosign-installer@v4 # e2e checks that cosign accepts our signatures
       - name: host agent from the host job (not rebuilt)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: host-agent
           path: build/host
       - run: chmod +x build/host/fc-host-agent
       - name: WASM apps from the WASM job (not rebuilt)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wasm-apps
           path: wasm-apps/build
@@ -250,7 +250,7 @@ jobs:
         include:
           - { chip: esp32c3, secure: 0, prov: ble }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: tools
         run: |
           sudo curl -fsSL -o /usr/local/bin/flightctl \
@@ -259,15 +259,15 @@ jobs:
           # PyYAML comes with the runner: install it only if that changes.
           python3 -c 'import yaml' || { sudo apt-get update && sudo apt-get install -y python3-yaml; }
           # NVS partition generator for provisioning (else the ESP-IDF image is pulled)
-          pip install esp-idf-nvs-partition-gen==0.1.9
+          pip install esp-idf-nvs-partition-gen==0.3.0
           # espsecure: the secure test signs a firmware with a key the chip does not know
-          pip install esptool==5.1.0
+          pip install esptool==5.3.1
           # detools: the release is pushed with a delta from the debug build
           # (the version third_party/fetch-detools.sh fetches for the device).
           # It has C extensions: the Python headers only if pip needs them.
           pip install detools==0.53.0 ||
             { sudo apt-get update && sudo apt-get install -y python3-dev && pip install detools==0.53.0; }
-      - uses: oras-project/setup-oras@v1
+      - uses: oras-project/setup-oras@v2
       - name: esp-emu (checksum verified)
         run: |
           cd /tmp
@@ -278,18 +278,18 @@ jobs:
           tar xzf "$name.tar.gz" && sudo install -m 755 "$name/esp-emu" /usr/local/bin/esp-emu
           esp-emu --version
       - name: firmware from the firmware job (not rebuilt)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: firmware-${{ matrix.chip }}${{ matrix.secure == 1 && '-secure' || '' }}
           path: firmware
       - name: secure build too, which a plain device must refuse
         if: matrix.secure == 0
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: firmware-${{ matrix.chip }}-secure
           path: firmware
       - name: WASM apps from the WASM job (not rebuilt)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wasm-apps
           path: wasm-apps/build

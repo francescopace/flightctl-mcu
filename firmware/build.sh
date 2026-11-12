@@ -44,6 +44,13 @@ done
 # before a change (e.g. the partition table offset) would silently keep the old
 # value. menuconfig changes do not survive the next build: put them in a file.
 rm -f "$ROOT/firmware/${BUILD_DIR:?}/sdkconfig"
+# A build directory keeps the paths of the toolchain it was made with: one
+# from another ESP-IDF fails at the first link ("xtensa-...-ar: not found").
+# Built again from nothing when the image changes.
+if [[ -d "$ROOT/firmware/$BUILD_DIR" && "$(cat "$ROOT/firmware/$BUILD_DIR/.idf_image" 2>/dev/null)" != "$IDF_IMAGE" ]]; then
+  rm -rf "$ROOT/firmware/${BUILD_DIR:?}"
+fi
+mkdir -p "$ROOT/firmware/$BUILD_DIR" && echo "$IDF_IMAGE" > "$ROOT/firmware/$BUILD_DIR/.idf_image"
 KEY_MOUNT=()
 if [[ -n "${SECURE_BOOT_KEY:-}" ]]; then
   KEY_MOUNT=(-v "$(cd "$(dirname "$SECURE_BOOT_KEY")" && pwd)/$(basename "$SECURE_BOOT_KEY"):/keys/secure_boot_signing_key.pem:ro")
@@ -53,6 +60,7 @@ if [[ -n "${SECURE_BOOT_KEY:-}" ]]; then
   if [[ "$(cat "$ROOT/firmware/$BUILD_DIR/.secure_boot_key" 2>/dev/null)" != "$KEY_SUM" ]]; then
     rm -rf "$ROOT/firmware/${BUILD_DIR:?}"
     mkdir -p "$ROOT/firmware/$BUILD_DIR" && echo "$KEY_SUM" > "$ROOT/firmware/$BUILD_DIR/.secure_boot_key"
+    echo "$IDF_IMAGE" > "$ROOT/firmware/$BUILD_DIR/.idf_image"
   fi
 fi
 # SECURE_BOOT_SIGNER=external: a secure build with no key at hand (an HSM

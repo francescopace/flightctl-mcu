@@ -47,7 +47,7 @@ def main():
         for key in extra:
             # espsecure does not sign a file in place: through a second file
             signed = multi + ".next"
-            subprocess.run([sys.executable, "-m", "espsecure", "sign_data", "--version", "2", "--append_signatures",
+            subprocess.run([sys.executable, "-m", "espsecure", "sign-data", "--version", "2", "--append-signatures",
                             "--keyfile", key, "--output", signed, bootloader],
                            cwd=build, check=True, stdout=subprocess.DEVNULL)
             os.replace(os.path.join(build, signed), os.path.join(build, multi))
@@ -55,8 +55,8 @@ def main():
     files[int(sdkconfig(build, "BOOTLOADER_OFFSET_IN_FLASH"), 16)] = bootloader
     # "keep": rewriting the flash settings in an image header would change
     # the signed bytes, and the ROM would refuse the bootloader.
-    cmd = [sys.executable, "-m", "esptool", "--chip", args["extra_esptool_args"]["chip"], "merge_bin",
-           "-o", "merged-binary.bin", "--flash_mode", "keep", "--flash_size", "keep", "--flash_freq", "keep"]
+    cmd = [sys.executable, "-m", "esptool", "--chip", args["extra_esptool_args"]["chip"], "merge-bin",
+           "-o", "merged-binary.bin", "--flash-mode", "keep", "--flash-size", "keep", "--flash-freq", "keep"]
     for off in sorted(files):
         cmd += [hex(off), files[off]]
     subprocess.run(cmd, cwd=build, check=True)
