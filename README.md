@@ -6,7 +6,7 @@
 
 # flightctl-mcu
 
-A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers. Boards running ESP-IDF or Zephyr (the ESP32 family, the Raspberry Pi Pico W) enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. The devices don't run Linux, and Flight Control runs unmodified.
+A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers: a portable C core, with ports for ESP-IDF, Zephyr and POSIX systems ([target devices](#target-devices)). Devices too small for Linux enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. The devices need no Linux, and Flight Control runs unmodified.
 
 It works end to end on real hardware, with signed images and certificate renewal. It is not production ready yet: see [Limitations](#limitations) and the [roadmap](docs/ROADMAP.md).
 
@@ -46,7 +46,7 @@ flowchart LR
     FC["Flight Control<br/>fleets, rollouts, UI"]
     REG["OCI registry<br/>firmware index, .wasm apps"]
   end
-  subgraph dev["Microcontroller (ESP-IDF or Zephyr, no Linux)"]
+  subgraph dev["Device (ESP-IDF, Zephyr, ...: no Linux needed)"]
     AG["agent<br/>enroll / spec / status"]
     OTA["OTA slots A/B<br/>bootloader rollback"]
     WAMR["WAMR<br/>WASM apps"]
@@ -71,10 +71,12 @@ flowchart TB
   core["core/ - C11, pthreads, BSD sockets, mbedTLS 4, cJSON, WAMR<br/>agent, http client, OCI client, app manager, identity"]
   port["core/include/fc_port.h - about 15 functions<br/>key/value store, system info, OTA, logging"]
   esp["port/espidf<br/>NVS, esp_ota, temperature sensor"]
-  host["port/host<br/>files, fake OTA (a simulated device on your laptop)"]
+  zephyr["port/zephyr<br/>LittleFS, MCUboot, Zephyr's sockets"]
+  host["port/host (Linux, macOS)<br/>files, fake OTA (a simulated device on your laptop)"]
   other["port/your-rtos<br/>(not written yet)"]
   core --> port
   port --> esp
+  port --> zephyr
   port --> host
   port --> other
 ```
@@ -103,9 +105,32 @@ sequenceDiagram
   end
 ```
 
-## Supported microcontrollers
+## Target devices
 
-Tested on real boards with ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and on one of these boards, the S3 ([RESULTS.md](docs/RESULTS.md#esp-idf-603-on-a-board-esp32-s3)); the table is from the earlier run:
+The agent is not tied to a chip or a vendor: it is a C core and a thin port for each system it runs on. What it asks of a device:
+
+- a CPU that [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) has a target for. In use here: Xtensa, RISC-V, Arm Cortex-M0+, and AArch64 and x86-64 on a host;
+- about 256 KB of RAM: the smallest board it runs on has 264 KB, and uses nearly all of it;
+- flash for two firmware slots and some storage, 2 MB at the least (images are 0.7 to 1.5 MB);
+- an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried: Ethernet and cellular are on the [roadmap](docs/ROADMAP.md);
+- a random generator and a way to learn the time (SNTP), for TLS;
+- mbedTLS 4.1 or later.
+
+Three stacks have a port today:
+
+| Stack | Devices | What works there |
+|---|---|---|
+| **ESP-IDF** 6.0<br/>`port/espidf`, `firmware/` | Espressif's WiFi chips. Six run it: ESP32, S2, S3, C3, C5, C6. Another one ESP-IDF supports is mostly configuration. | Everything, and the most complete: also Secure Boot, flash encryption, keys in hardware, WiFi provisioning over SoftAP and BLE ([docs/SECURITY.md](docs/SECURITY.md), [docs/PROVISIONING.md](docs/PROVISIONING.md)). On six boards, and on emulated chips in CI. |
+| **Zephyr** 4.5<br/>`port/zephyr`, `zephyr/` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. Two run it: a Raspberry Pi Pico W (RP2040) and an ESP32-S3-DevKitC. Likely next, not tried: the Raspberry Pi Pico 2 W, boards with Ethernet such as ST's Nucleo-144 (F7, H7) or NXP's i.MX RT kits. | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([docs/ZEPHYR.md](docs/ZEPHYR.md)). On two boards, and as a Linux process (`native_sim`) in CI. A new board is two files. |
+| **Linux, macOS**<br/>`port/host` | Anything with POSIX threads and sockets: a gateway, a single-board computer, a container, your laptop. | Runs as a process. Enrollment, monitoring, config and WASM apps are real; a firmware update only saves the image to a file. It is the simulated device of the tests, and where the protocol work was done. A Linux device that can run bootc and Podman should run Flight Control's own agent instead. |
+
+Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs a port, which is about 15 functions: see [Adding another device](#adding-another-device). None is written.
+
+"Everything" means enrollment, monitoring, config, firmware OTA with rollback and WASM apps. The same `.wasm` file runs on every one of these, whatever the CPU.
+
+### Boards tried
+
+With ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and on one of these boards, the S3 ([RESULTS.md](docs/RESULTS.md#esp-idf-603-on-a-board-esp32-s3)); the table is from the earlier run:
 
 | Chip | Core | Status | Free heap with an app running |
 |---|---|---|---|
@@ -118,18 +143,18 @@ Tested on real boards with ESP-IDF 5.5.6, firmware v3.0 (both agent connections 
 
 The S2 Mini and the C6 DevKitC flash only over their native USB port, started in download mode (plug them in holding BOOT).
 
-"Everything" means enrollment, monitoring, config, firmware OTA with rollback and WASM apps. PSRAM is not used, so a single image runs on every board variant of a chip. The exception is the S2, which needs its PSRAM (see the table). The same `.wasm` file runs on Xtensa and RISC-V.
+PSRAM is not used, so a single image runs on every board variant of a chip. The exception is the S2, which needs its PSRAM (see the table).
 
 Firmware images are 1.06–1.25 MB, leaving 25–36% of a 1.6 MB OTA slot free. Most of that size is the WiFi stack and mbedTLS. The agent itself is about 21 KB and WAMR about 71 KB.
 
-The Zephyr port ([docs/ZEPHYR.md](docs/ZEPHYR.md)) was tried on two real boards, with Zephyr 4.5 and firmware updates through MCUboot:
+With Zephyr 4.5 and firmware updates through MCUboot ([docs/ZEPHYR.md](docs/ZEPHYR.md)):
 
 | Board | Core | Status | Free heap with an app running |
 |---|---|---|---|
 | Raspberry Pi Pico W (RP2040) | Arm Cortex-M0+ | everything works | ~31 KB |
 | ESP32-S3 | Xtensa LX7 | everything except rollback, which was not exercised | ~49 KB |
 
-## Adding another microcontroller
+## Adding another device
 
 ### Another ESP32 chip
 
@@ -142,7 +167,17 @@ If ESP-IDF supports the chip, it is mostly configuration:
 
 Per-device differences, such as a different LED pin on a clone board, don't need a separate build. Set a label on the device (`led-gpio=38`, `led-order=rgb`, `led-ws2812=false`) and the fleet template passes it into the config.
 
-### Another RTOS or vendor (Zephyr, NuttX, STM32, nRF, ...)
+### Another Zephyr board
+
+If Zephyr supports the board and it meets [the list above](#target-devices), it is two files in `zephyr/boards/`, as for the two boards that are there:
+
+1. `<board>.overlay`: the `fc_creds` (16 KB) and `fc_storage` partitions, usually carved out of the board's storage partition, and the nodes Zephyr leaves off (the WiFi chip, the random generator).
+2. `<board>.conf`: the network driver, MCUboot's image manager, and the memory the board can give: the kernel heap (thread stacks come from it), the C heap, the agent's stacks.
+3. Build with `BOARD=<board> zephyr/build.sh`, write the credentials with `deploy/provision.py --format zephyr --board <board files>`. Firmware updates need MCUboot: the script builds with it for a board named `.../mcuboot` and for Espressif's, and for any other with `MCUBOOT=1`.
+
+A CPU family that is new here needs its WAMR target named in `zephyr/CMakeLists.txt`, and a chip without a random generator needs an entropy driver (the Pico W has one in `port/zephyr`). What each of the two boards took is in [docs/ZEPHYR.md](docs/ZEPHYR.md).
+
+### Another RTOS (NuttX, RT-Thread, ThreadX, ...)
 
 The core needs:
 

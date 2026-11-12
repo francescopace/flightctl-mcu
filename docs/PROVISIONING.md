@@ -4,6 +4,10 @@ A device needs two things to join a fleet: credentials for Flight Control,
 which belong to the installation, and a network, which belongs to the site.
 The firmware has neither built in: one image serves every installation.
 
+What follows is the ESP-IDF firmware. A Zephyr build gets both at the factory,
+in one partition (`deploy/provision.py --format zephyr`, [ZEPHYR.md](ZEPHYR.md)):
+it has no provisioning in the field yet.
+
 ## At the factory, over USB
 
 `deploy/provision.py` writes the `fc_creds` partition: the CA, the enrollment

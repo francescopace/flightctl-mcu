@@ -1,5 +1,10 @@
 # Device security: Secure Boot, flash encryption, keys in hardware
 
+This page is about the ESP-IDF firmware, on Espressif's chips. The Zephyr
+builds have none of it yet: MCUboot checks the firmware's signature in
+software, and the device key is in the storage partition in clear
+([ZEPHYR.md](ZEPHYR.md)).
+
 A device in the field has to resist someone who holds it: who can read its
 flash, or write a firmware of their own. The `secure` firmware variant
 ([firmware/sdkconfig.secure](../firmware/sdkconfig.secure)) turns on what the
