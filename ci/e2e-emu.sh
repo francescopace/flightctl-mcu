@@ -305,6 +305,8 @@ if [[ "$SECURE" == 0 && "$PROV" == ble ]]; then
   grep -q 'Provisioning was successful' "$WORK/prov.log" || fail "BLE field provisioning not confirmed"
   grep -q 'field provisioning over BLE' "$WORK/emu.log" || fail "device not in BLE provisioning"
   echo "ok: network given in the field over BLE, device connected"
+  # The controller stays until the device has shut its BLE down (ci/ble-prov.py).
+  grep -E 'the device (shut its BLE down|still used BLE)' "$WORK/prov.log" || true
 elif [[ "$SECURE" == 0 ]]; then
   log "WiFi provisioning in the field"
   for i in $(seq 1 60); do

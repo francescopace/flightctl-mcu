@@ -9,7 +9,9 @@ session (Security 1, proof of possession) and the WiFi messages.
 Start it before the emulator: it listens on port 9544. It scans for a device
 advertising FC-..., connects, and maps the provisioning endpoints from the
 characteristics' user descriptions, as esp_prov does. With --wrong-pop it
-first checks that a session with that proof is refused. Needs bumble,
+first checks that a session with that proof is refused. Once the network is
+given it stays, as the controller a device has would: until the device has
+closed the connection and shut its BLE down, or --stay seconds. Needs bumble,
 protobuf and cryptography, $ESP_PROV_DIR (esp_prov) and $IDF_PATH (protocomm); ci/ble-prov.sh
 runs it in the espressif/idf image.
 """
@@ -50,6 +52,34 @@ def ack_privacy_commands():
 
 
 PROV_SERVICE = "1775244d-6b43-439b-877c-060f2d9bed07"
+# A device that has nothing more to ask its controller for this long has shut
+# its BLE down (seconds here; the emulator runs slower than that).
+QUIET_S = 15
+
+
+async def stay(closed, controller, limit):
+    """After provisioning the device ends the connection and shuts its BLE
+    down, which it asks its controller for. This one used to leave as soon as
+    the network was given, closing the emulator's HCI link under a host that
+    was still using it: the emulated device then stopped for minutes, at
+    times. It answers until the device is done."""
+    loop = asyncio.get_running_loop()
+    last = loop.time()
+    on_packet = controller.on_packet
+
+    def seen(packet):
+        nonlocal last
+        last = loop.time()
+        on_packet(packet)
+
+    controller.on_packet = seen
+    start = loop.time()
+    while loop.time() - start < limit:
+        if closed.is_set() and loop.time() - last >= QUIET_S:
+            print(f"the device shut its BLE down ({loop.time() - start:.0f} s after the network was given)", flush=True)
+            return
+        await asyncio.sleep(1)
+    print(f"the device still used BLE after {limit} s: leaving it", flush=True)
 
 
 class Transport:
@@ -115,6 +145,8 @@ async def main():
     p.add_argument("--passphrase", default="")
     p.add_argument("--port", default="9544")
     p.add_argument("--timeout", type=int, default=180)
+    p.add_argument("--stay", type=int, default=240,
+                   help="seconds to go on as the device's controller, at most, once the network is given")
     a = p.parse_args()
 
     ack_privacy_commands()
@@ -143,6 +175,8 @@ async def main():
         print("wrong proof of possession refused", flush=True)
         await connection.disconnect()
         connection, tp = await connect(phone, "FC-", a.timeout)
+    closed = asyncio.Event()
+    connection.on("disconnection", lambda *_: closed.set())
     sec = security.Security1(a.pop, False)
     if not await esp_prov.establish_session(tp, sec):
         sys.exit("no session with the right proof of possession")
@@ -155,6 +189,7 @@ async def main():
         print("WiFi state:", state, flush=True)
         if state == "connected":
             print("Provisioning was successful", flush=True)
+            await stay(closed, emu_ctrl, a.stay)
             return
         if state == "failed":
             sys.exit("device could not join the network")
