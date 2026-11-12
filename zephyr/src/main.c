@@ -84,10 +84,12 @@ static void wait_for_time(void)
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
 
-/* Where several access points carry the network, the chip may join a far one
- * (Infineon's driver takes no access point's address, and telling the chip to
- * prefer the strongest changed nothing): there, name lookups and handshakes
- * time out. A weak join is given up for another one, a few times. */
+/* Where several access points carry the network, the Pico W's chip may join a
+ * far one (Infineon's driver takes no access point's address, and telling the
+ * chip to prefer the strongest changed nothing): there, name lookups and
+ * handshakes time out. A weak join is given up for another one, a few times.
+ * Espressif's driver scans every channel and joins the strongest
+ * (CONFIG_ESP32_WIFI_STA_SCAN_ALL, in the board's file). */
 #define WIFI_GOOD_DBM (-60)
 #define WIFI_JOINS 5
 
@@ -131,7 +133,10 @@ static void wifi_up(const cJSON *creds)
         if (net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &p, sizeof(p)) == 0) {
             struct wifi_iface_status st = {0};
             int known = net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, iface, &st, sizeof(st)) == 0;
-            if (known && st.rssi < WIFI_GOOD_DBM && ++joins < WIFI_JOINS) {
+            /* Infineon's driver has joined when the request returns; others
+             * (Espressif's) join after it, and choose the access point
+             * themselves. */
+            if (IS_ENABLED(CONFIG_WIFI_AIROC) && known && st.rssi < WIFI_GOOD_DBM && ++joins < WIFI_JOINS) {
                 fc_port_log(FC_LOG_INFO, "WiFi: access point ..:%02x:%02x is weak (%d dBm), looking for a nearer one",
                             st.bssid[4], st.bssid[5], st.rssi);
                 net_mgmt(NET_REQUEST_WIFI_DISCONNECT, iface, NULL, 0);
@@ -139,6 +144,7 @@ static void wifi_up(const cJSON *creds)
                 continue;
             }
             if (k_sem_take(&s_ip_up, K_SECONDS(30)) == 0) {
+                known = net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, iface, &st, sizeof(st)) == 0;
                 if (known) {
                     fc_port_log(FC_LOG_INFO, "WiFi: connected (channel %d, %d dBm, access point ..:%02x:%02x)",
                                 st.channel, st.rssi, st.bssid[4], st.bssid[5]);

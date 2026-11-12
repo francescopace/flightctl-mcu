@@ -8,7 +8,8 @@ agent passes the end-to-end test of the simulated device, against an
 unmodified Flight Control. On a real Raspberry Pi Pico W it enrolls over WiFi,
 stays online, runs a signed WASM app and updates its firmware through
 MCUboot, whole or as a delta, going back when the new one does not work
-(below).
+(below). On a real ESP32-S3 it does the same, bar the way back, which was not
+tried there: the first chip to run both ports.
 
 ## Try it
 
@@ -222,6 +223,65 @@ What the board taught the port:
   ask together at start. **Four connections in all** is another: the two to
   Flight Control, DHCP and DNS use them up, and the one to the registry was
   refused.
+
+## On an ESP32-S3
+
+An ESP32-S3-DevKitC (Xtensa LX7, 512 KB of RAM, 8 MB of flash, WiFi in the
+chip): the board the ESP-IDF firmware runs on, here with Zephyr's own WiFi
+driver, MCUboot and TF-PSA-Crypto instead of Espressif's.
+
+```bash
+third_party/fetch-zephyr.sh
+```
+
+```bash
+third_party/fetch-zephyr-sdk.sh
+```
+
+```bash
+BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 zephyr/build.sh
+```
+
+```bash
+ERASE=1 zephyr/flash-esp32.sh /dev/cu.usbmodemXXXX .secrets
+```
+
+The fetch scripts bring Espressif's HAL module (164 MB), the binary WiFi
+libraries it needs (under Espressif's licence) and the Xtensa toolchain. The
+build is always with MCUboot, which is how Zephyr starts this chip when it is
+to be updated; `flash-esp32.sh` writes MCUboot, the signed application and
+the credentials with esptool, through the board's UART port, where the
+console also is (115200). Nothing burns eFuses: MCUboot checks the image's
+signature in software, and Secure Boot and flash encryption stay off.
+
+Tried on the board, against Flight Control 1.4.0:
+
+| | |
+|---|---|
+| Enrollment | key made by PSA from the chip's random generator, certificate for a year |
+| WASM app | the signed `alarm` app runs (WAMR's fast interpreter on Xtensa); the Pico's copy, signed with another key, was refused |
+| Firmware, whole | 885 KB in 7 s, 24 s from the restart to the agent, MCUboot's swap included; confirmed |
+| Firmware, as a delta | 19 KB (2.2%) rebuilt the 885 KB image in 8 s; confirmed |
+| Reflashed over USB | same device: its key is in the storage partition |
+| Memory | 49 KB of the 128 KB C heap free with the app and both connections up, 40 KB at the lowest |
+
+What it took, beyond the board's two files in `zephyr/boards/`:
+
+- **Memory by hand.** Zephyr gives the first core 372 KB for data. The kernel
+  heap is the larger of what the application asks and what the drivers add:
+  the WiFi driver's 51 KB are not added to a size that is set, and with
+  64 KB there were 28 KB left for thread stacks. It is 96 KB now, the C heap
+  128 KB, the agent's stacks 16 KB each: 98% of the region.
+- **The WiFi driver joins after the request returns**, and chooses the access
+  point itself (`CONFIG_ESP32_WIFI_STA_SCAN_ALL`: the strongest). The Pico's
+  way of giving up a weak join is for Infineon's driver only.
+- **A kept connection the server closed** is `ENOTCONN` to Zephyr's TCP, not
+  a reset: the port took it for an error and warned at every request, before
+  the core opened another connection as it should.
+
+Not tried: the way back from a firmware that does not reach Flight Control
+(as on the Pico), and Secure Boot or flash encryption under Zephyr. Not in
+CI: the build needs the Xtensa toolchain.
 
 ## Things to know about native_sim
 

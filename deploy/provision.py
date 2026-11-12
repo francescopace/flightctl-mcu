@@ -5,6 +5,8 @@
     deploy/provision.py --image flash.bin                put it into a merged flash image (emulator)
     deploy/provision.py --out creds.bin                  just the partition
     deploy/provision.py --format zephyr --image flash.bin    for the Zephyr build (zephyr/)
+    deploy/provision.py --format zephyr --board esp32s3_devkitc_procpu --port /dev/cu.usbmodem1101
+                                                         a Zephyr build on an Espressif board
 
 Contents (NVS namespace "fc"):
   ca, enroll_crt, enroll_key   from --secrets (default .secrets, see deploy/enrollment.sh)
@@ -210,8 +212,8 @@ def main():
         p.error("--pop: 8 to 63 characters (it is also the provisioning access point's password)")
 
     if args.format == "zephyr":
-        if args.port:
-            p.error("--format zephyr: --image or --out (writing to a board is not there yet)")
+        if args.port and not args.board.startswith("esp32"):
+            p.error("--format zephyr --port: Espressif boards only (esptool); for the others --image or --out")
         offset, size = zephyr_partition(args.board)
         data = build_zephyr_partition(args, size)
     else:

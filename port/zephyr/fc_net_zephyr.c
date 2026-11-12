@@ -21,6 +21,13 @@ static int failed(const char *what, int code)
     return code;
 }
 
+/* The peer closed a kept connection: the core opens another, and it is not
+ * worth a warning. Zephyr's own TCP says ENOTCONN once it has seen the close. */
+static int gone(int err)
+{
+    return err == EPIPE || err == ECONNRESET || err == ENOTCONN;
+}
+
 void mbedtls_net_init(mbedtls_net_context *ctx)
 {
     ctx->fd = -1;
@@ -70,8 +77,7 @@ int mbedtls_net_send(void *ctx, const unsigned char *buf, size_t len)
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
         return MBEDTLS_ERR_SSL_WANT_WRITE;
     }
-    return errno == EPIPE || errno == ECONNRESET ? MBEDTLS_ERR_NET_CONN_RESET
-                                                 : failed("send", MBEDTLS_ERR_NET_SEND_FAILED);
+    return gone(errno) ? MBEDTLS_ERR_NET_CONN_RESET : failed("send", MBEDTLS_ERR_NET_SEND_FAILED);
 }
 
 int mbedtls_net_recv(void *ctx, unsigned char *buf, size_t len)
@@ -87,8 +93,7 @@ int mbedtls_net_recv(void *ctx, unsigned char *buf, size_t len)
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
         return MBEDTLS_ERR_SSL_WANT_READ;
     }
-    return errno == EPIPE || errno == ECONNRESET ? MBEDTLS_ERR_NET_CONN_RESET
-                                                 : failed("receive", MBEDTLS_ERR_NET_RECV_FAILED);
+    return gone(errno) ? MBEDTLS_ERR_NET_CONN_RESET : failed("receive", MBEDTLS_ERR_NET_RECV_FAILED);
 }
 
 /* `timeout` in milliseconds; 0 waits for ever. */

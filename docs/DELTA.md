@@ -124,8 +124,11 @@ MCUboot (`fw-push.py ... PLATFORM=zephyr.signed.bin`).
 - **A device flashed over USB** takes a delta only if what was flashed is,
   byte for byte, an image that was pushed (it is, when both come from the same
   build).
-- **Tried on one board**, a Raspberry Pi Pico W with Zephyr and MCUboot
+- **Tried on two boards.** A Raspberry Pi Pico W with Zephyr and MCUboot
   ([ZEPHYR.md](ZEPHYR.md)): a delta of 8.6 KB rebuilt a 734 KB image from the
   running one in 10 s, download included; and a delta took the board from
-  its Zephyr 4.3 build to the 4.5 one (232 KB, a third of the image). Not on
-  an ESP32 board: emulator only.
+  its Zephyr 4.3 build to the 4.5 one (232 KB, a third of the image). An
+  ESP32-S3 with both ports: the ESP-IDF firmware went from its debug build to
+  the release one with a delta of 511 KB (half of the image: the two are
+  compiled differently) in 13 s, the Zephyr one from a build to the next
+  with 19 KB (2.2%) in 8 s. The other ESP32 chips: emulator only.

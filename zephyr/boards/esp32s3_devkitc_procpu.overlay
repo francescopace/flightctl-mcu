@@ -1,0 +1,33 @@
+/*
+ * ESP32-S3-DevKitC (8 MB of flash), started by MCUboot: Zephyr's layout for
+ * this board (MCUboot in the first 64 KB, two slots of 2880 KB), with its
+ * storage partition, 192 KB, split into the credentials and the agent's
+ * storage as on the other boards.
+ */
+
+/delete-node/ &storage_partition;
+
+&flash0 {
+	partitions {
+		fc_creds_partition: partition@7b0000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fc_creds";
+			reg = <0x007b0000 0x00004000>;
+		};
+
+		fc_storage_partition: partition@7b4000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fc_storage";
+			reg = <0x007b4000 0x0002c000>;
+		};
+	};
+};
+
+&wifi {
+	status = "okay";
+};
+
+/* The chip's random generator: Zephyr's entropy device, and PSA's source. */
+&trng0 {
+	status = "okay";
+};

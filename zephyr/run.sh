@@ -8,7 +8,7 @@
 # seed, and every instance would make the same device key.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.29.1}"
+ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.30.0}"
 BUILD_DIR="${BUILD_DIR:-build-native_sim_native_64}"
 FLASH="${1:?usage: zephyr/run.sh FLASH.bin [args...]}"
 shift

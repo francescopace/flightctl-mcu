@@ -9,15 +9,21 @@
 set -euo pipefail
 ZEPHYR_TAG="${ZEPHYR_TAG:-v4.5.0}"
 ZEPHYR_COMMIT="${ZEPHYR_COMMIT:-41d10b59730406bbab4ca9f1fbbe9e96aafb4966}"
-ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.29.1}"
+ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.30.0}"
 # mbedtls: TLS. littlefs: storage. mcuboot, zcbor: firmware slots. The rest:
 # the Raspberry Pi Pico W (RP2040, CYW43439 WiFi).
-MODULES="${ZEPHYR_MODULES:-mbedtls tf-psa-crypto littlefs mcuboot zcbor cmsis cmsis_6 hal_rpi_pico hal_infineon picolibc}"
+MODULES="${ZEPHYR_MODULES:-mbedtls tf-psa-crypto littlefs mcuboot zcbor cmsis cmsis_6 hal_rpi_pico hal_infineon hal_espressif picolibc}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WS="$ROOT/third_party/zephyr-ws"
+# The tree is there at this version: nothing to do, or only the modules that
+# were added to the list since it was fetched.
+HAVE=""
 if [[ -d "$WS/zephyr/.git" && "$(git -C "$WS/zephyr" rev-parse HEAD)" == "$ZEPHYR_COMMIT" && -f "$WS/.fetched" ]]; then
-  echo "Zephyr $ZEPHYR_TAG already in $WS"
-  exit 0
+  if [[ "$(cat "$WS/.fetched")" == "$MODULES" ]]; then
+    echo "Zephyr $ZEPHYR_TAG already in $WS"
+    exit 0
+  fi
+  HAVE=1
 fi
 if ! command -v west >/dev/null; then
   exec docker run --rm -v "$ROOT:/project" -w /project \
@@ -25,19 +31,21 @@ if ! command -v west >/dev/null; then
     "$ZEPHYR_IMAGE" third_party/fetch-zephyr.sh
 fi
 git config --global --add safe.directory '*' 2>/dev/null || true
-rm -rf "$WS"
-west init -m https://github.com/zephyrproject-rtos/zephyr --mr "$ZEPHYR_TAG" --clone-opt=--depth=1 "$WS"
-# A tag can be moved: the commit cannot.
-got="$(git -C "$WS/zephyr" rev-parse HEAD)"
-if [[ "$got" != "$ZEPHYR_COMMIT" ]]; then
-  echo "Zephyr $ZEPHYR_TAG is commit $got, expected $ZEPHYR_COMMIT" >&2
+if [[ -z "$HAVE" ]]; then
   rm -rf "$WS"
-  exit 1
+  west init -m https://github.com/zephyrproject-rtos/zephyr --mr "$ZEPHYR_TAG" --clone-opt=--depth=1 "$WS"
+  # A tag can be moved: the commit cannot.
+  got="$(git -C "$WS/zephyr" rev-parse HEAD)"
+  if [[ "$got" != "$ZEPHYR_COMMIT" ]]; then
+    echo "Zephyr $ZEPHYR_TAG is commit $got, expected $ZEPHYR_COMMIT" >&2
+    rm -rf "$WS"
+    exit 1
+  fi
 fi
 cd "$WS"
 filter="-.*"
 for m in $MODULES; do filter="$filter,+$m"; done
 west config manifest.project-filter -- "$filter"
 west update --narrow -o=--depth=1
-touch "$WS/.fetched"
+echo "$MODULES" > "$WS/.fetched"
 echo "Zephyr $ZEPHYR_TAG in $WS"

@@ -5,12 +5,13 @@
 # The Zephyr tree comes from third_party/fetch-zephyr.sh; the build goes to
 # zephyr/build-<board>. The default board is native_sim: the agent as a Linux
 # process on Zephyr's kernel, network stack and file system.
-# A board named .../mcuboot (rpi_pico/rp2040/w/mcuboot) is built with MCUboot,
-# for firmware updates: the bootloader in <build>/mcuboot, the application in
-# <build>/zephyr, signed (zephyr.signed.bin) with .secrets/mcuboot-signing.pem.
+# A board named .../mcuboot (rpi_pico/rp2040/w/mcuboot) or an Espressif one
+# (esp32s3_devkitc/esp32s3/procpu) is built with MCUboot, for firmware updates:
+# the bootloader in <build>/mcuboot, the application in <build>/zephyr, signed
+# (zephyr.signed.bin) with .secrets/mcuboot-signing.pem.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.29.1}"
+ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.30.0}"
 BOARD="${BOARD:-native_sim/native/64}"
 BUILD_DIR="${BUILD_DIR:-build-${BOARD//\//_}}"
 WS="$ROOT/third_party/zephyr-ws"
@@ -25,9 +26,10 @@ NATIVE=""
 command -v west >/dev/null && [[ -z "${ZEPHYR_DOCKER:-}" ]] && NATIVE=1
 # Where the build sees this repository: here, or /project in the build image.
 SEEN="$ROOT"; [[ -n "$NATIVE" ]] || SEEN=/project
-if [[ "$BOARD" == */mcuboot ]]; then
-  # A board started by MCUboot: built with it (sysbuild), and signed with this
-  # checkout's key, which is made the first time.
+if [[ "$BOARD" == */mcuboot || "$BOARD" == esp32* ]]; then
+  # A board started by MCUboot (Espressif's always are, for updates): built
+  # with it (sysbuild), and signed with this checkout's key, which is made the
+  # first time.
   KEY=.secrets/mcuboot-signing.pem
   MAKE_KEY='[[ -f "$1" ]] || { mkdir -p "$(dirname "$1")"; python3 "$2/bootloader/mcuboot/scripts/imgtool.py" keygen -k "$1" -t ecdsa-p256; }'
   WEST_ARGS+=(--sysbuild)
