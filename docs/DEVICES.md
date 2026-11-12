@@ -9,7 +9,7 @@ The agent is not tied to a chip or a vendor: it is a C core and a thin port for 
 - a CPU that [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) has a target for. In use here: Xtensa, RISC-V, Arm Cortex-M0+, and AArch64 and x86-64 on a host;
 - about 256 KB of RAM: the smallest board it runs on has 264 KB, and uses nearly all of it;
 - flash for two firmware slots and some storage, 2 MB at the least (images are 0.7 to 1.5 MB);
-- an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried on hardware: a wired board is on the [roadmap](ROADMAP.md#to-do)'s list;
+- an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried on hardware: a Zephyr board with Ethernet is two files ([below](#another-zephyr-board)), not tried;
 - a random generator and a way to learn the time (SNTP), for TLS;
 - mbedTLS 4.1 or later.
 

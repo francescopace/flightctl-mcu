@@ -18,7 +18,6 @@ Checks that were never made:
 - [ ] The way back from a firmware that does not work, on the C6. It is tested in the emulator, on the ESP32-S3 with both ports and, for Zephyr, on the Pico W.
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
 - [ ] The Zephyr builds for boards in CI. They need the ARM and Xtensa toolchains; CI builds and tests `native_sim` only.
-- [ ] A wired board. Nothing in the core is about WiFi, and Zephyr on `native_sim` already runs without it, but WiFi is the only link tried on hardware: a Zephyr board with Ethernet is two files ([DEVICES.md](DEVICES.md#another-zephyr-board)).
 
 What the Zephyr port does not have, and the ESP-IDF firmware has:
 
@@ -29,16 +28,22 @@ What Flight Control offers and the agent does not answer yet:
 
 - [ ] The remote terminal: `flightctl console device/<name>` and the Terminal tab of the UI. Flight Control puts the session in the rendered spec (`consoles`), and the agent is to open a gRPC stream for it on the endpoint it already uses. That takes an HTTP/2 and gRPC client in the core, which speaks HTTP/1.1 only; a closed set of commands in place of a shell, which a microcontroller does not have (status, heap, apps, log, reboot); and a third TLS connection for as long as the session lasts, which the boards shortest of RAM may not have room for.
 - [ ] The device's log from the UI. Flight Control has no API for logs: the Log tab runs `journalctl` through the terminal's channel. So it comes after the terminal: a log kept in RAM (today it goes to the serial port only), shown by a command, and then an answer to the commands the UI sends, which holds only as long as the UI sends those.
+- [ ] Decommission: the action of the same name in the UI, or `flightctl decommission`. The server puts `decommissioning` in the spec (target `Unenroll`), and the Linux agent reports the `DeviceDecommissioning` condition as started, wipes its key and certificate, and reports it completed. This agent ignores the field, so the device never completes it. On a microcontroller: erase the device key and the management certificate from flash, report the condition, and stop talking to the service (no new enrollment by itself, which would bring the device back under a new name).
+- [ ] Real CPU and storage figures for the alerts. Flight Control raises alerts from what the status reports (resources, apps, disconnection), and Alertmanager is installed with it. The agent reports memory from the heap, but CPU and disk are always `Healthy`. CPU: the idle task's share of time; disk: the storage partition and the space for apps.
 
 Towards a deployment:
 
 - [ ] A registry with TLS and authentication. Today it is plain HTTP: signatures protect the images from tampering, not from being read.
+- [ ] Fleets kept in Git: Import Fleet in the UI, a `ResourceSync` on the server's side. Today `tools/fleet/apply.sh` applies them and fills in `${REGISTRY}`, which a fleet in Git would have to spell out.
+- [ ] Apps from the software catalog (Flight Control 1.4, `v1alpha1`): versions, channels and upgrade paths in the UI, with the registry's address written once. The server resolves the reference to an image before the agent sees it, so the agent needs nothing; tried on the Pico W ([RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals), limitation 11). The firmware waits for upstream item 9.
+- [ ] Known vulnerabilities in the firmware, in the UI's security overview. Flight Control asks Trustify (or Quay with Clair) about the OS image digest each device reports, which these devices already report. It takes an SBOM per release (ESP-IDF or Zephyr, mbedTLS, WAMR, detools, the agent), uploaded to Trustify. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
 
 Waiting for Flight Control (the items are in the [upstream track](#upstream-track-flight-control)):
 
 - [ ] Battery-powered devices: deep sleep, status only on wake-up, no long-poll. Needs item 3.
 - [ ] The same device name after re-enrollment: a device whose certificate expired while offline enrolls again as a new device. Needs the server to accept a re-enrollment for a known name.
 - [ ] The device key in the Digital Signature peripheral on the ESP32 chips that have no ECDSA one (RSA-3072, sealed under a key in eFuse). Written and switched off: needs item 7.
+- [ ] The firmware from the software catalog, like the apps. Needs item 9.
 
 Not planned here: burning eFuses on a real board. Secure Boot, flash encryption and what goes with them are verified on emulated chips, which run the chip's real ROM; whoever ships a batch burns one board per chip first ([SECURITY.md](SECURITY.md)).
 
