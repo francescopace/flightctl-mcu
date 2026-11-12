@@ -711,9 +711,15 @@ static void apply_rendered(agent_t *a, const char *json)
             pthread_mutex_unlock(&a->lock);
             request_status(a);
             char oerr[160];
-            if (fc_oci_fetch_firmware(image, new_digest, sizeof(new_digest), oerr, sizeof(oerr)) != 0) {
+            int frc = fc_oci_fetch_firmware(image, new_digest, sizeof(new_digest), oerr, sizeof(oerr));
+            if (frc != 0) {
                 snprintf(err, sizeof(err), "%s", oerr);
-                retry = 1; /* registry or network trouble: try this spec again */
+                /* Registry or network trouble: try this spec again. An image
+                 * the device refused would be refused again: it waits for
+                 * the next spec, and the slot is not written every minute. */
+                if (frc != FC_OCI_REFUSED) {
+                    retry = 1;
+                }
             } else {
                 reboot = 1;
             }

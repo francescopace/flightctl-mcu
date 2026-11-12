@@ -29,6 +29,10 @@ features it was built for, and the agent refuses an update built for others
 before it is installed (`firmware built for another security variant`). A
 secure build pushed to plain devices by mistake therefore changes nothing on
 them; a plain device can become a secure one only by flashing it over USB.
+An image a device refuses (this, an older security version, the bootloader's
+checks) is reported in its status and not downloaded again until the fleet's
+spec changes: the device stays out of date with the reason, and its flash is
+not written every minute.
 Devices on firmware older than this check (v3.0) do not have it.
 
 The variant is tested on emulated chips (esp-emu, which runs the chip's real

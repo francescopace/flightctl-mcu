@@ -6,7 +6,13 @@
  * registry) into the inactive OTA slot and makes it the next boot image:
  * the whole image, or a delta from the running one when the manifest has it.
  * `digest` gets the digest of the resolved reference (index or manifest).
- * Returns 0 on success; on failure `err` says why and the slot is untouched. */
+ * Returns 0 on success; on failure `err` says why and the slot is untouched:
+ * -1 for what may pass (the registry, the network), FC_OCI_REFUSED for an
+ * image that was downloaded and that the device does not take (the
+ * bootloader's checks, the security variant, anti-rollback). The same image
+ * would be refused again: it is not worth another download, and another
+ * write of the slot. */
+#define FC_OCI_REFUSED (-2)
 int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, char *err, size_t err_len);
 
 /* How the last firmware was downloaded, for the status: "full 1085 KB",

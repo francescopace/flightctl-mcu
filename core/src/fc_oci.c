@@ -369,21 +369,21 @@ static int ota_sink(const void *data, size_t len, void *ctx)
     return fc_port_ota_write(ctx, data, len);
 }
 
-/* Commits the slot; -1 with `err` set when the image is refused. */
+/* Commits the slot; FC_OCI_REFUSED with `err` set when the image is refused. */
 static int ota_commit(void *ota, char *err, size_t err_len)
 {
     int rc = fc_port_ota_end(ota, 1);
     if (rc == FC_OTA_TOO_OLD) {
         snprintf(err, err_len, "firmware older than this device accepts (anti-rollback security version)");
-        return -1;
+        return FC_OCI_REFUSED;
     }
     if (rc == FC_OTA_WRONG_VARIANT) {
         snprintf(err, err_len, "firmware built for another security variant (secure or plain) than this device");
-        return -1;
+        return FC_OCI_REFUSED;
     }
     if (rc != 0) {
         snprintf(err, err_len, "firmware image rejected by the bootloader checks");
-        return -1;
+        return FC_OCI_REFUSED;
     }
     return 0;
 }
@@ -603,8 +603,9 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
         fc_port_ota_end(ota, 0);
         return -1;
     }
-    if (ota_commit(ota, err, err_len) != 0) {
-        return -1;
+    int rc = ota_commit(ota, err, err_len);
+    if (rc != 0) {
+        return rc;
     }
     set_firmware_download("full", blob_size, blob_size);
     return 0;

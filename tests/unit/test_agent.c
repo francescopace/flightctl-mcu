@@ -16,11 +16,15 @@
 
 /* ---- stubs ------------------------------------------------------------------ */
 
-static int s_fw_fetches;
+static int s_fw_fetches, s_fw_refused;
 
 int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, char *err, size_t err_len)
 {
     s_fw_fetches++;
+    if (s_fw_refused) {
+        snprintf(err, err_len, "firmware image rejected by the bootloader checks");
+        return FC_OCI_REFUSED;
+    }
     snprintf(err, err_len, "registry down");
     return -1;
 }
@@ -154,6 +158,24 @@ static void the_current_firmware_is_not_downloaded_again(void)
     CHECK_STR(s_a.attempted_version, "5"); /* 6 failed to download: retried, not skipped */
 }
 
+/* A download that failed is tried again with the same spec; an image the
+ * device refused is not: it would be written to the slot again for nothing. */
+static void a_refused_firmware_is_not_downloaded_again(void)
+{
+    new_agent();
+    snprintf(s_a.os_image, sizeof(s_a.os_image), "reg/fw:v1");
+    apply("6", "{\"os\":{\"image\":\"reg/fw:v2\"}}");
+    apply("6", "{\"os\":{\"image\":\"reg/fw:v2\"}}");
+    CHECK_INT(s_fw_fetches, 2); /* the registry was down: tried again */
+    s_fw_refused = 1;
+    apply("6", "{\"os\":{\"image\":\"reg/fw:v2\"}}");
+    CHECK_INT(s_fw_fetches, 3);
+    CHECK_CONTAINS(s_a.update_error, "rejected by the bootloader");
+    CHECK_STR(s_a.attempted_version, "6");
+    CHECK_STR(s_a.rendered_version, ""); /* not applied: the device stays out of date, with the error */
+    s_fw_refused = 0;
+}
+
 /* ---- certificates ----------------------------------------------------------- */
 
 /* A certificate for `subject_key_pem` issued by a throwaway CA, as PEM. */
@@ -275,6 +297,7 @@ int main(void)
     RUN(only_inline_config_is_supported);
     RUN(a_deeply_nested_spec_is_refused_without_crashing);
     RUN(the_current_firmware_is_not_downloaded_again);
+    RUN(a_refused_firmware_is_not_downloaded_again);
     RUN(a_renewed_certificate_for_our_key_is_installed);
     RUN(a_certificate_for_another_key_is_refused);
     RUN(a_denied_request_is_a_failure);

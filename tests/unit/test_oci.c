@@ -462,7 +462,7 @@ static void an_image_the_device_refuses_is_not_downloaded_again(void)
     push_firmware("v2", delta_new, sizeof(delta_new), 1, delta_patch, sizeof(delta_patch), delta_old,
                   sizeof(delta_old));
     stub_ota_end_result = FC_OTA_WRONG_VARIANT;
-    CHECK_INT(update(err, sizeof(err)), -1);
+    CHECK_INT(update(err, sizeof(err)), FC_OCI_REFUSED);
     CHECK_CONTAINS(err, "another security variant");
     CHECK_INT(stub_ota_commits, 0);
     CHECK_INT(stub_ota_aborts, 0);
