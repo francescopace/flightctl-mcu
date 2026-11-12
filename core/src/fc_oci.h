@@ -15,9 +15,12 @@
 #define FC_OCI_REFUSED (-2)
 int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, char *err, size_t err_len);
 
-/* How the last firmware was downloaded, for the status: "full 1085 KB",
- * "delta 26 of 1085 KB", or "" when none was (the image came over USB). */
-const char *fc_oci_firmware_download(void);
+/* How the last firmware was downloaded, for status.os.lastDelta: "Applied"
+ * (as a delta from the running image), "NotUsed" (whole: the release has no
+ * delta from the running image), "Fallback" (a delta that did not work, then
+ * the whole image; `*reason` says why, else it is ""), or "" when none was
+ * (the image came over USB). */
+const char *fc_oci_delta_outcome(const char **reason);
 
 /* Downloads one layer of `image` into a malloc'd buffer (caller frees):
  * through an index the manifest with platform.architecture == `arch`, then

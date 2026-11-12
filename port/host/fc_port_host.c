@@ -131,6 +131,8 @@ void fc_port_custom_info(void *obj)
     cJSON_AddStringToObject((cJSON *)obj, "deviceClass", "host-simulator");
 }
 
+void fc_port_metrics(void *obj) {}
+
 int fc_port_write_file(const char *path, const void *data, size_t len)
 {
     /* Flatten the absolute path into a single file name under files/. */

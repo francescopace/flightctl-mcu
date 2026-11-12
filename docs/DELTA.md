@@ -69,8 +69,11 @@ another digest, memory is short), the slot is given up and the image is
 downloaded whole, in the same update. An image the device refuses at commit
 would be refused whole too, and is not downloaded again.
 
-The device reports how its last firmware came in `customInfo`:
-`firmwareDownload: "delta 136 of 1085 KB"`, or `"full 1085 KB"`.
+The device reports how its last firmware came in `status.os.lastDelta`, the
+field Flight Control 1.4 has for it: `outcome: Applied` for a delta,
+`NotUsed` for a whole image when the release has no delta from the running
+one, and `Fallback` with a `fallbackReason` when a delta did not work and the
+image came whole. The sizes are in the device's log.
 
 With Secure Boot and flash encryption nothing changes: the device reads its
 image in clear through the flash encryption, the delta is between the signed

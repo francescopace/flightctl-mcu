@@ -160,7 +160,21 @@ The delta is half of the image because it goes from the debug build to the relea
 
 Unplanned, and as designed: the board was first approved while the end-to-end test had the server issuing 2-minute certificates, the server restarted, the certificate expired, and at its next start the board dropped that identity and enrolled again under a new key (problem 13).
 
-Not run on the board: the way back from a broken image, the secure variant (it burns eFuses), the other five chips.
+Not run on the board: the secure variant (it burns eFuses), the other five chips. The way back from a broken image came later (below).
+
+### The way back on the ESP32-S3, both ports
+
+12 November 2026, against Flight Control 1.4.0, the same board with each port in turn. Each was given, through its fleet, a firmware built to reach Flight Control on a wrong port (9443) and to give itself 30 seconds instead of 150:
+
+| | ESP-IDF 6.0.3 (v5.0) | Zephyr 4.5 with MCUboot |
+|---|---|---|
+| Before | the release build, come as a delta of 512 KB from the debug one (`lastDelta: Applied`) | the build of the day, come as a delta of 28 KB (`lastDelta: Applied`) |
+| Broken image | 1181 KB, whole (`NotUsed`), downloaded and restarted in 11 s | 885 KB, whole, in 14 s |
+| Given up | 30 s after the agent started, by the image itself | the same |
+| Back | the bootloader takes the previous slot | MCUboot swaps the slots back: 15 s |
+| Reported | 53 s after the fleet changed: "failed to start and was rolled back; not retried" | 1 min 53 s, the same message |
+
+Neither tried the image again. To have the board back as it was, the Zephyr build's storage (its key and credentials, at 0x7b0000, where the ESP-IDF layout does not reach) was saved before the ESP-IDF build was flashed and written back after; the board came back as the same device.
 
 ## Problems found and fixed
 
@@ -228,7 +242,16 @@ Not run on the board: the way back from a broken image, the secure variant (it b
 
 What changed for a deployment is the **label sync**. 1.4 installs `LabelSyncMapping` resources, and one of them copies every entry of `customInfo` into the device's labels (`custominfo.flightctl.io/<key>`). These devices report counters there: free heap, traffic, uptime. With the default, each status update rewrote the device's labels and logged two events ("label reconciliation was requested", "updated successfully (labels)"): 227 of 400 events on the test cluster, while the tests ran.
 
-`tools/fleet/labelsync-custom-info.yaml` replaces that mapping with one that copies only what stays the same between firmware updates (device class, board, firmware and OS version, security state). The labels then stop changing, and so does the second event. The first is still logged whenever `customInfo` changes, which for these devices is at every status: the service asks for a reconciliation before it knows nothing will come of it. Stopping that needs the counters out of `customInfo`, or a quieter service (limitation 10 below).
+`tools/fleet/labelsync-custom-info.yaml` replaces that mapping with one that copies only what stays the same between firmware updates (device class, board, firmware and OS version, security state). The labels then stop changing, and so does the second event. The first is logged whenever anything in the status changes (the service compares the whole status, `lastSeen` aside), before it knows nothing will come of it (limitation 10 below).
+
+Two things changed at every status, so each status was an event: the counters in `customInfo`, and the time of the `Updating` condition, which the agent set to the time of the status. Now the condition's time changes only with the condition, as in Kubernetes, and the counters are read at the start, five minutes later, then once an hour; the statuses in between repeat them. The simulated device, with no app, over 9 minutes (a status a minute):
+
+| | Events |
+|---|---|
+| Before | 10, one per status |
+| After | 2: at the start, and when the counters were read again five minutes later; then one an hour |
+
+What an app reports is not held back: the `alarm` app on the Zephyr boards, whose temperature is simulated and swings through its thresholds, changes its state about twice a minute, and each change is an event (30 in 15 minutes on the ESP32-S3).
 
 The labels a mapping makes are its own: editing a device without them, to change another label, is refused (409, "cannot edit a managed label owned by a mapping"). An edit must carry them as they are.
 
@@ -266,10 +289,14 @@ One thing the new labels give: a fleet can select on what a device says it is, `
    - The internal CA builds the certificate with the request's signature algorithm (`internal/crypto/internal_ca.go`: `SignatureAlgorithm: csr.SignatureAlgorithm`). An RSA request asks for SHA256WithRSA, the CA's key is ECDSA, and Go's `x509.CreateCertificate` refuses: "requested SignatureAlgorithm does not match private key type". Approving the request fails with a 400.
    - It matters for keys in hardware: the ESP32 DS peripheral signs only with RSA.
    - Proposal: leave `SignatureAlgorithm` unset in the template, so the CA signs with its own algorithm whatever the device key.
-10. **Since 1.4, a change in `customInfo` is a label event.**
-   - The default `custom-info` mapping copies all of `customInfo` into labels, and the service logs "label reconciliation was requested" at every change in it, even when no label changes ([above](#flight-control-140)).
+10. **Since 1.4, a change in the status is a label event.**
+   - The default `custom-info` mapping copies all of `customInfo` into labels, and the service logs "label reconciliation was requested" at every change in the status (`internal/service/common/device.go`: `deviceStatusesEqual`), even when no label changes ([above](#flight-control-140)).
    - `customInfo` is the only free-form place in the status, so a constrained device's counters end up there (limitation 5).
    - Proposal: ask for a reconciliation only when a mapping's inputs changed, and do not copy all of `customInfo` by default; or give counters a place of their own.
+11. **A fleet's OS image cannot come from the software catalog.**
+   - The fleet accepts `spec.os.catalogItemRef` and keeps it in its template version, but the device gets `os: {}`: building the device's spec from the template copies `os.image` only (`internal/tasks/desired_spec.go`: `assembleDesiredSpec`). The device is reported `UpToDate` and its firmware never changes, with no error.
+   - Tried on the Pico W on 12 November 2026, with a catalog for the Zephyr firmware and the `alarm` app. The app's `catalogItemRef` works: the server turned version `2.0.1-pico` into `…/alarm:v2.pico`, and the agent got the image reference as before (and refused it, signed with another key). Unchanged on `main` the same day.
+   - Proposal: copy `os.catalogItemRef` too, as is done for the applications.
 
 Limitations 1, 3, 8 and 9 are unchanged in the source of 1.4.0 (read, not tried again).
 
@@ -280,6 +307,6 @@ Limitations 1, 3, 8 and 9 are unchanged in the source of 1.4.0 (read, not tried 
   - The device key is in flash in clear, except in the `secure` variant (see [SECURITY.md](SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
 - **Provisioning**: credentials are written over USB (`tools/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
-- **Hardware coverage**: automatic rollback was not exercised on the C6, nor on the ESP32-S3 with the Zephyr build ([DEVICES.md](DEVICES.md#boards-tried)).
+- **Hardware coverage**: automatic rollback was not exercised on the C6 ([DEVICES.md](DEVICES.md#boards-tried)).
 
 What comes next is in the [roadmap](ROADMAP.md).

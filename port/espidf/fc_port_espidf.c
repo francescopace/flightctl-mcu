@@ -222,16 +222,6 @@ void fc_port_custom_info(void *obj)
     fc_port_sysinfo(&si);
     cJSON_AddStringToObject(o, "mac", si.hw_id);
     cJSON_AddStringToObject(o, "firmwareVersion", esp_app_get_description()->version);
-    snprintf(buf, sizeof(buf), "%lld", (long long)(esp_timer_get_time() / 1000000));
-    cJSON_AddStringToObject(o, "uptimeSeconds", buf);
-    snprintf(buf, sizeof(buf), "%u", (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));
-    cJSON_AddStringToObject(o, "memMinFreeBytes", buf);
-    /* With PSRAM the totals above include it; TLS and WiFi care about
-     * internal RAM, and about its largest free block. */
-    snprintf(buf, sizeof(buf), "%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-    cJSON_AddStringToObject(o, "memInternalFreeBytes", buf);
-    snprintf(buf, sizeof(buf), "%u", (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-    cJSON_AddStringToObject(o, "memInternalLargestBlock", buf);
     static const char *const reasons[] = {
         [ESP_RST_UNKNOWN] = "unknown", [ESP_RST_POWERON] = "poweron", [ESP_RST_EXT] = "external",
         [ESP_RST_SW] = "software", [ESP_RST_PANIC] = "panic", [ESP_RST_INT_WDT] = "int_wdt",
@@ -255,6 +245,26 @@ void fc_port_custom_info(void *obj)
     cJSON_AddStringToObject(o, "flashEncryption", fe == ESP_FLASH_ENC_MODE_RELEASE       ? "release"
                                                    : fe == ESP_FLASH_ENC_MODE_DEVELOPMENT ? "development"
                                                                                           : "off");
+#if !SOC_TEMP_SENSOR_SUPPORTED
+    cJSON_AddStringToObject(o, "temperatureSource", "simulated");
+#endif
+    (void)buf;
+}
+
+void fc_port_metrics(void *obj)
+{
+    cJSON *o = obj;
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%lld", (long long)(esp_timer_get_time() / 1000000));
+    cJSON_AddStringToObject(o, "uptimeSeconds", buf);
+    snprintf(buf, sizeof(buf), "%u", (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));
+    cJSON_AddStringToObject(o, "memMinFreeBytes", buf);
+    /* With PSRAM the totals above include it; TLS and WiFi care about
+     * internal RAM, and about its largest free block. */
+    snprintf(buf, sizeof(buf), "%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddStringToObject(o, "memInternalFreeBytes", buf);
+    snprintf(buf, sizeof(buf), "%u", (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    cJSON_AddStringToObject(o, "memInternalLargestBlock", buf);
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         snprintf(buf, sizeof(buf), "%d", ap.rssi);
@@ -264,9 +274,6 @@ void fc_port_custom_info(void *obj)
     if (fc_port_temperature(&t) == 0) {
         snprintf(buf, sizeof(buf), "%.1f", t);
         cJSON_AddStringToObject(o, "temperatureC", buf);
-#if !SOC_TEMP_SENSOR_SUPPORTED
-        cJSON_AddStringToObject(o, "temperatureSource", "simulated");
-#endif
     }
 }
 

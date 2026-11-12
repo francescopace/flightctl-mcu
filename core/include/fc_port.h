@@ -43,9 +43,16 @@ int fc_port_kv_del(const char *key);
 
 void fc_port_sysinfo(fc_sysinfo_t *si);
 
-/* Adds platform-specific string entries to status.systemInfo.customInfo.
- * `obj` is a cJSON object; declared as void* to keep cJSON out of this API. */
+/* Add platform-specific string entries to status.systemInfo.customInfo.
+ * `obj` is a cJSON object; declared as void* to keep cJSON out of this API.
+ * fc_port_custom_info: what stays the same while the device runs (the chip,
+ *   the firmware, the security state), in every status.
+ * fc_port_metrics: what changes all the time (heap, uptime, RSSI,
+ *   temperature). Flight Control logs an event for each change in the
+ *   status, so these are read only every metrics_interval_s
+ *   (fc_agent_config_t), and the statuses in between repeat them. */
 void fc_port_custom_info(void *obj);
+void fc_port_metrics(void *obj);
 
 /* Writes a config file delivered through spec.config. `path` is the absolute
  * path from the device spec; the port maps it onto its own storage. */

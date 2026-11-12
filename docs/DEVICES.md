@@ -51,7 +51,7 @@ With Zephyr 4.5 and firmware updates through MCUboot ([ZEPHYR.md](ZEPHYR.md)):
 | Board | Core | Status | Free heap with an app running |
 |---|---|---|---|
 | Raspberry Pi Pico W (RP2040) | Arm Cortex-M0+ | everything works | ~31 KB |
-| ESP32-S3 | Xtensa LX7 | everything except rollback, which was not exercised | ~49 KB |
+| ESP32-S3 | Xtensa LX7 | everything works | ~49 KB |
 
 ## Adding another device
 

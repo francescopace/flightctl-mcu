@@ -435,6 +435,7 @@ void app_main(void)
         .labels = parse_labels(labels),
         .agent_version = "flightctl-mcu/0.1.0",
         .status_interval_s = CONFIG_FC_STATUS_INTERVAL,
+        .metrics_interval_s = CONFIG_FC_METRICS_INTERVAL,
         .ota_verify_timeout_s = CONFIG_FC_OTA_VERIFY_TIMEOUT,
         .on_config_file = on_config_file,
         .custom_info = alarm_custom_info,

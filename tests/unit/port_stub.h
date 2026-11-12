@@ -4,6 +4,7 @@
 
 /* State of the in-memory port (port_stub.c). */
 extern int stub_reboots;
+extern int stub_metrics_reads; /* fc_port_metrics calls; it reports the count as "reads" */
 extern int stub_verbose; /* 1: print the agent's log lines */
 /* OTA and the running image (off unless stub_ota_enabled). */
 #define STUB_OTA_MAX 8192

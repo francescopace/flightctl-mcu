@@ -385,8 +385,8 @@ wait_for 300 "release build confirmed, app running" \
 # UpToDate is enough: the device reports the new version only once the new
 # image is confirmed (and the release build does not log at INFO level).
 echo "heap: free $(custom memFreeBytes), min $(custom memMinFreeBytes), largest internal block $(custom memInternalLargestBlock)"
-wait_for 30 "the release came as a delta from the debug build ($(custom firmwareDownload))" \
-  "ci.get('firmwareDownload', '').startswith('delta ')"
+wait_for 30 "the release came as a delta from the debug build" \
+  "(st.get('os') or {}).get('lastDelta', {}).get('outcome') == 'Applied'"
 
 log "unsigned app refused"
 apply_fleet "release.$TAG" "v2.$TAG-unsigned"
@@ -428,8 +428,10 @@ wait_for $CERT_TTL "certificate renewed" "ci.get('mgmtCertNotAfter', '$first') >
 expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
 wait_s=$(( expiry - $(date +%s) + 5 ))
 (( wait_s > 0 )) && { echo "waiting ${wait_s}s for the first certificate to expire"; sleep "$wait_s"; }
-tx=$(custom netTxBytes)
-wait_for 120 "status accepted after the first certificate expired" "int(ci.get('netTxBytes', 0)) > $tx"
+# The counters in customInfo change once an hour: a status accepted since is
+# shown by the next renewal, every quarter of CERT_TTL.
+last=$(custom mgmtCertNotAfter)
+wait_for 120 "status accepted after the first certificate expired" "ci.get('mgmtCertNotAfter', '') > '$last'"
 
 if [[ "$ROLLBACK" == 1 ]]; then
   # The broken build keeps the device away from the server for a minute or
@@ -450,8 +452,8 @@ if [[ "$ROLLBACK" == 1 ]]; then
   wait_for 480 "back on the release build, update reported as failed" \
     "ci.get('firmwareVersion', '').endswith('-release') and 'rolled back' in upd.get('info', '')"
   # The broken build has no delta: it came whole.
-  wait_for 30 "an image without a delta came whole ($(custom firmwareDownload))" \
-    "ci.get('firmwareDownload', '').startswith('full ')"
+  wait_for 30 "an image without a delta came whole" \
+    "(st.get('os') or {}).get('lastDelta', {}).get('outcome') == 'NotUsed'"
 fi
 
 if [[ -n "${SPARE_KEY:-}" ]]; then

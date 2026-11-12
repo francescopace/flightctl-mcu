@@ -321,8 +321,8 @@ static void device_running(const unsigned char *fw, size_t len)
     stub_fw = fw;
     stub_fw_len = len;
     s_running_digest[0] = '\0';
-    s_fw_download[0] = '\0';
-    s_fw_download_loaded = 0;
+    s_fw_delta[0] = '\0';
+    s_fw_delta_loaded = 0;
 }
 
 static int update(char *err, size_t err_len)
@@ -350,8 +350,15 @@ static void firmware_comes_as_a_delta_from_the_running_image(void)
     CHECK_SLOT(delta_new);
     CHECK_INT(stub_ota_commits, 1);
     CHECK_INT(stub_ota_aborts, 0);
-    CHECK_CONTAINS(fc_oci_firmware_download(), "delta 0 of 3 KB");
-    CHECK_CONTAINS(stub_kv("fw.download"), "delta");
+    const char *why;
+    CHECK_STR(fc_oci_delta_outcome(&why), "Applied");
+    CHECK_STR(why, "");
+    CHECK_STR(stub_kv("fw.delta"), "Applied");
+
+    /* The firmware it rebooted into reads it back. */
+    s_fw_delta[0] = '\0';
+    s_fw_delta_loaded = 0;
+    CHECK_STR(fc_oci_delta_outcome(&why), "Applied");
 }
 
 static void a_device_on_another_image_takes_the_whole_one(void)
@@ -368,7 +375,7 @@ static void a_device_on_another_image_takes_the_whole_one(void)
     CHECK_SLOT(delta_new);
     CHECK_INT(stub_ota_commits, 1);
     CHECK_INT(stub_ota_aborts, 0); /* the delta was not tried */
-    CHECK_STR(fc_oci_firmware_download(), "full 3 KB");
+    CHECK_STR(fc_oci_delta_outcome(NULL), "NotUsed");
 
     /* A port that cannot read its image, or an image shorter than the base. */
     device_running(NULL, 0);
@@ -399,7 +406,10 @@ static void a_bad_delta_falls_back_to_the_whole_image(void)
     CHECK_SLOT(wanted);
     CHECK_INT(stub_ota_aborts, 1);
     CHECK_INT(stub_ota_commits, 1);
-    CHECK_STR(fc_oci_firmware_download(), "full 3 KB");
+    const char *why;
+    CHECK_STR(fc_oci_delta_outcome(&why), "Fallback");
+    CHECK_CONTAINS(why, "the rebuilt image is not sha256:");
+    CHECK_CONTAINS(stub_kv("fw.delta"), "Fallback the rebuilt image");
 
     /* Corrupt, at every position in turn (its digest in the manifest is the
      * corrupt one's: only the decoder and the image digest stand in the way). */
@@ -456,7 +466,29 @@ static void an_image_the_device_refuses_is_not_downloaded_again(void)
     CHECK_CONTAINS(err, "another security variant");
     CHECK_INT(stub_ota_commits, 0);
     CHECK_INT(stub_ota_aborts, 0);
-    CHECK_STR(fc_oci_firmware_download(), "");
+    CHECK_STR(fc_oci_delta_outcome(NULL), "");
+}
+
+/* A device updated by a firmware from before status.os.lastDelta finds how it
+ * came in that firmware's words. */
+static void the_outcome_written_by_an_older_firmware_is_read(void)
+{
+    const char *why;
+    device_running(delta_old, sizeof(delta_old));
+    fc_port_kv_set("fw.download", "delta 136 of 1085 KB", 20);
+    CHECK_STR(fc_oci_delta_outcome(&why), "Applied");
+    CHECK_STR(why, "");
+    device_running(delta_old, sizeof(delta_old));
+    fc_port_kv_set("fw.download", "full 1085 KB", 12);
+    CHECK_STR(fc_oci_delta_outcome(&why), "NotUsed");
+
+    /* The next update writes the new key and drops the old one. */
+    push_firmware("v2", delta_new, sizeof(delta_new), 1, delta_patch, sizeof(delta_patch), delta_old,
+                  sizeof(delta_old));
+    char err[160];
+    CHECK_INT(update(err, sizeof(err)), 0);
+    CHECK_STR(stub_kv("fw.delta"), "Applied");
+    CHECK(stub_kv("fw.download") == NULL);
 }
 
 int main(void)
@@ -476,6 +508,7 @@ int main(void)
     RUN(a_device_on_another_image_takes_the_whole_one);
     RUN(a_bad_delta_falls_back_to_the_whole_image);
     RUN(an_image_the_device_refuses_is_not_downloaded_again);
+    RUN(the_outcome_written_by_an_older_firmware_is_read);
     reg_reset();
     mbedtls_pk_free(&s_key);
     mbedtls_pk_free(&s_other);

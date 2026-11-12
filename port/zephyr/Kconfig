@@ -36,6 +36,14 @@ config FC_FW_VERSION
 	string "Firmware version, logged at boot"
 	default "dev"
 
+config FC_METRICS_INTERVAL
+	int "Counters in customInfo read every (s)"
+	default 3600
+	help
+	  The heap's low-water mark, traffic. The statuses in between repeat
+	  the last values: Flight Control 1.4 logs an event for every change
+	  in the status.
+
 config FC_OTA_VERIFY_TIMEOUT
 	int "Seconds a new firmware has to reach Flight Control before it is given up"
 	default 150

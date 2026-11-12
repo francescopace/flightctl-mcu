@@ -7,7 +7,8 @@
 Uses the flightctl CLI, as whoever is logged in. Each round appends one row
 per device: its state and the metrics it reports in customInfo (heap, its
 low-water mark, the largest internal block, RSSI, temperature, traffic,
-uptime, firmware, reset reason). Leave it running for weeks next to the lab
+uptime, firmware, reset reason), which the devices read again once an hour
+(metrics_interval_s). Leave it running for weeks next to the lab
 fleet; --report then tells, per device, how long it was watched, how often it
 was not online, how many times it restarted and why, whether the heap's
 low-water mark kept falling (a leak), and its traffic per hour.

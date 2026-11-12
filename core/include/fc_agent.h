@@ -31,6 +31,11 @@ typedef struct {
 
     const char *agent_version;
     int status_interval_s; /* default 60 */
+    /* The counters in customInfo (heap, traffic, uptime: fc_port_metrics)
+     * are read again only after this many seconds; the statuses in between
+     * repeat them. Since 1.4 Flight Control logs an event for every change
+     * in the status. Default 3600. */
+    int metrics_interval_s;
     /* A new firmware must reach Flight Control within this time, or it is
      * rolled back. Default 150 s. */
     int ota_verify_timeout_s;
@@ -40,7 +45,9 @@ typedef struct {
      *   was stored; data is NUL terminated. A non-zero return rejects the file
      *   and is reported as an update error (device Degraded / OutOfDate).
      * custom_info: adds string fields to the cJSON object
-     *   status.systemInfo.customInfo. */
+     *   status.systemInfo.customInfo, in every status: each change in the
+     *   status is an event in Flight Control, so only values that change
+     *   seldom. */
     int (*on_config_file)(const char *path, const char *data, size_t len, void *app_ctx);
     void (*custom_info)(void *cjson_obj, void *app_ctx);
     void *app_ctx;

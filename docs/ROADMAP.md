@@ -15,7 +15,7 @@ Four milestones are done: it works on real hardware, it can be left running, it 
 Checks that were never made:
 
 - [ ] ESP-IDF 6.0 on the other five boards (C3, C5, C6, S2, classic ESP32). On hardware only the S3 ran it; the others ran ESP-IDF 5.5, and 6.0 in the emulator (C3, C5).
-- [ ] The way back from a firmware that does not work, on the ESP32-S3 (both ports) and on the C6. It is tested in the emulator and, for Zephyr, on the Pico W.
+- [ ] The way back from a firmware that does not work, on the C6. It is tested in the emulator, on the ESP32-S3 with both ports and, for Zephyr, on the Pico W.
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
 - [ ] The Zephyr builds for boards in CI. They need the ARM and Xtensa toolchains; CI builds and tests `native_sim` only.
 - [ ] A wired board. Nothing in the core is about WiFi, and Zephyr on `native_sim` already runs without it, but WiFi is the only link tried on hardware: a Zephyr board with Ethernet is two files ([DEVICES.md](DEVICES.md#another-zephyr-board)).
@@ -33,8 +33,6 @@ What Flight Control offers and the agent does not answer yet:
 Towards a deployment:
 
 - [ ] A registry with TLS and authentication. Today it is plain HTTP: signatures protect the images from tampering, not from being read.
-- [ ] The counters out of `customInfo` (free heap, traffic, uptime), or fewer of them: since Flight Control 1.4 each change there logs an event (item 8 below).
-- [ ] The outcome of a delta in `status.os.lastDelta`, which Flight Control 1.4 has, instead of `customInfo`.
 
 Waiting for Flight Control (the items are in the [upstream track](#upstream-track-flight-control)):
 
@@ -60,6 +58,12 @@ Each milestone has a tag; what was measured and what went wrong is in [RESULTS.m
 - Firmware updates as deltas, in the core, so every port has them: a device on a known release downloads 1 to 12% of the image and rebuilds the rest from its own, checked against the signed digest ([DELTA.md](DELTA.md)). On the Pico W and on the ESP32-S3 with both ports; the other ESP32 chips in the emulator.
 - Current foundations: the core on mbedTLS 4, whose cryptography is PSA only, with ESP-IDF 6.0 and Zephyr 4.5, and the tests against Flight Control 1.4.0, whose agent API is the same as 1.3.1's ([DEPENDENCIES.md](DEPENDENCIES.md)). ESP-IDF 6.0 ran on one board, the S3.
 
+**Since milestone 3** (November 2026):
+
+- A status with nothing new is the same as the last one: Flight Control 1.4 logs an event at every change in the status (item 8 below), and that was one per device at every status. The counters in `customInfo` (heap, traffic, uptime, RSSI, temperature) are read at the start, five minutes later and then once an hour, and the time of the `Updating` condition changes only with it ([RESULTS.md](RESULTS.md#flight-control-140)).
+- How the last firmware came is in `status.os.lastDelta`, the field Flight Control 1.4 has for it, no longer in `customInfo`.
+- The way back from a firmware that does not work, on the ESP32-S3 with both ports ([RESULTS.md](RESULTS.md#the-way-back-on-the-esp32-s3-both-ports)).
+
 ## Upstream track (Flight Control)
 
 Raised as proposals, in parallel with the milestones. Details in [RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals).
@@ -71,7 +75,8 @@ Raised as proposals, in parallel with the milestones. Details in [RESULTS.md](RE
 5. No free-form status per app, full status on every update (most of the remaining idle traffic), `os.image` compared as a string.
 6. Enrollment certificates cannot be revoked: the server checks only their signer and expiry.
 7. Devices with RSA keys cannot enroll: the internal CA copies the request's signature algorithm, which fails with its ECDSA key.
-8. Since 1.4, `customInfo` is copied into the device's labels by default, and any change in it logs an event: a device that reports counters there writes one at every status.
+8. Since 1.4, `customInfo` is copied into the device's labels by default, and any change in the status logs an event: a device that reports counters writes one at every status. These devices now change them once an hour.
+9. A fleet's `spec.os.catalogItemRef` (software catalog, 1.4) does not reach the device: it gets `os: {}` and stays on its firmware, reported up to date. Apps from the catalog work.
 
 Items 1, 3, 6 and 7 are as they were in the source of 1.4.0.
 

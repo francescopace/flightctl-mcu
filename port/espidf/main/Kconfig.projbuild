@@ -52,6 +52,14 @@ config FC_STATUS_INTERVAL
         Control marks a device Unknown after 5 minutes without a status, so
         keep it well below 300.
 
+config FC_METRICS_INTERVAL
+    int "Counters in customInfo read every (s)"
+    default 3600
+    help
+        Heap, traffic, uptime, RSSI and temperature. The statuses in between
+        repeat the last values: Flight Control 1.4 logs an event for every
+        change in the status.
+
 config FC_LED_GPIO
     int "Default LED GPIO (overridable from config)"
     default 48

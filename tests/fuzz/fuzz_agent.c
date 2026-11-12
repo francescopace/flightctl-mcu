@@ -26,9 +26,12 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
 
 void fc_oci_set_signing_key(const char *pub_pem) {}
 
-const char *fc_oci_firmware_download(void)
+static const char *s_delta_outcome = "", *s_delta_reason = "";
+
+const char *fc_oci_delta_outcome(const char **reason)
 {
-    return "";
+    *reason = s_delta_reason;
+    return s_delta_outcome;
 }
 
 void fc_port_host_init(const char *data_dir, int debug);

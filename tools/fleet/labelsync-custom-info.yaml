@@ -1,10 +1,10 @@
 # Flight Control 1.4 and later copy every entry of a device's customInfo into
 # its labels (the "custom-info" LabelSyncMapping the service installs). These
-# devices also report counters there (free heap, traffic, uptime), which
-# change with every status: each one would rewrite the labels and log two
-# events. This replaces that mapping with one that copies only what stays
-# the same between two firmware updates, which is also what a fleet selector
-# can use: custominfo.flightctl.io/deviceClass=zephyr, for example.
+# devices also report counters there (free heap, traffic, uptime), read again
+# once an hour: each change would rewrite the labels. This replaces that
+# mapping with one that copies only what stays the same between two firmware
+# updates, which is also what a fleet selector can use:
+# custominfo.flightctl.io/deviceClass=zephyr, for example.
 #
 #   tools/fleet/apply.sh tools/fleet/labelsync-custom-info.yaml
 apiVersion: flightctl.io/v1beta1

@@ -26,7 +26,7 @@ flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t 
 
 The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
 
-Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, so narrow that to what does not change ([why](RESULTS.md#flight-control-140)):
+Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, once an hour, so narrow that to what does not change ([why](RESULTS.md#flight-control-140)):
 
 ```bash
 tools/fleet/apply.sh tools/fleet/labelsync-custom-info.yaml

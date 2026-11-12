@@ -44,7 +44,8 @@
 #define DELTA_FROM       "io.flightctl-mcu.delta.from"      /* digest of the image the patch starts from */
 #define DELTA_FROM_SIZE  "io.flightctl-mcu.delta.from-size" /* and its size in bytes */
 #define MAX_DELTAS       8                                  /* deltas looked at in one manifest */
-#define KV_FW_DOWNLOAD   "fw.download"
+#define KV_FW_DELTA      "fw.delta"
+#define KV_FW_DOWNLOAD   "fw.download" /* before: "delta 26 of 1085 KB", "full 1085 KB" */
 
 static const char *s_signing_key;
 
@@ -399,34 +400,42 @@ static int ota_commit(void *ota, char *err, size_t err_len)
     return 0;
 }
 
-/* How the last firmware came, for the status: "delta 27 of 1110 KB". */
-static char s_fw_download[48];
-static int s_fw_download_loaded;
+/* How the last firmware came, for status.os.lastDelta: "Applied",
+ * "NotUsed", or "Fallback <why>"; kept across the reboot into it. */
+static char s_fw_delta[136];
+static int s_fw_delta_loaded;
 
-const char *fc_oci_firmware_download(void)
+const char *fc_oci_delta_outcome(const char **reason)
 {
-    if (!s_fw_download_loaded) {
+    if (!s_fw_delta_loaded) {
         char *v = NULL;
         size_t len = 0;
-        if (fc_port_kv_get(KV_FW_DOWNLOAD, &v, &len) == 0) {
-            snprintf(s_fw_download, sizeof(s_fw_download), "%.*s", (int)len, v);
+        if (fc_port_kv_get(KV_FW_DELTA, &v, &len) == 0) {
+            snprintf(s_fw_delta, sizeof(s_fw_delta), "%.*s", (int)len, v);
+        } else if (fc_port_kv_get(KV_FW_DOWNLOAD, &v, &len) == 0) {
+            /* written by a firmware before this one, which took this one */
+            snprintf(s_fw_delta, sizeof(s_fw_delta), "%s",
+                     len >= 6 && memcmp(v, "delta ", 6) == 0 ? "Applied" : "NotUsed");
         }
         free(v);
-        s_fw_download_loaded = 1;
+        s_fw_delta_loaded = 1;
     }
-    return s_fw_download;
+    char *sp = strchr(s_fw_delta, ' ');
+    if (reason != NULL) {
+        *reason = sp != NULL ? sp + 1 : "";
+    }
+    static char outcome[16];
+    snprintf(outcome, sizeof(outcome), "%.*s", sp != NULL ? (int)(sp - s_fw_delta) : (int)strlen(s_fw_delta),
+             s_fw_delta);
+    return outcome;
 }
 
-static void set_firmware_download(const char *how, long got, long full)
+static void set_delta_outcome(const char *outcome, const char *why)
 {
-    if (got == full) {
-        snprintf(s_fw_download, sizeof(s_fw_download), "%s %ld KB", how, (full + 512) / 1024);
-    } else {
-        snprintf(s_fw_download, sizeof(s_fw_download), "%s %ld of %ld KB", how, (got + 512) / 1024,
-                 (full + 512) / 1024);
-    }
-    s_fw_download_loaded = 1;
-    fc_port_kv_set(KV_FW_DOWNLOAD, s_fw_download, strlen(s_fw_download));
+    snprintf(s_fw_delta, sizeof(s_fw_delta), "%s%s%s", outcome, why[0] ? " " : "", why);
+    s_fw_delta_loaded = 1;
+    fc_port_kv_set(KV_FW_DELTA, s_fw_delta, strlen(s_fw_delta));
+    fc_port_kv_del(KV_FW_DOWNLOAD);
 }
 
 /* sha256 of the first `size` bytes of the running image, "sha256:<hex>";
@@ -584,14 +593,15 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
     long delta_size = 0, from_size = 0;
     int has_delta = find_delta(layers, blob_size, delta_digest, &delta_size, &from_size);
     cJSON_Delete(layers);
+    char why[120] = "";
     if (has_delta) {
         fc_port_log(FC_LOG_INFO, "firmware %s (%s): %ld bytes, as a delta of %ld from the running image", image,
                     platform, blob_size, delta_size);
-        char why[120] = "";
         int rc = fetch_firmware_delta(&r, delta_digest, delta_size, from_size, blob_digest, blob_size, why,
                                       sizeof(why), err, err_len);
         if (rc == 0) {
-            set_firmware_download("delta", delta_size, blob_size);
+            fc_port_log(FC_LOG_INFO, "firmware came as a delta: %ld of %ld bytes", delta_size, blob_size);
+            set_delta_outcome("Applied", "");
         }
         if (rc <= 0) {
             return rc;
@@ -614,7 +624,7 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
     if (rc != 0) {
         return rc;
     }
-    set_firmware_download("full", blob_size, blob_size);
+    set_delta_outcome(has_delta ? "Fallback" : "NotUsed", has_delta ? why : "");
     return 0;
 }
 

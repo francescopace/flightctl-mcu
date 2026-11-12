@@ -193,6 +193,10 @@ void fc_port_custom_info(void *obj)
 {
     cJSON_AddStringToObject((cJSON *)obj, "deviceClass", "zephyr");
     cJSON_AddStringToObject((cJSON *)obj, "board", CONFIG_BOARD_TARGET);
+}
+
+void fc_port_metrics(void *obj)
+{
     size_t total, free_now, free_min;
     char num[24];
     fc_heap_stats(&total, &free_now, &free_min);

@@ -284,8 +284,10 @@ grep -q "management certificate renewed" "$WORK/agent.log" || fail "no renewal i
 expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
 wait_s=$(( expiry - $(date +%s) + 5 ))
 (( wait_s > 0 )) && { echo "waiting ${wait_s}s for the first certificate to expire"; sleep "$wait_s"; }
-tx=$(custom netTxBytes)
-wait_for 90 "status accepted after the first certificate expired" "int(ci.get('netTxBytes', 0)) > $tx and st['summary']['status'] == 'Online'"
+# The counters in customInfo change once an hour: a status accepted since is
+# shown by the next renewal, every quarter of CERT_TTL.
+last=$(custom mgmtCertNotAfter)
+wait_for 90 "status accepted after the first certificate expired" "ci.get('mgmtCertNotAfter', '') > '$last' and st['summary']['status'] == 'Online'"
 
 # Where the device reports its heap (the Zephyr build): how low it has been,
 # after two apps, their updates and the certificate renewal.
@@ -296,8 +298,8 @@ log "server restart"
 # take new specs.
 kubectl -n flightctl rollout restart deployment/flightctl-api >/dev/null
 kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
-tx=$(custom netTxBytes)
-wait_for 120 "status accepted after the restart" "int(ci.get('netTxBytes', 0)) > $tx and st['summary']['status'] == 'Online'"
+last=$(custom mgmtCertNotAfter)
+wait_for 120 "status accepted after the restart" "ci.get('mgmtCertNotAfter', '') > '$last' and st['summary']['status'] == 'Online'"
 before=$(rendered)
 apply_fleet 30 ""
 wait_for 330 "spec applied after the restart" "st['config']['renderedVersion'] == d['metadata']['annotations']['device-controller/renderedVersion'] != '$before'"

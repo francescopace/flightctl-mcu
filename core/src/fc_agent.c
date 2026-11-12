@@ -65,6 +65,14 @@
  * enrollment request is approved already and cannot issue another
  * certificate. Apps, config and firmware stay. */
 #define CERT_EXPIRED_GRACE_S 60
+/* Counters in customInfo (fc_port_metrics, heap and traffic) are read again
+ * after this long; the statuses in between repeat them. Flight Control 1.4
+ * logs an event for every change in the status: with counters read at every
+ * status that was one event per device at every status. */
+#define METRICS_INTERVAL_S 3600
+/* The first read is at the first status, before the agent has done much:
+ * no traffic yet, the heap still whole. The second comes this long after. */
+#define METRICS_SECOND_READ_S 300
 #define CLOCK_SET_AFTER 1735689600 /* 2025-01-01: before that, the clock is not set */
 
 typedef struct {
@@ -99,6 +107,13 @@ typedef struct {
      * success) before the new image has proven it can reach the server. */
     char reported_rendered[32];
     time_t verify_deadline;
+    /* The Updating condition as last reported, and since when: its
+     * lastTransitionTime changes only with it (status thread). */
+    char cond_last[220];
+    char cond_since[32];
+    char *metrics;          /* counters for customInfo, as a JSON object (status thread) */
+    time_t metrics_at;
+    int metrics_reads;
 } agent_t;
 
 static void rfc3339_now(char *buf, size_t len)
@@ -174,6 +189,50 @@ static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, cons
 
 /* ---- status ------------------------------------------------------------ */
 
+/* The counters, read again when they are due and kept as text (a few hundred
+ * bytes, not a cJSON tree): they go into customInfo as they were until then. */
+static void add_metrics(agent_t *a, cJSON *custom, const fc_sysinfo_t *si)
+{
+    int interval = a->cfg->metrics_interval_s > 0 ? a->cfg->metrics_interval_s : METRICS_INTERVAL_S;
+    if (a->metrics_reads == 1 && interval > METRICS_SECOND_READ_S) {
+        interval = METRICS_SECOND_READ_S;
+    }
+    time_t now = time(NULL);
+    /* A clock set after the first status moves `now` by years: read them again. */
+    if (a->metrics == NULL || now - a->metrics_at >= interval || now < a->metrics_at) {
+        cJSON *m = cJSON_CreateObject();
+        char num[32];
+        snprintf(num, sizeof(num), "%llu", (unsigned long long)si->mem_free);
+        cJSON_AddStringToObject(m, "memFreeBytes", num);
+        unsigned long long tx, rx;
+        fc_http_traffic(&tx, &rx);
+        snprintf(num, sizeof(num), "%llu", tx);
+        cJSON_AddStringToObject(m, "netTxBytes", num);
+        snprintf(num, sizeof(num), "%llu", rx);
+        cJSON_AddStringToObject(m, "netRxBytes", num);
+        snprintf(num, sizeof(num), "%lu", fc_http_handshakes());
+        cJSON_AddStringToObject(m, "tlsHandshakes", num);
+        fc_port_metrics(m);
+        char *text = cJSON_PrintUnformatted(m);
+        cJSON_Delete(m);
+        if (text != NULL) {
+            free(a->metrics);
+            a->metrics = text;
+            a->metrics_at = now;
+            a->metrics_reads++;
+        }
+    }
+    cJSON *m = a->metrics != NULL ? cJSON_Parse(a->metrics) : NULL;
+    if (m == NULL) {
+        return;
+    }
+    while (m->child != NULL) {
+        cJSON *item = cJSON_DetachItemViaPointer(m, m->child);
+        cJSON_AddItemToObject(custom, item->string, item);
+    }
+    cJSON_Delete(m);
+}
+
 static cJSON *build_status(agent_t *a)
 {
     fc_sysinfo_t si = {0};
@@ -189,11 +248,22 @@ static cJSON *build_status(agent_t *a)
 
     cJSON *conds = cJSON_AddArrayToObject(st, "conditions");
     cJSON *c = cJSON_CreateObject();
+    const char *cstatus = updating ? "True" : "False";
+    const char *creason = failed ? "Error" : (updating ? a->update_reason : "Updated");
+    const char *cmessage = failed ? a->update_error : "";
+    /* Flight Control 1.4 logs an event for any change in the status: the
+     * time moves only when the condition does, as with Kubernetes'. */
+    char ckey[sizeof(a->cond_last)];
+    snprintf(ckey, sizeof(ckey), "%s|%s|%s", cstatus, creason, cmessage);
+    if (strcmp(ckey, a->cond_last) != 0 || a->cond_since[0] == '\0') {
+        snprintf(a->cond_last, sizeof(a->cond_last), "%s", ckey);
+        snprintf(a->cond_since, sizeof(a->cond_since), "%s", now);
+    }
     cJSON_AddStringToObject(c, "type", "Updating");
-    cJSON_AddStringToObject(c, "status", updating ? "True" : "False");
-    cJSON_AddStringToObject(c, "reason", failed ? "Error" : (updating ? a->update_reason : "Updated"));
-    cJSON_AddStringToObject(c, "message", failed ? a->update_error : "");
-    cJSON_AddStringToObject(c, "lastTransitionTime", now);
+    cJSON_AddStringToObject(c, "status", cstatus);
+    cJSON_AddStringToObject(c, "reason", creason);
+    cJSON_AddStringToObject(c, "message", cmessage);
+    cJSON_AddStringToObject(c, "lastTransitionTime", a->cond_since);
     cJSON_AddItemToArray(conds, c);
 
     cJSON *sys = cJSON_AddObjectToObject(st, "systemInfo");
@@ -204,23 +274,11 @@ static cJSON *build_status(agent_t *a)
     cJSON *custom = cJSON_AddObjectToObject(sys, "customInfo");
     /* Every status carries all of this (Flight Control replaces the whole
      * status), so only what is worth monitoring: the chip and the agent are
-     * already in systemInfo, the labels and agentVersion. */
+     * already in systemInfo, the labels and agentVersion. Each change in the
+     * status is an event in Flight Control 1.4: what changes all the time
+     * is in add_metrics. */
     cJSON_AddStringToObject(custom, "osVersion", si.os_version);
-    char num[32];
-    snprintf(num, sizeof(num), "%llu", (unsigned long long)si.mem_free);
-    cJSON_AddStringToObject(custom, "memFreeBytes", num);
-    unsigned long long tx, rx;
-    fc_http_traffic(&tx, &rx);
-    snprintf(num, sizeof(num), "%llu", tx);
-    cJSON_AddStringToObject(custom, "netTxBytes", num);
-    snprintf(num, sizeof(num), "%llu", rx);
-    cJSON_AddStringToObject(custom, "netRxBytes", num);
-    if (fc_oci_firmware_download()[0] != '\0') {
-        /* how the running firmware came: whole, or as a delta */
-        cJSON_AddStringToObject(custom, "firmwareDownload", fc_oci_firmware_download());
-    }
-    snprintf(num, sizeof(num), "%lu", fc_http_handshakes());
-    cJSON_AddStringToObject(custom, "tlsHandshakes", num);
+    add_metrics(a, custom, &si);
     if (a->cert_not_after > 0) {
         char exp[32];
         struct tm tm;
@@ -255,6 +313,16 @@ static cJSON *build_status(agent_t *a)
     cJSON *os = cJSON_AddObjectToObject(st, "os");
     cJSON_AddStringToObject(os, "image", a->os_image);
     cJSON_AddStringToObject(os, "imageDigest", a->os_digest);
+    const char *why;
+    const char *outcome = fc_oci_delta_outcome(&why);
+    if (outcome[0] != '\0') {
+        /* how the last firmware came: as a delta, or whole and why */
+        cJSON *delta = cJSON_AddObjectToObject(os, "lastDelta");
+        cJSON_AddStringToObject(delta, "outcome", outcome);
+        if (why[0] != '\0') {
+            cJSON_AddStringToObject(delta, "fallbackReason", why);
+        }
+    }
 
     cJSON *upd = cJSON_AddObjectToObject(st, "updated");
     cJSON_AddStringToObject(upd, "status", failed ? "OutOfDate" : (updating ? "Updating" : "UpToDate"));

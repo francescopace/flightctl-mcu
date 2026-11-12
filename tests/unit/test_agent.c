@@ -31,9 +31,12 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
 
 void fc_oci_set_signing_key(const char *pub_pem) {}
 
-const char *fc_oci_firmware_download(void)
+static const char *s_delta_outcome = "", *s_delta_reason = "";
+
+const char *fc_oci_delta_outcome(const char **reason)
 {
-    return "";
+    *reason = s_delta_reason;
+    return s_delta_outcome;
 }
 
 int fc_apps_init(const void *natives, int n_natives)
@@ -64,6 +67,7 @@ static void new_agent(void)
 {
     stub_reset();
     free(s_a.mgmt_cert_pem);
+    free(s_a.metrics);
     fc_identity_free(&s_a.id);
     memset(&s_a, 0, sizeof(s_a));
     s_a.cfg = &s_cfg;
@@ -285,6 +289,128 @@ static void status_requests_are_urgent_or_grouped(void)
     s_running = NULL;
 }
 
+/* ---- status content ---------------------------------------------------------- */
+
+static const char *custom_info(cJSON *st, const char *key)
+{
+    return cJSON_GetStringValue(
+        cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(st, "systemInfo"), "customInfo"), key));
+}
+
+/* Each change in customInfo is an event in Flight Control 1.4: the counters
+ * are read once an interval, and repeated as they were in between. */
+static void counters_are_read_again_only_when_due(void)
+{
+    new_agent();
+    cJSON *st = build_status(&s_a);
+    CHECK_STR(custom_info(st, "reads"), "1");
+    CHECK(custom_info(st, "netTxBytes") != NULL);
+    CHECK(custom_info(st, "memFreeBytes") != NULL);
+    char *first = cJSON_PrintUnformatted(cJSON_GetObjectItem(cJSON_GetObjectItem(st, "systemInfo"), "customInfo"));
+    cJSON_Delete(st);
+    for (int i = 0; i < 3; i++) {
+        st = build_status(&s_a);
+        char *again = cJSON_PrintUnformatted(cJSON_GetObjectItem(cJSON_GetObjectItem(st, "systemInfo"), "customInfo"));
+        CHECK_STR(again, first); /* the same customInfo, byte for byte */
+        free(again);
+        cJSON_Delete(st);
+    }
+    free(first);
+    CHECK_INT(stub_metrics_reads, 1);
+
+    /* The first read was at start: the second comes after five minutes. */
+    s_a.metrics_at -= METRICS_SECOND_READ_S - 1;
+    cJSON_Delete(build_status(&s_a));
+    CHECK_INT(stub_metrics_reads, 1);
+    s_a.metrics_at -= 1;
+    st = build_status(&s_a);
+    CHECK_STR(custom_info(st, "reads"), "2");
+    cJSON_Delete(st);
+
+    s_a.metrics_at -= METRICS_INTERVAL_S - 1; /* then hourly */
+    cJSON_Delete(build_status(&s_a));
+    CHECK_INT(stub_metrics_reads, 2);
+    s_a.metrics_at -= 1;
+    cJSON_Delete(build_status(&s_a));
+    CHECK_INT(stub_metrics_reads, 3);
+
+    s_a.metrics_at += 10 * 365 * 86400; /* the clock was set back: read them now */
+    st = build_status(&s_a);
+    CHECK_STR(custom_info(st, "reads"), "4");
+    cJSON_Delete(st);
+
+    fc_agent_config_t cfg = s_cfg;
+    cfg.metrics_interval_s = 30;
+    s_a.cfg = &cfg;
+    s_a.metrics_at -= 29;
+    cJSON_Delete(build_status(&s_a));
+    CHECK_INT(stub_metrics_reads, 4);
+    s_a.metrics_at -= 1;
+    cJSON_Delete(build_status(&s_a));
+    CHECK_INT(stub_metrics_reads, 5);
+    s_a.cfg = &s_cfg;
+}
+
+static const char *transition_time(cJSON *st)
+{
+    return cJSON_GetStringValue(
+        cJSON_GetObjectItem(cJSON_GetArrayItem(cJSON_GetObjectItem(st, "conditions"), 0), "lastTransitionTime"));
+}
+
+/* Flight Control 1.4 logs an event for any change in the status: two
+ * statuses with nothing new are the same, byte for byte. */
+static void a_status_with_nothing_new_is_the_same(void)
+{
+    new_agent();
+    cJSON_Delete(build_status(&s_a));
+    snprintf(s_a.cond_since, sizeof(s_a.cond_since), "2026-01-01T00:00:00Z"); /* as if long ago */
+    cJSON *st = build_status(&s_a);
+    char *first = cJSON_PrintUnformatted(st);
+    CHECK_STR(transition_time(st), "2026-01-01T00:00:00Z");
+    cJSON_Delete(st);
+    st = build_status(&s_a);
+    char *again = cJSON_PrintUnformatted(st);
+    CHECK_STR(again, first);
+    free(again);
+    cJSON_Delete(st);
+    free(first);
+
+    /* The condition changes: so does its time. */
+    snprintf(s_a.update_error, sizeof(s_a.update_error), "registry down");
+    st = build_status(&s_a);
+    CHECK(strcmp(transition_time(st), "2026-01-01T00:00:00Z") != 0);
+    cJSON_Delete(st);
+}
+
+static const char *last_delta(cJSON *st, const char *key)
+{
+    return cJSON_GetStringValue(
+        cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(st, "os"), "lastDelta"), key));
+}
+
+static void the_last_firmware_download_is_in_os_last_delta(void)
+{
+    new_agent();
+    cJSON *st = build_status(&s_a);
+    CHECK(cJSON_GetObjectItem(cJSON_GetObjectItem(st, "os"), "lastDelta") == NULL); /* none yet */
+    cJSON_Delete(st);
+
+    s_delta_outcome = "Applied";
+    st = build_status(&s_a);
+    CHECK_STR(last_delta(st, "outcome"), "Applied");
+    CHECK(last_delta(st, "fallbackReason") == NULL);
+    CHECK(custom_info(st, "firmwareDownload") == NULL);
+    cJSON_Delete(st);
+
+    s_delta_outcome = "Fallback";
+    s_delta_reason = "the delta does not apply";
+    st = build_status(&s_a);
+    CHECK_STR(last_delta(st, "outcome"), "Fallback");
+    CHECK_STR(last_delta(st, "fallbackReason"), "the delta does not apply");
+    cJSON_Delete(st);
+    s_delta_outcome = s_delta_reason = "";
+}
+
 int main(void)
 {
     fc_http_global_init();
@@ -300,6 +426,9 @@ int main(void)
     RUN(a_denied_request_is_a_failure);
     RUN(an_expired_certificate_starts_over_as_a_new_device);
     RUN(status_requests_are_urgent_or_grouped);
+    RUN(counters_are_read_again_only_when_due);
+    RUN(a_status_with_nothing_new_is_the_same);
+    RUN(the_last_firmware_download_is_in_os_last_delta);
     free(s_a.mgmt_cert_pem);
     fc_identity_free(&s_a.id);
     stub_reset();

@@ -8,8 +8,8 @@ agent passes the end-to-end test of the simulated device, against an
 unmodified Flight Control. On a real Raspberry Pi Pico W it enrolls over WiFi,
 stays online, runs a signed WASM app and updates its firmware through
 MCUboot, whole or as a delta, going back when the new one does not work
-(below). On a real ESP32-S3 it does the same, bar the way back, which was not
-tried there: the first chip to run both ports.
+(below). On a real ESP32-S3 it does the same: the first chip to run both
+ports.
 
 ## Try it
 
@@ -154,7 +154,7 @@ two rows with 4.5):
 | A whole image (734 KB) | downloaded and written in 15 s; the device restarts, MCUboot swaps the slots, and the new firmware is confirmed 38 s after its start, once Flight Control has taken its status |
 | The same after a restart | still the new firmware: the confirmation is kept |
 | A firmware that cannot reach Flight Control | given up after its 30 s (150 by default): the device restarts, MCUboot puts the previous firmware back, and that one reports the failure and does not try the image again |
-| A delta (8.6 KB for the 734 KB image, 1.2%) | downloaded and the image rebuilt from the running one in 10 s; then as a whole image. `firmwareDownload: delta 8 of 717 KB` |
+| A delta (8.6 KB for the 734 KB image, 1.2%) | downloaded and the image rebuilt from the running one in 10 s; then as a whole image. Reported then as `firmwareDownload: delta 8 of 717 KB`; now as `lastDelta: Applied` |
 | From the Zephyr 4.3 build to the 4.5 one (and mbedTLS 3.6 to 4.1) | over the air, by the MCUboot already on the board: a delta of 232 KB for the 723 KB image (33%: little of the code is where it was). The device kept its identity, certificate and app |
 | A delta between two 4.5 builds (7.5 KB, 1.0%) | downloaded in 9 s; confirmed, and still the new firmware after a restart |
 
@@ -262,6 +262,7 @@ Tried on the board, against Flight Control 1.4.0:
 | WASM app | the signed `alarm` app runs (WAMR's fast interpreter on Xtensa); the Pico's copy, signed with another key, was refused |
 | Firmware, whole | 885 KB in 7 s, 24 s from the restart to the agent, MCUboot's swap included; confirmed |
 | Firmware, as a delta | 19 KB (2.2%) rebuilt the 885 KB image in 8 s; confirmed |
+| A firmware that cannot reach Flight Control | downloaded whole in 14 s; given up after its 30 s; MCUboot put the previous firmware back (a 15 s swap), which reported the failure 1 min 53 s after the fleet changed, and did not try the image again |
 | Reflashed over USB | same device: its key is in the storage partition |
 | Memory | 49 KB of the 128 KB C heap free with the app and both connections up, 40 KB at the lowest |
 
@@ -291,9 +292,8 @@ on the ESP32-S3 (1.0%). Both must hold the public half of the key the
 release is signed with: the Pico W had been provisioned with another, and
 refused the fleet's app until its credentials were written again.
 
-Not tried: the way back from a firmware that does not reach Flight Control
-(as on the Pico), and Secure Boot or flash encryption under Zephyr. Not in
-CI: the build needs the Xtensa toolchain.
+Not tried: Secure Boot or flash encryption under Zephyr. Not in CI: the
+build needs the Xtensa toolchain.
 
 ## Things to know about native_sim
 

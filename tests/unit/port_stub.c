@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "mbedtls/pk.h"
+#include "cJSON.h"
 #include "psa/crypto.h"
 
 #define MAX_ENTRIES 64
@@ -68,6 +69,7 @@ void stub_reset(void)
         s_kv[i].data = s_files[i].data = NULL;
     }
     stub_reboots = 0;
+    stub_metrics_reads = 0;
     fc_port_hwkey_forget();
     stub_ota_enabled = 0;
     stub_ota_len = 0;
@@ -130,6 +132,15 @@ void fc_port_sysinfo(fc_sysinfo_t *si)
 }
 
 void fc_port_custom_info(void *obj) {}
+
+int stub_metrics_reads;
+
+void fc_port_metrics(void *obj)
+{
+    char n[16];
+    snprintf(n, sizeof(n), "%d", ++stub_metrics_reads);
+    cJSON_AddStringToObject((cJSON *)obj, "reads", n);
+}
 
 int fc_port_write_file(const char *path, const void *data, size_t len)
 {
