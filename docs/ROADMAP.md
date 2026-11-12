@@ -2,7 +2,7 @@
 
 flightctl-mcu lets microcontrollers be managed by an unmodified [Flight Control](https://github.com/flightctl/flightctl): enrollment, monitoring, configuration, firmware OTA and WebAssembly apps, in the same fleets as Linux devices.
 
-The first milestone proved that this works on real hardware; the second closed the gaps that made it unsafe or costly to leave running; the third made it deployable in the field (provisioning, Secure Boot, flash encryption, the device key in hardware), verified on emulated chips. The next one frees it from one chip vendor.
+Four milestones are done: it works on real hardware, it can be left running, it can be deployed in the field, and it is not tied to one chip vendor. What is left is a list, [below](#to-do), not a milestone.
 
 ## Principles
 
@@ -10,51 +10,50 @@ The first milestone proved that this works on real hardware; the second closed t
 - **Portable core.** `core/` is POSIX C with mbedTLS, cJSON and WAMR. Chip and RTOS specifics live behind `port/`.
 - **Verifiable without hardware.** Every feature also runs on the simulated device, so CI can check it against a real Flight Control on kind. Hardware tests add to that; they don't replace it.
 
-## Milestone 0: proof of concept (done, November 2026)
+## To do
 
-Six Espressif chips (ESP32, S2, S3, C3, C5, C6) in one fleet, managed by Flight Control 1.3.1:
+Checks that were never made:
 
-- enrollment with a key generated on the device, mTLS with TLS 1.3;
-- full device status, including heap, RSSI, temperature and traffic;
-- inline config applied in 1–6 s without a reboot, validated by the application;
-- firmware OTA from one multi-chip OCI index, A/B slots, staged rollout with a canary and automatic rollback;
-- WebAssembly apps (WAMR), updated without a reboot, same `.wasm` on Xtensa and RISC-V;
-- CI: host agent, firmware for every chip, WASM apps, and an end-to-end test against Flight Control on kind.
+- [ ] ESP-IDF 6.0 on the other five boards (C3, C5, C6, S2, classic ESP32). On hardware only the S3 ran it; the others ran ESP-IDF 5.5, and 6.0 in the emulator (C3, C5).
+- [ ] The way back from a firmware that does not work, on the ESP32-S3 (both ports) and on the C6. It is tested in the emulator and, for Zephyr, on the Pico W.
+- [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`deploy/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
+- [ ] The Zephyr builds for boards in CI. They need the ARM and Xtensa toolchains; CI builds and tests `native_sim` only.
+- [ ] A wired board. Nothing in the core is about WiFi, and Zephyr on `native_sim` already runs without it, but WiFi is the only link tried on hardware: a Zephyr board with Ethernet is two files ([ZEPHYR.md](ZEPHYR.md)).
 
-Measurements, problems found and Flight Control limitations are in [RESULTS.md](RESULTS.md).
+What the Zephyr port does not have, and the ESP-IDF firmware has:
 
-## Milestone 1: production foundations (done, November 2026)
+- [ ] Protection of the device: MCUboot checks the firmware's signature in software, and the device key is in the storage partition in clear. No Secure Boot, no encryption.
+- [ ] The WiFi network given in the field: a Zephyr build gets it at the factory, with the credentials.
 
-The gaps that would stop anyone from leaving a device in the field. None of them needed new hardware or server changes, and each one is tested in CI. They ran on the simulated device, on all six boards (firmware v3.0, see [RESULTS.md](RESULTS.md#firmware-v30-on-all-six-boards)), and in Espressif's emulator for the C3, C5 and S3, where CI also runs the real firmware.
+Towards a deployment:
 
-| # | Item | Why | Result |
-|---|---|---|---|
-| 1.1 | **Management certificate renewal** | The certificate issued at enrollment expires, and the device was lost when it did. | The device asks for a new certificate for the same key (signer `flightctl.io/device-management-renewal`, approved by the server on its own) once a quarter of the lifetime has passed, as the Linux agent does. The end-to-end test runs the server with 2-minute certificates and checks that the device keeps reporting after the first one expires. |
-| 1.2 | **Persistent TLS connections** | One TLS handshake per request cost about 560 KB/hour per idle device, mostly handshakes. | HTTP keep-alive, one connection per agent thread, reopened when the server drops it. Idle traffic is about 220 KB/hour, with no handshakes in 10 minutes. The rest is the full status every minute: going lower needs differential status updates (upstream item 5). TLS session resumption was tried and dropped: Flight Control 1.3.1 issues session tickets but never resumed a session with them, so reconnections stay full handshakes (about 1.5 KB). |
-| 1.3 | **Signed firmware and apps** | Anyone who could write to the registry could run code on every device. | Images are signed when pushed, in cosign's format, with an ECDSA P-256 key. A device with the public key in its firmware refuses unsigned images and images signed with another key. CI checks both, and that `cosign verify` accepts our signatures. |
-| 1.4 | **Hardening and fault tests** | Parsers face data from the network, and the agent must survive a flaky server or registry. | libFuzzer targets for the HTTP reader, the OCI and signature handling, and the agent's handling of specs and certificates, two minutes each in CI. The first runs found an integer overflow in chunked-body parsing and an undefined conversion of a layer size from a manifest, both fixed and kept as seeds. A release profile (`-Os`) is about 15% smaller. The end-to-end test covers an update while the registry is down and a server restart. |
-| 1.5 | **Automatic enrollment approval** | Approving each device by hand does not scale past a lab. | `deploy/auto-approve/auto-approve.py` approves requests from an allow list (device name or MAC) with their labels, through the Flight Control CLI. The end-to-end test enrolls its device this way. |
-| 1.6 | **WASM app SDK** | Writing an app meant reading the agent source. | `wasm-apps/sdk/fc_app.h` documents the interface, with a version the device checks. A second example app (`trend`) runs in the end-to-end test. |
+- [ ] A registry with TLS and authentication. Today it is plain HTTP: signatures protect the images from tampering, not from being read.
+- [ ] The counters out of `customInfo` (free heap, traffic, uptime), or fewer of them: since Flight Control 1.4 each change there logs an event (item 8 below).
+- [ ] The outcome of a delta in `status.os.lastDelta`, which Flight Control 1.4 has, instead of `customInfo`.
 
-## Milestone 2: field deployment (done, November 2026, on emulated chips)
+Waiting for Flight Control (the items are in the [upstream track](#upstream-track-flight-control)):
 
-What burns eFuses (Secure Boot, flash encryption, anti-rollback, key revocation) is verified on emulated chips, which run the chip's real ROM, and not on boards: a burn cannot be undone.
+- [ ] Battery-powered devices: deep sleep, status only on wake-up, no long-poll. Needs item 3.
+- [ ] The same device name after re-enrollment: a device whose certificate expired while offline enrolls again as a new device. Needs the server to accept a re-enrollment for a known name.
+- [ ] The device key in the Digital Signature peripheral on the ESP32 chips that have no ECDSA one (RSA-3072, sealed under a key in eFuse). Written and switched off: needs item 7.
 
-- **Provisioning**: done over USB: credentials, endpoint, signing key and WiFi live in an `fc_creds` partition (`deploy/provision.py`), and the firmware has none built in. One enrollment certificate per batch, with its own lifetime: `BATCH=… EXPIRATION=… deploy/enrollment.sh` (the end-to-end test uses one). It cannot be revoked: Flight Control checks only its signer and expiry (upstream item 6). WiFi provisioning in the field: done, over SoftAP or BLE (`ble` variant, [PROVISIONING.md](PROVISIONING.md)); a device provisioned with a proof of possession and no network waits for an installer (Espressif's app or `esp_prov`). CI provisions its emulated devices both ways.
-- **Expired certificates**: done. A device offline for longer than its certificate enrolls again as a new device (see problem 13 in RESULTS.md). Keeping the device's name across re-enrollment needs Flight Control's help (see the upstream track).
-- **Secure Boot v2, flash encryption and NVS encryption**: done in the emulator. The `secure` firmware variant, the factory procedure and what is left are in [SECURITY.md](SECURITY.md); CI runs the end-to-end test on emulated C3 and C5 with it. Anti-rollback (security version in eFuse) and Secure Boot key rotation (bootloader signed with spare keys, the old key revoked by the first release signed with the next) are in the end-to-end test. A spare Secure Boot key can be revoked through the fleet's config, the Secure Boot keys can stay in an HSM (`firmware/sign-external.py`), and the `nodl` variant closes the ESP32's ROM download mode. Not burned on a real board, and not planned here: whoever ships a batch burns one board per chip first ([SECURITY.md](SECURITY.md)).
-- **Device key in hardware**: done in the emulator. On the ESP32-C5 the secure variant keeps the device key (ECDSA P-256) in an eFuse key block that only the ECDSA peripheral reads; CI's secure end-to-end test on the C5 enrolls and renews with it. On the other chips the key stays in the encrypted store: their DS peripheral signs only with RSA (RSA-3072 sealed under an HMAC key in eFuse: generation, sealing and signing work), and Flight Control 1.3.1 cannot issue a certificate for an RSA key (upstream item 7), so that option is off.
+Not planned here: burning eFuses on a real board. Secure Boot, flash encryption and what goes with them are verified on emulated chips, which run the chip's real ROM; whoever ships a batch burns one board per chip first ([SECURITY.md](SECURITY.md)).
 
-## Milestone 3: beyond Espressif
+## Done
 
-- **Zephyr port** of `port/`: done for what there is to try it on. On `native_sim` the agent passes the simulated device's end-to-end test against Flight Control, in CI, with the core unchanged ([ZEPHYR.md](ZEPHYR.md)). On a real Raspberry Pi Pico W (264 KB of RAM) it enrolls over WiFi, stays online, runs a signed WASM app and updates its firmware through MCUboot: a whole image, a delta, and the way back from an image that does not reach Flight Control. The board is a test bench, not a target (its entropy is the ring oscillator's, not a certified source). On a real ESP32-S3, the chip the ESP-IDF firmware also runs on, it enrolls, runs the app and updates its firmware, whole and as a delta; the way back was not tried there. Not in CI: the builds for boards, which need the ARM and Xtensa toolchains.
-- **Other links**: Ethernet, cellular (NB-IoT, LTE-M).
-- **Current foundations**: done. The core is written for mbedTLS 4, whose cryptography is PSA only, and both ports build on the releases that have it: ESP-IDF 6.0 and Zephyr 4.5, with the same mbedTLS 4.1.1 (before: mbedTLS 3.6, ESP-IDF 5.5, Zephyr 4.3). Device keys in hardware go through ESP-IDF's PSA drivers. The tests now run against Flight Control 1.4.0 (1.3.1 before), whose agent API is the same ([RESULTS.md](RESULTS.md#flight-control-140)); the other versions are in [DEPENDENCIES.md](DEPENDENCIES.md). Checked by the same tests as before, on the emulated chips, on the Pico W and on one ESP32 board, an S3 (enrollment, config, app, firmware whole and as a delta); not on the other five.
-- **Delta firmware updates**: done. A release can carry deltas from earlier releases (`fw-push.py --delta-from`); a device running one of those downloads the delta, 1 to 12% of the image in the cases measured, and rebuilds the new image from its own, checked against the signed digest; otherwise, or if anything fails, it downloads the image. detools' format (bsdiff, heatshrink), as in Espressif's `esp_delta_ota`, applied in the core, so the next ports get it too. See [DELTA.md](DELTA.md). Tried on a Raspberry Pi Pico W with Zephyr and on an ESP32-S3 with both ports; the other ESP32 chips emulator only, like Milestone 2.
+Each milestone has a tag; what was measured and what went wrong is in [RESULTS.md](RESULTS.md).
 
-## Later
+**Milestone 0: proof of concept** (5–6 November 2026). Six Espressif chips (ESP32, S2, S3, C3, C5, C6) in one fleet under Flight Control 1.3.1: enrollment with a key made on the device and mutual TLS 1.3, full status, inline config applied without a reboot, firmware from one multi-chip OCI index into A/B slots with a canary rollout and automatic rollback, WASM apps updated without a reboot, and CI with an end-to-end test against Flight Control on kind.
 
-- **Soak tests**: the lab fleet running for weeks, metrics collected automatically. The collector is ready: `deploy/soak/collect.py` samples every device's status into a CSV and reports, per device, time not online, restarts and their causes, the heap's low-water mark over time and traffic per hour. Not run yet: premature before there is a fleet to watch for weeks.
+**Milestone 1: production foundations** (tag `m1`). What would stop anyone from leaving a device running: renewal of the management certificate; TLS connections kept open (220 KB per hour idle, from 560); firmware and apps signed in cosign's format; fuzzing of what reads the network, and tests with the registry down and the server restarting; enrollment approved from an allow list; an SDK for WASM apps. On all six boards, and on emulated C3, C5 and S3.
+
+**Milestone 2: field deployment** (tag `m2`), on emulated chips. Credentials written over USB, the same firmware everywhere, one enrollment certificate per batch; the WiFi network given in the field over SoftAP or BLE ([PROVISIONING.md](PROVISIONING.md)); a device whose certificate expired enrolls again; Secure Boot v2 with key rotation and revocation, flash and NVS encryption, anti-rollback, and on the ESP32-C5 the device key in the ECDSA peripheral ([SECURITY.md](SECURITY.md)).
+
+**Milestone 3: beyond Espressif** (tag `m3`, November 2026).
+
+- A second port, Zephyr, with the core unchanged ([ZEPHYR.md](ZEPHYR.md)). On `native_sim` it passes the simulated device's end-to-end test in CI. On a Raspberry Pi Pico W (RP2040, 264 KB of RAM) it enrolls over WiFi, runs a signed WASM app and updates its firmware through MCUboot: whole, as a delta, and back from an image that does not reach Flight Control. On an ESP32-S3 it does the same bar the way back: one chip, both ports.
+- Firmware updates as deltas, in the core, so every port has them: a device on a known release downloads 1 to 12% of the image and rebuilds the rest from its own, checked against the signed digest ([DELTA.md](DELTA.md)). On the Pico W and on the ESP32-S3 with both ports; the other ESP32 chips in the emulator.
+- Current foundations: the core on mbedTLS 4, whose cryptography is PSA only, with ESP-IDF 6.0 and Zephyr 4.5, and the tests against Flight Control 1.4.0, whose agent API is the same as 1.3.1's ([DEPENDENCIES.md](DEPENDENCIES.md)). ESP-IDF 6.0 ran on one board, the S3.
 
 ## Upstream track (Flight Control)
 
@@ -63,18 +62,13 @@ Raised as proposals, in parallel with the milestones. Details in [RESULTS.md](RE
 1. `matchExpressions` in fleet selectors is accepted but ignored.
 2. Rollout success is judged on `renderedVersion` only: write the agent's obligation into the API contract.
 3. Fixed 5-minute disconnect timeout: make it configurable, or let the device declare its contact interval.
-4. No way to declare a device class or supported app runtimes (`status.capabilities`).
+4. No way to declare a device class or supported app runtimes (`status.capabilities`). Since 1.4 a fleet can at least select on the class a device reports (`custominfo.flightctl.io/deviceClass`), not yet refuse an app it cannot run.
 5. No free-form status per app, full status on every update (most of the remaining idle traffic), `os.image` compared as a string.
 6. Enrollment certificates cannot be revoked: the server checks only their signer and expiry.
 7. Devices with RSA keys cannot enroll: the internal CA copies the request's signature algorithm, which fails with its ECDSA key.
 8. Since 1.4, `customInfo` is copied into the device's labels by default, and any change in it logs an event: a device that reports counters there writes one at every status.
 
 Items 1, 3, 6 and 7 are as they were in the source of 1.4.0.
-
-Work on the agent that waits for these:
-
-- **Battery-powered devices**: deep sleep, status only on wake-up, no long-poll. Needs item 3.
-- **The same device name after re-enrollment**: a device whose certificate expired while offline enrolls again as a new device. Needs the server to accept a re-enrollment for a known name.
 
 ## Open questions
 
