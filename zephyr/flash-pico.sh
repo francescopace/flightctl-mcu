@@ -15,11 +15,27 @@ SECONDS_OF_CONSOLE="${2:-60}"
 shift; shift || true
 DRIVE=/Volumes/RPI-RP2
 BIN="$ROOT/zephyr/$BUILD_DIR/zephyr/zephyr.bin"
-[[ -f "$BIN" ]] || { echo "no $BIN: BOARD=rpi_pico/rp2040/w BUILD_DIR=$BUILD_DIR zephyr/build.sh -S cdc-acm-console" >&2; exit 1; }
+BOOT="$ROOT/zephyr/$BUILD_DIR/mcuboot/zephyr/zephyr.bin"
+BOARD_FILES=rpi_pico_rp2040_w
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT   # the image holds the enrollment key and the WiFi password
-cp "$BIN" "$WORK/flash.bin"
-"$ROOT/deploy/provision.py" --format zephyr --board rpi_pico_rp2040_w --secrets "$SECRETS" --image "$WORK/flash.bin" "$@"
+if [[ -f "$BOOT" ]]; then
+  # Built with MCUboot (BOARD=rpi_pico/rp2040/w/mcuboot): the bootloader, then
+  # the signed application in the first slot, at 64 KB.
+  APP="$ROOT/zephyr/$BUILD_DIR/zephyr/zephyr/zephyr.signed.bin"
+  [[ -f "$APP" ]] || { echo "no $APP" >&2; exit 1; }
+  BOARD_FILES=rpi_pico_rp2040_w_mcuboot
+  python3 - "$BOOT" "$APP" "$WORK/flash.bin" <<'PY'
+import sys
+boot, app = (open(p, "rb").read() for p in sys.argv[1:3])
+assert len(boot) <= 0x10000, "MCUboot is larger than its partition"
+open(sys.argv[3], "wb").write(boot + b"\xff" * (0x10000 - len(boot)) + app)
+PY
+else
+  [[ -f "$BIN" ]] || { echo "no $BIN: BOARD=rpi_pico/rp2040/w BUILD_DIR=$BUILD_DIR zephyr/build.sh -S cdc-acm-console" >&2; exit 1; }
+  cp "$BIN" "$WORK/flash.bin"
+fi
+"$ROOT/deploy/provision.py" --format zephyr --board "$BOARD_FILES" --secrets "$SECRETS" --image "$WORK/flash.bin" "$@"
 python3 "$ROOT/third_party/zephyr-ws/zephyr/scripts/build/uf2conv.py" "$WORK/flash.bin" -c -b 0x10000000 -f 0xe48bff56 \
   -o "$WORK/flash.uf2" >/dev/null
 # Ask for the bootloader until the drive is there: a board that restarts in

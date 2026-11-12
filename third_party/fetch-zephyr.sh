@@ -15,8 +15,10 @@ ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.29.1}"
 MODULES="${ZEPHYR_MODULES:-mbedtls littlefs mcuboot zcbor cmsis cmsis_6 hal_rpi_pico hal_infineon picolibc}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WS="$ROOT/third_party/zephyr-ws"
+patch_tree() { "$ROOT/third_party/patch-zephyr.sh"; }
 if [[ -d "$WS/zephyr/.git" && "$(git -C "$WS/zephyr" rev-parse HEAD)" == "$ZEPHYR_COMMIT" && -f "$WS/.fetched" ]]; then
   echo "Zephyr $ZEPHYR_TAG already in $WS"
+  patch_tree
   exit 0
 fi
 if ! command -v west >/dev/null; then
@@ -39,5 +41,6 @@ filter="-.*"
 for m in $MODULES; do filter="$filter,+$m"; done
 west config manifest.project-filter -- "$filter"
 west update --narrow -o=--depth=1
+patch_tree
 touch "$WS/.fetched"
 echo "Zephyr $ZEPHYR_TAG in $WS"

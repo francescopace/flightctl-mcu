@@ -1,0 +1,54 @@
+The RP2040's flash: writes shorter than a page do nothing.
+
+In Zephyr 4.3.2's hal_rpi_pico, flash_cs_force() takes a bool (true: chip
+select high), and the code Zephyr adds for writes shorter than a 256-byte
+page calls it with OUTOVER_LOW and OUTOVER_HIGH, an enum's 2 and 3: both
+true. The flash is never selected, the write is not done, and the driver
+reports success. LittleFS loses what it writes, and MCUboot cannot mark a
+slot (the request to try an image, its confirmation).
+
+Later revisions of hal_rpi_pico call it with 0 and 1 (seen on its zephyr
+branch, November 2026): this patch goes when the pinned Zephyr has them.
+
+Applied by third_party/patch-zephyr.sh.
+
+diff --git a/src/rp2_common/hardware_flash/flash.c b/src/rp2_common/hardware_flash/flash.c
+index 87b08a1..674243e 100644
+--- a/src/rp2_common/hardware_flash/flash.c
++++ b/src/rp2_common/hardware_flash/flash.c
+@@ -557,7 +557,7 @@ static void __no_inline_not_in_flash_func(flash_put_get)(const uint8_t *tx, uint
+ 			break;
+ 		}
+ 	}
+-	flash_cs_force(OUTOVER_HIGH);
++	flash_cs_force(true);
+ }
+ #endif
+ 
+@@ -573,7 +573,7 @@ static inline void flash_wait_ready(uint cs)
+ 		qmi_hw->direct_tx = FLASHCMD_READ_STATUS | QMI_DIRECT_TX_NOPUSH_BITS;
+ 		cs = flash_put_get(cs, NULL, &status_reg, 1);
+ #else
+-		flash_cs_force(OUTOVER_LOW);
++		flash_cs_force(false);
+ 		ssi_hw->dr0 = FLASHCMD_READ_STATUS;
+ 		flash_put_get(NULL, &status_reg, 1, 1);
+ #endif
+@@ -587,7 +587,7 @@ static inline void flash_enable_write(uint cs)
+ 	flash_put_get(cs, NULL, NULL, 0);
+ #else
+ 	__unused uint ignore = cs;
+-	flash_cs_force(OUTOVER_LOW);
++	flash_cs_force(false);
+ 	ssi_hw->dr0 = FLASHCMD_WRITE_ENABLE;
+ 	flash_put_get(NULL, NULL, 0, 1);
+ #endif
+@@ -602,7 +602,7 @@ static inline void flash_put_cmd_addr(uint8_t cmd, uint32_t addr)
+ 		((addr << 16) >> 16) | QMI_DIRECT_TX_NOPUSH_BITS | QMI_DIRECT_TX_DWIDTH_BITS;
+ 	qmi_hw->direct_tx = (addr >> 16) | QMI_DIRECT_TX_NOPUSH_BITS | QMI_DIRECT_TX_DWIDTH_BITS;
+ #else
+-	flash_cs_force(OUTOVER_LOW);
++	flash_cs_force(false);
+ 	addr |= cmd << 24;
+ 	for (int i = 0; i < 4; ++i) {
+ 		ssi_hw->dr0 = addr >> 24;

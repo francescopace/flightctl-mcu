@@ -150,7 +150,7 @@ Then implement `core/include/fc_port.h` for your platform:
 | `fc_port_write_file` | Where `spec.config` files end up |
 | `fc_port_fw_platform` | The `platform.architecture` to pick from a firmware index, e.g. `esp32c3` |
 | `fc_port_ota_begin/write/end` | Write an image into the inactive slot and make it the next boot image |
-| `fc_port_ota_pending_verify/confirm/rollback`, `fc_port_reboot` | Confirm a new image or go back. On Zephyr this maps naturally onto MCUboot. |
+| `fc_port_ota_pending_verify/confirm/rollback`, `fc_port_reboot` | Confirm a new image or go back. On Zephyr this is MCUboot's test and confirm. |
 | `fc_port_log` | Logging |
 
 `port/espidf/fc_port_espidf.c` (about 300 lines) and `port/host/fc_port_host.c` are the two references. The firmware wiring in `firmware/main/` covers WiFi, time sync, the demo app and its host functions; it is ESP-IDF specific and would be rewritten for another platform.
@@ -176,7 +176,7 @@ deploy/auto-approve/ enrollment approval from an allow list
 tests/unit/      unit tests of the C core (in-memory port)
 tests/python/    tests of the deploy scripts
 tests/fuzz/      libFuzzer targets and seed inputs
-third_party/     fetch scripts for WAMR, detools and Zephyr (none is vendored)
+third_party/     fetch scripts for WAMR, detools and Zephyr (none is vendored), and patches/ for what is fetched
 ci/              helpers for the GitHub Actions workflow
 docs/            roadmap, results, device security, provisioning, firmware deltas
 ```

@@ -2,6 +2,7 @@
 """Pushes the firmware builds as one multi-chip OCI artifact.
 
     firmware/fw-push.py [--variant NAME] [--delta-from TAG ...] <registry>/flightctl-mcu/fw:v2 [esp32s3 esp32c3 ...]
+    firmware/fw-push.py ... <registry>/flightctl-mcu/fw:v2 rpi_pico_w=zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin
 
 Layout (OCI 1.1, plain HTTP registry, stdlib only):
   index (tag)      artifactType application/vnd.flightctl-mcu.firmware.v1
@@ -12,6 +13,10 @@ Layout (OCI 1.1, plain HTTP registry, stdlib only):
 The device picks the manifest whose platform.architecture is its chip, streams
 the layer into the inactive OTA slot and checks its sha256.
 Default chips: every firmware/build-<chip>[-<variant>]/ with a built image.
+PLATFORM=FILE instead of a chip pushes FILE for that platform: a Zephyr build
+signed for MCUboot (zephyr.signed.bin), for the board whose
+CONFIG_FC_FW_PLATFORM is PLATFORM. Its manifest says os "zephyr" and its layer
+application/vnd.zephyr.mcuboot-image.
 
 --delta-from TAG (a tag or digest in the same repository, repeatable): also
 push, for each chip, a delta from that release's image to this one. A device
@@ -34,6 +39,7 @@ import urllib.request
 
 ARTIFACT_TYPE = "application/vnd.flightctl-mcu.firmware.v1"
 LAYER_TYPE = "application/vnd.espressif.app-image"
+ZEPHYR_LAYER_TYPE = "application/vnd.zephyr.mcuboot-image"
 DELTA_TYPE = "application/vnd.flightctl-mcu.firmware.delta.v1+detools"
 DELTA_FROM = "io.flightctl-mcu.delta.from"
 DELTA_FROM_SIZE = "io.flightctl-mcu.delta.from-size"
@@ -159,12 +165,16 @@ def main():
     py = detools_python(root) if delta_from else None
     entries = []
     for chip in chips:
-        data = open(f"{fw_dir}/build-{chip}{variant}/flightctl_mcu_fw.bin", "rb").read()
+        path, platform_os, layer_type = f"{fw_dir}/build-{chip}{variant}/flightctl_mcu_fw.bin", "esp-idf", LAYER_TYPE
+        if "=" in chip:
+            chip, path = chip.split("=", 1)
+            platform_os, layer_type = "zephyr", ZEPHYR_LAYER_TYPE
+        data = open(path, "rb").read()
         digest = push_blob(base, repo, data)
         # The whole image first: firmware that knows nothing of deltas takes
         # the first layer.
         layers = [{
-            "mediaType": LAYER_TYPE, "digest": digest, "size": len(data),
+            "mediaType": layer_type, "digest": digest, "size": len(data),
             "annotations": {"org.opencontainers.image.title": f"flightctl_mcu_fw-{chip}.bin"},
         }]
         print(f"  {chip:8} {len(data):8} bytes  {digest}")
@@ -196,7 +206,7 @@ def main():
         mdigest, msize = push_manifest(base, repo, None, MANIFEST_TYPE, manifest)
         entries.append({"mediaType": MANIFEST_TYPE, "digest": mdigest, "size": msize,
                         "artifactType": ARTIFACT_TYPE,
-                        "platform": {"os": "esp-idf", "architecture": chip}})
+                        "platform": {"os": platform_os, "architecture": chip}})
 
     index = {"schemaVersion": 2, "mediaType": INDEX_TYPE, "artifactType": ARTIFACT_TYPE,
              "manifests": entries, "annotations": {"org.opencontainers.image.version": tag}}

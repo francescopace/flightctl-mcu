@@ -29,6 +29,31 @@ config FC_ENTROPY_RP2_ROSC
 	  oscillator (port/zephyr/fc_entropy_rp2.c); set
 	  CONFIG_MBEDTLS_ENTROPY_POLL_ZEPHYR=n with it.
 
+config FC_FW_VERSION
+	string "Firmware version, logged at boot"
+	default "dev"
+
+config FC_OTA_VERIFY_TIMEOUT
+	int "Seconds a new firmware has to reach Flight Control before it is given up"
+	default 150
+	help
+	  Counted from the boot into the new image. After it the device
+	  restarts and MCUboot puts the previous image back.
+
+config FC_TEST_SERVER_PORT
+	int "Test only: force this agent endpoint port (0: off)"
+	default 0
+	help
+	  For the test of the way back: a firmware that cannot reach Flight
+	  Control whatever the device was provisioned with.
+
+config FC_FW_PLATFORM
+	string "The name of this board's firmware in a release"
+	default BOARD
+	help
+	  A firmware release is an OCI index with an image per platform; the
+	  device takes the one whose platform.architecture is this.
+
 config FC_LOG_DEBUG
 	bool "Log the agent's debug messages"
 	default n

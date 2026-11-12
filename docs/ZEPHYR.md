@@ -6,8 +6,9 @@ application in `zephyr/`. The core is unchanged between the two.
 **Where it stands.** On `native_sim` (Zephyr built as a Linux process) the
 agent passes the end-to-end test of the simulated device, against an
 unmodified Flight Control. On a real Raspberry Pi Pico W it enrolls over WiFi,
-stays online and runs a signed WASM app (below); on some boots its network
-does not work. Not there yet: firmware updates (they need MCUboot).
+stays online, runs a signed WASM app and updates its firmware through
+MCUboot, whole or as a delta, going back when the new one does not work
+(below).
 
 ## Try it
 
@@ -61,7 +62,8 @@ flash file across restarts.
 | Credentials | The `fc_creds` partition: `"FCC1"`, a length and a JSON object with the fields of the ESP-IDF firmware's partition (`deploy/provision.py --format zephyr`). |
 | C heap | `port/zephyr/fc_heap_zephyr.c`, a heap the port owns, so that the device can report how much is free (`memFreeBytes`, `memMinFreeBytes`); Zephyr 4.3's malloc does not say. |
 | WASM | WAMR's Zephyr platform, fast interpreter, as in the other builds. |
-| Firmware deltas | detools, compiled in as elsewhere; unused until there are firmware updates. |
+| Firmware updates | MCUboot's two slots (boards built with it): the image is streamed into the second, read back, and asked for as a test; MCUboot checks its signature, swaps the slots, and swaps them back unless the agent confirms the image once it has reached Flight Control. `native_sim` has no MCUboot and no updates. |
+| Firmware deltas | detools, in the core as elsewhere; the port reads the running image from the first slot. |
 
 ## Why Zephyr 4.3
 
@@ -117,6 +119,44 @@ network is the one in `firmware/sdkconfig.wifi`, or `--wifi-ssid`) and prints
 the console. The board must be in its bootloader: plugged in with BOOTSEL
 held down, or, once it runs this build, `PORT=/dev/cu.usbmodemXXXX`.
 
+### Firmware updates
+
+```bash
+BOARD=rpi_pico/rp2040/w/mcuboot BUILD_DIR=build-pico-mcuboot zephyr/build.sh -- -Dzephyr_SNIPPET=cdc-acm-console
+```
+
+```bash
+BUILD_DIR=build-pico-mcuboot zephyr/flash-pico.sh .secrets
+```
+
+```bash
+firmware/fw-push.py <registry>/flightctl-mcu/fw:v2 rpi_pico_w=zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin
+```
+
+The board `rpi_pico/rp2040/w/mcuboot` is Zephyr's layout for MCUboot on the
+Pico: the bootloader in the first 64 KB, two slots of 832 KB (the application
+is 734 KB), and the last 320 KB for the credentials and the storage, where
+the build without MCUboot has them too. The build makes MCUboot and the
+application together (sysbuild) and signs the application with
+`.secrets/mcuboot-signing.pem`, an ECDSA P-256 key made the first time:
+MCUboot starts only images signed with it. The first flash writes MCUboot,
+the application and the credentials; after that a release is the signed
+image, pushed for the platform the board's configuration names
+(`CONFIG_FC_FW_PLATFORM`), and `spec.os.image` in the fleet, as on ESP32.
+
+Seen on the board, from one release to the next:
+
+| | |
+|---|---|
+| A whole image (734 KB) | downloaded and written in 15 s; the device restarts, MCUboot swaps the slots, and the new firmware is confirmed 38 s after its start, once Flight Control has taken its status |
+| The same after a restart | still the new firmware: the confirmation is kept |
+| A firmware that cannot reach Flight Control | given up after its 30 s (150 by default): the device restarts, MCUboot puts the previous firmware back, and that one reports the failure and does not try the image again |
+| A delta (8.6 KB for the 734 KB image, 1.2%) | downloaded and the image rebuilt from the running one in 10 s; then as a whole image. `firmwareDownload: delta 8 of 717 KB` |
+
+Not done: MCUboot's own protection against older images (the device takes
+any image signed with the key), and MCUboot's console (it logs on the UART
+pins, not on USB).
+
 What was seen on the board: it joins the network in 3 s, takes the time from
 SNTP, makes its key in 2 s, does a TLS 1.3 handshake in about 9 s, enrolls,
 keeps its identity across restarts, and is Online and UpToDate in Flight
@@ -135,13 +175,18 @@ thread uses 3 KB and gets 8 KB.
 Open on this board:
 
 - **The entropy source is not a certified one** (below).
-- **Never run there**: firmware updates, certificate renewal, days of uptime.
+- **Never run there**: certificate renewal, days of uptime.
 
 What the board taught the port:
 
-- **Flash writes of less than a page do nothing** on this board with Zephyr
-  4.3: they report success, and the data is not there. Whole pages work, so
-  LittleFS is set to write whole pages (`CONFIG_FS_LITTLEFS_PROG_SIZE=256`).
+- **Flash writes of less than a page did nothing** on this board with Zephyr
+  4.3.2: they reported success, and the data was not there. LittleFS lost
+  what it wrote, and MCUboot could not mark a slot. The cause is in Zephyr's
+  code for the RP2040's flash: the function that selects the chip is called
+  with a value that always means "not selected". Four lines, fixed by
+  `third_party/patches/hal_rpi_pico-flash-short-writes.patch`, which the fetch
+  and build scripts apply. LittleFS still writes whole pages here
+  (`CONFIG_FS_LITTLEFS_PROG_SIZE=256`), as it was tried.
 - **A stack that cannot be had becomes a 1 KB stack.** Zephyr takes a
   thread's stack from the kernel heap when its size is set; if that fails the
   thread keeps the default. The core now checks, and says so instead of

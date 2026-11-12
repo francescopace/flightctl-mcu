@@ -287,10 +287,152 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
 
 const char *fc_port_fw_platform(void)
 {
-    return CONFIG_BOARD;
+    return CONFIG_FC_FW_PLATFORM;
 }
 
-/* No firmware updates yet: they need MCUboot, which native_sim does not run. */
+#if defined(CONFIG_MCUBOOT_IMG_MANAGER)
+/* ---- firmware update: MCUboot's two slots -------------------------------------
+ * The image (signed for MCUboot: zephyr.signed.bin) is streamed into the
+ * second slot and asked for as a test: MCUboot checks its signature at the
+ * next boot, swaps the slots, and swaps them back at the boot after that
+ * unless the image was confirmed. */
+#include <zephyr/dfu/flash_img.h>
+#include <zephyr/dfu/mcuboot.h>
+
+#include "mbedtls/sha256.h"
+
+#define SLOT_RUNNING FIXED_PARTITION_ID(slot0_partition)
+#define SLOT_NEXT    FIXED_PARTITION_ID(slot1_partition)
+typedef struct {
+    struct flash_img_context img;
+    /* Of what was given, to compare with what the slot holds: a flash driver
+     * may report a write it did not do (the RP2040's did, for short ones:
+     * third_party/patches). */
+    mbedtls_sha256_context sha;
+    size_t size, written;
+} ota_t;
+
+int fc_port_ota_begin(size_t size, void **handle)
+{
+    const struct flash_area *fa;
+    if (flash_area_open(SLOT_NEXT, &fa) != 0) {
+        return -1;
+    }
+    size_t room = fa->fa_size;
+    flash_area_close(fa);
+    if (size == 0 || size > room) {
+        fc_port_log(FC_LOG_ERROR, "ota: an image of %u bytes for a slot of %u", (unsigned)size, (unsigned)room);
+        return -1;
+    }
+    ota_t *o = calloc(1, sizeof(*o));
+    if (o == NULL) {
+        return -1;
+    }
+    if (flash_img_init_id(&o->img, SLOT_NEXT) != 0) {
+        free(o);
+        return -1;
+    }
+    mbedtls_sha256_init(&o->sha);
+    mbedtls_sha256_starts(&o->sha, 0);
+    o->size = size;
+    *handle = o;
+    return 0;
+}
+
+int fc_port_ota_write(void *handle, const void *data, size_t len)
+{
+    ota_t *o = handle;
+    if (o->written + len > o->size) {
+        return -1;
+    }
+    int rc = flash_img_buffered_write(&o->img, data, len, false);
+    if (rc != 0) {
+        fc_port_log(FC_LOG_ERROR, "ota: flash write at %u: %d", (unsigned)o->written, rc);
+        return -1;
+    }
+    mbedtls_sha256_update(&o->sha, data, len);
+    o->written += len;
+    return 0;
+}
+
+/* 0 when the slot holds what was written. */
+static int slot_matches(ota_t *o)
+{
+    uint8_t want[32], got[32], buf[256];
+    mbedtls_sha256_finish(&o->sha, want);
+    const struct flash_area *fa;
+    if (flash_area_open(SLOT_NEXT, &fa) != 0) {
+        return -1;
+    }
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    mbedtls_sha256_starts(&sha, 0);
+    int rc = 0;
+    for (size_t off = 0; off < o->size && rc == 0; off += sizeof(buf)) {
+        size_t n = o->size - off < sizeof(buf) ? o->size - off : sizeof(buf);
+        rc = flash_area_read(fa, (off_t)off, buf, n);
+        mbedtls_sha256_update(&sha, buf, n);
+    }
+    mbedtls_sha256_finish(&sha, got);
+    mbedtls_sha256_free(&sha);
+    flash_area_close(fa);
+    return rc == 0 && memcmp(want, got, sizeof(want)) == 0 ? 0 : -1;
+}
+
+int fc_port_ota_end(void *handle, int commit)
+{
+    ota_t *o = handle;
+    int rc = -1;
+    if (commit && o->written == o->size) {
+        struct mcuboot_img_header hdr;
+        if (flash_img_buffered_write(&o->img, (const uint8_t *)"", 0, true) != 0) {
+            fc_port_log(FC_LOG_ERROR, "ota: cannot write the end of the image");
+        } else if (slot_matches(o) != 0) {
+            fc_port_log(FC_LOG_ERROR, "ota: the slot does not hold what was written");
+        } else if (boot_read_bank_header(SLOT_NEXT, &hdr, sizeof(hdr)) != 0) {
+            fc_port_log(FC_LOG_ERROR, "ota: not an image for MCUboot");
+        } else if (boot_request_upgrade(BOOT_UPGRADE_TEST) != 0 || mcuboot_swap_type() != BOOT_SWAP_TYPE_TEST) {
+            fc_port_log(FC_LOG_ERROR, "ota: MCUboot does not take the request to try the image");
+        } else {
+            rc = 0;
+        }
+    }
+    mbedtls_sha256_free(&o->sha);
+    free(o);
+    return rc;
+}
+
+int fc_port_fw_read(size_t off, void *buf, size_t len)
+{
+    const struct flash_area *fa;
+    if (flash_area_open(SLOT_RUNNING, &fa) != 0) {
+        return -1;
+    }
+    int rc = off + len <= fa->fa_size ? flash_area_read(fa, (off_t)off, buf, len) : -1;
+    flash_area_close(fa);
+    return rc == 0 ? 0 : -1;
+}
+
+int fc_port_ota_pending_verify(void)
+{
+    return !boot_is_img_confirmed();
+}
+
+void fc_port_ota_confirm(void)
+{
+    int rc = boot_write_img_confirmed();
+    if (rc != 0 || !boot_is_img_confirmed()) {
+        fc_port_log(FC_LOG_ERROR, "ota: cannot confirm the running image (%d): the next boot goes back", rc);
+    }
+}
+
+/* An image that was not confirmed is swapped back by MCUboot at the next boot. */
+void fc_port_ota_rollback(void)
+{
+    fc_port_reboot();
+}
+#else
+/* No firmware updates without MCUboot (native_sim does not run it). */
 int fc_port_ota_begin(size_t size, void **handle)
 {
     return -1;
@@ -319,6 +461,7 @@ int fc_port_ota_pending_verify(void)
 void fc_port_ota_confirm(void) {}
 
 void fc_port_ota_rollback(void) {}
+#endif
 
 /* ---- device key in hardware: none ------------------------------------------- */
 

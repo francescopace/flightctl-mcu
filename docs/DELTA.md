@@ -101,7 +101,8 @@ fuzzes the decoder in CI with the others.
 The decoder is in the core. A port only has to read its running image:
 `fc_port_fw_read(off, buf, len)`. One that cannot returns -1, and its updates
 are whole images. On the host port, the image is the file `FC_FW_IMAGE`
-names.
+names; on Zephyr, MCUboot's first slot, and the image is the one signed for
+MCUboot (`fw-push.py ... PLATFORM=zephyr.signed.bin`).
 
 ## What the tests check
 
@@ -123,6 +124,7 @@ names.
 - **A device flashed over USB** takes a delta only if what was flashed is,
   byte for byte, an image that was pushed (it is, when both come from the same
   build).
-- **Not tried on a board.** Reading the running slot while writing the other
-  is what any OTA does, but the timing of a delta on real flash has not been
-  measured.
+- **Tried on one board**, a Raspberry Pi Pico W with Zephyr and MCUboot
+  ([ZEPHYR.md](ZEPHYR.md)): a delta of 8.6 KB rebuilt a 734 KB image from the
+  running one in 10 s, download included. Not on an ESP32 board: emulator
+  only.

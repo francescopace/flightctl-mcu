@@ -1,0 +1,20 @@
+/*
+ * The Pico W with MCUboot: Zephyr's layout for this board (MCUboot in the
+ * first 64 KB, two slots of 832 KB), with its storage partition, the last
+ * 320 KB, split into the credentials and the agent's storage as in the build
+ * without MCUboot.
+ */
+/delete-node/ &storage_partition;
+
+&flash0 {
+	partitions {
+		fc_creds_partition: partition@1b0000 {
+			label = "fc_creds";
+			reg = <0x001b0000 0x00004000>;
+		};
+		fc_storage_partition: partition@1b4000 {
+			label = "fc_storage";
+			reg = <0x001b4000 0x0004c000>;
+		};
+	};
+};

@@ -196,7 +196,7 @@ static void stop(const char *why)
 
 int main(void)
 {
-    fc_port_log(FC_LOG_INFO, "flightctl-mcu on Zephyr, board %s", CONFIG_BOARD_TARGET);
+    fc_port_log(FC_LOG_INFO, "flightctl-mcu %s on Zephyr, board %s", CONFIG_FC_FW_VERSION, CONFIG_BOARD_TARGET);
     if (fc_port_zephyr_init() != 0) {
         stop("cannot mount the storage (the fc_storage partition)");
     }
@@ -229,7 +229,9 @@ int main(void)
                 (unsigned)heap, (unsigned)kheap_free, (unsigned)kheap);
     fc_agent_config_t cfg = {
         .server_host = host,
-        .server_port = cJSON_IsNumber(port) ? port->valueint : 8443,
+        .server_port = CONFIG_FC_TEST_SERVER_PORT != 0 ? CONFIG_FC_TEST_SERVER_PORT
+                       : cJSON_IsNumber(port)           ? port->valueint
+                                                        : 8443,
         .ca_pem = str(creds, "ca"),
         .enrollment_cert_pem = str(creds, "enroll_crt"),
         .enrollment_key_pem = str(creds, "enroll_key"),
@@ -237,6 +239,7 @@ int main(void)
         .labels = labels,
         .agent_version = "flightctl-mcu/0.1.0",
         .status_interval_s = 60,
+        .ota_verify_timeout_s = CONFIG_FC_OTA_VERIFY_TIMEOUT,
         .wasm_natives = s_natives,
         .wasm_natives_count = sizeof(s_natives) / sizeof(s_natives[0]),
     };
