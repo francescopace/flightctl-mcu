@@ -20,7 +20,7 @@ spec:
       # One OCI index with an image per board (tools/fw-push.py
       # PLATFORM=zephyr.signed.bin ...): each device takes its own.
       os:
-        image: ${REGISTRY}/flightctl-mcu/fw:z3
+        image: ${REGISTRY}/flightctl-mcu/fw:z6
       # The same WASM app as on the ESP-IDF boards; here its temperature and
       # its LED are simulated (port/zephyr/src/main.c).
       applications:
