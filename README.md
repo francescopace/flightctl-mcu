@@ -32,8 +32,8 @@ A C client for it, with mbedTLS for TLS 1.3, fits in about 21 KB of flash. Once 
 |---|---|
 | Enrollment request + approval | P-256 key generated on the device, CSR, management certificate stored in flash |
 | Certificate signing request (renewal signer) | The device renews its management certificate for the same key before it expires |
-| `spec.config` (inline files) | Files stored in NVS. The firmware gets each file through a callback and can reject it. |
-| `spec.os.image` | Firmware image, pulled from an OCI registry into the inactive OTA slot. One image index covers all chips; each board picks its own. Its cosign signature is checked first. A release can carry deltas from earlier ones: a device on one of those downloads 1 to 12% of the image and rebuilds the rest from its own ([docs/DELTA.md](docs/DELTA.md)). |
+| `spec.config` (inline files) | Files kept in the device's storage (NVS on ESP-IDF, LittleFS on Zephyr). The firmware gets each file through a callback and can reject it. |
+| `spec.os.image` | Firmware image, pulled from an OCI registry into the inactive OTA slot. One image index covers every chip and board; each device picks its own. Its cosign signature is checked first. A release can carry deltas from earlier ones: a device on one of those downloads 1 to 12% of the image and rebuilds the rest from its own ([docs/DELTA.md](docs/DELTA.md)). |
 | `spec.applications` (`appType: container`) | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
 | `status` | Heap, flash, chip and firmware version, RSSI, temperature, app state, bytes on the wire (in `customInfo`) |
 | Fleet rollout (`BatchSequence`) | Works unchanged. The device reports a new version only after the new firmware has reached the server. |
@@ -233,6 +233,8 @@ You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/fli
 
 The scripts were written on macOS (Apple Silicon). CI runs the host agent, the firmware build and the kind setup on Linux too.
 
+The walk below is for an Espressif board with the ESP-IDF firmware, the most complete of the three ports. For a board with the Zephyr build, steps 3 and 4 are in [docs/ZEPHYR.md](docs/ZEPHYR.md) and the fleet is `deploy/fleet/zephyr-lab.yaml`; with no board at all, the simulated device at the end runs on your machine.
+
 **1. Control plane.** Flight Control on kind, reachable from your LAN at `<your-ip>.nip.io`, and a plain-HTTP OCI registry on port 5001. If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and set its agent endpoint in `firmware/sdkconfig.local` (step 2).
 
 ```bash
@@ -267,7 +269,7 @@ Create the key that signs firmware and apps. The device gets its public half, an
 deploy/signing/keygen.sh
 ```
 
-**3. Build and flash a board.** The firmware has no credentials in it, so one build serves every installation. `flash.sh` detects the chip on the port:
+**3. Build and flash a board (ESP-IDF).** The firmware has no credentials in it, so one build serves every installation. `flash.sh` detects the chip on the port:
 
 ```bash
 third_party/fetch-wamr.sh
