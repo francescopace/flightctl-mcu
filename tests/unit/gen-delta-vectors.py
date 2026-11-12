@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes tests/unit/delta_vectors.h: an old image, a new one and the detools
 patches between them, for test_oci.c. Run with a python that has detools
-(build/detools-venv/bin/python, which firmware/fw-push.py --delta-from makes):
+(build/detools-venv/bin/python, which tools/fw-push.py --delta-from makes):
 
     build/detools-venv/bin/python tests/unit/gen-delta-vectors.py
 """

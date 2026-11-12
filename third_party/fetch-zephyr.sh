@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetches Zephyr at a pinned release, with only the modules the port needs,
 # into third_party/zephyr-ws (a west workspace, git-ignored). Needs west: this
-# machine's, or the one in the Zephyr build image (zephyr/build.sh uses the
+# machine's, or the one in the Zephyr build image (port/zephyr/build.sh uses the
 # same image).
 # v4.5 has mbedTLS 4.1.1, the same as ESP-IDF 6.0.3: the agent core is
 # written for mbedTLS 4, whose cryptography is PSA only (TF-PSA-Crypto, a

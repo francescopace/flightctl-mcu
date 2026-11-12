@@ -135,16 +135,15 @@ The work also found gaps in Flight Control for this class of device, such as a f
 ## Repository layout
 
 ```
-core/         portable C: agent, HTTP/TLS client, OCI client, WASM app manager
-port/         the ports: espidf, zephyr, host
-firmware/     ESP-IDF project, with its build, flash and push scripts
-zephyr/       Zephyr application and board settings
-host/         simulated device executable
+core/         the agent, portable C: HTTP/TLS client, OCI client, WASM app manager
+port/         one directory per stack, with its port of the core and its firmware:
+              espidf (ESP-IDF project), zephyr (Zephyr application), host (simulated device)
 wasm-apps/    app SDK header, example apps, build script
-deploy/       Flight Control on kind, registry, example fleets, provisioning, signing
-tests/        unit tests, tests of the deploy scripts, fuzz targets
-ci/           the scripts the GitHub Actions workflow runs
-third_party/  fetch scripts for WAMR, detools and Zephyr (none is vendored)
+tools/        Flight Control on kind, registry, example fleets, credentials,
+              provisioning, signing, firmware push
+tests/        unit tests, fuzz targets, tests of the tools, end-to-end tests
+docs/         the documents listed above
+third_party/  cJSON, and the scripts that fetch WAMR, detools and Zephyr
 ```
 
 ## License

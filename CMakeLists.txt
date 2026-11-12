@@ -64,29 +64,29 @@ add_library(fc_core STATIC
     core/src/fc_identity.c
     core/src/fc_oci.c
     core/src/fc_apps.c
-    core/third_party/cjson/cJSON.c
+    third_party/cjson/cJSON.c
     ${DELTA_SRCS}
 )
-target_include_directories(fc_core PUBLIC core/include core/third_party/cjson PRIVATE core/src)
-# Same cJSON nesting limit as the firmware (firmware/components/fc_core).
+target_include_directories(fc_core PUBLIC core/include third_party/cjson PRIVATE core/src)
+# Same cJSON nesting limit as the firmware (port/espidf/components/fc_core).
 target_compile_definitions(fc_core PUBLIC CJSON_NESTING_LIMIT=32)
 target_include_directories(fc_core PRIVATE ${WAMR_ROOT_DIR}/core/iwasm/include)
 target_link_libraries(fc_core PUBLIC vmlib MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::tfpsacrypto Threads::Threads)
 
-add_executable(fc-host-agent host/main.c port/host/fc_port_host.c)
+add_executable(fc-host-agent port/host/main.c port/host/fc_port_host.c)
 target_link_libraries(fc-host-agent PRIVATE fc_core)
 
 # Fuzzers (clang with libFuzzer): cmake -DFC_FUZZ=ON -DCMAKE_C_COMPILER=clang ...
-# then ci/fuzz.sh runs them. Each one compiles the sources it tests, with
+# then tests/fuzz.sh runs them. Each one compiles the sources it tests, with
 # the sanitizers on.
 option(FC_FUZZ "Build the libFuzzer targets" OFF)
 if(FC_FUZZ)
     set(FUZZ_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined -g -O1)
     add_compile_options(-Wno-deprecated-declarations)
-    set(CJSON core/third_party/cjson/cJSON.c)
+    set(CJSON third_party/cjson/cJSON.c)
     function(fc_fuzzer name)
         add_executable(${name} tests/fuzz/${name}.c ${ARGN})
-        target_include_directories(${name} PRIVATE core/include core/src core/third_party/cjson
+        target_include_directories(${name} PRIVATE core/include core/src third_party/cjson
                                    ${WAMR_ROOT_DIR}/core/iwasm/include)
         target_compile_options(${name} PRIVATE ${FUZZ_FLAGS})
         target_compile_definitions(${name} PRIVATE CJSON_NESTING_LIMIT=32)
@@ -109,7 +109,7 @@ if(FC_UNIT)
     enable_testing()
     function(fc_unit name)
         add_executable(${name} tests/unit/${name}.c tests/unit/port_stub.c ${ARGN})
-        target_include_directories(${name} PRIVATE core/include core/src core/third_party/cjson tests/unit
+        target_include_directories(${name} PRIVATE core/include core/src third_party/cjson tests/unit
                                    ${WAMR_ROOT_DIR}/core/iwasm/include)
         target_compile_definitions(${name} PRIVATE CJSON_NESTING_LIMIT=32)
         target_compile_options(${name} PRIVATE -Wno-unused-function -Wno-deprecated-declarations)
@@ -120,8 +120,8 @@ if(FC_UNIT)
         target_link_libraries(${name} PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::tfpsacrypto Threads::Threads)
         add_test(NAME ${name} COMMAND ${name})
     endfunction()
-    fc_unit(test_http core/third_party/cjson/cJSON.c)
-    fc_unit(test_oci core/third_party/cjson/cJSON.c ${DELTA_SRCS})
-    fc_unit(test_identity core/src/fc_identity.c core/src/fc_http.c core/third_party/cjson/cJSON.c)
-    fc_unit(test_agent core/src/fc_identity.c core/src/fc_http.c core/third_party/cjson/cJSON.c)
+    fc_unit(test_http third_party/cjson/cJSON.c)
+    fc_unit(test_oci third_party/cjson/cJSON.c ${DELTA_SRCS})
+    fc_unit(test_identity core/src/fc_identity.c core/src/fc_http.c third_party/cjson/cJSON.c)
+    fc_unit(test_agent core/src/fc_identity.c core/src/fc_http.c third_party/cjson/cJSON.c)
 endif()

@@ -9,7 +9,7 @@
 #   .secrets/signing.key); NO_SIGN=1 skips it. Needs oras.
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$DIR/../deploy/local-ip.sh"
+source "$DIR/../tools/local-ip.sh"
 APP="${1:?app}"; VER="${2:?build version}"; TAG="${3:-$VER}"; REG="${4:-${REGISTRY:-$(local_ip):5001}}"
 OUT="$DIR/build/$APP-$VER"
 [[ -f "$OUT/$APP.wasm" ]] || { echo "no $OUT/$APP.wasm: build it with wasm-apps/build.sh $APP $VER" >&2; exit 1; }
@@ -20,7 +20,7 @@ oras push --plain-http --disable-path-validation ${ORAS_ARGS:-} \
   "$REG/flightctl-mcu/$APP:$TAG" "$APP.wasm:application/vnd.wasm.content.layer.v1+wasm" | tail -1
 KEY="${SIGNING_KEY:-$DIR/../.secrets/signing.key}"
 if [[ -z "${NO_SIGN:-}" && -f "$KEY" ]]; then
-  "$DIR/../deploy/signing/sign.py" --key "$KEY" "$REG/flightctl-mcu/$APP:$TAG"
+  "$DIR/../tools/signing/sign.py" --key "$KEY" "$REG/flightctl-mcu/$APP:$TAG"
 else
   echo "not signed (no signing key)"
 fi

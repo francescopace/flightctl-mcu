@@ -19,7 +19,7 @@
  *                           status.systemInfo.customInfo["app.<name>"]; send
  *                           it when it changes, not on every tick
  *     fc_log(s, len)        a line in the device log
- *   from the firmware (firmware/main/alarm.c; the host simulator mimics them):
+ *   from the firmware (port/espidf/main/alarm.c; the host simulator mimics them):
  *     fc_temp_mc()          temperature in milli-degrees C
  *     fc_threshold_mc()     threshold_c from the fleet config, in milli-degrees C
  *     fc_led(r, g, b)       the board LED, 0-255 per channel (single-colour

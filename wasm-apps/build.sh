@@ -6,7 +6,7 @@
 #   NO_PUSH=1 only builds. See push.sh for REGISTRY, signing and NO_SIGN.
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$DIR/../deploy/local-ip.sh"
+source "$DIR/../tools/local-ip.sh"
 APP="${1:?app}"; VER="${2:?version (v1, v2, ...)}"; REG="${3:-${REGISTRY:-$(local_ip):5001}}"
 OUT="$DIR/build/$APP-$VER"
 mkdir -p "$OUT"

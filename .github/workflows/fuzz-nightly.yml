@@ -41,7 +41,7 @@ jobs:
         run: |
           third_party/fetch-wamr.sh
           third_party/fetch-detools.sh
-          FUZZ_SECONDS=$(( ${{ inputs.minutes || '20' }} * 60 )) CC=clang ci/fuzz.sh \
+          FUZZ_SECONDS=$(( ${{ inputs.minutes || '20' }} * 60 )) CC=clang tests/fuzz.sh \
             -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
       - name: corpus size
         if: always()

@@ -5,31 +5,31 @@ which belong to the installation, and a network, which belongs to the site.
 The firmware has neither built in: one image serves every installation.
 
 What follows is the ESP-IDF firmware. A Zephyr build gets both at the factory,
-in one partition (`deploy/provision.py --format zephyr`, [ZEPHYR.md](ZEPHYR.md)):
+in one partition (`tools/provision.py --format zephyr`, [ZEPHYR.md](ZEPHYR.md)):
 it has no provisioning in the field yet.
 
 ## At the factory, over USB
 
-`deploy/provision.py` writes the `fc_creds` partition: the CA, the enrollment
+`tools/provision.py` writes the `fc_creds` partition: the CA, the enrollment
 certificate and key, the image signing key, the agent endpoint and the
 labels, and optionally the WiFi network. One partition serves a whole batch:
 each device generates its own key on its first boot. Into a merged image, to
 flash a batch:
 
 ```bash
-deploy/provision.py --image firmware/build-esp32c3-secure/merged-binary.bin --secrets .secrets/batch-2026-11-a --pop <secret>
+tools/provision.py --image port/espidf/build-esp32c3-secure/merged-binary.bin --secrets .secrets/batch-2026-11-a --pop <secret>
 ```
 
 ### One enrollment certificate per batch
 
 ```bash
-BATCH=2026-11-a EXPIRATION=30d deploy/enrollment.sh .secrets/batch-2026-11-a
+BATCH=2026-11-a EXPIRATION=30d tools/enrollment.sh .secrets/batch-2026-11-a
 ```
 
 A leaked enrollment certificate lets anyone create enrollment requests until
 it expires: Flight Control 1.3.1 cannot revoke one (it checks only the signer
 and the expiry). A certificate per batch with a short lifetime limits that;
-approving devices from an allow list (`deploy/auto-approve`) decides who
+approving devices from an allow list (`tools/auto-approve`) decides who
 actually gets in. The lifetime must cover the factory window and the longest
 a device may stay offline before it enrolls, or enrolls again after its
 management certificate expired.
@@ -47,11 +47,11 @@ for an installer:
   site's network;
 - with Espressif's `esp_prov`, from a laptop on that access point. It comes
   with the `network_provisioning` component (the firmware's WiFi provisioning
-  since ESP-IDF 6, which no longer has it); `ci/esp-prov.sh` fetches it and
+  since ESP-IDF 6, which no longer has it); `tests/e2e/esp-prov.sh` fetches it and
   runs it:
 
   ```bash
-  ci/esp-prov.sh 192.168.4.1:80 --pop <secret> --ssid <site network> --passphrase <password>
+  tests/e2e/esp-prov.sh 192.168.4.1:80 --pop <secret> --ssid <site network> --passphrase <password>
   ```
 
 The session is ESP-IDF's provisioning Security 1: an X25519 key exchange,
@@ -74,7 +74,7 @@ The `ble` variant does the same over Bluetooth Low Energy instead of an
 access point, which suits phones better and needs no WiFi hop:
 
 ```bash
-TARGET=esp32c3 VARIANT=ble firmware/build.sh
+TARGET=esp32c3 VARIANT=ble port/espidf/build.sh
 ```
 
 (`VARIANT=secure-ble` with the secure variant.) The device advertises
@@ -96,15 +96,15 @@ the flash is written (the network is saved during the session) is untested.
 
 ## What the CI checks
 
-The plain emulator run (`ci/e2e-emu.sh`) provisions its device in the field:
+The plain emulator run (`tests/e2e/e2e-emu.sh`) provisions its device in the field:
 the image has a proof of possession and no network, the emulator joins the
-device's access point, `ci/esp-prov.sh` tries a wrong proof (refused) and then
+device's access point, `tests/e2e/esp-prov.sh` tries a wrong proof (refused) and then
 the right one with the emulator's network, and the device carries on to
 enroll. The end-to-end test also takes a one-day enrollment certificate for
 the run, as for a batch.
 
-An extra CI job does it over BLE (`PROV=ble ci/e2e-emu.sh`, C3, ble variant):
-`ci/ble-prov.py` runs Google's Bumble as the emulator's BLE controller and as
+An extra CI job does it over BLE (`PROV=ble tests/e2e/e2e-emu.sh`, C3, ble variant):
+`tests/e2e/ble-prov.py` runs Google's Bumble as the emulator's BLE controller and as
 the installer's phone, and Espressif's esp_prov code for the session. A wrong
 proof is refused there too. Once the device is online the test restarts the
 emulator without its BLE backend, on the flash the device wrote (with that

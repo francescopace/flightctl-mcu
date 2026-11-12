@@ -1,0 +1,19 @@
+# 4 MB layout (works on 4 MB and 8 MB modules): two OTA slots for A/B updates.
+# The partition table is at 0x10000 (CONFIG_PARTITION_TABLE_OFFSET): a
+# bootloader with Secure Boot v2 and flash encryption (VARIANT=secure) needs
+# up to 48 KB once signed.
+# fc_creds holds what a device needs to reach its Flight Control (CA,
+# enrollment credentials, endpoint, image signing key, labels, optionally
+# WiFi), written by tools/provision.py: one firmware for every installation.
+# With NVS encryption (secure builds) the firmware moves it into the
+# encrypted nvs_store on first boot and erases it; nvs_keys then holds the
+# NVS keys, itself protected by flash encryption.
+# Name,    Type, SubType,  Offset,   Size,     Flags
+nvs,       data, nvs,      0x11000,  0x5000,
+otadata,   data, ota,      0x16000,  0x2000,
+phy_init,  data, phy,      0x18000,  0x1000,
+nvs_keys,  data, nvs_keys, 0x19000,  0x1000,   encrypted
+fc_creds,  data, nvs,      0x1a000,  0x6000,
+ota_0,     app,  ota_0,    0x20000,  0x1A0000,
+ota_1,     app,  ota_1,    0x1C0000, 0x1A0000,
+nvs_store, data, nvs,      0x360000, 0xA0000,

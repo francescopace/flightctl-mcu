@@ -1,0 +1,18 @@
+# Devices that tools/auto-approve/auto-approve.py may approve, with their
+# labels. Copy it to allowlist.yaml (git-ignored) and fill it in.
+defaults:
+  labels:
+    site: lab
+    app: alarm
+devices:
+  # By device name: the hash of the device key, printed at first boot
+  # ("device name: ...") and shown in the enrollment request.
+  - name: 0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdef
+    labels:
+      stage: canary
+  # By MAC address, as the device reports it (customInfo.mac).
+  - mac: "ac:eb:e6:4a:e7:08"
+    labels:
+      stage: prod
+      led-active-low: "true"
+      led-ws2812: "false"

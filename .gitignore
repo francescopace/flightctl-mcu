@@ -1,13 +1,13 @@
 .secrets/
 build/
-firmware/build-*/
+port/espidf/build-*/
 sdkconfig
 sdkconfig.old
 managed_components/
-firmware/dependencies.lock
-firmware/sdkconfig.wifi
-firmware/sdkconfig.local
-deploy/auto-approve/allowlist.yaml
+port/espidf/dependencies.lock
+port/espidf/sdkconfig.wifi
+port/espidf/sdkconfig.local
+tools/auto-approve/allowlist.yaml
 third_party/wamr/
 third_party/detools/
 third_party/zephyr-ws/
@@ -15,7 +15,7 @@ wasm-apps/build/
 .ccache/
 # Never commit keys or enrollment material, wherever a tool writes them:
 # device and signing keys, Secure Boot keys (*.pem), and flash or credential
-# images (deploy/provision.py --out), which hold a device's enrollment key and
+# images (tools/provision.py --out), which hold a device's enrollment key and
 # WiFi password.
 *.key
 *.pem
@@ -34,5 +34,5 @@ venv/
 *~
 .vscode/
 .idea/
-zephyr/build-*/
+port/zephyr/build-*/
 third_party/zephyr-sdk/

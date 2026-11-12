@@ -117,7 +117,7 @@ Certificate renewal was not run on the board, whose certificate is valid for a y
 
 ### Firmware v3.0 on all six boards
 
-Flashed over USB once (the partition table gained `fc_creds`), provisioned with `deploy/provision.py`, then updated over the air to the signed v3.0 index by the `alarm-lab` fleet (`idf-lab` since 12 November 2026):
+Flashed over USB once (the partition table gained `fc_creds`), provisioned with `tools/provision.py`, then updated over the air to the signed v3.0 index by the `alarm-lab` fleet (`idf-lab` since 12 November 2026):
 
 | Chip | Free heap | Minimum | Largest internal block | TLS handshakes |
 |---|---|---|---|---|
@@ -142,11 +142,11 @@ Five of the six boards came back with a new device key, hence a new name, and we
 | ESP32-C5 | confirmed, 15 s | refused | renewed, still reporting after the first certificate expired | 61.7 / 42.2 / 40.9 KB (after problem 12) |
 | ESP32-S3 | confirmed, 35 s | – | renewed | 121.3 / 102.1 / 73.7 KB |
 
-The C3 figures match the board (58–60 KB free). `ci/e2e-emu.sh` runs the whole sequence for the C3 and the C5, in CI too. Since the credentials moved out of the firmware (`fc_creds` partition), it tests the same images CI builds for the boards, provisioned for the test cluster: it boots the debug build, updates it over the air to the release build (72 KB free on the C3, against 58 KB for the debug build), and tries a broken build that cannot reach the server, which is rolled back once its confirmation window ends (150 s by default, 30 s in the test build).
+The C3 figures match the board (58–60 KB free). `tests/e2e/e2e-emu.sh` runs the whole sequence for the C3 and the C5, in CI too. Since the credentials moved out of the firmware (`fc_creds` partition), it tests the same images CI builds for the boards, provisioned for the test cluster: it boots the debug build, updates it over the air to the release build (72 KB free on the C3, against 58 KB for the debug build), and tries a broken build that cannot reach the server, which is rolled back once its confirmation window ends (150 s by default, 30 s in the test build).
 
 ### ESP-IDF 6.0.3 on a board (ESP32-S3)
 
-12 November 2026, against Flight Control 1.4.0: the first run of the ESP-IDF 6 firmware (mbedTLS 4.1.1, cryptography through PSA) outside the emulator. One board, an ESP32-S3-DevKitC, erased, flashed over USB with the debug build (v4.0-dev) and provisioned with `deploy/provision.py`:
+12 November 2026, against Flight Control 1.4.0: the first run of the ESP-IDF 6 firmware (mbedTLS 4.1.1, cryptography through PSA) outside the emulator. One board, an ESP32-S3-DevKitC, erased, flashed over USB with the debug build (v4.0-dev) and provisioned with `tools/provision.py`:
 
 | Step | Result |
 |---|---|
@@ -215,7 +215,7 @@ Not run on the board: the way back from a broken image, the secure variant (it b
     - A fleet config holding a JSON value nested 500 levels deep made the C3 overflow its 24 KB thread stack while parsing it ("Stack protection fault"), reboot, get the same config and crash again. A registry could do the same with a manifest, which is parsed before its signature is checked. The fuzzers run on the host, with 256 KB stacks, and could not see it.
     - The real cause was two copies of cJSON in the firmware: ours and ESP-IDF's (component `json`), and the firmware ran ESP-IDF's.
     - Fix: the firmware builds only the ESP-IDF components it needs (`set(COMPONENTS main)`; the build fails if `json` comes back), and cJSON's nesting limit is 32 instead of 1000 (real documents use fewer than 10). The same config is now rejected with an error in Flight Control. Side effect: a clean firmware build takes under a minute instead of three.
-    - Later, WiFi provisioning in the field needed ESP-IDF's `json` component: the firmware now links only ESP-IDF's cJSON, built with the same limit of 32 (`firmware/CMakeLists.txt`), and no longer ours.
+    - Later, WiFi provisioning in the field needed ESP-IDF's `json` component: the firmware now links only ESP-IDF's cJSON, built with the same limit of 32 (`port/espidf/CMakeLists.txt`), and no longer ours.
 
 ## Flight Control 1.4.0
 
@@ -224,11 +224,11 @@ Not run on the board: the way back from a broken image, the secure variant (it b
 - **The agent API is the same.** No path changed between the two releases, and the schemas only gained optional fields: `status.systemInfoStatus`, `status.os.lastDelta` and `deltaSize`, `spec.os.deltaImage` in the rendered spec, `systemInfo.osMode`. The agent sends none and ignores the last.
 - **Every end-to-end test passes unchanged**: the simulated device, Zephyr on `native_sim`, and the firmware in the emulator (C3 with SoftAP and with BLE provisioning, C3 and C5 secure). One run of the secure C3 failed at the step back to long-lived certificates and passed when run again; the first ran next to three other builds on the same machine, which is the likely cause (an emulator short of CPU, whose clock falls behind the server's) and was not proven.
 - **Flight Control now has deltas of its own**, for bootc images, made by the service. They are another mechanism: these devices find theirs in the release's index ([DELTA.md](DELTA.md)). `status.os.lastDelta` would be the place to report the outcome, instead of `customInfo`.
-- **cosign 3**, which GitHub's installer now gives, accepts the signatures `deploy/signing/sign.py` makes, as cosign 2 does.
+- **cosign 3**, which GitHub's installer now gives, accepts the signatures `tools/signing/sign.py` makes, as cosign 2 does.
 
 What changed for a deployment is the **label sync**. 1.4 installs `LabelSyncMapping` resources, and one of them copies every entry of `customInfo` into the device's labels (`custominfo.flightctl.io/<key>`). These devices report counters there: free heap, traffic, uptime. With the default, each status update rewrote the device's labels and logged two events ("label reconciliation was requested", "updated successfully (labels)"): 227 of 400 events on the test cluster, while the tests ran.
 
-`deploy/fleet/labelsync-custom-info.yaml` replaces that mapping with one that copies only what stays the same between firmware updates (device class, board, firmware and OS version, security state). The labels then stop changing, and so does the second event. The first is still logged whenever `customInfo` changes, which for these devices is at every status: the service asks for a reconciliation before it knows nothing will come of it. Stopping that needs the counters out of `customInfo`, or a quieter service (limitation 10 below).
+`tools/fleet/labelsync-custom-info.yaml` replaces that mapping with one that copies only what stays the same between firmware updates (device class, board, firmware and OS version, security state). The labels then stop changing, and so does the second event. The first is still logged whenever `customInfo` changes, which for these devices is at every status: the service asks for a reconciliation before it knows nothing will come of it. Stopping that needs the counters out of `customInfo`, or a quieter service (limitation 10 below).
 
 The labels a mapping makes are its own: editing a device without them, to change another label, is refused (409, "cannot edit a managed label owned by a mapping"). An edit must carry them as they are.
 
@@ -260,7 +260,7 @@ One thing the new labels give: a fleet can select on what a device says it is, `
    - Proposal: recommend digest references (`@sha256:`) for firmware and apps, or compare `imageDigest`.
 8. **An enrollment certificate cannot be revoked.**
    - The enrollment endpoint checks only the certificate's signer and expiry (`internal/api_server/middleware/enrollment_auth.go`). One leaked from a batch of devices can enroll new devices until it expires; deleting its CertificateSigningRequest changes nothing.
-   - Workaround: one certificate per batch with a short lifetime (`BATCH=… EXPIRATION=… deploy/enrollment.sh`), and approval from an allow list.
+   - Workaround: one certificate per batch with a short lifetime (`BATCH=… EXPIRATION=… tools/enrollment.sh`), and approval from an allow list.
    - Proposal: a revocation list for enrollment certificates, or refuse those whose CertificateSigningRequest was deleted or denied.
 9. **A device with an RSA key cannot enroll.**
    - The internal CA builds the certificate with the request's signature algorithm (`internal/crypto/internal_ca.go`: `SignatureAlgorithm: csr.SignatureAlgorithm`). An RSA request asks for SHA256WithRSA, the CA's key is ECDSA, and Go's `x509.CreateCertificate` refuses: "requested SignatureAlgorithm does not match private key type". Approving the request fails with a 400.
@@ -278,7 +278,7 @@ Limitations 1, 3, 8 and 9 are unchanged in the source of 1.4.0 (read, not tried 
 - **Security**:
   - The registry is plain HTTP without authentication. Signatures make that safe against tampering, not against reading.
   - The device key is in flash in clear, except in the `secure` variant (see [SECURITY.md](SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
-- **Provisioning**: credentials are written over USB (`deploy/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
+- **Provisioning**: credentials are written over USB (`tools/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 - **Hardware coverage**: automatic rollback was not exercised on the C6, nor on the ESP32-S3 with the Zephyr build ([DEVICES.md](DEVICES.md#boards-tried)).
 

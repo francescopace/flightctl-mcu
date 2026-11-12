@@ -30,10 +30,10 @@ third_party/fetch-zephyr.sh
 ```
 
 ```bash
-zephyr/build.sh
+port/zephyr/build.sh
 ```
 
-Then a flash image with the device's credentials (`deploy/enrollment.sh`
+Then a flash image with the device's credentials (`tools/enrollment.sh`
 makes them, as for the other devices), and the device itself:
 
 ```bash
@@ -41,11 +41,11 @@ python3 -c "open('build/zephyr-flash.bin','wb').write(b'\xff'*(2*1024*1024))"
 ```
 
 ```bash
-deploy/provision.py --format zephyr --image build/zephyr-flash.bin
+tools/provision.py --format zephyr --image build/zephyr-flash.bin
 ```
 
 ```bash
-zephyr/run.sh build/zephyr-flash.bin
+port/zephyr/run.sh build/zephyr-flash.bin
 ```
 
 It asks to be approved like any device (`flightctl approve
@@ -60,7 +60,7 @@ flash file across restarts.
 | TLS, X.509 | Zephyr's mbedTLS module, 4.1, the version ESP-IDF 6.0 has; its cryptography is PSA's (TF-PSA-Crypto). |
 | Network | Zephyr's sockets; `port/zephyr/fc_net_zephyr.c` gives mbedTLS its `mbedtls_net_*` functions on them. On `native_sim` the sockets are the host's (no TAP interface to set up). |
 | Storage | LittleFS on the `fc_storage` flash partition: one file per key, written through a rename. |
-| Credentials | The `fc_creds` partition: `"FCC1"`, a length and a JSON object with the fields of the ESP-IDF firmware's partition (`deploy/provision.py --format zephyr`). |
+| Credentials | The `fc_creds` partition: `"FCC1"`, a length and a JSON object with the fields of the ESP-IDF firmware's partition (`tools/provision.py --format zephyr`). |
 | C heap | `port/zephyr/fc_heap_zephyr.c`, a heap the port owns, so that the device can report how much is free (`memFreeBytes`, `memMinFreeBytes`); Zephyr's malloc does not say. |
 | WASM | WAMR's Zephyr platform, fast interpreter, as in the other builds. |
 | Firmware updates | MCUboot's two slots (boards built with it): the image is streamed into the second, read back, and asked for as a test; MCUboot checks its signature, swaps the slots, and swaps them back unless the agent confirms the image once it has reached Flight Control. `native_sim` has no MCUboot and no updates. |
@@ -85,7 +85,7 @@ mbedTLS 3.6, when the core was written for that.)
 
 ## What the tests check
 
-`DEVICE_KIND=zephyr ci/e2e.sh` is the end-to-end test of the simulated device
+`DEVICE_KIND=zephyr tests/e2e/e2e.sh` is the end-to-end test of the simulated device
 with the Zephyr build as the device, and CI runs it (a job builds the
 application in Zephyr's image, another runs it against Flight Control on
 kind): enrollment and approval, status, a config file and its change, a WASM
@@ -108,31 +108,31 @@ third_party/fetch-zephyr-sdk.sh
 ```
 
 ```bash
-BOARD=rpi_pico/rp2040/w BUILD_DIR=build-pico-usb zephyr/build.sh -S cdc-acm-console
+BOARD=rpi_pico/rp2040/w BUILD_DIR=build-pico-usb port/zephyr/build.sh -S cdc-acm-console
 ```
 
 ```bash
-zephyr/flash-pico.sh .secrets
+port/zephyr/flash-pico.sh .secrets
 ```
 
 The first fetches the ARM toolchain (1.9 GB) and the WiFi chip's firmware;
 the last writes one UF2 with the application and the credentials (the WiFi
-network is the one in `firmware/sdkconfig.wifi`, or `--wifi-ssid`) and prints
+network is the one in `port/espidf/sdkconfig.wifi`, or `--wifi-ssid`) and prints
 the console. The board must be in its bootloader: plugged in with BOOTSEL
 held down, or, once it runs this build, `PORT=/dev/cu.usbmodemXXXX`.
 
 ### Firmware updates
 
 ```bash
-BOARD=rpi_pico/rp2040/w/mcuboot BUILD_DIR=build-pico-mcuboot zephyr/build.sh -- -Dzephyr_SNIPPET=cdc-acm-console
+BOARD=rpi_pico/rp2040/w/mcuboot BUILD_DIR=build-pico-mcuboot port/zephyr/build.sh -- -Dzephyr_SNIPPET=cdc-acm-console
 ```
 
 ```bash
-BUILD_DIR=build-pico-mcuboot zephyr/flash-pico.sh .secrets
+BUILD_DIR=build-pico-mcuboot port/zephyr/flash-pico.sh .secrets
 ```
 
 ```bash
-firmware/fw-push.py <registry>/flightctl-mcu/fw:v2 rpi_pico_w=zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin
+tools/fw-push.py <registry>/flightctl-mcu/fw:v2 rpi_pico_w=port/zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin
 ```
 
 The board `rpi_pico/rp2040/w/mcuboot` is Zephyr's layout for MCUboot on the
@@ -239,11 +239,11 @@ third_party/fetch-zephyr-sdk.sh
 ```
 
 ```bash
-BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 zephyr/build.sh
+BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 port/zephyr/build.sh
 ```
 
 ```bash
-ERASE=1 zephyr/flash-esp32.sh /dev/cu.usbmodemXXXX .secrets
+ERASE=1 port/zephyr/flash-esp32.sh /dev/cu.usbmodemXXXX .secrets
 ```
 
 The fetch scripts bring Espressif's HAL module (164 MB), the binary WiFi
@@ -265,7 +265,7 @@ Tried on the board, against Flight Control 1.4.0:
 | Reflashed over USB | same device: its key is in the storage partition |
 | Memory | 49 KB of the 128 KB C heap free with the app and both connections up, 40 KB at the lowest |
 
-What it took, beyond the board's two files in `zephyr/boards/`:
+What it took, beyond the board's two files in `port/zephyr/boards/`:
 
 - **Memory by hand.** Zephyr gives the first core 372 KB for data. The kernel
   heap is the larger of what the application asks and what the drivers add:
@@ -279,11 +279,11 @@ What it took, beyond the board's two files in `zephyr/boards/`:
   a reset: the port took it for an error and warned at every request, before
   the core opened another connection as it should.
 
-The two boards are in one fleet (`deploy/fleet/zephyr-lab.yaml`), served by
+The two boards are in one fleet (`tools/fleet/zephyr-lab.yaml`), served by
 one release with an image for each:
 
 ```bash
-firmware/fw-push.py --delta-from z2 <registry>/flightctl-mcu/fw:z3 rpi_pico_w=zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin esp32s3_devkitc=zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
+tools/fw-push.py --delta-from z2 <registry>/flightctl-mcu/fw:z3 rpi_pico_w=port/zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
 ```
 
 Each took its own image from it, as a delta: 20 KB on the Pico W (2.9%), 9 KB
@@ -297,7 +297,7 @@ CI: the build needs the Xtensa toolchain.
 
 ## Things to know about native_sim
 
-- **Always `--seed-random`** (`zephyr/run.sh` passes it). Without it the
+- **Always `--seed-random`** (`port/zephyr/run.sh` passes it). Without it the
   random generator starts from a fixed seed, and every instance makes the
   same device key, hence the same device name.
 - **A reboot starts the process again** (`CONFIG_NATIVE_SIM_REBOOT`), with

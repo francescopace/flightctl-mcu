@@ -7,7 +7,7 @@ software, and the device key is in the storage partition in clear
 
 A device in the field has to resist someone who holds it: who can read its
 flash, or write a firmware of their own. The `secure` firmware variant
-([firmware/sdkconfig.secure](../firmware/sdkconfig.secure)) turns on what the
+([port/espidf/sdkconfig.secure](../port/espidf/sdkconfig.secure)) turns on what the
 chip offers against that:
 
 | | What it does | Against |
@@ -24,11 +24,11 @@ All this is fixed in the chip's eFuses on the device's first boot, and cannot
 be undone: from then on the chip runs only images signed with your Secure Boot
 key. **Lose that key and the devices can never be updated again.**
 
-**It is a separate build, off by default.** `firmware/build.sh` without
+**It is a separate build, off by default.** `port/espidf/build.sh` without
 `VARIANT=secure` builds the plain firmware, which never touches the eFuses: the
 development boards and most of CI run it. The secure variant is built only on
 purpose, with your Secure Boot key, in its own directory
-(`firmware/build-<chip>-secure`), and pushed with its own `--variant`. A device
+(`port/espidf/build-<chip>-secure`), and pushed with its own `--variant`. A device
 stays on the variant it was flashed with: each image carries the security
 features it was built for, and the agent refuses an update built for others
 before it is installed (`firmware built for another security variant`). A
@@ -48,7 +48,7 @@ plan to: a burn cannot be undone.
 
 They protect different things, and both belong offline (an HSM in production):
 
-- the **image signing key** (`deploy/signing/keygen.sh`, ECDSA P-256) signs
+- the **image signing key** (`tools/signing/keygen.sh`, ECDSA P-256) signs
   the OCI artifacts in the registry, firmware and apps, in cosign's format.
   The agent checks it before it downloads anything;
 - the **Secure Boot key** (RSA-3072) signs the firmware binaries themselves.
@@ -60,7 +60,7 @@ espsecure generate-signing-key --version 2 --scheme rsa3072 secure_boot_key.pem
 ```
 
 ```bash
-TARGET=esp32c3 FW_VERSION=v4 VARIANT=secure SECURE_BOOT_KEY=secure_boot_key.pem firmware/build.sh
+TARGET=esp32c3 FW_VERSION=v4 VARIANT=secure SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
 ```
 
 `VARIANT=secure-release` gives the release profile of the same, and
@@ -135,7 +135,7 @@ Control names a device after its RSA key as it does after an ECDSA one
 default):
 
 ```bash
-TARGET=esp32c3 FW_VERSION=v5 VARIANT=secure-release SECURE_VERSION=1 SECURE_BOOT_KEY=secure_boot_key.pem firmware/build.sh
+TARGET=esp32c3 FW_VERSION=v5 VARIANT=secure-release SECURE_VERSION=1 SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
 ```
 
 When a device confirms a release, it burns that version into eFuse; from then
@@ -151,7 +151,7 @@ the device first boots; the empty slots are revoked then. To keep a way to
 replace the key, sign the factory bootloader with the next ones too:
 
 ```bash
-firmware/merge-secure.py --extra-key secure_boot_key_1.pem --extra-key secure_boot_key_2.pem firmware/build-esp32c3-secure
+port/espidf/merge-secure.py --extra-key secure_boot_key_1.pem --extra-key secure_boot_key_2.pem port/espidf/build-esp32c3-secure
 ```
 
 Keep keys 1 and 2 offline, unused. Releases are signed with key 0. To retire
@@ -185,11 +185,11 @@ The build signs with a key file (`SECURE_BOOT_KEY`). To keep the Secure Boot
 keys in an HSM instead, build without a key and sign afterwards:
 
 ```bash
-TARGET=esp32c3 VARIANT=secure-release SECURE_BOOT_SIGNER=external firmware/build.sh
+TARGET=esp32c3 VARIANT=secure-release SECURE_BOOT_SIGNER=external port/espidf/build.sh
 ```
 
 ```bash
-firmware/sign-external.py firmware/build-esp32c3-secure-release --pub-key key0.pub.pem --sign-cmd '<command> {digest} {signature}'
+port/espidf/sign-external.py port/espidf/build-esp32c3-secure-release --pub-key key0.pub.pem --sign-cmd '<command> {digest} {signature}'
 ```
 
 The command gets a file with the image's SHA-256 digest and must write an
@@ -209,7 +209,7 @@ the device in hand, it can load code into RAM. For the field, the `nodl`
 variant turns the ROM download mode off for good on first boot:
 
 ```bash
-TARGET=esp32 VARIANT=secure-nodl-release SECURE_BOOT_KEY=secure_boot_key.pem firmware/build.sh
+TARGET=esp32 VARIANT=secure-nodl-release SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
 ```
 
 After that the serial port can no longer write the flash either: `fc_creds`
@@ -223,7 +223,7 @@ builds; the emulator does not run the ESP32.
 Signed, a bootloader with Secure Boot and flash encryption takes up to 48 KB
 (ESP32-C5), more than fits below the default partition table at 0x8000. The
 table is at 0x10000 in every build, secure or not
-([firmware/partitions.csv](../firmware/partitions.csv)); the OTA slots did not
+([port/espidf/partitions.csv](../port/espidf/partitions.csv)); the OTA slots did not
 move. A board flashed with the earlier layout has to be flashed over USB and
 provisioned again: an OTA update cannot change the partition table.
 
@@ -231,18 +231,18 @@ provisioned again: an OTA update cannot change the partition table.
 
 1. **Merged image.** With Secure Boot, ESP-IDF leaves the bootloader out of
    its flash arguments, so it is never flashed by accident.
-   `firmware/merge-secure.py` writes `merged-binary.bin` with it, signed with
+   `port/espidf/merge-secure.py` writes `merged-binary.bin` with it, signed with
    the spare keys too (see "Key rotation"):
 
    ```bash
-   firmware/merge-secure.py --extra-key secure_boot_key_1.pem firmware/build-esp32c3-secure
+   port/espidf/merge-secure.py --extra-key secure_boot_key_1.pem port/espidf/build-esp32c3-secure
    ```
 
 2. **Provision into the image**, so the board is flashed once and its first
    boot has everything:
 
    ```bash
-   deploy/provision.py --image firmware/build-esp32c3-secure/merged-binary.bin --wifi-ssid <ssid> --wifi-password <password>
+   tools/provision.py --image port/espidf/build-esp32c3-secure/merged-binary.bin --wifi-ssid <ssid> --wifi-password <password>
    ```
 
    One image serves a whole batch: `fc_creds` is the same for every device of
@@ -252,7 +252,7 @@ provisioned again: an OTA update cannot change the partition table.
    port, so that no board is locked by accident:
 
    ```bash
-   BURN_EFUSES=/dev/cu.usbmodem1101 BUILD=build-esp32c3-secure firmware/flash.sh /dev/cu.usbmodem1101
+   BURN_EFUSES=/dev/cu.usbmodem1101 BUILD=build-esp32c3-secure port/espidf/flash.sh /dev/cu.usbmodem1101
    ```
 
 4. **First boot**, about two seconds longer than usual. The bootloader:
@@ -281,7 +281,7 @@ write; esptool then needs `--no-stub`. Not yet tried on a real board.
 ## What the CI checks
 
 The emulator runs the real ROM and models the eFuses, the XTS-AES flash
-encryption and its decrypting cache. `SECURE=1 ci/e2e-emu.sh` (C3 and C5 in
+encryption and its decrypting cache. `SECURE=1 tests/e2e/e2e-emu.sh` (C3 and C5 in
 CI, with a throwaway Secure Boot key):
 
 - the first boot burns the eFuses, encrypts the flash and moves `fc_creds` into
@@ -329,5 +329,5 @@ Tried by hand in the emulator:
 - **ESP32 (classic).** Secure Boot v2 needs silicon revision 3
   (`CONFIG_ESP32_REV_MIN_3`, set by the variant). Not run anywhere yet: the
   emulator does not run the ESP32.
-- **The image signing key in an HSM.** `deploy/signing` signs OCI artifacts
+- **The image signing key in an HSM.** `tools/signing` signs OCI artifacts
   with a key file; cosign itself can sign with a KMS or PKCS#11 key.

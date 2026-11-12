@@ -1,0 +1,36 @@
+# Apply with tools/fleet/apply.sh tools/fleet/zephyr-lab.yaml, which fills
+# in ${REGISTRY}.
+# Example fleet: the boards with the Zephyr build (docs/ZEPHYR.md), whatever
+# the board. A device joins with the label app=zephyr-lab, given when it is
+# provisioned (--labels) or approved. (The boards with the ESP-IDF firmware
+# are in idf-lab.yaml: the two are released apart for now.)
+apiVersion: flightctl.io/v1beta1
+kind: Fleet
+metadata:
+  name: zephyr-lab
+spec:
+  selector:
+    matchLabels:
+      app: zephyr-lab
+  template:
+    metadata:
+      labels:
+        fleet: zephyr-lab
+    spec:
+      # One OCI index with an image per board (tools/fw-push.py
+      # PLATFORM=zephyr.signed.bin ...): each device takes its own.
+      os:
+        image: ${REGISTRY}/flightctl-mcu/fw:z3
+      # The same WASM app as on the ESP-IDF boards; here its temperature and
+      # its LED are simulated (port/zephyr/src/main.c).
+      applications:
+        - name: alarm
+          appType: container
+          image: ${REGISTRY}/flightctl-mcu/alarm:v2.2
+          envVars:
+            TICK_MS: "100"
+      config:
+        - name: alarm
+          inline:
+            - path: /etc/fc-app/alarm.json
+              content: '{"threshold_c": 40}'

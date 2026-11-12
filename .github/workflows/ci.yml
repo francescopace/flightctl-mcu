@@ -49,7 +49,7 @@ jobs:
           NO_PUSH=1 wasm-apps/build.sh alarm v2
           NO_PUSH=1 wasm-apps/build.sh trend v1
       - name: host agent
-        run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} ci/build-host.sh
+        run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} port/host/build-ci.sh
       - uses: actions/upload-artifact@v7
         with:
           name: wasm-apps
@@ -59,7 +59,7 @@ jobs:
           name: host-agent
           path: build/host/fc-host-agent
       - name: unit tests (C with sanitizers, Python)
-        run: CC=clang ci/unit.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
+        run: CC=clang tests/unit.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
       # Last, so a finding does not stop the artifacts above. Starts from the
       # corpus of the nightly runs (read only here).
       - uses: actions/cache/restore@v6
@@ -68,7 +68,7 @@ jobs:
           key: fuzz-corpus-
           restore-keys: fuzz-corpus-
       - name: fuzzing, 30 seconds per target
-        run: FUZZ_SECONDS=30 CC=clang ci/fuzz.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
+        run: FUZZ_SECONDS=30 CC=clang tests/fuzz.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -90,7 +90,7 @@ jobs:
         target: [esp32, esp32s2, esp32s3, esp32c3, esp32c5, esp32c6]
         profile: [plain]
         # Secure Boot v2 + flash encryption + NVS encryption, for the emulated
-        # chips (signed with a throwaway key, see ci/build-firmware.sh).
+        # chips (signed with a throwaway key, see port/espidf/build-ci.sh).
         include:
           - { target: esp32c3, profile: secure }
           - { target: esp32c5, profile: secure }
@@ -105,37 +105,37 @@ jobs:
           restore-keys: ccache-${{ matrix.target }}-${{ matrix.profile }}-
       - name: debug build
         shell: bash
-        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.V }}
+        run: port/espidf/build-ci.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.V }}
       # Secure profile: security version 1 (anti-rollback), so the device
       # refuses the debug build (0) once it has confirmed the release.
       - name: release profile (-Os)
         shell: bash
         env:
           SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
-        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}release
+        run: port/espidf/build-ci.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}release
       - name: broken build, for the rollback test (emulated chips only)
         if: contains(fromJSON('["esp32c3", "esp32c5"]'), matrix.target)
         shell: bash
         env:
           SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
-        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}broken
+        run: port/espidf/build-ci.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}broken
       - name: ble variant, for the BLE field provisioning test (C3)
         if: matrix.target == 'esp32c3' && matrix.profile == 'plain'
         shell: bash
-        run: ci/build-firmware.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ble
+        run: port/espidf/build-ci.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ble
       - uses: actions/upload-artifact@v7
         with:
           name: firmware-${{ matrix.target }}${{ env.S }}
           path: |
-            firmware/build-${{ matrix.target }}${{ env.S }}/flightctl_mcu_fw.bin
-            firmware/build-${{ matrix.target }}${{ env.S }}/merged-binary.bin
-            firmware/build-${{ matrix.target }}-${{ env.P }}release/flightctl_mcu_fw.bin
-            firmware/build-${{ matrix.target }}-${{ env.P }}release/flightctl_mcu_fw-unsigned.bin
-            firmware/build-${{ matrix.target }}-${{ env.P }}release/merged-binary.bin
-            firmware/build-${{ matrix.target }}-${{ env.P }}broken/flightctl_mcu_fw.bin
-            firmware/build-${{ matrix.target }}-ble/flightctl_mcu_fw.bin
-            firmware/build-${{ matrix.target }}-ble/flightctl_mcu_fw.elf
-            firmware/build-${{ matrix.target }}-ble/merged-binary.bin
+            port/espidf/build-${{ matrix.target }}${{ env.S }}/flightctl_mcu_fw.bin
+            port/espidf/build-${{ matrix.target }}${{ env.S }}/merged-binary.bin
+            port/espidf/build-${{ matrix.target }}-${{ env.P }}release/flightctl_mcu_fw.bin
+            port/espidf/build-${{ matrix.target }}-${{ env.P }}release/flightctl_mcu_fw-unsigned.bin
+            port/espidf/build-${{ matrix.target }}-${{ env.P }}release/merged-binary.bin
+            port/espidf/build-${{ matrix.target }}-${{ env.P }}broken/flightctl_mcu_fw.bin
+            port/espidf/build-${{ matrix.target }}-ble/flightctl_mcu_fw.bin
+            port/espidf/build-${{ matrix.target }}-ble/flightctl_mcu_fw.elf
+            port/espidf/build-${{ matrix.target }}-ble/merged-binary.bin
 
   zephyr:
     name: Zephyr (native_sim)
@@ -153,11 +153,11 @@ jobs:
           key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh') }}
       - run: third_party/fetch-zephyr.sh
       - name: build
-        run: zephyr/build.sh
+        run: port/zephyr/build.sh
       - uses: actions/upload-artifact@v7
         with:
           name: zephyr-native-sim
-          path: zephyr/build-native_sim_native_64/zephyr/zephyr.exe
+          path: port/zephyr/build-native_sim_native_64/zephyr/zephyr.exe
 
   e2e-zephyr:
     name: end-to-end (Zephyr on native_sim vs Flight Control on kind)
@@ -180,8 +180,8 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: zephyr-native-sim
-          path: zephyr/build-native_sim_native_64/zephyr
-      - run: chmod +x zephyr/build-native_sim_native_64/zephyr/zephyr.exe
+          path: port/zephyr/build-native_sim_native_64/zephyr
+      - run: chmod +x port/zephyr/build-native_sim_native_64/zephyr/zephyr.exe
       - name: WASM apps from the WASM job (not rebuilt)
         uses: actions/download-artifact@v8
         with:
@@ -189,7 +189,7 @@ jobs:
           path: wasm-apps/build
       # The test of the simulated device, with the Zephyr build as the device.
       - name: e2e
-        run: PREBUILT_APPS=1 DEVICE_KIND=zephyr ci/e2e.sh
+        run: PREBUILT_APPS=1 DEVICE_KIND=zephyr tests/e2e/e2e.sh
       - name: cluster state on failure
         if: failure()
         run: |
@@ -227,7 +227,7 @@ jobs:
           name: wasm-apps
           path: wasm-apps/build
       - name: e2e
-        run: PREBUILT_APPS=1 ci/e2e.sh
+        run: PREBUILT_APPS=1 tests/e2e/e2e.sh
       - name: cluster state on failure
         if: failure()
         run: |
@@ -281,13 +281,13 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: firmware-${{ matrix.chip }}${{ matrix.secure == 1 && '-secure' || '' }}
-          path: firmware
+          path: port/espidf
       - name: secure build too, which a plain device must refuse
         if: matrix.secure == 0
         uses: actions/download-artifact@v8
         with:
           name: firmware-${{ matrix.chip }}-secure
-          path: firmware
+          path: port/espidf
       - name: WASM apps from the WASM job (not rebuilt)
         uses: actions/download-artifact@v8
         with:
@@ -299,7 +299,7 @@ jobs:
       - name: e2e on the emulator
         env:
           ESP_PROV_LOCAL: 1
-        run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} PROV=${{ matrix.prov }} ci/e2e-emu.sh
+        run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} PROV=${{ matrix.prov }} tests/e2e/e2e-emu.sh
       - name: logs on failure
         if: failure()
         run: |

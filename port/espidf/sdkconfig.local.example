@@ -1,0 +1,6 @@
+# Copy to sdkconfig.local (git-ignored): settings of your Flight Control
+# installation. tools/enrollment.sh prints the agent endpoint.
+CONFIG_FC_SERVER_HOST="agent-api.192.0.2.10.nip.io"
+CONFIG_FC_SERVER_PORT=8443
+# Labels requested at enrollment (the example fleet selects app=alarm).
+CONFIG_FC_LABELS="site=lab,app=alarm"

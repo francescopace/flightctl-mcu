@@ -16,7 +16,7 @@ Measured on release builds for the ESP32-C3 (an image of 1.11 MB):
 ## Publishing a release with deltas
 
 ```bash
-firmware/fw-push.py --delta-from v3.0 --delta-from v3.1 <registry>/flightctl-mcu/fw:v3.2
+tools/fw-push.py --delta-from v3.0 --delta-from v3.1 <registry>/flightctl-mcu/fw:v3.2
 ```
 
 For each chip, `fw-push.py` takes that chip's image out of each release named
@@ -111,7 +111,7 @@ MCUboot (`fw-push.py ... PLATFORM=zephyr.signed.bin`).
   one corrupted at each byte in turn, one cut short, one with a larger window
   and one that does not match its digest all end with the whole image in the
   slot.
-- End-to-end, on every emulated chip and variant (`ci/e2e-emu.sh`): the
+- End-to-end, on every emulated chip and variant (`tests/e2e/e2e-emu.sh`): the
   release is pushed with a delta from the debug build the device starts on,
   and the device must report that it came as a delta; the next image, which
   has none, must come whole.

@@ -59,22 +59,22 @@ With Zephyr 4.5 and firmware updates through MCUboot ([ZEPHYR.md](ZEPHYR.md)):
 
 If ESP-IDF supports the chip, it is mostly configuration:
 
-1. Build for it: `TARGET=esp32c61 FW_VERSION=v1 firmware/build.sh`. The build directory is `firmware/build-<target>`.
-2. Put board-specific defaults in `firmware/sdkconfig.defaults.<target>`. For example the LED pin: see `sdkconfig.defaults.esp32c3` or `sdkconfig.defaults.esp32`.
+1. Build for it: `TARGET=esp32c61 FW_VERSION=v1 port/espidf/build.sh`. The build directory is `port/espidf/build-<target>`.
+2. Put board-specific defaults in `port/espidf/sdkconfig.defaults.<target>`. For example the LED pin: see `sdkconfig.defaults.esp32c3` or `sdkconfig.defaults.esp32`.
 3. If the chip has no temperature sensor, `port/espidf` already falls back to a simulated one (`SOC_TEMP_SENSOR_SUPPORTED`).
-4. `firmware/fw-push.py` picks up every `build-*` directory, so the chip ends up in the next firmware index on its own.
+4. `tools/fw-push.py` picks up every `build-*` directory, so the chip ends up in the next firmware index on its own.
 
 Per-device differences, such as a different LED pin on a clone board, don't need a separate build. Set a label on the device (`led-gpio=38`, `led-order=rgb`, `led-ws2812=false`) and the fleet template passes it into the config.
 
 ### Another Zephyr board
 
-If Zephyr supports the board and it meets [the list above](#what-a-device-needs), it is two files in `zephyr/boards/`, as for the two boards that are there:
+If Zephyr supports the board and it meets [the list above](#what-a-device-needs), it is two files in `port/zephyr/boards/`, as for the two boards that are there:
 
 1. `<board>.overlay`: the `fc_creds` (16 KB) and `fc_storage` partitions, usually carved out of the board's storage partition, and the nodes Zephyr leaves off (the WiFi chip, the random generator).
 2. `<board>.conf`: the network driver, MCUboot's image manager, and the memory the board can give: the kernel heap (thread stacks come from it), the C heap, the agent's stacks.
-3. Build with `BOARD=<board> zephyr/build.sh`, write the credentials with `deploy/provision.py --format zephyr --board <board files>`. Firmware updates need MCUboot: the script builds with it for a board named `.../mcuboot` and for Espressif's, and for any other with `MCUBOOT=1`.
+3. Build with `BOARD=<board> port/zephyr/build.sh`, write the credentials with `tools/provision.py --format zephyr --board <board files>`. Firmware updates need MCUboot: the script builds with it for a board named `.../mcuboot` and for Espressif's, and for any other with `MCUBOOT=1`.
 
-A CPU family that is new here needs its WAMR target named in `zephyr/CMakeLists.txt`, and a chip without a random generator needs an entropy driver (the Pico W has one in `port/zephyr`). What each of the two boards took is in [ZEPHYR.md](ZEPHYR.md).
+A CPU family that is new here needs its WAMR target named in `port/zephyr/CMakeLists.txt`, and a chip without a random generator needs an entropy driver (the Pico W has one in `port/zephyr`). What each of the two boards took is in [ZEPHYR.md](ZEPHYR.md).
 
 ### Another RTOS (NuttX, RT-Thread, ThreadX, ...)
 
@@ -100,4 +100,4 @@ Then implement `core/include/fc_port.h` for your platform:
 | `fc_port_hwkey_bits/seal/pk/forget` | A device key kept in hardware ([SECURITY.md](SECURITY.md)). A port without one says so, and the key stays in storage. |
 | `fc_port_log` | Logging |
 
-`port/host/fc_port_host.c` (250 lines), `port/zephyr/fc_port_zephyr.c` (480) and `port/espidf/fc_port_espidf.c` (1000, with the keys in hardware) are the three references. The firmware wiring in `firmware/main/` covers WiFi, time sync, the demo app and its host functions; it is ESP-IDF specific and would be rewritten for another platform.
+`port/host/fc_port_host.c` (250 lines), `port/zephyr/fc_port_zephyr.c` (480) and `port/espidf/fc_port_espidf.c` (1000, with the keys in hardware) are the three references. The firmware wiring in `port/espidf/main/` covers WiFi, time sync, the demo app and its host functions; it is ESP-IDF specific and would be rewritten for another platform.

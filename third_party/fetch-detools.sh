@@ -2,7 +2,7 @@
 # Fetches detools (https://github.com/eerimoq/detools) at a pinned release into
 # third_party/detools (git-ignored). The agent applies firmware deltas with
 # its C library and the heatshrink decoder that comes with it
-# (core/src/fc_delta.c); firmware/fw-push.py makes them with the Python
+# (core/src/fc_delta.c); tools/fw-push.py makes them with the Python
 # package of the same version.
 set -euo pipefail
 DETOOLS_TAG="${DETOOLS_TAG:-0.53.0}"

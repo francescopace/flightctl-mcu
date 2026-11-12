@@ -1,4 +1,4 @@
-"""Tests for the deploy scripts' logic (no registry, cluster or board needed).
+"""Tests for the tools' logic (no registry, cluster or board needed).
 
     python3 -m unittest discover tests/python
 """
@@ -22,10 +22,10 @@ def load(name, path):
     return mod
 
 
-sign = load("sign", "deploy/signing/sign.py")
-provision = load("provision", "deploy/provision.py")
-soak = load("soak", "deploy/soak/collect.py")
-approve = load("auto_approve", "deploy/auto-approve/auto-approve.py")
+sign = load("sign", "tools/signing/sign.py")
+provision = load("provision", "tools/provision.py")
+soak = load("soak", "tools/soak/collect.py")
+approve = load("auto_approve", "tools/auto-approve/auto-approve.py")
 
 
 class SignTest(unittest.TestCase):
@@ -90,7 +90,7 @@ class ProvisionTest(unittest.TestCase):
     def test_pop_length(self):
         # It is also the provisioning access point's WPA2 password: 8 to 63.
         for pop, code in (("short", 2), ("x" * 64, 2)):
-            r = subprocess.run([sys.executable, os.path.join(ROOT, "deploy", "provision.py"), "--out", os.devnull,
+            r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "provision.py"), "--out", os.devnull,
                                 "--server", "h:1", "--labels", "a=b", "--pop", pop],
                                capture_output=True, text=True)
             self.assertEqual(r.returncode, code, r.stderr)
