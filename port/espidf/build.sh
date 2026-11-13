@@ -9,7 +9,7 @@
 # VARIANT=<name> adds sdkconfig.<name> and builds in build-<target>-<name>
 # (e.g. VARIANT=broken for the rollback demo). Several, joined by "-", add
 # each in turn: VARIANT=secure-release, VARIANT=secure-broken.
-# BUILD_DIR=<dir> overrides the build directory (relative to firmware/).
+# BUILD_DIR=<dir> overrides the build directory (relative to port/espidf/).
 # SECURE_BOOT_KEY=<pem> is the Secure Boot v2 signing key for the secure
 # variants (VARIANT=secure): bootloader and app images are signed with it.
 # SECURE_BOOT_SIGNER=external builds them unsigned, for an HSM to sign

@@ -2,7 +2,7 @@
 
 flightctl-mcu lets microcontrollers be managed by an unmodified [Flight Control](https://github.com/flightctl/flightctl): enrollment, monitoring, configuration, firmware OTA and WebAssembly apps, in the same fleets as Linux devices.
 
-Four milestones are done: it works on real hardware, it can be left running, it can be deployed in the field, and it is not tied to one chip vendor. What is left is a list, [below](#to-do), not a milestone.
+What it does today is in the [README](../README.md#what-maps-to-what), and how it was verified in [RESULTS.md](RESULTS.md). This page is what is left.
 
 ## Principles
 
@@ -10,14 +10,14 @@ Four milestones are done: it works on real hardware, it can be left running, it 
 - **Portable core.** `core/` is POSIX C with mbedTLS, cJSON and WAMR. Chip and RTOS specifics live behind `port/`.
 - **Verifiable without hardware.** Every feature also runs on the simulated device, so CI can check it against a real Flight Control on kind. Hardware tests add to that; they don't replace it.
 
-## To do
+## Next
 
-Checks that were never made:
+Checks not made yet:
 
-- [ ] ESP-IDF 6.0 on the other five boards (C3, C5, C6, S2, classic ESP32). On hardware only the S3 ran it; the others ran ESP-IDF 5.5, and 6.0 in the emulator (C3, C5).
+- [ ] ESP-IDF 6.0 on the other four boards (C5, C6, S2, classic ESP32). On hardware the S3 and the C3 ran it; the others ran ESP-IDF 5.5, and 6.0 in the emulator (C5).
 - [ ] The way back from a firmware that does not work, on the C6. It is tested in the emulator, on the ESP32-S3 with both ports and, for Zephyr, on the Pico W.
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
-- [ ] Decommissioning and the registry with TLS on an ESP-IDF board: they run in the emulator (C3), not yet on hardware. Also never tried: the `FactoryReset` target (the CLI and the UI send `Unenroll` only), and Bearer tokens against a real registry (Harbor, Quay); `registry:3` asks for Basic.
+- [ ] Two parts of decommissioning and the registry never tried: the `FactoryReset` target (the CLI and the UI send `Unenroll` only), and Bearer tokens against a real registry (Harbor, Quay); `registry:3` asks for Basic.
 - [ ] The Zephyr builds for boards in CI. They need the ARM and Xtensa toolchains; CI builds and tests `native_sim` only.
 
 What the Zephyr port does not have, and the ESP-IDF firmware has:
@@ -34,58 +34,21 @@ What Flight Control offers and the agent does not answer yet:
 Towards a deployment:
 
 - [ ] Fleets kept in Git: Import Fleet in the UI, a `ResourceSync` on the server's side. Today `tools/fleet/apply.sh` applies them and fills in `${REGISTRY}`, which a fleet in Git would have to spell out.
-- [ ] Apps from the software catalog (Flight Control 1.4, `v1alpha1`): versions, channels and upgrade paths in the UI, with the registry's address written once. The server resolves the reference to an image before the agent sees it, so the agent needs nothing; tried on the Pico W ([RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals), limitation 11). The firmware waits for upstream item 9.
 - [ ] Known vulnerabilities in the firmware, in the UI's security overview. Flight Control asks Trustify (or Quay with Clair) about the OS image digest each device reports, which these devices already report. It takes an SBOM per release (ESP-IDF or Zephyr, mbedTLS, WAMR, detools, the agent), uploaded to Trustify. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
 
-Waiting for Flight Control (the items are in the [upstream track](#upstream-track-flight-control)):
+Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):
 
-- [ ] Battery-powered devices: deep sleep, status only on wake-up, no long-poll. Needs item 3.
-- [ ] The same device name after re-enrollment: a device whose certificate expired while offline enrolls again as a new device. Needs the server to accept a re-enrollment for a known name.
-- [ ] The device key in the Digital Signature peripheral on the ESP32 chips that have no ECDSA one (RSA-3072, sealed under a key in eFuse). Written and switched off: needs item 7.
-- [ ] The firmware from the software catalog, like the apps. Needs item 9.
+- [ ] Battery-powered devices: deep sleep, status only on wake-up, no long-poll. Needs limitation 3 lifted.
+- [ ] The same device name after re-enrollment: a device whose certificate expired while offline enrolls again as a new device. Needs limitation 13 lifted.
+- [ ] The device key in the Digital Signature peripheral on the ESP32 chips that have no ECDSA one (RSA-3072, sealed under a key in eFuse). Written and switched off: needs limitation 9 lifted.
+- [ ] The firmware from the software catalog, as apps already can. Needs limitation 11 lifted.
+- [ ] Revoking a batch's enrollment certificate from `tools/enrollment.sh`. Flight Control's main branch has the API (limitation 8); it waits for a release.
 
 Not planned here: burning eFuses on a real board. Secure Boot, flash encryption and what goes with them are verified on emulated chips, which run the chip's real ROM; whoever ships a batch burns one board per chip first ([SECURITY.md](SECURITY.md)).
 
-## Done
+## Upstream (Flight Control)
 
-Each milestone has a tag; what was measured and what went wrong is in [RESULTS.md](RESULTS.md).
-
-**Milestone 0: proof of concept** (5–6 November 2026). Six Espressif chips (ESP32, S2, S3, C3, C5, C6) in one fleet under Flight Control 1.3.1: enrollment with a key made on the device and mutual TLS 1.3, full status, inline config applied without a reboot, firmware from one multi-chip OCI index into A/B slots with a canary rollout and automatic rollback, WASM apps updated without a reboot, and CI with an end-to-end test against Flight Control on kind.
-
-**Milestone 1: production foundations** (tag `m1`). What would stop anyone from leaving a device running: renewal of the management certificate; TLS connections kept open (220 KB per hour idle, from 560); firmware and apps signed in cosign's format; fuzzing of what reads the network, and tests with the registry down and the server restarting; enrollment approved from an allow list; an SDK for WASM apps. On all six boards, and on emulated C3, C5 and S3.
-
-**Milestone 2: field deployment** (tag `m2`), on emulated chips. Credentials written over USB, the same firmware everywhere, one enrollment certificate per batch; the WiFi network given in the field over SoftAP or BLE ([PROVISIONING.md](PROVISIONING.md)); a device whose certificate expired enrolls again; Secure Boot v2 with key rotation and revocation, flash and NVS encryption, anti-rollback, and on the ESP32-C5 the device key in the ECDSA peripheral ([SECURITY.md](SECURITY.md)).
-
-**Milestone 3: beyond Espressif** (tag `m3`, November 2026).
-
-- A second port, Zephyr, with the core unchanged ([ZEPHYR.md](ZEPHYR.md)). On `native_sim` it passes the simulated device's end-to-end test in CI. On a Raspberry Pi Pico W (RP2040, 264 KB of RAM) it enrolls over WiFi, runs a signed WASM app and updates its firmware through MCUboot: whole, as a delta, and back from an image that does not reach Flight Control. On an ESP32-S3 it does the same bar the way back: one chip, both ports.
-- Firmware updates as deltas, in the core, so every port has them: a device on a known release downloads 1 to 12% of the image and rebuilds the rest from its own, checked against the signed digest ([DELTA.md](DELTA.md)). On the Pico W and on the ESP32-S3 with both ports; the other ESP32 chips in the emulator.
-- Current foundations: the core on mbedTLS 4, whose cryptography is PSA only, with ESP-IDF 6.0 and Zephyr 4.5, and the tests against Flight Control 1.4.0, whose agent API is the same as 1.3.1's ([DEPENDENCIES.md](DEPENDENCIES.md)). ESP-IDF 6.0 ran on one board, the S3.
-
-**Since milestone 3** (November 2026):
-
-- A status with nothing new is the same as the last one: Flight Control 1.4 logs an event at every change in the status (item 8 below), and that was one per device at every status. The counters in `customInfo` (heap, traffic, uptime, RSSI, temperature) are read at the start, five minutes later and then once an hour, and the time of the `Updating` condition changes only with it ([RESULTS.md](RESULTS.md#flight-control-140)).
-- How the last firmware came is in `status.os.lastDelta`, the field Flight Control 1.4 has for it, no longer in `customInfo`.
-- The way back from a firmware that does not work, on the ESP32-S3 with both ports ([RESULTS.md](RESULTS.md#the-way-back-on-the-esp32-s3-both-ports)).
-- Decommission, from the UI or `flightctl decommission`: the device reports the `DeviceDecommissioning` condition Started, then Completed, wipes its key and management certificate, and does not enroll again until its storage is erased ([QUICKSTART.md](QUICKSTART.md#7-take-it-out)).
-- A registry with TLS and a password: the device takes the registry's CA and an `auth.json` from its fleet, as config files in the paths containers use on Linux, and sends the credentials only over TLS, as Basic or for a Bearer token ([REGISTRY.md](REGISTRY.md)). The local registry has a second door with both, which the end-to-end test pulls from.
-
-## Upstream track (Flight Control)
-
-Raised as proposals, in parallel with the milestones. Details in [RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals).
-
-1. `matchExpressions` in fleet selectors is accepted but ignored.
-2. Rollout success is judged on `renderedVersion` only: write the agent's obligation into the API contract.
-3. Fixed 5-minute disconnect timeout: make it configurable, or let the device declare its contact interval.
-4. No way to declare a device class or supported app runtimes (`status.capabilities`). Since 1.4 a fleet can at least select on the class a device reports (`custominfo.flightctl.io/deviceClass`), not yet refuse an app it cannot run.
-5. No free-form status per app, full status on every update (most of the remaining idle traffic), `os.image` compared as a string.
-6. Enrollment certificates cannot be revoked: the server checks only their signer and expiry.
-7. Devices with RSA keys cannot enroll: the internal CA copies the request's signature algorithm, which fails with its ECDSA key.
-8. Since 1.4, `customInfo` is copied into the device's labels by default, and any change in the status logs an event: a device that reports counters writes one at every status. These devices now change them once an hour.
-9. A fleet's `spec.os.catalogItemRef` (software catalog, 1.4) does not reach the device: it gets `os: {}` and stays on its firmware, reported up to date. Apps from the catalog work.
-10. An inline config file given in base64 reaches the device percent-encoded (`%3D` for the padding), which the Linux agent's decoder refuses.
-
-Items 1, 3, 6 and 7 are as they were in the source of 1.4.0.
+The gaps found in Flight Control for this class of device, each with a proposal, are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals). They were checked against 1.4.0 and against Flight Control's main branch of 12 November 2026: all hold there, except the revocation of enrollment certificates (limitation 8), fixed on main and not yet released.
 
 ## Open questions
 
@@ -95,12 +58,12 @@ Items 1, 3, 6 and 7 are as they were in the source of 1.4.0.
 
 ## Reference: agent API as used
 
-Checked against Flight Control 1.3.1 and 1.4.0:
+Checked against Flight Control 1.4.0:
 
 - `POST/GET enrollmentrequests`, `POST/GET certificatesigningrequests`;
 - `GET devices/{name}/rendered?knownRenderedVersion=`, a long-poll of about 4 minutes that returns `204` when nothing changed;
-- `PUT/PATCH devices/{name}/status`.
+- `PUT devices/{name}/status` (the API also has `PATCH`, which the agent does not use).
 - mTLS with TLS 1.3 and ECDSA P-256. The device name is derived from the public key: `lower(base32hex_nopad(sha256(X || Y)))`.
 - A device is up to date when `status.config.renderedVersion` equals the rendered version served; the OS is out of date when `status.os.image` differs from `spec.os.image` as a string.
 - A device becomes `Unknown` after 5 minutes without contact.
-- `consoles` in the rendered spec (someone asked for a terminal on the device) is ignored: see the list above.
+- `consoles` in the rendered spec (someone asked for a terminal on the device) is ignored: see [Next](#next).

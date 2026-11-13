@@ -27,8 +27,9 @@ BATCH=2026-11-a EXPIRATION=30d tools/enrollment.sh .secrets/batch-2026-11-a
 ```
 
 A leaked enrollment certificate lets anyone create enrollment requests until
-it expires: Flight Control 1.3.1 cannot revoke one (it checks only the signer
-and the expiry). A certificate per batch with a short lifetime limits that;
+it expires: Flight Control 1.4.0 cannot revoke one (it checks only the
+signer and the expiry; its main branch also checks that the certificate's
+request was not revoked, not yet in a release). A certificate per batch with a short lifetime limits that;
 approving devices from an allow list (`tools/auto-approve`) decides who
 actually gets in. The lifetime must cover the factory window and the longest
 a device may stay offline before it enrolls, or enrolls again after its
@@ -89,8 +90,8 @@ transport: an update needs that memory. Its code stays, and the BLE controller's
 agent's and the registry's TLS connections at once): the variant runs the
 controller from flash (`CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY`, slower BLE, only
 while provisioning) and leaves out the BLE features provisioning does not
-use. It adds about 400 KB of flash (1.59 MB on the C3, 1.64 MB secure, in a
-1.7 MB slot). Not on the ESP32-S2, which has no Bluetooth. Not yet tried on
+use. It adds about 270 KB of flash (1,502 KB on the C3 with release v3.1,
+about 50 KB more in the secure variant, in a 1,664 KB slot). Not on the ESP32-S2, which has no Bluetooth. Not yet tried on
 a board: the emulator stands in for the controller, so how BLE behaves while
 the flash is written (the network is saved during the session) is untested.
 

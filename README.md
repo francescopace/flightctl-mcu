@@ -8,7 +8,7 @@
 
 A [Flight Control](https://github.com/flightctl/flightctl) agent for microcontrollers: a portable C core, with ports for ESP-IDF, Zephyr and POSIX systems. Devices too small for Linux enroll in the same control plane as your Linux edge devices. From there you can monitor them, push configuration, update their firmware over the air, and deploy WebAssembly apps to them. Flight Control runs unmodified.
 
-It works end to end on real hardware, with signed images and certificate renewal. It is not production ready yet: see [Status](#status).
+It works end to end on real hardware, with signed images and certificate renewal. Its known limits are under [Status](#status).
 
 ## Why
 
@@ -16,7 +16,7 @@ Flight Control (upstream of Red Hat Edge Manager, [video overview](https://www.y
 
 A sensor node or a small controller on a production line is a microcontroller with a few hundred KB of RAM and an RTOS. It ends up managed by a vendor cloud, a custom MQTT backend, or nothing at all: the gateway that collects its data shows up in Flight Control, and the devices behind it don't.
 
-Here the microcontroller speaks the Flight Control agent API itself. That API is a small HTTP+JSON protocol over mutual TLS: enroll, long-poll the device spec, report status. A C client for it fits in about 21 KB of flash. Flight Control then treats the board as a regular device, with the same fleets, label selectors, rollouts, RBAC and UI.
+Here the microcontroller speaks the Flight Control agent API itself. That API is a small HTTP+JSON protocol over mutual TLS: enroll, long-poll the device spec, report status. The agent's own code, with the OCI client, signatures and apps, takes about 31 KB of flash; 45 KB with cJSON, the delta decoder and its port. Flight Control then treats the board as a regular device, with the same fleets, label selectors, rollouts, RBAC and UI.
 
 ## What maps to what
 
@@ -117,20 +117,20 @@ The requirements in full, the boards tried and how to add a chip, a board or an 
 | [DELTA.md](docs/DELTA.md) | Firmware updates as deltas |
 | [REGISTRY.md](docs/REGISTRY.md) | The registry: TLS, credentials, the local one |
 | [TESTING.md](docs/TESTING.md) | Unit tests, fuzzing, end-to-end tests, what CI runs |
-| [RESULTS.md](docs/RESULTS.md) | Measurements, problems found, gaps in Flight Control |
-| [ROADMAP.md](docs/ROADMAP.md) | Milestones and what comes next |
+| [RESULTS.md](docs/RESULTS.md) | What was verified and where, measurements, gaps in Flight Control |
+| [ROADMAP.md](docs/ROADMAP.md) | What comes next |
 | [DEPENDENCIES.md](docs/DEPENDENCIES.md) | Versions, where each is set, licenses |
 
 ## Status
 
-Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), rollback, certificate renewal.
+Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), deltas, rollback, a registry with TLS and a password, decommissioning. Certificate renewal, Secure Boot and provisioning in the field are tested on emulated chips ([RESULTS.md](docs/RESULTS.md#what-works)).
 
 Not there yet:
 
 - The device trusts only the registry CA its fleet gives it: no public CA bundle, and no blobs redirected to another host ([REGISTRY.md](docs/REGISTRY.md)).
 - Secure Boot and flash encryption (the `secure` variant) are tested in the emulator only. Without them the device key is in flash in clear.
 - WiFi is the only link tried.
-- Flight Control cannot revoke an enrollment certificate.
+- Flight Control 1.4.0 cannot revoke an enrollment certificate; its main branch can, not yet in a release.
 - Apps must be WASM OCI artifacts. Podman-style images with a `.wasm` inside a tarball are not supported.
 
 The work also found gaps in Flight Control for this class of device, such as a fixed 5-minute disconnect timeout. They are written up in [docs/RESULTS.md](docs/RESULTS.md#flight-control-limitations-found-upstream-proposals), with the [current limitations](docs/RESULTS.md#current-limitations) in full.

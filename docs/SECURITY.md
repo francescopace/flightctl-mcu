@@ -93,11 +93,11 @@ difference. The device reports `deviceKey: "ecdsa"`.
 ### Other chips: the DS peripheral, off for now
 
 The S2, S3, C3 and C6 have a Digital Signature peripheral instead, which
-signs only with RSA, and Flight Control 1.3.1 cannot enroll a device with an
+signs only with RSA, and Flight Control cannot enroll a device with an
 RSA key: its internal CA copies the request's signature algorithm into the
 certificate (`internal_ca.go`), and with its ECDSA key Go refuses to sign
 ("requested SignatureAlgorithm does not match private key type"). Found by
-the end-to-end test. Until Flight Control fixes it (upstream item 9 in
+the end-to-end test. Until Flight Control fixes it (limitation 9 in
 RESULTS.md) these chips keep the device key in the encrypted store, and
 `CONFIG_FC_DEVICE_KEY_DS` stays off. With a CA that signs RSA keys it can be
 turned on. Then, on the first boot, the agent:

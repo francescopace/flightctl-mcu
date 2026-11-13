@@ -1,6 +1,6 @@
 # Firmware updates as deltas
 
-A firmware image is 1.1 to 1.6 MB, and most of it does not change from one
+A firmware image is 1.1 to 1.5 MB, and most of it does not change from one
 release to the next. A release can therefore carry deltas: for a device that
 runs a known earlier release, the difference between the two images instead
 of the whole new one.

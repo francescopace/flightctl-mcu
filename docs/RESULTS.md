@@ -1,73 +1,79 @@
 # Results
 
-What has been built and measured so far: Espressif microcontrollers managed by **Flight Control 1.3.1** (upstream of Red Hat Edge Manager), with no Linux on the device and **no changes to the server**. The server ran on kind on a Mac. Since 12 November 2026 the server is **Flight Control 1.4.0** ([below](#flight-control-140)); the figures up to there are with 1.3.1.
-
-The work is split in milestones (see the [roadmap](ROADMAP.md)): the proof of concept (milestone 0, 5–6 November 2026) and the production foundations (milestone 1, 8 November 2026). Figures are from milestone 0 unless a section says otherwise.
+What has been verified, where, and with which figures: microcontrollers managed by **Flight Control 1.4.0** (upstream of Red Hat Edge Manager), with no Linux on the device and **no changes to the server**. The server ran on kind on a Mac. Figures taken before 12 November 2026 are with Flight Control 1.3.1, whose agent API is the same ([below](#flight-control-140)); each section says which firmware it was measured with.
 
 ## What works
 
-| Capability | How | Result |
+| Capability | How | Verified |
 |---|---|---|
-| Enrollment and identity | P-256 key generated on the device, CSR, approval with `flightctl approve`, mTLS with TLS 1.3 | 7 MCU devices enrolled, plus a fake device on the host |
+| Enrollment and identity | P-256 key generated on the device, CSR, approval with `flightctl approve`, mTLS with TLS 1.3 | Eight boards (the six Espressif chips with ESP-IDF; a Pico W and an ESP32-S3 with Zephyr), emulated C3, C5 and S3, and the simulated device |
 | Monitoring | Full agent API status: resources, `customInfo` (heap, RSSI, temperature, traffic), and `Unknown` after 5 minutes offline | Works |
 | Config without reboot | Inline `spec.config`, validated by the application before it is stored | Applied in 1–6 s. An invalid config is rejected and reported as OutOfDate with the error message |
 | Firmware OTA | `spec.os.image` points to an OCI index with one firmware per chip. The download goes straight into the A/B slot and is checked with sha256 | Staged rollout (canary first, then the rest) across 3 devices in 50–80 s |
-| Automatic rollback | The new firmware is confirmed only after the server accepts a status from it; otherwise the device goes back to the previous one | A broken firmware rolls itself back in about 3.5 minutes. The rollout stops at the canary and the other devices never receive it |
-| WASM apps without reboot | `spec.applications` of type `container` with a WASM OCI image, run by WAMR | Update from v1 to v2 on Xtensa and RISC-V with the same `.wasm` file, no reboot |
+| Firmware deltas | A device on a known release downloads a patch from it and rebuilds the image from its own ([DELTA.md](DELTA.md)) | 1 to 12% of the image between builds of the same kind; on the Pico W and on the ESP32-S3 with both ports, the other ESP32 chips in the emulator |
+| Automatic rollback | The new firmware is confirmed only after the server accepts a status from it; otherwise the device goes back to the previous one | A broken firmware rolls itself back; the rollout stops at the canary and the other devices never receive it. On the ESP32-S3 with both ports, the Pico W and the emulated chips |
+| WASM apps without reboot | `spec.applications` of type `container` with a WASM OCI image, run by WAMR | Update from v1 to v2 on Xtensa, RISC-V and Arm with the same `.wasm` file, no reboot |
 | Heterogeneous fleet | One fleet and one firmware reference, with per-device settings through labels and the template | S2, S3, C3, C5, C6 and classic ESP32 in the same fleet |
-| Certificate renewal (milestone 1) | The device renews its management certificate for the same key, through the renewal signer the server approves on its own | Tested with 2-minute certificates: the device keeps reporting after the first one expires |
-| Signed images (milestone 1) | Firmware and apps signed in cosign's format; the device checks the signature against a key in its firmware | Unsigned images and images signed with another key are refused; `cosign verify` accepts our signatures |
-| Automatic approval (milestone 1) | An allow list of device names or MACs with their labels | Used by the end-to-end test |
-
-## Fleet tested
-
-| Chip | Arch | Board | Temperature sensor | LED | Phases tested |
-|---|---|---|---|---|---|
-| ESP32-S3 (×2) | Xtensa LX7 | DevKitC N8R8 / N4R2 | internal | WS2812 on GPIO 38, RGB order (label) | F2–F5 |
-| ESP32-C3 | RISC-V | SuperMini | internal | blue, active low, GPIO 8 (label) | F2–F5 |
-| ESP32-C5 | RISC-V | DevKitC | internal (about 15 °C below the others) | WS2812 on GPIO 27 | F2–F5 |
-| Classic ESP32 | Xtensa LX6 | DevKit | **simulated** (no supported sensor) | GPIO 2 | F2–F5 |
-| ESP32-C6 | RISC-V | DevKitC | internal | WS2812 on GPIO 8, RGB order (label) | F2–F5 (rollback not exercised). Flashing works only over the native USB port, with the board powered up holding BOOT; after flashing it needs a replug |
-| ESP32-S2 | Xtensa LX7 | Lolin S2 Mini (S2FNR2: 4 MB flash, 2 MB PSRAM) | internal | blue, GPIO 15 | F2–F5. Needs its PSRAM. Native USB only: flash it from download mode (hold BOOT while plugging in) |
-| macOS host | arm64 | fake device | simulated | printed to the terminal | F1, F3, F5 (testing without hardware) |
+| Certificate renewal | The device renews its management certificate for the same key, through the renewal signer the server approves on its own | With 2-minute certificates, in the emulator and on the simulated device: the device keeps reporting after the first one expires. Not on a board, where a certificate lasts a year |
+| Signed images | Firmware and apps signed in cosign's format; the device checks the signature against a key in its credentials | Unsigned images and images signed with another key are refused; `cosign verify` accepts the signatures |
+| Registry with TLS and a password | The registry's CA and an `auth.json` from the fleet ([REGISTRY.md](REGISTRY.md)) | On the C3 (ESP-IDF), the Pico W and the ESP32-S3 (Zephyr), and in every end-to-end test |
+| Decommissioning | Key and certificate wiped, no enrollment until the storage is erased | On the same three boards, 2.4 to 3 s from the request to `Completed`, and in the end-to-end tests |
+| Automatic approval | An allow list of device names or MACs with their labels | Used by the end-to-end tests |
+| Provisioning in the field | The WiFi network over SoftAP or BLE ([PROVISIONING.md](PROVISIONING.md)) | On the emulated C3, in CI |
+| Secure Boot, flash encryption, anti-rollback | The `secure` variant ([SECURITY.md](SECURITY.md)) | On the emulated C3 and C5 only: no real chip has been burned |
 
 ## Measurements
 
-### Firmware (v2.6, ESP-IDF 5.5.6, default `-Og` build)
+### Firmware size
 
-| Chip | Image | Free space in the OTA slot (1.6 MB) |
+Release v3.1, ESP-IDF 6.0.3, debug build (`-Og`):
+
+| Chip | Image | Free in the 1,664 KB OTA slot |
 |---|---|---|
-| ESP32 | 1,081 KB | 34% |
-| ESP32-S3 | 1,077 KB | 35% |
-| ESP32-C3 | 1,148 KB | 30% |
-| ESP32-C5 | 1,247 KB | 25% |
-| ESP32-C6 | 1,186 KB | 28% |
+| ESP32 | 1,161 KB | 30% |
+| ESP32-S2 | 1,133 KB | 32% |
+| ESP32-S3 | 1,160 KB | 30% |
+| ESP32-C3 | 1,234 KB | 26% |
+| ESP32-C5 | 1,330 KB | 20% |
+| ESP32-C6 | 1,330 KB | 20% |
 
-Breakdown on the C3 (code and data in flash):
+The release profile (`VARIANT=release`: `-Os`, quieter logs) is about 15% smaller, on the C3 and the S3. BLE provisioning built in (`VARIANT=ble`) adds about 270 KB: 1,502 KB on the C3, 10% of the slot free.
 
-| Component | Size |
+The largest parts, on the C3:
+
+| Component | Flash (code and constants) |
 |---|---|
-| WiFi and lwIP | about 280 KB |
-| mbedTLS (crypto, TLS, X.509) | about 222 KB |
-| WAMR (fast interpreter) | 71 KB |
-| **flightctl-mcu agent** (`fc_core`: enrollment, spec, status, OTA, OCI, apps) | **21 KB** |
+| WiFi, WPA and lwIP | about 430 KB |
+| Cryptography and TLS (mbedTLS 4, TF-PSA-Crypto) | about 197 KB |
+| WiFi provisioning in the field (network_provisioning, protocomm, HTTP server) | about 93 KB |
+| WAMR (fast interpreter) | 68 KB |
+| **flightctl-mcu agent** (`core/`: enrollment, spec, status, OTA, OCI, signatures, apps, applying deltas) | **31 KB** |
+| its libraries and ESP-IDF port (cJSON, the detools decoder with heatshrink, `fc_port_espidf.c`) | 14 KB |
 
 The agent itself is small. Almost all the space goes to the network stack and to cryptography, which any securely connected device needs anyway.
 
-### RAM (internal heap, PSRAM off, with WAMR and the `alarm` app running)
+### RAM
 
-| Chip | Free in steady state | Minimum since boot |
-|---|---|---|
-| ESP32-S3 | about 150 KB | 26 KB (during the OTA download) |
-| ESP32-C3 | about 87 KB | 39 KB |
-| ESP32-C6 | about 177 KB | 140 KB |
-| ESP32-S2 | about 40 KB internal (largest block 23 KB), plus 2 MB PSRAM | — |
-| ESP32-C5 | about 68 KB | 29 KB |
-| Classic ESP32 | about 88 KB | 60 KB |
+Internal heap with the `alarm` app running and both agent connections open, firmware v3.0 (ESP-IDF 5.5.6), flashed over USB once and then updated over the air to a signed release by its fleet:
 
-The peak is two TLS 1.3 handshakes in parallel (status thread and spec thread) plus the OTA download. The C5 has the smallest margin.
+| Chip | Free heap | Minimum | Largest internal block | TLS handshakes |
+|---|---|---|---|---|
+| ESP32-C3 | 56.8 KB | 35.6 KB | 36.9 KB | 2 |
+| ESP32-C5 | 59.1 KB | 43.7 KB | 36.9 KB | 2 |
+| ESP32-S3 | 118.3 KB | 99.2 KB | – | 2 |
+| ESP32-C6 | 162.9 KB | 142.2 KB | 135.2 KB | 2 |
+| Classic ESP32 | 73.4 KB | 56.1 KB | 65.5 KB | 2 |
+| ESP32-S2 | 27.6 KB internal (+2 MB PSRAM) | – | 18.4 KB | 2 |
+
+The S2 has the least room: its largest internal block is only just above the 16.7 KB a TLS handshake needs. The lowest point is when a TLS handshake and a firmware download run together.
+
+With release v3.1 (ESP-IDF 6.0.3) the C3 had 70 KB free and 48 KB at the lowest after three hours. With Zephyr: about 31 KB free on the Pico W, 49 KB on the ESP32-S3 ([DEVICES.md](DEVICES.md#boards-tried)).
+
+Flashing the firmware does not touch the key storage: a board keeps its identity unless its whole flash is erased, and then enrolls again as a new device. The firmware logs a warning when it generates a new key, and an error when the key storage is unusable and has to be erased.
 
 ### Timings
+
+On the ESP-IDF boards, with the early firmware (v2.x, ESP-IDF 5.5.6):
 
 | Operation | Time |
 |---|---|
@@ -79,30 +85,20 @@ The peak is two TLS 1.3 handshakes in parallel (status thread and spec thread) p
 
 ### Idle traffic
 
-Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on the wire, TLS included) over 869 s, with a status every 60 s and the server's long-poll of about 4 minutes:
+Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on the wire, TLS included). The agent keeps its two connections open (HTTP keep-alive), sends a status at once when something changes and otherwise every 2 minutes, and the server's long-poll lasts about 4 minutes:
 
-| Device | Sent | Received | Total |
-|---|---|---|---|
-| Classic ESP32 (with WASM app) | 236 KB/h | 493 KB/h | **about 730 KB/h, about 17 MB per day** |
-| Fake device on the host (no app) | 183 KB/h | 380 KB/h | about 560 KB/h |
+| Device | Total |
+|---|---|
+| Simulated device, no app (status every minute) | about 220 KB/hour: 87 KB sent, 130 KB received; no TLS handshake in 10 minutes |
+| ESP32-C3 with the `alarm` app, firmware v3.0 | about 280 KB/hour, over 10 minutes that included two server restarts |
 
-Each request cost about 10 KB, and most of that was the TLS 1.3 handshake with mTLS, because the agent opened a new connection for every request. The status JSON is 2–3 KB. The 25 minutes of ESP32 serial log showed no errors and no hangs.
+A connection per request cost 560 to 730 KB/hour: most of each request was the TLS 1.3 handshake with mTLS. What is left is the full status and the server's answer to it; going lower needs differential status updates (limitation 6 below). TLS session resumption was tried with Flight Control 1.3.1: it issued session tickets but did not resume a session with them, so a reconnection costs a full handshake (about 1.5 KB received).
 
-**Milestone 1, with kept connections** (HTTP keep-alive, one connection per agent thread), measured over 10 minutes on the fake device:
+An app whose state flaps sends a status at most every 15 s (problem 11 below).
 
-| Device | Sent | Received | Total | TLS handshakes |
-|---|---|---|---|---|
-| Fake device on the host (no app) | 87 KB/h | 130 KB/h | **about 220 KB/h** (was 560) | 0 |
+### Signed updates and kept connections on a board (ESP32-C3)
 
-What is left is the full status and the server's answer to it. Since then the firmware sends its heartbeat status every 2 minutes instead of 1 (changes still go out at once; Flight Control marks a device Unknown after 5 minutes without one) and drops redundant fields from `customInfo`. Going lower needs differential status updates (limitation 6 below). TLS session resumption was also tried: Flight Control 1.3.1 issues session tickets but did not resume a session with them, so a reconnection costs a full handshake (about 1.5 KB received).
-
-### Release build (milestone 1)
-
-The release profile (`VARIANT=release`: `-Os`, quieter logs) makes the C3 image 984 KB instead of 1,159 KB, about 15% smaller, with 41% of the OTA slot free.
-
-### Milestone 1 on a board (ESP32-C3)
-
-The C3 SuperMini, in a fleet of its own, with the `alarm` app:
+The C3 SuperMini, in a fleet of its own, with the `alarm` app (firmware v2.7 to v3.0, ESP-IDF 5.5.6):
 
 | Check | Result |
 |---|---|
@@ -115,24 +111,7 @@ The C3 SuperMini, in a fleet of its own, with the `alarm` app:
 
 Certificate renewal was not run on the board, whose certificate is valid for a year; it ran in the emulator, below.
 
-### Firmware v3.0 on all six boards
-
-Flashed over USB once (the partition table gained `fc_creds`), provisioned with `tools/provision.py`, then updated over the air to the signed v3.0 index by the `alarm-lab` fleet (`idf-lab` since 12 November 2026):
-
-| Chip | Free heap | Minimum | Largest internal block | TLS handshakes |
-|---|---|---|---|---|
-| ESP32-C3 | 56.8 KB | 35.6 KB | 36.9 KB | 2 |
-| ESP32-C5 | 59.1 KB | 43.7 KB | 36.9 KB | 2 |
-| ESP32-S3 | 118.3 KB | 99.2 KB | – | 2 |
-| ESP32-C6 | 162.9 KB | 142.2 KB | 135.2 KB | 2 |
-| Classic ESP32 | 73.4 KB | 56.1 KB | 65.5 KB | 2 |
-| ESP32-S2 | 27.6 KB internal (+2 MB PSRAM) | – | 18.4 KB | 2 |
-
-The S2 has the least room: its largest internal block is only just above the 16.7 KB a TLS handshake needs.
-
-Five of the six boards came back with a new device key, hence a new name, and were approved again with their old labels. Their flash had been erased by other projects using the same boards (`esptool erase_flash`); flashing our firmware does not touch the key storage: the C5, and the C3 flashed a second time, kept theirs. Since v3.0 the firmware logs an error when the key storage is unusable and has to be erased, and a warning when it generates a new key.
-
-### Milestone 1 in Espressif's emulator
+### In Espressif's emulator
 
 [esp-emu](https://github.com/espressif/esp-emulator) 0.51 runs the real firmware for the C3, C5 and S3 (not the S2 or the classic ESP32). Its WiFi access point NATs to the host, so the emulated chip enrolls in the same Flight Control as the boards. With the server issuing 4-minute certificates:
 
@@ -146,7 +125,7 @@ The C3 figures match the board (58–60 KB free). `tests/e2e/e2e-emu.sh` runs th
 
 ### ESP-IDF 6.0.3 on a board (ESP32-S3)
 
-12 November 2026, against Flight Control 1.4.0: the first run of the ESP-IDF 6 firmware (mbedTLS 4.1.1, cryptography through PSA) outside the emulator. One board, an ESP32-S3-DevKitC, erased, flashed over USB with the debug build (v4.0-dev) and provisioned with `tools/provision.py`:
+12 November 2026, against Flight Control 1.4.0: the first run of the ESP-IDF 6 firmware (mbedTLS 4.1.1, cryptography through PSA) outside the emulator, on an ESP32-S3-DevKitC with the debug build:
 
 | Step | Result |
 |---|---|
@@ -158,44 +137,37 @@ The C3 figures match the board (58–60 KB free). `tests/e2e/e2e-emu.sh` runs th
 
 The delta is half of the image because it goes from the debug build to the release one, compiled differently; between two builds of the same kind it is 1 to 12% ([DELTA.md](DELTA.md)).
 
-Unplanned, and as designed: the board was first approved while the end-to-end test had the server issuing 2-minute certificates, the server restarted, the certificate expired, and at its next start the board dropped that identity and enrolled again under a new key (problem 13).
-
-Not run on the board: the secure variant (it burns eFuses), the other five chips. The way back from a broken image came later (below).
+Not run on a board: the secure variant (it burns eFuses). The ESP32-C3 ran ESP-IDF 6.0.3 later ([below](#the-registry-with-tls-and-decommissioning-on-boards)); the C5, C6, S2 and classic ESP32 have not.
 
 ### The way back on the ESP32-S3, both ports
 
-12 November 2026, against Flight Control 1.4.0, the same board with each port in turn. Each was given, through its fleet, a firmware built to reach Flight Control on a wrong port (9443) and to give itself 30 seconds instead of 150:
+12 November 2026, against Flight Control 1.4.0, an ESP32-S3 with each port in turn. Each was given, through its fleet, a firmware built to reach Flight Control on a wrong port (9443) and to give itself 30 seconds instead of 150:
 
 | | ESP-IDF 6.0.3 (v5.0) | Zephyr 4.5 with MCUboot |
 |---|---|---|
-| Before | the release build, come as a delta of 512 KB from the debug one (`lastDelta: Applied`) | the build of the day, come as a delta of 28 KB (`lastDelta: Applied`) |
+| Before | the release build, come as a delta of 512 KB from the debug one (`lastDelta: Applied`) | a build come as a delta of 28 KB (`lastDelta: Applied`) |
 | Broken image | 1181 KB, whole (`NotUsed`), downloaded and restarted in 11 s | 885 KB, whole, in 14 s |
 | Given up | 30 s after the agent started, by the image itself | the same |
 | Back | the bootloader takes the previous slot | MCUboot swaps the slots back: 15 s |
 | Reported | 53 s after the fleet changed: "failed to start and was rolled back; not retried" | 1 min 53 s, the same message |
 
-Neither tried the image again. To have the board back as it was, the Zephyr build's storage (its key and credentials, at 0x7b0000, where the ESP-IDF layout does not reach) was saved before the ESP-IDF build was flashed and written back after; the board came back as the same device.
+Neither tried the image again.
 
 ### The registry with TLS, and decommissioning, on boards
 
-12 and 13 November 2026, against Flight Control 1.4.0. The boards were the `zephyr-lab` fleet: the Pico W and the ESP32-S3, both with the Zephyr build. They first took the new firmware (z7) through the registry's plain door, as a delta of 35 KB (Pico) and 47 KB (S3) from z6. The fleet then moved to the door with TLS and a password ([REGISTRY.md](REGISTRY.md)), in two steps:
+November 2026, against Flight Control 1.4.0, with the registry's door with TLS and a password ([REGISTRY.md](REGISTRY.md)). The CA and `auth.json` came from the fleet; decommissioning was sent with `flightctl decommission`.
 
-| | Pico W (RP2040, 264 KB of RAM) | ESP32-S3 |
-|---|---|---|
-| App over TLS: the CA and `auth.json` from the fleet, then the `alarm` app | running about 6 s after the config was written, no restart | the same |
-| Firmware over TLS, whole (its reference had changed) | 729 KB in 24 s, restarted, confirmed (`lastDelta: NotUsed`) | 886 KB, the same |
-| Firmware over TLS, as a delta (z8 from z7) | (offline, see below) | 17 KB (`Applied`) |
+| | ESP32-C3, ESP-IDF 6.0.3 | Pico W, Zephyr | ESP32-S3, Zephyr |
+|---|---|---|---|
+| App over TLS | running 3 s after the config, no restart | about 6 s | about 6 s |
+| Firmware over TLS, whole | 1234 KB in 5 s | 729 KB in 24 s | 886 KB |
+| Firmware over TLS, as a delta | not tried | not tried | 17 KB (`Applied`) |
+| Heap with both connections open (app running) | 70 KB free, 48 KB at the lowest, after 3 hours | not read | not read |
+| Decommissioning, from request to Completed | 3 s | 2.5 s | 2.4 s |
 
-The RAM used during a download over TLS was not measured. The counters in `customInfo` are read once an hour, and the reboot that follows a firmware download clears the low-water mark. The Pico, the board shortest of RAM, completed both downloads.
+After decommissioning each board wiped its key and management certificate, restarted, showed as `Decommissioned`, and kept running its app without asking to enroll again. Erased, each enrolled again as a new device.
 
-Decommissioning, with `flightctl decommission`:
-
-- **Pico.** It reported Started and, 2.5 s later, Completed. It then wiped its key and certificate and restarted, and Flight Control showed it `Decommissioned`. After the restart it logged that it was decommissioned and not enrolling, and kept running its app. No enrollment request came from it.
-- **S3.** The same, in 2.4 s. It was then erased and flashed again (`ERASE=1 port/zephyr/flash-esp32.sh`) and enrolled as a new device. It was approved into `zephyr-lab` and took z7, then z8, from the TLS door. The old record was deleted.
-
-The Pico's way back stopped short. `ERASE=1 port/zephyr/flash-pico.sh` put the board in its bootloader, but macOS did not mount the bootloader's drive, so the image was not written. The board stays in its bootloader until it is plugged in again.
-
-The ESP-IDF firmware does the same in the emulator: on the C3, the release (1.0 MB, whole) and the app came again through the TLS door, 25 s from the fleet's change to up to date, and at the end of the run the device was decommissioned and did not enroll again (`tests/e2e/e2e-emu.sh`).
+Not measured: the RAM used during a download over TLS (the reboot that follows a firmware download clears the low-water mark).
 
 Also found: Flight Control serves inline content given in base64 percent-encoded (limitation 12 below).
 
@@ -228,23 +200,23 @@ Also found: Flight Control serves inline content given in base64 percent-encoded
 7. **ESP32-S2: temperature reads could hang.**
    - On the S2, ESP-IDF's sensor read sets a bit, busy-waits for the result and clears the bit, without a lock. The status thread, the alarm task and the WASM app all read it, and two overlapping reads can leave one spinning forever.
    - Fix: a lock around the read in `port/espidf`, for every chip.
-8. **Chunked HTTP bodies: integer overflow** (milestone 1, found by fuzzing).
-   - A chunk size close to the maximum of an unsigned long wrapped the bounds check, in code that dated from the proof of concept.
+8. **Chunked HTTP bodies: integer overflow** (found by fuzzing).
+   - A chunk size close to the maximum of an unsigned long wrapped the bounds check, in code from the first version.
    - Fix: chunk sizes are parsed by hand and capped; the input is kept as a fuzzing seed.
-9. **Layer size from a manifest: undefined conversion** (milestone 1, found by fuzzing).
+9. **Layer size from a manifest: undefined conversion** (found by fuzzing).
    - A size such as `1e400` became infinity, then was cast to an integer.
    - Fix: sizes outside 1 byte to 64 MB are rejected.
-10. **Certificate renewal: use after free** (milestone 1, found in review).
+10. **Certificate renewal: use after free** (found in review).
     - A long-poll could still refer to a certificate that two renewals had already replaced and freed.
     - Fix: each request works on its own copy of the certificate.
-11. **A flapping app state flooded the network** (milestone 1, found on the C3).
+11. **A flapping app state flooded the network** (found on the C3).
     - The C3 sensor reads in steps of 1 °C, and the chip sat right at the 40 °C threshold: the app went from alarm to pre-alarm and back several times a minute, and every change sent a status, up to one every 3 s. Each status costs about 5 KB on the wire with the server's answer, so the idle C3 used 1.5 MB/hour.
     - Fix: the agent's own changes (spec applied, firmware confirmed) are still reported within a few seconds; changes reported by apps and the firmware are grouped, one status every 15 s at most. Same C3, same flapping: about 690 KB/hour.
     - What is left is mostly the size of each status and of the server's answer to it (limitation 6 below).
-12. **ESP32-C5: TLS handshakes failed for lack of memory** (milestone 1, found in the emulator).
+12. **ESP32-C5: TLS handshakes failed for lack of memory** (found in the emulator).
     - With the two kept connections, the largest free block went down to 19 KB, and a handshake needs 16.7 KB in one piece for the TLS receive buffer. When both connections opened together (at boot, and after each certificate renewal) one failed and was retried later.
     - Fix: on the C5, WiFi code stays in flash and the WiFi stack has fewer buffers, as on the S2. Free heap went from 43.6 to 61.7 KB, the largest block from 19 to 41 KB, and no handshake failed in 5 minutes with a renewal every minute.
-13. **A device offline for longer than its certificate cannot come back** (milestone 1, found in the emulator).
+13. **A device offline for longer than its certificate cannot come back** (found in the emulator).
     - In the rollback test the broken build kept the device away from the server for 3 minutes, longer than the 4-minute test certificate. Back on the good firmware, every request was refused: the certificate had expired, and renewal needs a valid one.
     - With the default lifetime (one year, renewed after three months) this takes nine months offline. The rollback test now goes back to the normal lifetime before it starts.
     - Fix: after a failed status update with an expired certificate, the device drops its key and certificate and enrolls again with the enrollment certificate, as a new device (the old enrollment request is approved already and cannot issue another certificate). Apps, config and firmware stay; the allow list approves it again by MAC; the old device record is left for the operator to delete. The end-to-end test stops the server until the certificate has expired and checks that the device comes back under a new name with its config.
@@ -259,7 +231,7 @@ Also found: Flight Control serves inline content given in base64 percent-encoded
 12 November 2026. The service on kind was upgraded in place from 1.3.1 with the Helm chart, with a Raspberry Pi Pico W enrolled and online: it stayed enrolled, came back `Online` and `UpToDate` by itself, and its free heap dipped from 22 to 17 KB at the lowest while the server restarted.
 
 - **The agent API is the same.** No path changed between the two releases, and the schemas only gained optional fields: `status.systemInfoStatus`, `status.os.lastDelta` and `deltaSize`, `spec.os.deltaImage` in the rendered spec, `systemInfo.osMode`. The agent sends none and ignores the last.
-- **Every end-to-end test passes unchanged**: the simulated device, Zephyr on `native_sim`, and the firmware in the emulator (C3 with SoftAP and with BLE provisioning, C3 and C5 secure). One run of the secure C3 failed at the step back to long-lived certificates and passed when run again; the first ran next to three other builds on the same machine, which is the likely cause (an emulator short of CPU, whose clock falls behind the server's) and was not proven.
+- **Every end-to-end test passes unchanged**: the simulated device, Zephyr on `native_sim`, and the firmware in the emulator (C3 with SoftAP and with BLE provisioning, C3 and C5 secure). One run of the secure C3 failed once and passed when run again; the likely cause, not proven, is an overloaded host.
 - **Flight Control now has deltas of its own**, for bootc images, made by the service. They are another mechanism: these devices find theirs in the release's index ([DELTA.md](DELTA.md)). `status.os.lastDelta` would be the place to report the outcome, instead of `customInfo`.
 - **cosign 3**, which GitHub's installer now gives, accepts the signatures `tools/signing/sign.py` makes, as cosign 2 does.
 
@@ -308,6 +280,7 @@ One thing the new labels give: a fleet can select on what a device says it is, `
    - The enrollment endpoint checks only the certificate's signer and expiry (`internal/api_server/middleware/enrollment_auth.go`). One leaked from a batch of devices can enroll new devices until it expires; deleting its CertificateSigningRequest changes nothing.
    - Workaround: one certificate per batch with a short lifetime (`BATCH=… EXPIRATION=… tools/enrollment.sh`), and approval from an allow list.
    - Proposal: a revocation list for enrollment certificates, or refuse those whose CertificateSigningRequest was deleted or denied.
+   - Fixed on Flight Control's main branch, not in 1.4.0: enrollment is refused when the certificate's CertificateSigningRequest is revoked or not approved (`CSRStatusAllowsEnrollment`, with an API to revoke it). It waits for a release.
 9. **A device with an RSA key cannot enroll.**
    - The internal CA builds the certificate with the request's signature algorithm (`internal/crypto/internal_ca.go`: `SignatureAlgorithm: csr.SignatureAlgorithm`). An RSA request asks for SHA256WithRSA, the CA's key is ECDSA, and Go's `x509.CreateCertificate` refuses: "requested SignatureAlgorithm does not match private key type". Approving the request fails with a 400.
    - It matters for keys in hardware: the ESP32 DS peripheral signs only with RSA.
@@ -318,7 +291,7 @@ One thing the new labels give: a fleet can select on what a device says it is, `
    - Proposal: ask for a reconciliation only when a mapping's inputs changed, and do not copy all of `customInfo` by default; or give counters a place of their own.
 11. **A fleet's OS image cannot come from the software catalog.**
    - The fleet accepts `spec.os.catalogItemRef` and keeps it in its template version, but the device gets `os: {}`: building the device's spec from the template copies `os.image` only (`internal/tasks/desired_spec.go`: `assembleDesiredSpec`). The device is reported `UpToDate` and its firmware never changes, with no error.
-   - Tried on the Pico W on 12 November 2026, with a catalog for the Zephyr firmware and the `alarm` app. The app's `catalogItemRef` works: the server turned version `2.0.1-pico` into `…/alarm:v2.pico`, and the agent got the image reference as before (and refused it, signed with another key). Unchanged on `main` the same day.
+   - Tried on the Pico W on 12 November 2026, with a catalog for the Zephyr firmware and the `alarm` app. The app's `catalogItemRef` works: the server turned version `2.0.1-pico` into `…/alarm:v2.pico`, and the agent got the image reference as before. Unchanged on `main` the same day.
    - Proposal: copy `os.catalogItemRef` too, as is done for the applications.
 12. **An inline file given in base64 reaches the device percent-encoded.**
    - The server keeps inline files as data URLs (`pkg/ignition/ignition_wrapper.go`: `SetFile`). For content already in base64 it sets the URL's encoding to ASCII, which percent-encodes the text. Building the rendered spec (`internal/tasks/device_render.go`: `ignitionConfigToRenderedConfig`) then cuts off the `data:...,` prefix and serves what is left as base64, escapes included. `aGk=` arrives as `aGk%3D`.
@@ -326,14 +299,18 @@ One thing the new labels give: a fleet can select on what a device says it is, `
    - Found on 12 November 2026 with an `auth.json` for the registry ([REGISTRY.md](REGISTRY.md)), in the rendered spec of a device on 1.4.0. Content given as text is turned into proper base64 by the same code and arrives intact. This agent now undoes the escapes before decoding, and the tools give text.
    - Proposal: unescape the data URL's text (or use the URL's own decoding) before serving it as base64.
 
-Limitations 1, 3, 8 and 9 are unchanged in the source of 1.4.0 (read, not tried again).
+13. **A device cannot enroll again under its own name.**
+   - An enrollment request for a name that already has a device is refused (`internal/service/enrollmentrequest/handler.go`: `ErrDuplicateName`). A device whose management certificate expired while it was offline can only enroll again under a new key, hence a new name; the old record stays until an operator deletes it (problem 13).
+   - Proposal: let an enrollment certificate re-enroll a known device, with the same approval as a new one.
+
+All of these were read again in the source of 1.4.0 and of Flight Control's main branch of 12 November 2026: they hold in both, except limitation 8, fixed on main.
 
 ## Current limitations
 
 - **Security**:
   - The registry can be reached over TLS with a password ([REGISTRY.md](REGISTRY.md)), but only with a CA the fleet gives the device: there is no public CA bundle, and blobs redirected to another host are not followed. Over plain HTTP, signatures make the registry safe against tampering, not against reading.
   - The device key is in flash in clear, except in the `secure` variant (see [SECURITY.md](SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
-- **Provisioning**: credentials are written over USB (`tools/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control cannot revoke it.
+- **Provisioning**: credentials are written over USB (`tools/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control 1.4.0 cannot revoke it (its main branch can).
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 - **Hardware coverage**: automatic rollback was not exercised on the C6 ([DEVICES.md](DEVICES.md#boards-tried)).
 

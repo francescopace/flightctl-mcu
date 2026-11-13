@@ -1,7 +1,8 @@
 /*
  * The C heap (malloc and friends), on a heap this port owns, so that it can
- * say how much of it is free and how low it has been: Zephyr 4.3's own
- * malloc keeps that to itself. Built instead of it (CONFIG_COMMON_LIBC_MALLOC=n),
+ * say how much of it is free and how low it has been: Zephyr's own malloc
+ * does not give that to applications (in 4.5, only through a header private
+ * to its libc). Built instead of it (CONFIG_COMMON_LIBC_MALLOC=n),
  * and written like it: a sys_heap behind a mutex.
  */
 #include <errno.h>

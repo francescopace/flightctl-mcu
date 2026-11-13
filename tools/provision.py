@@ -23,7 +23,7 @@ Contents (NVS namespace "fc"):
                                they hold the device. See docs/PROVISIONING.md.
 
 --format zephyr writes the partition the Zephyr application reads instead: "FCC1", a length,
-and a JSON object with the same fields (no WiFi yet). Its place in the flash comes from the
+and a JSON object with the same fields (WiFi too; no provisioning in the field). Its place in the flash comes from the
 board's overlay, port/zephyr/boards/<--board>.overlay (default native_sim_native_64, whose flash
 image is the file given to zephyr.exe --flash=).
 

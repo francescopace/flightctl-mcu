@@ -119,8 +119,9 @@ static void conn_close(conn_t *c)
 }
 
 /* TLS session resumption is not used: Flight Control 1.3.1 issued tickets
- * but never resumed a session with them, so every reconnection is a full
- * handshake. Keeping connections open is what saves the traffic. */
+ * but never resumed a session with them (not tried again on 1.4), so every
+ * reconnection is a full handshake. Keeping connections open is what saves
+ * the traffic. */
 struct fc_http_session {
     conn_t *conn;     /* open connection, or NULL */
     char host[128];   /* what it was opened for */

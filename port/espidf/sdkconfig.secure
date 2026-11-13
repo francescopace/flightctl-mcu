@@ -26,7 +26,7 @@ CONFIG_ESP32_REV_MIN_3=y
 CONFIG_FC_DEVICE_KEY_ECDSA=y
 # On the other chips the key stays in the encrypted store: their Digital
 # Signature peripheral (CONFIG_FC_DEVICE_KEY_DS) signs only with RSA, and
-# Flight Control 1.3.1 cannot issue a certificate for an RSA key with its
+# Flight Control cannot issue a certificate for an RSA key with its
 # ECDSA CA (docs/SECURITY.md).
 # Anti-rollback: each image carries a security version (SECURE_VERSION=<n>
 # when building, 0 by default). Once a release is confirmed, the chip keeps

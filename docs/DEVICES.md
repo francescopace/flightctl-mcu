@@ -19,8 +19,8 @@ Three stacks have a port today:
 
 | Stack | Devices | What works there |
 |---|---|---|
-| **ESP-IDF** 6.0<br/>`port/espidf`, `firmware/` | Espressif's WiFi chips. Six run it: ESP32, S2, S3, C3, C5, C6. Another one ESP-IDF supports is mostly configuration. | Everything, and the most complete: also Secure Boot, flash encryption, keys in hardware, WiFi provisioning over SoftAP and BLE ([SECURITY.md](SECURITY.md), [PROVISIONING.md](PROVISIONING.md)). On six boards, and on emulated chips in CI. |
-| **Zephyr** 4.5<br/>`port/zephyr`, `zephyr/` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. Two run it: a Raspberry Pi Pico W (RP2040) and an ESP32-S3-DevKitC. Likely next, not tried: the Raspberry Pi Pico 2 W, boards with Ethernet such as ST's Nucleo-144 (F7, H7) or NXP's i.MX RT kits. | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([ZEPHYR.md](ZEPHYR.md)). On two boards, and as a Linux process (`native_sim`) in CI. A new board is two files. |
+| **ESP-IDF** 6.0<br/>`port/espidf` | Espressif's WiFi chips. Six run it: ESP32, S2, S3, C3, C5, C6. Another one ESP-IDF supports is mostly configuration. | Everything, and the most complete: also Secure Boot, flash encryption, keys in hardware, WiFi provisioning over SoftAP and BLE ([SECURITY.md](SECURITY.md), [PROVISIONING.md](PROVISIONING.md)). On six boards, and on emulated chips in CI. |
+| **Zephyr** 4.5<br/>`port/zephyr` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. Two run it: a Raspberry Pi Pico W (RP2040) and an ESP32-S3-DevKitC. Likely next, not tried: the Raspberry Pi Pico 2 W, boards with Ethernet such as ST's Nucleo-144 (F7, H7) or NXP's i.MX RT kits. | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([ZEPHYR.md](ZEPHYR.md)). On two boards, and as a Linux process (`native_sim`) in CI. A new board is two files. |
 | **Linux, macOS**<br/>`port/host` | Anything with POSIX threads and sockets: a gateway, a single-board computer, a container, your laptop. | Runs as a process. Enrollment, monitoring, config and WASM apps are real; a firmware update only saves the image to a file. It is the simulated device of the tests, and where the protocol work was done. A Linux device that can run bootc and Podman should run Flight Control's own agent instead. |
 
 Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs a port, which is about 20 functions: see [Adding another device](#adding-another-device). None is written.
@@ -29,7 +29,7 @@ Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs 
 
 ## Boards tried
 
-With ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and on one of these boards, the S3 ([RESULTS.md](RESULTS.md#esp-idf-603-on-a-board-esp32-s3)); the table is from the earlier run:
+With ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and on two of these boards, the S3 ([RESULTS.md](RESULTS.md#esp-idf-603-on-a-board-esp32-s3)) and the C3 (release v3.1, [RESULTS.md](RESULTS.md#the-registry-with-tls-and-decommissioning-on-boards)); the table is from the earlier run:
 
 | Chip | Core | Status | Free heap with an app running |
 |---|---|---|---|
@@ -44,7 +44,7 @@ The S2 Mini and the C6 DevKitC flash only over their native USB port, started in
 
 PSRAM is not used, so a single image runs on every board variant of a chip. The exception is the S2, which needs its PSRAM (see the table).
 
-Firmware images were 1.06–1.25 MB, leaving 25–36% of a 1.6 MB OTA slot free. Most of that size is the WiFi stack and mbedTLS. The agent itself is about 21 KB and WAMR about 71 KB. With ESP-IDF 6.0.3 the images measured are 1.0 MB (S3, release build) to 1.26 MB (C3, debug build), and 1.53 MB with BLE provisioning built in (C3), which leaves 10% of the slot.
+With ESP-IDF 6.0.3 (release v3.1, debug build) the firmware images are 1,133 to 1,330 KB, leaving 20–32% of the 1,664 KB OTA slot free, and 1,502 KB with BLE provisioning built in (C3), which leaves 10% ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself is about 31 KB (45 KB with cJSON, detools and its ESP-IDF port; C3, debug build) and WAMR about 68 KB.
 
 With Zephyr 4.5 and firmware updates through MCUboot ([ZEPHYR.md](ZEPHYR.md)):
 

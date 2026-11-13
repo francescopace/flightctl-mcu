@@ -47,7 +47,7 @@ linked in.
 
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|
-| [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.0 | `tools/kind/up.sh`, `FLIGHTCTL_VERSION` in the workflow | Until 12 November 2026 the tests ran against 1.3.1; what changed for the devices is in [RESULTS.md](RESULTS.md#flight-control-140). |
+| [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.0 | `tools/kind/up.sh`, `FLIGHTCTL_VERSION` in the workflow | What changed for the devices since 1.3.1 is in [RESULTS.md](RESULTS.md#flight-control-140). |
 | Envoy Gateway | 1.2.5 | `tools/kind/up.sh` | The version Flight Control 1.4.0's installation guide names, not the latest. |
 | [esp-emulator](https://github.com/espressif/esp-emulator) | 0.51.0 | `ESP_EMU_VERSION` in the workflow | Checked against the release's sha256. |
 | OCI registry | `registry:3` | `tools/registry/up.sh` | |

@@ -302,8 +302,7 @@ build needs the Xtensa toolchain.
   same device key, hence the same device name.
 - **A reboot starts the process again** (`CONFIG_NATIVE_SIM_REBOOT`), with
   the same flash file, as a board would start again.
-- **The time is the host's**: the simulated clock starts there. A board will
-  take it from SNTP (`CONFIG_FC_SNTP_SERVER`); that path is written and not
-  yet run.
+- **The time is the host's**: the simulated clock starts there. A board
+  takes it from SNTP (`CONFIG_FC_SNTP_SERVER`).
 - **It is not a microcontroller.** Memory figures from it (a peak of about
   120 KB of heap with one app, on a 64-bit build) say little about a board.

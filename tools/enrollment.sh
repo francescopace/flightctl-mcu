@@ -9,8 +9,9 @@
 #   BATCH=2026-11-a EXPIRATION=30d tools/enrollment.sh .secrets/batch-2026-11-a
 # BATCH names the certificate (CN enroll-<batch>, also the name of its
 # CertificateSigningRequest in Flight Control); EXPIRATION is its lifetime
-# (default 365d). Flight Control 1.3.1 cannot revoke an enrollment
-# certificate: it checks only the signer and the expiry. Keep the lifetime to
+# (default 365d). Flight Control 1.4.0 cannot revoke an enrollment
+# certificate: it checks only the signer and the expiry (revocation is on its
+# main branch, not yet released). Keep the lifetime to
 # the batch's factory window plus the longest a device may stay offline
 # before enrolling (after which a device whose management certificate expired
 # can no longer enroll again), and approve devices from an allow list
