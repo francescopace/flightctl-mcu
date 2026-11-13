@@ -1,9 +1,8 @@
 # Device security: Secure Boot, flash encryption, keys in hardware
 
-This page is about the ESP-IDF firmware, on Espressif's chips. The Zephyr
-builds have none of it yet: MCUboot checks the firmware's signature in
-software, and the device key is in the storage partition in clear
-([ZEPHYR.md](ZEPHYR.md)).
+This page is mostly about the ESP-IDF firmware, on Espressif's chips. The
+Zephyr builds have less: signed images and anti-rollback, checked by MCUboot in
+software ([below](#zephyr)).
 
 A device in the field has to resist someone who holds it: who can read its
 flash, or write a firmware of their own. The `secure` firmware variant
@@ -318,6 +317,51 @@ Tried by hand in the emulator:
 - the DS key: generated, sealed (eFuse `BLOCK_KEY3` after the two Secure Boot
   digests and the flash encryption key) and checked with an RSA-PSS
   signature; an image with security version 2 burns it on first boot.
+
+## Zephyr
+
+What the Zephyr builds have, on any board started by MCUboot:
+
+- **Signed images.** MCUboot checks each image's ECDSA P-256 signature
+  (`.secrets/mcuboot-signing.pem`) before it boots it, as the device checks the
+  release's cosign signature before it downloads it.
+- **Anti-rollback.** Each image carries a security counter, `SECURE_VERSION`
+  when building (0 by default), as the ESP-IDF variant's security version:
+
+  ```bash
+  SECURE_VERSION=1 BOARD=rpi_pico/rp2040/w/mcuboot port/zephyr/build.sh
+  ```
+
+  MCUboot installs no update below the running image's counter
+  (`port/zephyr/sysbuild/mcuboot.conf`), and the agent refuses it before it
+  restarts, with the same reason as on ESP-IDF (`firmware older than this
+  device accepts`); the device reports its counter as `secureVersion`. Unlike
+  ESP-IDF's eFuse, the counter is the running image's, in flash: it stops a
+  signed vulnerable release from being put back over the air, not someone who
+  writes the flash over USB or SWD. Verified on the Pico W: running counter 1,
+  a release with counter 0 was refused in 20 s, without a restart.
+- **A build for the field has no USB console.** The console on USB, and the
+  bootloader it opens at 1200 baud for a new UF2 (`src/board_rp2.c`), come only
+  with `-S cdc-acm-console`, which the development builds add.
+
+What they do not have:
+
+- **The device key, the credentials and a network given in the field are in
+  the storage partitions in clear**, and the flash is not encrypted.
+  - The RP2040 (Pico W) has no secure boot, no encryption and no protected
+    memory, and its SWD port cannot be turned off: whoever holds the board
+    can read and write everything. Encrypting the key with something from the
+    chip, such as its unique ID, would hide nothing, since that can be read too.
+  - On Espressif's chips, Secure Boot v2 and flash encryption come with
+    Espressif's port of MCUboot, built on its own and not with Zephyr's
+    sysbuild: `CONFIG_ESP_FLASH_ENCRYPTION` excludes the MCUboot this build
+    uses. Moving to it changes the bootloader and the flash layout, and it could
+    be tried in the emulator only (no real chip is burned here). On the
+    ESP32-S3 the ESP-IDF firmware's `secure` variant has all of it today.
+- The path Zephyr offers is a chip with TrustZone-M and TF-M (the RP2350 of
+  the Pico 2 W, Nordic's nRF54L, ST's STM32U5): the device key as a PSA key in
+  TF-M's protected storage, which the core already uses through PSA, and a
+  secure boot of the chip's own. Not tried: there is no such board here.
 
 ## Not yet done
 

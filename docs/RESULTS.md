@@ -21,7 +21,7 @@ What has been verified, where, and with which figures: microcontrollers managed 
 | Decommissioning | Key and certificate wiped, no enrollment until the storage is erased | On the same three boards, 2.4 to 3 s from the request to `Completed`, and in the end-to-end tests |
 | Automatic approval | An allow list of device names or MACs with their labels | Used by the end-to-end tests |
 | Provisioning in the field | The WiFi network over SoftAP or BLE ([PROVISIONING.md](PROVISIONING.md)) | On the emulated C3, in CI. Zephyr: the same protocol against esp_prov in CI; on the ESP32-S3 the access point opens, not tried with an installer; not on the Pico W |
-| Secure Boot, flash encryption, anti-rollback | The `secure` variant ([SECURITY.md](SECURITY.md)) | On the emulated C3 and C5 only: no real chip has been burned |
+| Secure Boot, flash encryption, anti-rollback | The `secure` variant ([SECURITY.md](SECURITY.md)) | On the emulated C3 and C5 only: no real chip has been burned. Zephyr: anti-rollback by MCUboot, on the Pico W ([SECURITY.md](SECURITY.md#zephyr)) |
 
 ## Measurements
 

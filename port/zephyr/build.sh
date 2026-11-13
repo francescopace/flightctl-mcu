@@ -9,7 +9,9 @@
 # (esp32s3_devkitc/esp32s3/procpu), or any board with MCUBOOT=1, is built with
 # MCUboot, for firmware updates:
 # the bootloader in <build>/mcuboot, the application in <build>/zephyr, signed
-# (zephyr.signed.bin) with .secrets/mcuboot-signing.pem.
+# (zephyr.signed.bin) with .secrets/mcuboot-signing.pem, and SECURE_VERSION
+# (0 by default) as its security counter: MCUboot refuses updates below the
+# running image's.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.30.0}"
@@ -43,6 +45,9 @@ if [[ "$BOARD" == */mcuboot || "$BOARD" == esp32* || -n "${MCUBOOT:-}" ]]; then
   MAKE_KEY='[[ -f "$1" ]] || { mkdir -p "$(dirname "$1")"; python3 "$2/bootloader/mcuboot/scripts/imgtool.py" keygen -k "$1" -t ecdsa-p256; }'
   WEST_ARGS+=(--sysbuild)
   CMAKE_ARGS+=("-DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE=\"$SEEN/$KEY\"")
+  # The image's security counter: MCUboot installs no update with a lower one
+  # (sysbuild/mcuboot.conf). Raise it for a release that fixes a vulnerability.
+  CMAKE_ARGS+=("-Dzephyr_CONFIG_MCUBOOT_EXTRA_IMGTOOL_ARGS=\"--security-counter ${SECURE_VERSION:-0}\"")
 else
   KEY=""; MAKE_KEY=":"
 fi

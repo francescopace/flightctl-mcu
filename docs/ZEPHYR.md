@@ -317,7 +317,7 @@ written back. Release z10, which has it, came to both boards as a delta
 network: both were Online with the app running about 90 s after the fleet
 changed. Not tried on the board: an installer joining the access point.
 
-Not tried: Secure Boot or flash encryption under Zephyr. Not in CI: the
+Not tried: Secure Boot or flash encryption under Zephyr ([SECURITY.md](SECURITY.md#zephyr)). Not in CI: the
 build needs the Xtensa toolchain.
 
 ## Things to know about native_sim

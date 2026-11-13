@@ -27,6 +27,7 @@ provision = load("provision", "tools/provision.py")
 soak = load("soak", "tools/soak/collect.py")
 approve = load("auto_approve", "tools/auto-approve/auto-approve.py")
 registry = load("registry_client", "tools/registry/registry_client.py")
+sbom = load("sbom", "tools/sbom.py")
 
 
 class SignTest(unittest.TestCase):
@@ -262,6 +263,42 @@ spec:
             # plain HTTP: nothing mounted
             plain = yaml.safe_load(mod.export(self.FLEET, "10.0.0.1:5001"))
             self.assertEqual([c["name"] for c in plain["spec"]["template"]["spec"]["config"]], ["app"])
+
+
+class SbomTest(unittest.TestCase):
+    DIGEST = "sha256:" + "ab" * 32
+
+    def test_root_is_the_digest_flight_control_looks_up(self):
+        doc = sbom.make_sbom("reg:5443/flightctl-mcu/fw:v9", self.DIGEST, ["esp32c3"])
+        root = doc["metadata"]["component"]
+        # Flight Control finds the package URL that holds the device's image digest.
+        self.assertIn("ab" * 32, root["purl"])
+        self.assertTrue(root["purl"].startswith("pkg:oci/fw@sha256%3A"))
+        self.assertEqual(doc["dependencies"][0]["ref"], root["bom-ref"])
+        self.assertEqual(len(doc["dependencies"][0]["dependsOn"]), len(doc["components"]))
+
+    def test_esp_idf_components_from_the_lock_file(self):
+        doc = sbom.make_sbom("reg/fw:v9", self.DIGEST, ["esp32c3", "esp32s3"])
+        by_name = {}
+        for c in doc["components"]:
+            by_name.setdefault(c["name"], []).append(c)
+        self.assertEqual([c["version"] for c in by_name["esp-idf"]], ["6.0.3"])  # once for both chips
+        self.assertEqual(by_name["mbedtls"][0]["cpe"], "cpe:2.3:a:arm:mbed_tls:4.1.1:*:*:*:*:*:*:*")
+        self.assertIn("network_provisioning", by_name)
+        for name in ("flightctl-mcu", "cJSON", "wasm-micro-runtime", "detools"):
+            self.assertIn(name, by_name)
+        refs = [c["bom-ref"] for c in doc["components"]]
+        self.assertEqual(len(refs), len(set(refs)))
+
+    @unittest.skipUnless(os.path.isdir(os.path.join(ROOT, "third_party", "zephyr-ws", "zephyr")),
+                         "no Zephyr tree (third_party/fetch-zephyr.sh)")
+    def test_zephyr_components_from_the_tree(self):
+        doc = sbom.make_sbom("reg/fw:z9", self.DIGEST, [], ["rpi_pico_w", "esp32s3_devkitc"])
+        names = [c["name"] for c in doc["components"]]
+        for name in ("zephyr", "mbedtls", "mcuboot", "littlefs", "hal_infineon", "hal_espressif"):
+            self.assertIn(name, names)
+        refs = [c["bom-ref"] for c in doc["components"]]
+        self.assertEqual(len(refs), len(set(refs)))
 
 
 if __name__ == "__main__":

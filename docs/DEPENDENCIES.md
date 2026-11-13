@@ -72,6 +72,8 @@ Change the version where the table says, then run what covers it:
 
 - core libraries (mbedTLS, cJSON, WAMR, detools): `tests/unit.sh`, `tests/fuzz.sh`,
   `tests/e2e/e2e.sh`, and a firmware build;
+- any of them: the SBOM takes the new version by itself ([SBOM.md](SBOM.md)), except the
+  mbedTLS of a new ESP-IDF release, which `MBEDTLS_IN_ESP_IDF` in `tools/sbom.py` names;
 - ESP-IDF and its components: the firmware builds for every chip and
   `tests/e2e/e2e-emu.sh` (plain, `SECURE=1`, `PROV=ble`). A new component version
   changes the lock files: commit them;

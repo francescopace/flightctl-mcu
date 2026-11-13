@@ -116,6 +116,7 @@ The requirements in full, the boards tried and how to add a chip, a board or an 
 | [SECURITY.md](docs/SECURITY.md) | Secure Boot, flash encryption, keys in hardware, the factory procedure |
 | [PROVISIONING.md](docs/PROVISIONING.md) | Credentials over USB, WiFi over SoftAP or BLE |
 | [DELTA.md](docs/DELTA.md) | Firmware updates as deltas |
+| [SBOM.md](docs/SBOM.md) | Each release's SBOM, and its known vulnerabilities in Flight Control through Trustify |
 | [REGISTRY.md](docs/REGISTRY.md) | The registry: TLS, credentials, the local one |
 | [TESTING.md](docs/TESTING.md) | Unit tests, fuzzing, end-to-end tests, what CI runs |
 | [RESULTS.md](docs/RESULTS.md) | What was verified and where, measurements, gaps in Flight Control |

@@ -16,6 +16,7 @@
 #include <zephyr/fs/littlefs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/storage/flash_map.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/sys/sys_heap.h>
 #include <zephyr/version.h>
@@ -214,6 +215,12 @@ void fc_port_custom_info(void *obj)
 {
     cJSON_AddStringToObject((cJSON *)obj, "deviceClass", "zephyr");
     cJSON_AddStringToObject((cJSON *)obj, "board", CONFIG_BOARD_TARGET);
+#if defined(CONFIG_MCUBOOT_IMG_MANAGER)
+    /* The running image's: no update below it is installed. */
+    char num[12];
+    snprintf(num, sizeof(num), "%u", (unsigned)fc_zephyr_security_counter(PARTITION_ID(slot0_partition)));
+    cJSON_AddStringToObject((cJSON *)obj, "secureVersion", num);
+#endif
 }
 
 void fc_port_metrics(void *obj)
@@ -402,6 +409,42 @@ static int slot_matches(ota_t *o)
     return rc == 0 && memcmp(want, got, sizeof(want)) == 0 ? 0 : -1;
 }
 
+/* An image's security counter (tools: SECURE_VERSION, port/zephyr/build.sh),
+ * from its protected TLVs; 0 when it has none. MCUboot installs no image with
+ * a lower one than the running image's (sysbuild/mcuboot.conf): the device
+ * says so before it restarts, as the ESP-IDF firmware does. */
+#define TLV_PROT_MAGIC 0x6908
+#define TLV_SEC_CNT    0x50
+
+uint32_t fc_zephyr_security_counter(uint8_t slot)
+{
+    const struct flash_area *fa;
+    uint32_t cnt = 0;
+    if (flash_area_open(slot, &fa) != 0) {
+        return 0;
+    }
+    uint8_t hdr[16], tlv[4];
+    if (flash_area_read(fa, 0, hdr, sizeof(hdr)) == 0 && sys_get_le32(hdr) == 0x96f3b83dU) {
+        off_t off = (off_t)sys_get_le16(hdr + 8) + (off_t)sys_get_le32(hdr + 12);
+        if (flash_area_read(fa, off, tlv, sizeof(tlv)) == 0 && sys_get_le16(tlv) == TLV_PROT_MAGIC) {
+            off_t end = off + sys_get_le16(tlv + 2);
+            for (off += 4; off + 4 <= end; off += 4 + sys_get_le16(tlv + 2)) {
+                if (flash_area_read(fa, off, tlv, sizeof(tlv)) != 0) {
+                    break;
+                }
+                uint8_t v[4];
+                if (sys_get_le16(tlv) == TLV_SEC_CNT && sys_get_le16(tlv + 2) == 4 &&
+                    flash_area_read(fa, off + 4, v, sizeof(v)) == 0) {
+                    cnt = sys_get_le32(v);
+                    break;
+                }
+            }
+        }
+    }
+    flash_area_close(fa);
+    return cnt;
+}
+
 int fc_port_ota_end(void *handle, int commit)
 {
     ota_t *o = handle;
@@ -414,6 +457,11 @@ int fc_port_ota_end(void *handle, int commit)
             fc_port_log(FC_LOG_ERROR, "ota: the slot does not hold what was written");
         } else if (boot_read_bank_header(SLOT_NEXT, &hdr, sizeof(hdr)) != 0) {
             fc_port_log(FC_LOG_ERROR, "ota: not an image for MCUboot");
+        } else if (fc_zephyr_security_counter(SLOT_NEXT) < fc_zephyr_security_counter(SLOT_RUNNING)) {
+            fc_port_log(FC_LOG_ERROR, "ota: security version %u, below this device's %u",
+                        (unsigned)fc_zephyr_security_counter(SLOT_NEXT),
+                        (unsigned)fc_zephyr_security_counter(SLOT_RUNNING));
+            rc = FC_OTA_TOO_OLD;
         } else if (boot_request_upgrade(BOOT_UPGRADE_TEST) != 0 || mcuboot_swap_type() != BOOT_SWAP_TYPE_TEST) {
             fc_port_log(FC_LOG_ERROR, "ota: MCUboot does not take the request to try the image");
         } else {

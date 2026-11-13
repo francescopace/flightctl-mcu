@@ -26,6 +26,10 @@ from its own (docs/DELTA.md); the others, and older firmware, take the whole
 image. A delta is a detools patch (sequential, heatshrink): this needs the
 detools package, here or in a virtual environment made in build/ on first use.
 
+The release's SBOM (tools/sbom.py, CycloneDX) goes to build/sbom/ and to the
+registry, as an artifact whose subject is the index; to Trustify too when
+TRUSTIFY_URL is set (docs/SBOM.md).
+
 The index is then signed with tools/signing/sign.py when a signing key is
 there ($SIGNING_KEY or .secrets/signing.key); NO_SIGN=1 skips it.
 """
@@ -52,6 +56,7 @@ DETOOLS_VERSION = "0.53.1"  # the version third_party/fetch-detools.sh fetches f
 HEATSHRINK_WINDOW, HEATSHRINK_LOOKAHEAD = 12, 8
 EMPTY = b"{}"
 EMPTY_TYPE = "application/vnd.oci.empty.v1+json"
+SBOM_TYPE = "application/vnd.cyclonedx+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 
@@ -137,6 +142,39 @@ def make_delta(py, old, new):
             return f.read()
 
 
+def push_sbom(base, host, repo, tag, idigest, isize, entries, empty, root):
+    """The release's SBOM (tools/sbom.py): in build/sbom/, in the registry as an
+    artifact that refers to the index (OCI 1.1 subject), and in Trustify when
+    $TRUSTIFY_URL is set."""
+    sys.path.insert(0, os.path.join(root, "tools"))
+    import sbom
+    esp_idf = [e["platform"]["architecture"] for e in entries if e["platform"]["os"] == "esp-idf"]
+    zephyr = [e["platform"]["architecture"] for e in entries if e["platform"]["os"] == "zephyr"]
+    doc = sbom.make_sbom(f"{host}/{repo}:{tag}", idigest, esp_idf, zephyr)
+    data = (json.dumps(doc, indent=2) + "\n").encode()
+    os.makedirs(f"{root}/build/sbom", exist_ok=True)
+    path = f"{root}/build/sbom/{repo.rsplit('/', 1)[-1]}-{tag}.cdx.json"
+    with open(path, "wb") as f:
+        f.write(data)
+    manifest = {
+        "schemaVersion": 2,
+        "mediaType": MANIFEST_TYPE,
+        "artifactType": SBOM_TYPE,
+        "config": {"mediaType": EMPTY_TYPE, "digest": empty, "size": len(EMPTY)},
+        "layers": [{"mediaType": SBOM_TYPE, "digest": push_blob(base, repo, data), "size": len(data),
+                    "annotations": {"org.opencontainers.image.title": os.path.basename(path)}}],
+        "subject": {"mediaType": INDEX_TYPE, "digest": idigest, "size": isize},
+    }
+    # Tagged too, as cosign tags its attachments (sha256-<index>.sbom, next to
+    # the signature's .sig): registry:3 has no referrers API to find it by.
+    sdigest, _ = push_manifest(base, repo, f"{idigest.replace(':', '-')}.sbom", MANIFEST_TYPE, manifest)
+    print(f"SBOM {path} ({len(doc['components'])} components), in the registry as {sdigest}")
+    url = os.environ.get("TRUSTIFY_URL")
+    if url:
+        status, body = sbom.upload(url, doc, idigest)
+        print(f"SBOM in Trustify: {status} {body[:120]}")
+
+
 def main():
     args = sys.argv[1:]
     variant, delta_from = "", []
@@ -211,8 +249,9 @@ def main():
 
     index = {"schemaVersion": 2, "mediaType": INDEX_TYPE, "artifactType": ARTIFACT_TYPE,
              "manifests": entries, "annotations": {"org.opencontainers.image.version": tag}}
-    idigest, _ = push_manifest(base, repo, tag, INDEX_TYPE, index)
+    idigest, isize = push_manifest(base, repo, tag, INDEX_TYPE, index)
     print(f"{ref}@{idigest}")
+    push_sbom(base, host, repo, tag, idigest, isize, entries, empty, root)
     key = os.environ.get("SIGNING_KEY") or f"{root}/.secrets/signing.key"
     if not os.environ.get("NO_SIGN") and os.path.exists(key):
         subprocess.run([f"{root}/tools/signing/sign.py", "--key", key, f"{host}/{repo}@{idigest}"], check=True)

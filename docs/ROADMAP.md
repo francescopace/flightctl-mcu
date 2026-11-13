@@ -22,7 +22,7 @@ Checks not made yet:
 
 What the Zephyr port does not have, and the ESP-IDF firmware has:
 
-- [ ] Protection of the device: MCUboot checks the firmware's signature in software, and the device key is in the storage partition in clear. No Secure Boot, no encryption.
+- [ ] Protection of the device beyond signed images and anti-rollback: the device key is in the storage partition in clear, the flash is not encrypted. The RP2040 has nothing to do it with; on the ESP32-S3 it takes Espressif's MCUboot port; a chip with TF-M (RP2350, nRF54L, STM32U5) would keep the key protected ([SECURITY.md](SECURITY.md#zephyr)).
 - [ ] The WiFi network given in the field on the Pico W. The ESP32-S3 has it ([PROVISIONING.md](PROVISIONING.md#on-zephyr)); Infineon's driver in Zephyr 4.5 cannot open an access point on the Pico W's chip ([ZEPHYR.md](ZEPHYR.md#on-a-raspberry-pi-pico-w)).
 
 What Flight Control offers and the agent does not answer yet:
@@ -37,7 +37,7 @@ What an app can do and hold:
 
 Towards a deployment:
 
-- [ ] Known vulnerabilities in the firmware, in the UI's security overview. Flight Control asks Trustify (or Quay with Clair) about the OS image digest each device reports, which these devices already report. It takes an SBOM per release (ESP-IDF or Zephyr, mbedTLS, WAMR, detools, the agent), uploaded to Trustify. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
+- [ ] Known vulnerabilities in the firmware, in the UI's security overview. Each release has its SBOM, in the registry and, with `TRUSTIFY_URL`, in Trustify ([SBOM.md](SBOM.md)); Flight Control finds it by the image digest the devices report. Left: trying it with a Trustify instance and Flight Control's vulnerability reporting, and seeing which advisories Trustify matches. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
 
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):
 
