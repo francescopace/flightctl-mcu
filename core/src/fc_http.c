@@ -10,6 +10,8 @@
  */
 #include "fc_http.h"
 
+#include <pthread.h>
+
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,26 +33,41 @@
  * send() would otherwise wait for TCP to give up, minutes on lwIP. */
 #define FC_HTTP_SEND_TIMEOUT_S 30
 
-/* Raw bytes on the wire (TCP payload, TLS included), for traffic figures. */
-static volatile unsigned long long s_tx_bytes, s_rx_bytes;
-static volatile unsigned long s_handshakes;
+/* Raw bytes on the wire (TCP payload, TLS included), for traffic figures.
+ * Counted by every thread that talks to a server: under a lock, since a
+ * 64-bit add is not atomic on 32-bit chips (and the RP2040 has no atomics). */
+static pthread_mutex_t s_count_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned long long s_tx_bytes, s_rx_bytes;
+static unsigned long s_handshakes;
+
+static void count(unsigned long long *counter, unsigned long long n)
+{
+    pthread_mutex_lock(&s_count_lock);
+    *counter += n;
+    pthread_mutex_unlock(&s_count_lock);
+}
 
 unsigned long fc_http_handshakes(void)
 {
-    return s_handshakes;
+    pthread_mutex_lock(&s_count_lock);
+    unsigned long n = s_handshakes;
+    pthread_mutex_unlock(&s_count_lock);
+    return n;
 }
 
 void fc_http_traffic(unsigned long long *tx, unsigned long long *rx)
 {
+    pthread_mutex_lock(&s_count_lock);
     *tx = s_tx_bytes;
     *rx = s_rx_bytes;
+    pthread_mutex_unlock(&s_count_lock);
 }
 
 static int count_send(void *ctx, const unsigned char *buf, size_t len)
 {
     int rc = mbedtls_net_send(ctx, buf, len);
     if (rc > 0) {
-        s_tx_bytes += (unsigned long long)rc;
+        count(&s_tx_bytes, (unsigned long long)rc);
     }
     return rc;
 }
@@ -59,7 +76,7 @@ static int count_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_
 {
     int rc = mbedtls_net_recv_timeout(ctx, buf, len, timeout);
     if (rc > 0) {
-        s_rx_bytes += (unsigned long long)rc;
+        count(&s_rx_bytes, (unsigned long long)rc);
     }
     return rc;
 }
@@ -248,7 +265,9 @@ static int conn_open(conn_t *c, const fc_http_target_t *t)
             return -1;
         }
     }
+    pthread_mutex_lock(&s_count_lock);
     s_handshakes++;
+    pthread_mutex_unlock(&s_count_lock);
     return 0;
 }
 

@@ -58,7 +58,7 @@ typedef struct {
     pthread_t thread;
     pthread_attr_t thread_attr; /* until the thread is joined: on Zephyr it owns the stack */
     int thread_running;
-    volatile int stop;
+    int stop; /* set by the agent's thread, read by the runner: __atomic */
 
     /* reported (under s_lock) */
     char status[12]; /* Preparing, Running, Error, Stopped */
@@ -68,6 +68,16 @@ typedef struct {
 } app_t;
 
 static app_t s_apps[MAX_APPS];
+
+static int stopping(const app_t *a)
+{
+    return __atomic_load_n(&a->stop, __ATOMIC_ACQUIRE);
+}
+
+static void set_stop(app_t *a, int v)
+{
+    __atomic_store_n(&a->stop, v, __ATOMIC_RELEASE);
+}
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 static int s_inited;
 
@@ -138,7 +148,7 @@ static void *runner(void *arg)
     char ebuf[128];
     wasm_runtime_init_thread_env();
     wasm_module_t module = a->module;
-    while (!a->stop) {
+    while (!stopping(a)) {
         wasm_module_inst_t inst = wasm_runtime_instantiate(module, WASM_STACK, 0, ebuf, sizeof(ebuf));
         wasm_exec_env_t env = inst ? wasm_runtime_create_exec_env(inst, WASM_STACK) : NULL;
         wasm_function_inst_t tick = inst ? wasm_runtime_lookup_function(inst, "tick") : NULL;
@@ -161,7 +171,7 @@ static void *runner(void *arg)
             }
             set_status(a, "Running", NULL);
             fc_port_log(FC_LOG_INFO, "app %s running (%s, tick %d ms)", a->name, a->image, a->tick_ms);
-            while (!a->stop) {
+            while (!stopping(a)) {
                 uint32_t argv[1] = {now_ms()};
                 if (!wasm_runtime_call_wasm(env, tick, 1, argv)) {
                     const char *ex = wasm_runtime_get_exception(inst);
@@ -169,7 +179,7 @@ static void *runner(void *arg)
                     set_status(a, "Error", ex);
                     break;
                 }
-                for (int slept = 0; slept < a->tick_ms && !a->stop; slept += 50) {
+                for (int slept = 0; slept < a->tick_ms && !stopping(a); slept += 50) {
                     usleep((useconds_t)(a->tick_ms - slept < 50 ? a->tick_ms - slept : 50) * 1000);
                 }
             }
@@ -180,11 +190,11 @@ static void *runner(void *arg)
         if (inst) {
             wasm_runtime_deinstantiate(inst);
         }
-        if (!a->stop) {
-            for (int i = 0; i < RESTART_DELAY_S * 10 && !a->stop; i++) {
+        if (!stopping(a)) {
+            for (int i = 0; i < RESTART_DELAY_S * 10 && !stopping(a); i++) {
                 usleep(100 * 1000);
             }
-            if (!a->stop) {
+            if (!stopping(a)) {
                 pthread_mutex_lock(&s_lock);
                 a->restarts++;
                 pthread_mutex_unlock(&s_lock);
@@ -201,7 +211,7 @@ static void app_start(app_t *a)
     if (a->module == NULL) {
         return; /* the status already says why */
     }
-    a->stop = 0;
+    set_stop(a, 0);
     set_status(a, "Preparing", NULL);
     pthread_attr_init(&a->thread_attr);
     a->thread_running = pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK) == 0 &&
@@ -215,7 +225,7 @@ static void app_start(app_t *a)
 static void app_stop(app_t *a)
 {
     if (a->thread_running) {
-        a->stop = 1;
+        set_stop(a, 1);
         pthread_join(a->thread, NULL);
         pthread_attr_destroy(&a->thread_attr);
         a->thread_running = 0;
