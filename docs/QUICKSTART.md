@@ -2,7 +2,7 @@
 
 Flight Control on your laptop, then a device in it: an Espressif board, or a simulated one with no hardware at all.
 
-You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), esptool, oras, Python 3 with PyYAML, and for WASM apps clang plus `wasm-ld` (`brew install lld`). The simulated device also needs CMake, Ninja and mbedTLS 4.1 or later on the machine (`brew install mbedtls`). The ESP-IDF toolchain runs in the `espressif/idf:v6.0.3` container, so you don't install it.
+You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), esptool, oras, Python 3 with PyYAML, and for WASM apps clang plus `wasm-ld` (`brew install lld`). The simulated device also needs CMake, Ninja and mbedTLS 4.1 or later on the machine, built with `MBEDTLS_THREADING_C` (`brew install mbedtls` is). The ESP-IDF toolchain runs in the `espressif/idf:v6.0.3` container, so you don't install it.
 
 The scripts were written on macOS (Apple Silicon). CI runs the host agent, the firmware build and the kind setup on Linux too.
 

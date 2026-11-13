@@ -21,7 +21,7 @@ linked in.
 
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|
-| mbedTLS, installed on the system | 4.1 or later | `find_package(MbedTLS 4.1)` in `CMakeLists.txt` | CI builds 4.1.1 from source, the version the devices have (`.github/actions/mbedtls`), and links it statically. On macOS, Homebrew's (4.2.0 today). |
+| mbedTLS, installed on the system | 4.1 or later, with `MBEDTLS_THREADING_C` | `find_package(MbedTLS 4.1)` in `CMakeLists.txt` | CI builds 4.1.1 from source, the version the devices have (`.github/actions/mbedtls`), with the threading layer on, and links it statically. On macOS, Homebrew's (4.2.0 today), which has it. The core refuses to build without it (`core/include/fc_crypto.h`): its threads share PSA's key table. |
 | CMake, Ninja, a C11 compiler, pthreads | CMake 3.16 or later | `CMakeLists.txt` | In CI they come with Zephyr's build image (below), clang as the compiler; Apple clang works. |
 | clang with libFuzzer and the sanitizers | the build image's | `tests/unit.sh`, `tests/fuzz.sh` | For the tests only. |
 | clang with the `wasm32` target, `wasm-ld` | the build image's | `wasm-apps/build.sh` | For the example WASM apps, on any port. |

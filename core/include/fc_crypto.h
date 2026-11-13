@@ -13,6 +13,13 @@
 
 #include "psa/crypto.h"
 
+/* The agent calls PSA from several threads at once (the status thread, the
+ * spec thread, app downloads), and PSA's key table is shared between them
+ * only safely with the threading layer (tests/unit/test_threads.c). */
+#if !defined(MBEDTLS_THREADING_C)
+#error "mbedTLS must be built with MBEDTLS_THREADING_C (and MBEDTLS_THREADING_PTHREAD or _ALT)"
+#endif
+
 static inline int fc_crypto_init(void)
 {
     return psa_crypto_init() == PSA_SUCCESS ? 0 : -1;

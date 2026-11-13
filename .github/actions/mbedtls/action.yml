@@ -15,12 +15,18 @@ runs:
       id: cache
       with:
         path: /tmp/mbedtls-install
-        key: mbedtls-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+        key: mbedtls-${{ inputs.version }}-threading-${{ runner.os }}-${{ runner.arch }}
     - if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         git clone --depth 1 --branch ${{ inputs.version }} --recurse-submodules --shallow-submodules \
           https://github.com/Mbed-TLS/mbedtls /tmp/mbedtls-src
+        # The agent uses PSA from several threads (status, spec, downloads):
+        # without these its key table is shared unprotected (tests/unit/test_threads.c).
+        python3 /tmp/mbedtls-src/tf-psa-crypto/scripts/config.py \
+          -f /tmp/mbedtls-src/tf-psa-crypto/include/psa/crypto_config.h set MBEDTLS_THREADING_C
+        python3 /tmp/mbedtls-src/tf-psa-crypto/scripts/config.py \
+          -f /tmp/mbedtls-src/tf-psa-crypto/include/psa/crypto_config.h set MBEDTLS_THREADING_PTHREAD
         cmake -S /tmp/mbedtls-src -B /tmp/mbedtls -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF \
           -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/mbedtls-install
         cmake --build /tmp/mbedtls --target install -j "$(nproc)"
