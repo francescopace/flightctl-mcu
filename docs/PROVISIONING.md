@@ -4,9 +4,8 @@ A device needs two things to join a fleet: credentials for Flight Control,
 which belong to the installation, and a network, which belongs to the site.
 The firmware has neither built in: one image serves every installation.
 
-What follows is the ESP-IDF firmware. A Zephyr build gets both at the factory,
-in one partition (`tools/provision.py --format zephyr`, [ZEPHYR.md](ZEPHYR.md)):
-it has no provisioning in the field yet.
+What follows is the ESP-IDF firmware; the Zephyr build does the same over its
+access point ([below](#on-zephyr)).
 
 ## At the factory, over USB
 
@@ -95,6 +94,33 @@ about 50 KB more in the secure variant, in a 1,664 KB slot). Not on the ESP32-S2
 a board: the emulator stands in for the controller, so how BLE behaves while
 the flash is written (the network is saved during the session) is untested.
 
+## On Zephyr
+
+A Zephyr build takes its credentials from one partition
+(`tools/provision.py --format zephyr`, [ZEPHYR.md](ZEPHYR.md)), and its
+network the same three ways: given there (`--wifi-ssid`), kept from an
+earlier provisioning in the field, or, with `--pop` and neither, from an
+installer. The device scans for networks, opens the access point
+`FC-xxxxxx` with the proof of possession as its password, gives installers
+an address (192.168.4.1 is the device), and serves Espressif's protocol on
+port 80: the same Security 1 session, the same messages, so ESP SoftAP Prov
+and `tests/e2e/esp-prov.sh` work as with the ESP-IDF firmware. The protocol is
+the agent core's (`core/src/fc_prov.c`); the access point is the port's
+(`port/zephyr/src/wifi.c`).
+
+Where the radio can be an access point and a station at once (Espressif's,
+`CONFIG_ESP32_WIFI_AP_STA_MODE`), the device tries the network with the access
+point still up, and the installer is told whether it joined, or why not
+(wrong password, network not found). A radio that cannot closes the access
+point to try it and opens it again after three failed tries. The network is
+kept in the storage partition, in clear, as the device key is there; erasing
+the storage brings the access point back.
+
+Boards: the ESP32-S3-DevKitC. Not the Pico W: Infineon's driver in Zephyr 4.5
+cannot open an access point on its CYW43439
+([ZEPHYR.md](ZEPHYR.md#on-a-raspberry-pi-pico-w)), so it builds without it
+(no DHCP server: 2 KB of RAM it does not have to give).
+
 ## What the CI checks
 
 The plain emulator run (`tests/e2e/e2e-emu.sh`) provisions its device in the field:
@@ -112,5 +138,11 @@ emulator without its BLE backend, on the flash the device wrote (with that
 backend it runs at less than half speed, too slow for the test's short-lived
 certificates): the device boots with its network and no BLE, and goes
 through the same updates as in the plain run.
+
+The Zephyr build's protocol is checked against esp_prov on the host
+(`tests/e2e/prov-host.sh`, in the host job): a wrong proof of possession is
+refused, a wrong WiFi password is reported to the installer, the network
+picked from the device's scan is joined, and a radio that cannot join with
+its access point up gets the network to try.
 
 Not done: setting the Flight Control endpoint or labels in the field.

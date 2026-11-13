@@ -23,7 +23,7 @@ Checks not made yet:
 What the Zephyr port does not have, and the ESP-IDF firmware has:
 
 - [ ] Protection of the device: MCUboot checks the firmware's signature in software, and the device key is in the storage partition in clear. No Secure Boot, no encryption.
-- [ ] The WiFi network given in the field: a Zephyr build gets it at the factory, with the credentials.
+- [ ] The WiFi network given in the field on the Pico W. The ESP32-S3 has it ([PROVISIONING.md](PROVISIONING.md#on-zephyr)); Infineon's driver in Zephyr 4.5 cannot open an access point on the Pico W's chip ([ZEPHYR.md](ZEPHYR.md#on-a-raspberry-pi-pico-w)).
 
 What Flight Control offers and the agent does not answer yet:
 

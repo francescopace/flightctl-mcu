@@ -50,6 +50,8 @@ jobs:
           NO_PUSH=1 wasm-apps/build.sh trend v1
       - name: host agent
         run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} port/host/build-ci.sh
+      - name: Zephyr's field provisioning against esp_prov
+        run: tests/e2e/prov-host.sh
       - uses: actions/upload-artifact@v7
         with:
           name: wasm-apps

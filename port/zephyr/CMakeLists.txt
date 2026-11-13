@@ -57,6 +57,14 @@ target_sources(app PRIVATE
     ${ROOT}/third_party/cjson/cJSON.c
     ${DETOOLS_SRCS}
     ${WAMR_RUNTIME_LIB_SOURCE})
+# Boards with WiFi: the network, given at the factory, or in the field where
+# the board can open an access point (with a DHCP server for installers).
+if(CONFIG_WIFI)
+    target_sources(app PRIVATE src/wifi.c)
+endif()
+if(CONFIG_WIFI AND CONFIG_NET_DHCPV4_SERVER)
+    target_sources(app PRIVATE ${ROOT}/core/src/fc_prov.c)
+endif()
 if(CONFIG_FC_ENTROPY_RP2_ROSC)
     target_sources(app PRIVATE ${ROOT}/port/zephyr/fc_entropy_rp2.c)
 endif()

@@ -121,6 +121,20 @@ network is the one in `port/espidf/sdkconfig.wifi`, or `--wifi-ssid`) and prints
 the console. The board must be in its bootloader: plugged in with BOOTSEL
 held down, or, once it runs this build, `PORT=/dev/cu.usbmodemXXXX`.
 
+No provisioning in the field on this board: Infineon's driver in Zephyr 4.5
+does not open an access point on the CYW43439. Two faults, found on the board:
+- WHD's `CH20MHZ_CHSPEC` decides the band by comparing the whole chanspec
+  Zephyr's driver passes (channel, band and bandwidth bits) with 14, the last
+  2.4 GHz channel, so any channel is taken for 5 GHz, which the chip refuses
+  (`whd_wifi_set_chanspec failed`). Comparing the channel alone fixes it
+  (`CHSPEC_CHANNEL(chspec) <= CH_MAX_2G_CHANNEL` in `whd_chip_constants.h`).
+- With that fixed, the access point starts, then the driver's next request to
+  the chip (`event_msgs`, for the access point's events) gets no answer in 5 s,
+  and the driver closes the access point again.
+
+The board keeps the network given at the factory, and builds without a DHCP
+server, which would take 2 KB of its RAM.
+
 ### Firmware updates
 
 ```bash
@@ -170,9 +184,11 @@ file, downloads the signed WASM app from the registry and runs it.
 
 Memory, of 264 KB: 111 KB of static data in this build (the WiFi driver's and
 the network stack's buffers, the USB console), 45 KB of kernel heap (thread
-stacks, and 14 KB the WiFi driver and USB take), 110 KB of C heap. With both
+stacks, and 14 KB the WiFi driver and USB take), 108 KB of C heap. With both
 TLS connections open and the app running, 34 KB of that heap were free, and
-24 KB at the least; with Zephyr 4.5 and mbedTLS 4, 31 KB and 22.5 KB. (Zephyr
+24 KB at the least; with Zephyr 4.5 and mbedTLS 4, 31 KB and 22.5 KB; with
+mbedTLS's threading layer (release z9, 2 KB less heap), 29.7 KB, and 15 KB at
+the least. (Zephyr
 4.5 gives the WiFi driver's twenty packet buffers 2400 bytes each, 16 KB more
 than there is: the build keeps them at 1600, as they were.) It fits because the stacks are sized from what was
 measured on the board: the agent's threads use 5.6 KB at most (installing an
@@ -291,6 +307,15 @@ Each took its own image from it, as a delta: 20 KB on the Pico W (2.9%), 9 KB
 on the ESP32-S3 (1.0%). Both must hold the public half of the key the
 release is signed with: the Pico W had been provisioned with another, and
 refused the fleet's app until its credentials were written again.
+
+Field provisioning ([PROVISIONING.md](PROVISIONING.md#on-zephyr)): with a
+proof of possession and no network in its credentials, the board opened
+`FC-E8EC00` on channel 6 three seconds after boot, with the provisioning
+server listening, and the access point went away once the network was
+written back. Release z10, which has it, came to both boards as a delta
+(72 KB here, 56 KB on the Pico W) and changed nothing for a board with its
+network: both were Online with the app running about 90 s after the fleet
+changed. Not tried on the board: an installer joining the access point.
 
 Not tried: Secure Boot or flash encryption under Zephyr. Not in CI: the
 build needs the Xtensa toolchain.

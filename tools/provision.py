@@ -23,7 +23,7 @@ Contents (NVS namespace "fc"):
                                they hold the device. See docs/PROVISIONING.md.
 
 --format zephyr writes the partition the Zephyr application reads instead: "FCC1", a length,
-and a JSON object with the same fields (WiFi too; no provisioning in the field). Its place in the flash comes from the
+and a JSON object with the same fields. Its place in the flash comes from the
 board's overlay, port/zephyr/boards/<--board>.overlay (default native_sim_native_64, whose flash
 image is the file given to zephyr.exe --flash=).
 
@@ -169,15 +169,20 @@ def build_zephyr_partition(args, size):
     creds["server_port"] = int(port)
     creds["labels"] = dict(kv.split("=", 1) for kv in args.labels.split(",") if "=" in kv)
     # Boards with WiFi (native_sim uses the host's network): the network given
-    # here, else the one in port/espidf/sdkconfig.wifi, your desk's.
+    # here; else, with a proof of possession, the one an installer gives in the
+    # field; else the one in port/espidf/sdkconfig.wifi, your desk's.
     ssid, password, where = args.wifi_ssid, args.wifi_password, "given"
-    if not ssid and not args.board.startswith("native_sim"):
+    if args.pop:
+        creds["prov_pop"] = args.pop
+    if not ssid and not args.pop and not args.board.startswith("native_sim"):
         wifi = os.path.join(ROOT, "port", "espidf", "sdkconfig.wifi")
         ssid, password, where = sdkconfig_local("FC_WIFI_SSID", wifi), sdkconfig_local("FC_WIFI_PASSWORD", wifi), wifi
     if ssid:
         creds["wifi_ssid"] = ssid
         creds["wifi_pass"] = password or ""
         print(f"WiFi network: {where if where != 'given' else 'from the command line'}")
+    elif args.pop:
+        print("WiFi network: set in the field (access point FC-xxxxxx, --pop)")
     body = json.dumps(creds, separators=(",", ":")).encode()
     data = b"FCC1" + len(body).to_bytes(4, "little") + body
     if len(data) > size:

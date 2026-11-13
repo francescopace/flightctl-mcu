@@ -20,7 +20,7 @@ What has been verified, where, and with which figures: microcontrollers managed 
 | Registry with TLS and a password | The registry's CA and an `auth.json` from the fleet ([REGISTRY.md](REGISTRY.md)) | On the C3 (ESP-IDF), the Pico W and the ESP32-S3 (Zephyr), and in every end-to-end test |
 | Decommissioning | Key and certificate wiped, no enrollment until the storage is erased | On the same three boards, 2.4 to 3 s from the request to `Completed`, and in the end-to-end tests |
 | Automatic approval | An allow list of device names or MACs with their labels | Used by the end-to-end tests |
-| Provisioning in the field | The WiFi network over SoftAP or BLE ([PROVISIONING.md](PROVISIONING.md)) | On the emulated C3, in CI |
+| Provisioning in the field | The WiFi network over SoftAP or BLE ([PROVISIONING.md](PROVISIONING.md)) | On the emulated C3, in CI. Zephyr: the same protocol against esp_prov in CI; on the ESP32-S3 the access point opens, not tried with an installer; not on the Pico W |
 | Secure Boot, flash encryption, anti-rollback | The `secure` variant ([SECURITY.md](SECURITY.md)) | On the emulated C3 and C5 only: no real chip has been burned |
 
 ## Measurements
@@ -68,7 +68,7 @@ Internal heap with the `alarm` app running and both agent connections open, firm
 
 The S2 has the least room: its largest internal block is only just above the 16.7 KB a TLS handshake needs. The lowest point is when a TLS handshake and a firmware download run together.
 
-With release v3.1 (ESP-IDF 6.0.3) the C3 had 70 KB free and 48 KB at the lowest after three hours. Release v3.2, which adds the resource alerts, leaves about 4 KB less: 65.6 KB free five minutes after boot with `alarm`, against 69.8 KB for v3.1 at the same point. With Zephyr: about 31 KB free on the Pico W, 49 KB on the ESP32-S3 ([DEVICES.md](DEVICES.md#boards-tried)).
+With release v3.1 (ESP-IDF 6.0.3) the C3 had 70 KB free and 48 KB at the lowest after three hours. Release v3.2, which adds the resource alerts, leaves about 4 KB less: 65.6 KB free five minutes after boot with `alarm`, against 69.8 KB for v3.1 at the same point. With Zephyr: about 30 KB free on the Pico W, 50 KB on the ESP32-S3 ([DEVICES.md](DEVICES.md#boards-tried)).
 
 What a WASM app costs, on the C3 (debug builds): the heap five minutes after boot with and without the `trend` app (1.9 KB of `.wasm`) differs by 21.4 KB with v3.1 and 17.7 KB with v3.2, which no longer keeps the `.wasm` in RAM once the module is loaded. Split on a host with the same module, what is left is the module loaded by WAMR's fast interpreter (about 5 KB), the instance and its WAMR stack (about 3.5 KB), the module's linear memory (about 1 KB) and the app's thread stack (8 KB).
 

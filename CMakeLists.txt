@@ -65,6 +65,7 @@ add_library(fc_core STATIC
     core/src/fc_oci.c
     core/src/fc_apps.c
     core/src/fc_resources.c
+    core/src/fc_prov.c
     third_party/cjson/cJSON.c
     ${DELTA_SRCS}
 )
@@ -76,6 +77,10 @@ target_link_libraries(fc_core PUBLIC vmlib MbedTLS::mbedtls MbedTLS::mbedx509 Mb
 
 add_executable(fc-host-agent port/host/main.c port/host/fc_port_host.c)
 target_link_libraries(fc-host-agent PRIVATE fc_core)
+
+# The field provisioning server with a pretend radio (tests/e2e/prov-host.sh).
+add_executable(fc-prov-host port/host/prov_main.c port/host/fc_port_host.c)
+target_link_libraries(fc-prov-host PRIVATE fc_core)
 
 # Fuzzers (clang with libFuzzer): cmake -DFC_FUZZ=ON -DCMAKE_C_COMPILER=clang ...
 # then tests/fuzz.sh runs them. Each one compiles the sources it tests, with
