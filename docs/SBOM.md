@@ -40,6 +40,14 @@ Another release's, or one made again: `tools/sbom.py --ref <registry>/flightctl-
 
 Flight Control 1.4 reads the vulnerabilities from Trustify (Helm values
 `vulnerabilityReporting.enabled: true`, `vulnerabilityReporting.trustify.endpoint`).
+Its client speaks Trustify 0.4's API (`/api/v2`): Trustify 0.5 and later moved
+it to `/api/v3`. For the lab, `tools/trustify/up.sh` runs Trustify 0.4.12 next
+to the kind cluster and points Flight Control at it; then:
+
+```bash
+TRUSTIFY_URL=http://127.0.0.1:8095 tools/fw-push.py ...
+```
+
 Every 15 minutes it takes the image digests the devices report, finds in
 Trustify the package URL that holds each one and the SBOM that holds that
 package URL, and stores the advisories Trustify matches against the SBOM's
@@ -52,5 +60,20 @@ is often the only name an advisory gives.
 
 ## What was verified
 
-The SBOM of the Zephyr releases from z11 on is made and pushed with them. Not yet tried: Trustify with
-Flight Control, and which advisories it finds for these components.
+13 November 2026, Flight Control 1.4.0 and Trustify 0.4.12 on the lab's kind
+cluster, with the Zephyr boards on release z13:
+
+- Trustify took the SBOMs of z11, z12 and z13 (CycloneDX 1.6), and found each
+  release's SBOM by the digest the devices report, as Flight Control asks.
+- With a test advisory (OSV, made up and named as such, alias `CVE-2099-99999`,
+  "affected": mbedTLS `v4.1.1`), Trustify listed it for z13's SBOM, and within
+  a minute Flight Control showed it for the devices on z13: in
+  `/api/v1/vulnerabilities/devices/<name>`, with the release's image and digest,
+  severity and score, and in the fleet's and the organization's summaries.
+- The advisory was then deleted from Trustify; Flight Control kept the finding
+  ([limitation 14](RESULTS.md#flight-control-limitations-found-upstream-proposals)).
+
+Not tried: Trustify's own advisory feeds (CVE, OSV), so which real advisories
+it would match for these components, by package URL or by CPE. A test
+advisory had to carry a CVE alias: Trustify 0.4 made no vulnerability of an
+OSV record without one.

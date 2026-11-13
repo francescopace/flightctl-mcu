@@ -37,7 +37,7 @@ What an app can do and hold:
 
 Towards a deployment:
 
-- [ ] Known vulnerabilities in the firmware, in the UI's security overview. Each release has its SBOM, in the registry and, with `TRUSTIFY_URL`, in Trustify ([SBOM.md](SBOM.md)); Flight Control finds it by the image digest the devices report. Left: trying it with a Trustify instance and Flight Control's vulnerability reporting, and seeing which advisories Trustify matches. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
+- [ ] Known vulnerabilities in the firmware, in the UI's security overview. Each release has its SBOM, in the registry and, with `TRUSTIFY_URL`, in Trustify ([SBOM.md](SBOM.md)); Flight Control finds it by the image digest the devices report. Tried with Trustify 0.4.12 and a test advisory; left: Trustify's real advisory feeds, and which advisories they match for these components. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
 
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):
 
