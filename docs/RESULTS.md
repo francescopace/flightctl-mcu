@@ -27,18 +27,18 @@ What has been verified, where, and with which figures: microcontrollers managed 
 
 ### Firmware size
 
-Release v3.1, ESP-IDF 6.0.3, debug build (`-Og`):
+Release v3.2, ESP-IDF 6.0.3, debug build (`-Og`):
 
 | Chip | Image | Free in the 1,664 KB OTA slot |
 |---|---|---|
-| ESP32 | 1,161 KB | 30% |
-| ESP32-S2 | 1,133 KB | 32% |
-| ESP32-S3 | 1,160 KB | 30% |
-| ESP32-C3 | 1,234 KB | 26% |
-| ESP32-C5 | 1,330 KB | 20% |
-| ESP32-C6 | 1,330 KB | 20% |
+| ESP32 | 1,167 KB | 30% |
+| ESP32-S2 | 1,140 KB | 31% |
+| ESP32-S3 | 1,166 KB | 30% |
+| ESP32-C3 | 1,241 KB | 25% |
+| ESP32-C5 | 1,337 KB | 20% |
+| ESP32-C6 | 1,337 KB | 20% |
 
-The release profile (`VARIANT=release`: `-Os`, quieter logs) is about 15% smaller, on the C3 and the S3. BLE provisioning built in (`VARIANT=ble`) adds about 270 KB: 1,502 KB on the C3, 10% of the slot free.
+The release profile (`VARIANT=release`: `-Os`, quieter logs) is about 15% smaller, on the C3 and the S3. BLE provisioning built in (`VARIANT=ble`) adds about 270 KB: 1,502 KB on the C3 with release v3.1, 10% of the slot free.
 
 The largest parts, on the C3:
 
@@ -48,7 +48,7 @@ The largest parts, on the C3:
 | Cryptography and TLS (mbedTLS 4, TF-PSA-Crypto) | about 197 KB |
 | WiFi provisioning in the field (network_provisioning, protocomm, HTTP server) | about 93 KB |
 | WAMR (fast interpreter) | 68 KB |
-| **flightctl-mcu agent** (`core/`: enrollment, spec, status, OTA, OCI, signatures, apps, applying deltas) | **31 KB** |
+| **flightctl-mcu agent** (`core/`: enrollment, spec, status, resource alerts, OTA, OCI, signatures, apps, applying deltas) | **35 KB** |
 | its libraries and ESP-IDF port (cJSON, the detools decoder with heatshrink, `fc_port_espidf.c`) | 14 KB |
 
 The agent itself is small. Almost all the space goes to the network stack and to cryptography, which any securely connected device needs anyway.
@@ -68,7 +68,9 @@ Internal heap with the `alarm` app running and both agent connections open, firm
 
 The S2 has the least room: its largest internal block is only just above the 16.7 KB a TLS handshake needs. The lowest point is when a TLS handshake and a firmware download run together.
 
-With release v3.1 (ESP-IDF 6.0.3) the C3 had 70 KB free and 48 KB at the lowest after three hours. With Zephyr: about 31 KB free on the Pico W, 49 KB on the ESP32-S3 ([DEVICES.md](DEVICES.md#boards-tried)).
+With release v3.1 (ESP-IDF 6.0.3) the C3 had 70 KB free and 48 KB at the lowest after three hours. Release v3.2, which adds the resource alerts, leaves about 4 KB less: 65.6 KB free five minutes after boot with `alarm`, against 69.8 KB for v3.1 at the same point. With Zephyr: about 31 KB free on the Pico W, 49 KB on the ESP32-S3 ([DEVICES.md](DEVICES.md#boards-tried)).
+
+What a WASM app costs, on the C3 (debug builds): the heap five minutes after boot with and without the `trend` app (1.9 KB of `.wasm`) differs by 21.4 KB with v3.1 and 17.7 KB with v3.2, which no longer keeps the `.wasm` in RAM once the module is loaded. Split on a host with the same module, what is left is the module loaded by WAMR's fast interpreter (about 5 KB), the instance and its WAMR stack (about 3.5 KB), the module's linear memory (about 1 KB) and the app's thread stack (8 KB).
 
 Flashing the firmware does not touch the key storage: a board keeps its identity unless its whole flash is erased, and then enrolls again as a new device. The firmware logs a warning when it generates a new key, and an error when the key storage is unusable and has to be erased.
 

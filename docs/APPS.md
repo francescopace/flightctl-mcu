@@ -13,3 +13,5 @@ There are two examples:
 - [trend](../wasm-apps/trend/trend.c): no LED. It smooths the temperature and reports whether it is rising or falling, and how fast.
 
 Build and push with `wasm-apps/build.sh <app> <version>`. Keep its link flags: exporting `__heap_base` and `__data_end` lets WAMR shrink the 64 KB WebAssembly memory page to what the module actually uses. Without that, an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses, so an app with a function pointer would not load.
+
+What limits an app on a small chip is the heap, not the 64 KB the device accepts for a `.wasm`. Each app takes the module as WAMR's fast interpreter loads it (about 2.5 to 3.5 times the `.wasm`), its linear memory (static data and the 1 KB stack), about 3.5 KB for the instance and 8 KB for its thread. `trend`, 1.9 KB of `.wasm`, takes 17.7 KB on a C3 ([RESULTS.md](RESULTS.md#ram)).

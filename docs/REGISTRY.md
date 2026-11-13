@@ -54,7 +54,7 @@ The push tools follow the devices' rule:
 - `tools/registry/registry_client.py` holds the shared logic.
 
 ```bash
-tools/fw-push.py $(cat .secrets/registry/host)/flightctl-mcu/fw:v3.1
+tools/fw-push.py $(cat .secrets/registry/host)/flightctl-mcu/fw:v3.2
 ```
 
 ```bash
