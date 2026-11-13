@@ -7,6 +7,12 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # The agent (TLS handshakes, JSON) runs in the main task.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=24576
 
+# CPU use for status.resources: the idle tasks' run time, in esp_timer
+# microseconds, on 64 bits (32 would wrap after 71 minutes).
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64=y
+
 # Flight Control requires TLS 1.3 with ECDSA P-256.
 CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
 CONFIG_MBEDTLS_SSL_TLS1_3_KEXM_EPHEMERAL=y

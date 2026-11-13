@@ -24,8 +24,13 @@ typedef struct {
     int cpu_count;
     uint64_t mem_total;
     uint64_t mem_free;
-    uint64_t disk_total;
+    uint64_t disk_total;       /* the storage the agent writes to (config, apps) */
     uint64_t disk_free;
+    /* Time the CPUs were busy, and all the time, both counted since boot in
+     * any one unit (cycles, microseconds): the core takes the difference
+     * between two readings. cpu_total 0: the port cannot tell. */
+    uint64_t cpu_busy;
+    uint64_t cpu_total;
 } fc_sysinfo_t;
 
 typedef enum {

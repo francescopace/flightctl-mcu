@@ -200,6 +200,14 @@ void fc_port_sysinfo(fc_sysinfo_t *si)
         si->disk_total = (uint64_t)vfs.f_blocks * vfs.f_frsize;
         si->disk_free = (uint64_t)vfs.f_bfree * vfs.f_frsize;
     }
+#ifdef CONFIG_SCHED_THREAD_USAGE_ALL
+    /* Cycles: all of them, and those outside the idle threads. */
+    k_thread_runtime_stats_t rt;
+    if (k_thread_runtime_stats_all_get(&rt) == 0) {
+        si->cpu_total = rt.execution_cycles;
+        si->cpu_busy = rt.total_cycles;
+    }
+#endif
 }
 
 void fc_port_custom_info(void *obj)

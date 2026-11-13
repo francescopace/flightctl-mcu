@@ -27,6 +27,7 @@ int stub_verbose;
 int stub_hwkey_bits;
 int stub_hwkey_seal_fails;
 int stub_hwkey_seals;
+int stub_kv_set_fails;
 
 static entry_t *find(entry_t *t, const char *key, int create)
 {
@@ -79,6 +80,7 @@ void stub_reset(void)
     stub_hwkey_bits = 0;
     stub_hwkey_seal_fails = 0;
     stub_hwkey_seals = 0;
+    stub_kv_set_fails = 0;
 }
 
 const char *stub_kv(const char *key)
@@ -107,6 +109,9 @@ int fc_port_kv_get(const char *key, char **out, size_t *len)
 
 int fc_port_kv_set(const char *key, const void *data, size_t len)
 {
+    if (stub_kv_set_fails) {
+        return -1;
+    }
     return put(s_kv, key, data, len);
 }
 

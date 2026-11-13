@@ -15,7 +15,10 @@ mkdir -p "$OUT"
 # the module really uses (a few KB), which the C3/C5 heap can satisfy.
 # APP_VERSION is the major version from the tag (v2.1 -> 2), for apps that
 # build several behaviours from one source (alarm).
-clang --target=wasm32 -O2 -nostdlib -I"$DIR/sdk" -DAPP_VERSION="$(echo "${VER#v}" | cut -d. -f1 | tr -cd '0-9')" \
+# -mcpu=mvp: the device's WAMR has no reference types, and clang 20 and later
+# otherwise encode call_indirect in a way it refuses ("zero byte expected"),
+# so any app with a function pointer would not load.
+clang --target=wasm32 -mcpu=mvp -O2 -nostdlib -I"$DIR/sdk" -DAPP_VERSION="$(echo "${VER#v}" | cut -d. -f1 | tr -cd '0-9')" \
   -Wl,--no-entry -Wl,--export=__heap_base -Wl,--export=__data_end -Wl,--stack-first -Wl,-z,stack-size=1024 \
   -Wl,--initial-memory=65536 -Wl,--max-memory=65536 -Wl,--strip-all \
   -o "$OUT/$APP.wasm" "$DIR/$APP/$APP.c"

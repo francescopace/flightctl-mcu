@@ -20,6 +20,7 @@
 #include "fc_identity.h"
 #include "fc_oci.h"
 #include "fc_port.h"
+#include "fc_resources.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/x509_crt.h"
 
@@ -35,6 +36,7 @@
 /* Decommissioned: the target asked for. Kept when everything else is wiped,
  * so the device does not enroll again on its own at the next boot. */
 #define KV_DECOMMISSIONED    "decommission"
+#define KV_RESOURCES         "resources"      /* spec.resources last applied */
 
 #define API "/api/v1"
 #define RENDERED_ANNOTATION "device-controller/renderedVersion"
@@ -233,6 +235,11 @@ static void add_metrics(agent_t *a, cJSON *custom, const fc_sysinfo_t *si)
         cJSON_AddStringToObject(m, "netRxBytes", num);
         snprintf(num, sizeof(num), "%lu", fc_http_handshakes());
         cJSON_AddStringToObject(m, "tlsHandshakes", num);
+        int cpu = fc_res_cpu_percent();
+        if (cpu >= 0) {
+            snprintf(num, sizeof(num), "%d", cpu);
+            cJSON_AddStringToObject(m, "cpuPercent", num);
+        }
         fc_port_metrics(m);
         char *text = cJSON_PrintUnformatted(m);
         cJSON_Delete(m);
@@ -333,14 +340,8 @@ static cJSON *build_status(agent_t *a)
     fc_apps_status(cJSON_AddArrayToObject(st, "applications"), cJSON_AddObjectToObject(st, "applicationsSummary"),
                    custom);
 
-    const char *mem = "Healthy";
-    if (si.mem_total > 0 && si.mem_free * 10 < si.mem_total) {
-        mem = "Warning";
-    }
-    cJSON *res = cJSON_AddObjectToObject(st, "resources");
-    cJSON_AddStringToObject(res, "cpu", "Healthy");
-    cJSON_AddStringToObject(res, "memory", mem);
-    cJSON_AddStringToObject(res, "disk", "Healthy");
+    char res_info[80];
+    int res_level = fc_res_status(cJSON_AddObjectToObject(st, "resources"), res_info, sizeof(res_info));
 
     cJSON *integ = cJSON_AddObjectToObject(st, "integrity");
     cJSON_AddStringToObject(integ, "status", "Unsupported");
@@ -369,9 +370,15 @@ static cJSON *build_status(agent_t *a)
         cJSON_AddStringToObject(upd, "info", a->update_error);
     }
 
+    /* A critical resource alert first, then a failed update, then a warning. */
     cJSON *sum = cJSON_AddObjectToObject(st, "summary");
-    cJSON_AddStringToObject(sum, "status", failed ? "Degraded" : "Online");
-    cJSON_AddStringToObject(sum, "info", failed ? a->update_error : "Device is running");
+    if (res_level == 2 || (res_level == 1 && !failed)) {
+        cJSON_AddStringToObject(sum, "status", res_level == 2 ? "Error" : "Degraded");
+        cJSON_AddStringToObject(sum, "info", res_info);
+    } else {
+        cJSON_AddStringToObject(sum, "status", failed ? "Degraded" : "Online");
+        cJSON_AddStringToObject(sum, "info", failed ? a->update_error : "Device is running");
+    }
 
     cJSON *life = cJSON_AddObjectToObject(st, "lifecycle");
     /* The server sets Decommissioning when asked, and keeps the lifecycle
@@ -771,10 +778,23 @@ static void *status_thread(void *arg)
             if (renew > 0 && renew < due) {
                 due = renew;
             }
-            if (time(NULL) >= due) {
+            /* Resource samples come on their own interval, between statuses;
+             * an alert that starts or clears is reported with the next. */
+            long long sample = fc_res_next_sample(), mono = fc_res_now();
+            if (sample >= 0 && sample <= mono) {
+                pthread_mutex_unlock(&a->lock);
+                fc_sysinfo_t si = {0};
+                fc_port_sysinfo(&si);
+                int changed = fc_res_sample(&si, mono);
+                pthread_mutex_lock(&a->lock);
+                a->status_dirty |= changed;
+                continue;
+            }
+            time_t now = time(NULL);
+            if (now >= due) {
                 break;
             }
-            struct timespec until = {.tv_sec = due};
+            struct timespec until = {.tv_sec = sample >= 0 && now + (sample - mono) < due ? now + (sample - mono) : due};
             pthread_cond_timedwait(&a->status_wake, &a->lock, &until);
         }
         a->status_urgent = 0;
@@ -876,6 +896,39 @@ static int apply_inline_file(agent_t *a, const cJSON *file, char *err, size_t er
     return rc;
 }
 
+/* spec.resources, kept in storage so that the monitors are the fleet's
+ * again after a reboot (the long-poll then answers that nothing changed).
+ * Written only when it changes. */
+static void apply_resources(const cJSON *resources, char *err, size_t err_len)
+{
+    fc_res_apply(resources, fc_res_now(), err, err_len);
+    char *text = cJSON_IsArray(resources) ? cJSON_PrintUnformatted(resources) : NULL;
+    char *stored = NULL;
+    size_t len = 0;
+    int have = fc_port_kv_get(KV_RESOURCES, &stored, &len) == 0;
+    if (text == NULL && have) {
+        fc_port_kv_del(KV_RESOURCES);
+    } else if (text != NULL && (!have || strcmp(text, stored) != 0)) {
+        fc_port_kv_set(KV_RESOURCES, text, strlen(text));
+    }
+    free(stored);
+    free(text);
+}
+
+static void load_resources(void)
+{
+    fc_res_reset(fc_res_now());
+    char *stored = NULL;
+    size_t len = 0;
+    if (fc_port_kv_get(KV_RESOURCES, &stored, &len) == 0) {
+        cJSON *r = cJSON_Parse(stored);
+        char err[160];
+        fc_res_apply(r, fc_res_now(), err, sizeof(err));
+        cJSON_Delete(r);
+        free(stored);
+    }
+}
+
 static void apply_rendered(agent_t *a, const char *json)
 {
     cJSON *dev = cJSON_Parse(json);
@@ -894,6 +947,8 @@ static void apply_rendered(agent_t *a, const char *json)
         cJSON_Delete(dev);
         return;
     }
+
+    apply_resources(cJSON_GetObjectItem(spec, "resources"), err, sizeof(err));
 
     const cJSON *provider;
     cJSON_ArrayForEach(provider, cJSON_GetObjectItem(spec, "config")) {
@@ -1212,6 +1267,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     kv_load_str(KV_OS_IMAGE, a.os_image, sizeof(a.os_image));
     kv_load_str(KV_OS_DIGEST, a.os_digest, sizeof(a.os_digest));
     kv_load_str(KV_OS_FAILED, a.failed_os_image, sizeof(a.failed_os_image));
+    load_resources();
     fc_port_log(FC_LOG_INFO, "device name: %s", a.id.name);
     resume_firmware_update(&a);
 

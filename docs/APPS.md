@@ -12,4 +12,4 @@ There are two examples:
 - [alarm](../wasm-apps/alarm/alarm.c): the LED logic of the temperature alarm, a few hundred bytes. It uses only blue, dim for the pre-alarm and blinking for the alarm, so boards with a single-colour LED look the same as RGB ones.
 - [trend](../wasm-apps/trend/trend.c): no LED. It smooths the temperature and reports whether it is rising or falling, and how fast.
 
-Build and push with `wasm-apps/build.sh <app> <version>`. Keep its link flags: exporting `__heap_base` and `__data_end` lets WAMR shrink the 64 KB WebAssembly memory page to what the module actually uses. Without that, an app does not fit on a C3.
+Build and push with `wasm-apps/build.sh <app> <version>`. Keep its link flags: exporting `__heap_base` and `__data_end` lets WAMR shrink the 64 KB WebAssembly memory page to what the module actually uses. Without that, an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses, so an app with a function pointer would not load.

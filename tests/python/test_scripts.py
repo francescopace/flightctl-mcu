@@ -222,5 +222,47 @@ class RegistryConfigTest(unittest.TestCase):
             self.assertEqual(mod.files_for("10.0.0.1:5001"), [])
 
 
+class GitExportTest(unittest.TestCase):
+    FLEET = """apiVersion: flightctl.io/v1beta1
+kind: Fleet
+metadata:
+  name: f
+spec:
+  selector:
+    matchLabels: {app: a}
+  template:
+    spec:
+      os:
+        image: ${REGISTRY}/fw:v1
+      config:
+        - name: app
+          inline:
+            - path: /etc/a.json
+              content: '{"x": {{ getOrDefault .metadata.labels "x" "1" }}}'
+        - name: registry
+          inline: []
+"""
+
+    def test_registry_spelled_out_and_secrets_mounted(self):
+        import yaml
+        mod = load("git_export", "tools/fleet/git-export.py")
+        with tempfile.TemporaryDirectory() as d:
+            for name, text in (("host", "reg.example:5443"), ("ca.crt", "CA"), ("auth.json", "{}")):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write(text)
+            mod.registry_client.SECRETS = d
+            os.environ.pop("REGISTRY_AUTH_FILE", None)
+            fleet = yaml.safe_load(mod.export(self.FLEET, "reg.example:5443"))
+            spec = fleet["spec"]["template"]["spec"]
+            self.assertEqual(spec["os"]["image"], "reg.example:5443/fw:v1")
+            self.assertEqual([c["name"] for c in spec["config"]], ["app", "registry-ca", "registry-auth"])
+            self.assertIn("{{ getOrDefault", spec["config"][0]["inline"][0]["content"])
+            self.assertEqual(spec["config"][1]["secretRef"]["mountPath"], "/etc/containers/certs.d/reg.example")
+            self.assertEqual(spec["config"][2]["secretRef"]["mountPath"], "/etc/containers")
+            # plain HTTP: nothing mounted
+            plain = yaml.safe_load(mod.export(self.FLEET, "10.0.0.1:5001"))
+            self.assertEqual([c["name"] for c in plain["spec"]["template"]["spec"]["config"]], ["app"])
+
+
 if __name__ == "__main__":
     unittest.main()

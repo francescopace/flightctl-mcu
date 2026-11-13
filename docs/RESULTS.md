@@ -8,6 +8,7 @@ What has been verified, where, and with which figures: microcontrollers managed 
 |---|---|---|
 | Enrollment and identity | P-256 key generated on the device, CSR, approval with `flightctl approve`, mTLS with TLS 1.3 | Eight boards (the six Espressif chips with ESP-IDF; a Pico W and an ESP32-S3 with Zephyr), emulated C3, C5 and S3, and the simulated device |
 | Monitoring | Full agent API status: resources, `customInfo` (heap, RSSI, temperature, traffic), and `Unknown` after 5 minutes offline | Works |
+| Resource alerts | CPU, heap and storage sampled against the fleet's `spec.resources` rules, as the Linux agent does; the status gives `Warning` or `Critical` per resource and the summary turns `Degraded` or `Error` | In the end-to-end test: a memory rule from the fleet reported as `Warning` within 21 s, and Flight Control logged `DeviceMemoryWarning`, then `DeviceMemoryNormal` once the rule was removed. CPU from the idle time is in the firmware, not yet read on a board |
 | Config without reboot | Inline `spec.config`, validated by the application before it is stored | Applied in 1–6 s. An invalid config is rejected and reported as OutOfDate with the error message |
 | Firmware OTA | `spec.os.image` points to an OCI index with one firmware per chip. The download goes straight into the A/B slot and is checked with sha256 | Staged rollout (canary first, then the rest) across 3 devices in 50–80 s |
 | Firmware deltas | A device on a known release downloads a patch from it and rebuilds the image from its own ([DELTA.md](DELTA.md)) | 1 to 12% of the image between builds of the same kind; on the Pico W and on the ESP32-S3 with both ports, the other ESP32 chips in the emulator |
@@ -225,6 +226,12 @@ Also found: Flight Control serves inline content given in base64 percent-encoded
     - The real cause was two copies of cJSON in the firmware: ours and ESP-IDF's (component `json`), and the firmware ran ESP-IDF's.
     - Fix: the firmware builds only the ESP-IDF components it needs (`set(COMPONENTS main)`; the build fails if `json` comes back), and cJSON's nesting limit is 32 instead of 1000 (real documents use fewer than 10). The same config is now rejected with an error in Flight Control. Side effect: a clean firmware build takes under a minute instead of three.
     - Later, WiFi provisioning in the field needed ESP-IDF's `json` component: the firmware now links only ESP-IDF's cJSON, built with the same limit of 32 (`port/espidf/CMakeLists.txt`), and no longer ours.
+15. **An app with a function pointer did not load.**
+    - clang 20 and later encode `call_indirect` with the reference-types layout by default, and the firmware's WAMR, built without reference types, refuses it ("zero byte expected").
+    - Fix: apps are built for the WebAssembly MVP (`-mcpu=mvp` in `wasm-apps/build.sh`).
+16. **Each app was held in RAM twice, and could be lost on a full flash.**
+    - The agent kept the `.wasm` bytes and gave WAMR a second copy to load, for as long as the app ran. A new version was stored only after the old one was stopped, without checking the write: on a full or failing flash the app ran until the next reboot and was then gone.
+    - Fix: the module is loaded once, with WAMR copying what it needs, and the bytes are freed right after. A new version is stored first; if that fails, the running version keeps running and the update is retried. A stored module that no longer loads is reported in the status and downloaded again with the next spec.
 
 ## Flight Control 1.4.0
 

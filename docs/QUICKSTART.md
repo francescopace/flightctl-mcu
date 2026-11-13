@@ -118,7 +118,7 @@ tools/fleet/apply.sh
 
 The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest.
 
-This is the plain door. For the one with TLS and a password, push to `$(cat .secrets/registry/host)` and apply with `REGISTRY=$(cat .secrets/registry/host)`. `apply.sh` then adds the registry's CA and the password to the fleet as config files. The devices must already run firmware that knows TLS, which this one does; see [REGISTRY.md](REGISTRY.md#moving-a-fleet-from-plain-http-to-tls).
+This is the plain door. For the one with TLS and a password, push to `$(cat .secrets/registry/host)` and apply with `REGISTRY=$(cat .secrets/registry/host)`. `apply.sh` then adds the registry's CA and the password to the fleet as config files. The devices must already run firmware that knows TLS, which this one does; see [REGISTRY.md](REGISTRY.md#moving-a-fleet-from-plain-http-to-tls). To keep the fleet in Git instead, see [REGISTRY.md](REGISTRY.md#fleets-kept-in-git).
 
 ## 7. Take it out
 

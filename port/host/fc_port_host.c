@@ -7,8 +7,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
@@ -85,6 +86,35 @@ int fc_port_kv_del(const char *key)
     return unlink(p) == 0 || errno == ENOENT ? 0 : -1;
 }
 
+/* Bytes in the files under `dir`. */
+static uint64_t du(const char *dir, int depth)
+{
+    uint64_t total = 0;
+    DIR *d = opendir(dir);
+    if (d == NULL) {
+        return 0;
+    }
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) {
+            continue;
+        }
+        char p[1024];
+        struct stat st;
+        snprintf(p, sizeof(p), "%s/%s", dir, e->d_name);
+        if (lstat(p, &st) != 0) {
+            continue;
+        }
+        if (S_ISREG(st.st_mode)) {
+            total += (uint64_t)st.st_size;
+        } else if (S_ISDIR(st.st_mode) && depth < 8) {
+            total += du(p, depth + 1);
+        }
+    }
+    closedir(d);
+    return total;
+}
+
 void fc_port_sysinfo(fc_sysinfo_t *si)
 {
     struct utsname u;
@@ -118,11 +148,33 @@ void fc_port_sysinfo(fc_sysinfo_t *si)
 #else
     si->mem_total = (uint64_t)sysconf(_SC_PHYS_PAGES) * (uint64_t)sysconf(_SC_PAGESIZE);
     si->mem_free = (uint64_t)sysconf(_SC_AVPHYS_PAGES) * (uint64_t)sysconf(_SC_PAGESIZE);
+    /* MemFree leaves out the page cache, which the kernel gives back. */
+    FILE *mi = fopen("/proc/meminfo", "r");
+    if (mi != NULL) {
+        char line[128];
+        unsigned long long kb;
+        while (fgets(line, sizeof(line), mi) != NULL) {
+            if (sscanf(line, "MemAvailable: %llu kB", &kb) == 1) {
+                si->mem_free = kb * 1024;
+            }
+        }
+        fclose(mi);
+    }
 #endif
-    struct statvfs vfs;
-    if (statvfs(s_data_dir, &vfs) == 0) {
-        si->disk_total = (uint64_t)vfs.f_blocks * vfs.f_frsize;
-        si->disk_free = (uint64_t)vfs.f_bavail * vfs.f_frsize;
+    /* The simulated device's storage: what its data directory holds, out of
+     * FC_HOST_DISK_BYTES (default 640 KB, the ESP-IDF firmware's partition),
+     * not the host's file system. */
+    const char *quota = getenv("FC_HOST_DISK_BYTES");
+    si->disk_total = quota != NULL ? strtoull(quota, NULL, 10) : 640 * 1024;
+    uint64_t used = du(s_data_dir, 0);
+    si->disk_free = used < si->disk_total ? si->disk_total - used : 0;
+    /* The process stands for the device's CPU: its CPU time against the clock. */
+    struct rusage ru;
+    struct timespec ts;
+    if (getrusage(RUSAGE_SELF, &ru) == 0 && clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+        si->cpu_busy = (uint64_t)(ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) * 1000000 +
+                       (uint64_t)(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec);
+        si->cpu_total = (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
     }
 }
 

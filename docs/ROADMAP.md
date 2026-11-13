@@ -29,11 +29,9 @@ What Flight Control offers and the agent does not answer yet:
 
 - [ ] The remote terminal: `flightctl console device/<name>` and the Terminal tab of the UI. Flight Control puts the session in the rendered spec (`consoles`), and the agent is to open a gRPC stream for it on the endpoint it already uses. That takes an HTTP/2 and gRPC client in the core, which speaks HTTP/1.1 only; a closed set of commands in place of a shell, which a microcontroller does not have (status, heap, apps, log, reboot); and a third TLS connection for as long as the session lasts, which the boards shortest of RAM may not have room for.
 - [ ] The device's log from the UI. Flight Control has no API for logs: the Log tab runs `journalctl` through the terminal's channel. So it comes after the terminal: a log kept in RAM (today it goes to the serial port only), shown by a command, and then an answer to the commands the UI sends, which holds only as long as the UI sends those.
-- [ ] Real CPU and storage figures for the alerts. Flight Control raises alerts from what the status reports (resources, apps, disconnection), and Alertmanager is installed with it. The agent reports memory from the heap, but CPU and disk are always `Healthy`. CPU: the idle task's share of time; disk: the storage partition and the space for apps.
 
 Towards a deployment:
 
-- [ ] Fleets kept in Git: Import Fleet in the UI, a `ResourceSync` on the server's side. Today `tools/fleet/apply.sh` applies them and fills in `${REGISTRY}`, which a fleet in Git would have to spell out.
 - [ ] Known vulnerabilities in the firmware, in the UI's security overview. Flight Control asks Trustify (or Quay with Clair) about the OS image digest each device reports, which these devices already report. It takes an SBOM per release (ESP-IDF or Zephyr, mbedTLS, WAMR, detools, the agent), uploaded to Trustify. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
 
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):

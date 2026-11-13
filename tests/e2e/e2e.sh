@@ -3,8 +3,10 @@
 # real Flight Control. Checks enrollment, approval, status, inline config,
 # a WASM app install, an update v1 -> v2 without restart, a config change,
 # the rejection of an unsigned app, an update while the registry is down,
-# the app removal, the renewal of the management certificate (the server is
-# told to issue 2-minute certificates for the test), a server restart and,
+# the app removal, a resource alert from the fleet's spec.resources, the
+# renewal of the management certificate (the server is told to issue
+# 2-minute certificates for the test), a server restart, a new enrollment
+# after the certificate expired, the fleet kept in Git (a ResourceSync) and,
 # last, the device's decommissioning. Apps are signed with a throwaway key;
 # when cosign is installed, it checks that signature too. The device pulls
 # from the registry's door with TLS and a password (tools/registry/up.sh),
@@ -36,6 +38,7 @@ DEVICE_KIND="${DEVICE_KIND:-host}"
 # image sees when the device runs in it (port/zephyr/run.sh).
 ZFLASH="$ROOT/build/e2e-zephyr-$TAG.bin"
 AGENT_PID=""
+GIT_SERVER=""
 DEVICE=""
 OLD_DEVICE=""
 CERT_TTL=120
@@ -53,7 +56,12 @@ cleanup() {
     kill "$AGENT_PID" 2>/dev/null || true
     wait "$AGENT_PID" 2>/dev/null || true
   fi
+  [[ -n "$GIT_SERVER" ]] && docker rm -f "$GIT_SERVER" >/dev/null 2>&1 || true
   if [[ -z "${KEEP:-}" ]]; then
+    flightctl delete "resourcesync/$FLEET" >/dev/null 2>&1 || true
+    flightctl delete "repository/$FLEET-fleets" >/dev/null 2>&1 || true
+    [[ -n "$GIT_SERVER" ]] && kubectl -n flightctl delete secret/fc-registry-ca secret/fc-registry-auth \
+      role/flightctl-worker-registry-secrets rolebinding/flightctl-worker-registry-secrets >/dev/null 2>&1 || true
     flightctl delete "fleet/$FLEET" >/dev/null 2>&1 || true
     [[ -n "$DEVICE" ]] && flightctl delete "device/$DEVICE" >/dev/null 2>&1 || true
     [[ -n "$DEVICE" ]] && flightctl delete "enrollmentrequest/$DEVICE" >/dev/null 2>&1 || true
@@ -88,7 +96,9 @@ sys.exit(0 if ($expr) else 1)" 2>/dev/null; then
 }
 
 # fleet <threshold_c> <app tag, or empty for no app> [app image name, default alarm]
-apply_fleet() {
+# RESOURCES: spec.resources to add (YAML, indented for the template's spec).
+RESOURCES=""
+fleet_yaml() {
   local threshold="$1" app="$2" image="${3:-alarm}"
   {
     cat <<EOF
@@ -111,6 +121,7 @@ spec:
             - path: /etc/fc-app/alarm.json
               content: '{"threshold_c": $threshold}'
 EOF
+    [[ -n "$RESOURCES" ]] && printf '%s\n' "$RESOURCES"
     if [[ -n "$app" ]]; then
       cat <<EOF
       applications:
@@ -121,7 +132,10 @@ EOF
             TICK_MS: "100"
 EOF
     fi
-  } | tools/fleet/registry-config.py "$REGISTRY" | flightctl apply -f - >/dev/null
+  }
+}
+apply_fleet() {
+  fleet_yaml "$@" | tools/fleet/registry-config.py "$REGISTRY" | flightctl apply -f - >/dev/null
 }
 
 rendered() {
@@ -288,6 +302,22 @@ wait_for 120 "trend app reporting" "apps and apps[0]['status'] == 'Running' and 
 apply_fleet 35 ""
 wait_for 120 "trend app removed" "not apps"
 
+log "resource alerts"
+# Any memory in use is above 0%: Warning after 10 s, sampled every 5 s.
+RESOURCES='      resources:
+        - monitorType: Memory
+          samplingInterval: 5s
+          alertRules:
+            - severity: Warning
+              percentage: 0
+              duration: 10s
+              description: e2e memory alert'
+apply_fleet 35 ""
+wait_for 120 "memory Warning reported" "st['resources']['memory'] == 'Warning' and st['summary']['status'] == 'Degraded' and 'Memory' in st['summary'].get('info', '')"
+RESOURCES=""
+apply_fleet 35 ""
+wait_for 120 "alert cleared with the default monitors" "st['resources']['memory'] == 'Healthy' and st['summary']['status'] == 'Online'"
+
 log "management certificate renewal"
 # Issued at enrollment for CERT_TTL seconds; the agent renews it after a
 # quarter of that. The device must keep reporting after the first one expires.
@@ -364,6 +394,56 @@ else
   grep -q '"threshold_c": 30' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "config lost across re-enrollment"
   echo "ok: config kept"
 fi
+
+log "fleet from Git, the registry's credentials from Kubernetes secrets"
+# The same fleet as a file in a Git repository, imported by a ResourceSync:
+# tools/fleet/git-export.py spells out the registry and mounts its CA and
+# password from secrets (tools/fleet/registry-secrets.sh) instead of putting
+# them in the file. The repository is served by git daemon in a container.
+mkdir -p "$WORK/git/src"
+fleet_yaml 25 "v1.$TAG" > "$WORK/git/e2e.yaml"
+tools/fleet/git-export.py "$REGISTRY" "$WORK/git/src/fleets" "$WORK/git/e2e.yaml" >/dev/null
+grep -q "auth.json\|BEGIN CERTIFICATE" "$WORK/git/src/fleets/e2e.yaml" && fail "credentials in the exported fleet"
+git -C "$WORK/git/src" init -q -b main
+git -C "$WORK/git/src" add fleets
+git -C "$WORK/git/src" -c user.name=e2e -c user.email=e2e@localhost commit -qm "e2e fleet"
+git clone -q --bare "$WORK/git/src" "$WORK/git/fleets.git"
+GIT_SERVER="fc-e2e-git-$TAG"
+docker run -d --rm --name "$GIT_SERVER" -p "${GIT_PORT:-9418}:9418" -v "$WORK/git:/git:ro" alpine:3.20 sh -c \
+  "apk add -q --no-cache git-daemon && git config --global safe.directory '*' &&
+   exec git daemon --reuseaddr --export-all --base-path=/git --listen=0.0.0.0 /git" >/dev/null
+for i in $(seq 1 30); do
+  git ls-remote "git://127.0.0.1:${GIT_PORT:-9418}/fleets.git" >/dev/null 2>&1 && break
+  (( i == 30 )) && fail "git daemon not serving the repository"
+  sleep 2
+done
+tools/fleet/registry-secrets.sh >/dev/null
+writes_before=$(grep -c 'config: wrote /etc/containers/auth.json' "$WORK/agent.log" || true)
+flightctl delete "fleet/$FLEET" >/dev/null   # the ResourceSync owns it from now on
+flightctl apply -f - >/dev/null <<EOF
+apiVersion: flightctl.io/v1beta1
+kind: Repository
+metadata:
+  name: $FLEET-fleets
+spec:
+  type: git
+  url: git://$IP:${GIT_PORT:-9418}/fleets.git
+---
+apiVersion: flightctl.io/v1beta1
+kind: ResourceSync
+metadata:
+  name: $FLEET
+spec:
+  repository: $FLEET-fleets
+  targetRevision: main
+  path: /fleets
+EOF
+wait_for 420 "fleet from Git applied, app pulled" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v1') and st['updated']['status'] == 'UpToDate'"
+(( $(grep -c 'config: wrote /etc/containers/auth.json' "$WORK/agent.log") > writes_before )) \
+  || fail "the credentials did not come from the secret"
+grep -q 'config: wrote /etc/containers/certs.d/' "$WORK/agent.log" || fail "the registry CA did not come from the secret"
+echo "ok: credentials mounted from the secrets"
+config_stored 25 1 "config from Git written" "config from Git not written"
 
 log "decommission"
 # Started, then Completed, then the device wipes its key and certificate and

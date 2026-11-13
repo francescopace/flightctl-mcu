@@ -29,6 +29,8 @@
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_wifi.h"
 #include "fc_crypto.h"
 #include "fc_port.h"
@@ -207,11 +209,25 @@ void fc_port_sysinfo(fc_sysinfo_t *si)
     si->cpu_count = chip.cores;
     si->mem_total = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
     si->mem_free = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+    /* Entries of 32 bytes. One page is kept free for NVS to move entries
+     * into when it reclaims erased ones, so it is not counted; the entries
+     * erased and not yet reclaimed are counted as free, as NVS does. */
     nvs_stats_t st;
     if (nvs_get_stats(PART, &st) == ESP_OK) {
-        si->disk_total = (uint64_t)st.total_entries * 32;
-        si->disk_free = (uint64_t)st.free_entries * 32;
+        si->disk_total = (uint64_t)(st.used_entries + st.available_entries) * 32;
+        si->disk_free = (uint64_t)st.available_entries * 32;
     }
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS && CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER && \
+    CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64
+    /* Microseconds of the esp_timer, per core: the idle tasks' share is the
+     * time the CPU was free. */
+    uint64_t idle = 0;
+    for (int core = 0; core < portNUM_PROCESSORS; core++) {
+        idle += ulTaskGetIdleRunTimeCounterForCore(core);
+    }
+    si->cpu_total = (uint64_t)esp_timer_get_time() * portNUM_PROCESSORS;
+    si->cpu_busy = si->cpu_total > idle ? si->cpu_total - idle : 0;
+#endif
 }
 
 void fc_port_custom_info(void *obj)

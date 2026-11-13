@@ -148,6 +148,49 @@ static void a_rejected_config_keeps_the_old_version(void)
     cJSON_Delete(st);
 }
 
+static const char *status_at(const cJSON *st, const char *obj, const char *key)
+{
+    return cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(st, obj), key));
+}
+
+/* spec.resources: applied, kept for the next boot, and its alerts in the
+ * status and the summary. The stub's heap is half used. */
+static void resource_monitors_are_kept_and_reported(void)
+{
+    new_agent();
+    load_resources();
+    apply("5", "{\"resources\":[{\"monitorType\":\"Memory\",\"samplingInterval\":\"1s\",\"alertRules\":["
+               "{\"severity\":\"Critical\",\"duration\":\"0s\",\"percentage\":40,\"description\":\"\"}]}]}");
+    CHECK_STR(s_a.update_error, "");
+    CHECK_CONTAINS(stub_kv("resources"), "\"Memory\"");
+    fc_sysinfo_t si;
+    fc_port_sysinfo(&si);
+    CHECK_INT(fc_res_sample(&si, fc_res_now() + 1), 1);
+    cJSON *st = build_status(&s_a);
+    CHECK_STR(status_at(st, "resources", "memory"), "Critical");
+    CHECK_STR(status_at(st, "resources", "cpu"), "Healthy");
+    CHECK_STR(status_at(st, "summary", "status"), "Error");
+    CHECK_STR(status_at(st, "summary", "info"), "Critical resource alert: Memory");
+    cJSON_Delete(st);
+
+    /* after a reboot: the defaults, then the stored monitors */
+    load_resources();
+    fc_port_sysinfo(&si);
+    fc_res_sample(&si, fc_res_now() + 2);
+    st = build_status(&s_a);
+    CHECK_STR(status_at(st, "resources", "memory"), "Critical");
+    cJSON_Delete(st);
+
+    /* a spec without resources: the defaults, and nothing kept */
+    apply("6", "{}");
+    CHECK(stub_kv("resources") == NULL);
+    fc_res_sample(&si, fc_res_now() + 3);
+    st = build_status(&s_a);
+    CHECK_STR(status_at(st, "resources", "memory"), "Healthy");
+    CHECK_STR(status_at(st, "summary", "status"), "Online");
+    cJSON_Delete(st);
+}
+
 static void only_inline_config_is_supported(void)
 {
     new_agent();
@@ -549,6 +592,7 @@ int main(void)
     RUN(a_rejected_config_keeps_the_old_version);
     RUN(percent_encoded_base64_is_decoded);
     RUN(only_inline_config_is_supported);
+    RUN(resource_monitors_are_kept_and_reported);
     RUN(a_deeply_nested_spec_is_refused_without_crashing);
     RUN(the_current_firmware_is_not_downloaded_again);
     RUN(a_refused_firmware_is_not_downloaded_again);

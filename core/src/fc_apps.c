@@ -50,8 +50,10 @@ typedef struct {
     char image[200];
     char digest[72];
     int tick_ms;
-    unsigned char *wasm;
-    size_t wasm_len;
+    /* Loaded once and owned by the slot; the runner only instantiates it.
+     * NULL when the stored module could not be loaded. The .wasm bytes are
+     * not kept in RAM (load_module). */
+    wasm_module_t module;
 
     pthread_t thread;
     pthread_attr_t thread_attr; /* until the thread is joined: on Zephyr it owns the stack */
@@ -118,23 +120,24 @@ static uint32_t now_ms(void)
     return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 
+/* Loads a module so that the .wasm buffer can be freed as soon as this
+ * returns: WAMR copies the strings and data segments it needs and leaves the
+ * buffer as it was (a plain wasm_runtime_load patches it and keeps pointing
+ * into it), so the bytes can still be stored after this check. */
+static wasm_module_t load_module(unsigned char *code, size_t len, char *ebuf, size_t elen)
+{
+    LoadArgs args;
+    memset(&args, 0, sizeof(args));
+    args.wasm_binary_freeable = true;
+    return wasm_runtime_load_ex(code, (uint32_t)len, &args, ebuf, (uint32_t)elen);
+}
+
 static void *runner(void *arg)
 {
     app_t *a = arg;
     char ebuf[128];
     wasm_runtime_init_thread_env();
-    /* WAMR may patch the buffer while loading: give it a private copy. */
-    unsigned char *code = malloc(a->wasm_len);
-    wasm_module_t module = NULL;
-    if (code != NULL) {
-        memcpy(code, a->wasm, a->wasm_len);
-        module = wasm_runtime_load(code, (uint32_t)a->wasm_len, ebuf, sizeof(ebuf));
-    }
-    if (module == NULL) {
-        set_status(a, "Error", code ? ebuf : "out of memory");
-        fc_port_log(FC_LOG_WARN, "app %s: load: %s", a->name, code ? ebuf : "out of memory");
-        goto done;
-    }
+    wasm_module_t module = a->module;
     while (!a->stop) {
         wasm_module_inst_t inst = wasm_runtime_instantiate(module, WASM_STACK, 0, ebuf, sizeof(ebuf));
         wasm_exec_env_t env = inst ? wasm_runtime_create_exec_env(inst, WASM_STACK) : NULL;
@@ -154,7 +157,6 @@ static void *runner(void *arg)
                 set_status(a, "Error", ebuf);
                 wasm_runtime_destroy_exec_env(env);
                 wasm_runtime_deinstantiate(inst);
-                wasm_runtime_unload(module);
                 goto done;
             }
             set_status(a, "Running", NULL);
@@ -189,15 +191,16 @@ static void *runner(void *arg)
             }
         }
     }
-    wasm_runtime_unload(module);
 done:
-    free(code);
     wasm_runtime_destroy_thread_env();
     return NULL;
 }
 
 static void app_start(app_t *a)
 {
+    if (a->module == NULL) {
+        return; /* the status already says why */
+    }
     a->stop = 0;
     set_status(a, "Preparing", NULL);
     pthread_attr_init(&a->thread_attr);
@@ -218,6 +221,16 @@ static void app_stop(app_t *a)
         a->thread_running = 0;
     }
     set_status(a, "Stopped", NULL);
+}
+
+/* Stops the app and unloads its module (after the runner is joined). */
+static void app_release(app_t *a)
+{
+    app_stop(a);
+    if (a->module != NULL) {
+        wasm_runtime_unload(a->module);
+        a->module = NULL;
+    }
 }
 
 /* ---- persistence ----------------------------------------------------------- */
@@ -307,15 +320,24 @@ int fc_apps_init(const void *natives, int n_natives)
         char key[64];
         wasm_key(name, key, sizeof(key));
         char *code = NULL;
-        if (fc_port_kv_get(key, &code, &a->wasm_len) != 0) {
+        size_t code_len = 0;
+        if (fc_port_kv_get(key, &code, &code_len) != 0) {
             continue;
         }
+        char ebuf[96];
+        a->module = load_module((unsigned char *)code, code_len, ebuf, sizeof(ebuf));
+        free(code);
         a->used = 1;
-        a->wasm = (unsigned char *)code;
         snprintf(a->name, sizeof(a->name), "%s", name);
         snprintf(a->image, sizeof(a->image), "%s", cJSON_GetStringValue(cJSON_GetObjectItem(o, "image")));
         snprintf(a->digest, sizeof(a->digest), "%s", cJSON_GetStringValue(cJSON_GetObjectItem(o, "digest")));
         a->tick_ms = (int)cJSON_GetNumberValue(cJSON_GetObjectItem(o, "tick_ms"));
+        if (a->module == NULL) {
+            /* Shown in the status; the next spec downloads the image again. */
+            fc_port_log(FC_LOG_WARN, "app %s: cannot load the saved module: %s", a->name, ebuf);
+            set_status(a, "Error", ebuf);
+            continue;
+        }
         fc_port_log(FC_LOG_INFO, "starting saved app %s (%s)", a->name, a->image);
         app_start(a);
     }
@@ -332,27 +354,23 @@ static int tick_ms_of(const cJSON *app)
     return ms < 10 ? 10 : ms > 60000 ? 60000 : ms;
 }
 
-/* Downloads and checks a module; on success *out is malloc'd. */
-static int fetch_module(const char *image, unsigned char **out, size_t *len, char *digest, size_t dlen,
-                        char *err, size_t err_len)
+/* Downloads and loads a module: on success *out is the malloc'd .wasm (to be
+ * stored, then freed) and *module the loaded module, which is what runs. A
+ * module WAMR cannot load is rejected before a working app is replaced. */
+static int fetch_module(const char *image, unsigned char **out, size_t *len, wasm_module_t *module, char *digest,
+                        size_t dlen, char *err, size_t err_len)
 {
     if (fc_oci_fetch_layer(image, "wasm", LAYER_WASM, MAX_WASM_SIZE, out, len, digest, dlen, err, err_len) != 0) {
         return -1;
     }
-    /* Reject what WAMR cannot load before replacing a working app. */
     char ebuf[96];
-    unsigned char *copy = malloc(*len);
-    wasm_module_t m = copy ? (memcpy(copy, *out, *len), wasm_runtime_load(copy, (uint32_t)*len, ebuf, sizeof(ebuf)))
-                           : NULL;
-    if (m == NULL) {
-        snprintf(err, err_len, "%s: not a loadable WASM module: %s", image, copy ? ebuf : "out of memory");
-        free(copy);
+    *module = load_module(*out, *len, ebuf, sizeof(ebuf));
+    if (*module == NULL) {
+        snprintf(err, err_len, "%s: not a loadable WASM module: %s", image, ebuf);
         free(*out);
         *out = NULL;
         return 1; /* permanent */
     }
-    wasm_runtime_unload(m);
-    free(copy);
     return 0;
 }
 
@@ -376,11 +394,10 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         }
         if (a->used && !keep) {
             fc_port_log(FC_LOG_INFO, "removing app %s", a->name);
-            app_stop(a);
+            app_release(a);
             char key[64];
             wasm_key(a->name, key, sizeof(key));
             fc_port_kv_del(key);
-            free(a->wasm);
             pthread_mutex_lock(&s_lock);
             a->used = 0;
             pthread_mutex_unlock(&s_lock);
@@ -401,7 +418,9 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         }
         app_t *a = find(name);
         int tick = tick_ms_of(app);
-        if (a != NULL && strcmp(a->image, image) == 0) {
+        /* Same image: nothing to do, unless its saved module failed to load
+         * at boot, in which case it is downloaded again. */
+        if (a != NULL && strcmp(a->image, image) == 0 && a->module != NULL) {
             if (a->tick_ms != tick) {
                 a->tick_ms = tick; /* picked up on the next tick */
                 changed = 1;
@@ -410,8 +429,9 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         }
         unsigned char *code = NULL;
         size_t len = 0;
+        wasm_module_t module = NULL;
         char digest[72], ferr[160];
-        int f = fetch_module(image, &code, &len, digest, sizeof(digest), ferr, sizeof(ferr));
+        int f = fetch_module(image, &code, &len, &module, digest, sizeof(digest), ferr, sizeof(ferr));
         if (f != 0) {
             snprintf(err, err_len, "app %s: %s", name, ferr);
             *retry |= f < 0;
@@ -420,20 +440,32 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         }
         if (a == NULL && (a = alloc_slot()) == NULL) {
             snprintf(err, err_len, "app %s: too many apps (max %d)", name, MAX_APPS);
+            wasm_runtime_unload(module);
             free(code);
             rc = -1;
             continue;
         }
+        /* Stored before the running version is stopped: an app that cannot be
+         * stored would run until the next reboot and then be gone. A failed
+         * write leaves the old module in place on both ports. */
+        char key[64];
+        wasm_key(name, key, sizeof(key));
+        int stored = fc_port_kv_set(key, code, len) == 0;
+        free(code); /* from here on only the loaded module is kept */
+        if (!stored) {
+            snprintf(err, err_len, "app %s: cannot store the module (%u bytes)", name, (unsigned)len);
+            fc_port_log(FC_LOG_WARN, "%s", err);
+            wasm_runtime_unload(module);
+            *retry = 1;
+            rc = -1;
+            continue; /* the running version, if any, keeps running */
+        }
         if (a->used) {
             fc_port_log(FC_LOG_INFO, "updating app %s: %s -> %s", name, a->image, image);
-            app_stop(a);
-            free(a->wasm);
+            app_release(a);
         } else {
             fc_port_log(FC_LOG_INFO, "installing app %s (%s, %u bytes)", name, image, (unsigned)len);
         }
-        char key[64];
-        wasm_key(name, key, sizeof(key));
-        fc_port_kv_set(key, code, len);
         pthread_mutex_lock(&s_lock);
         a->used = 1;
         snprintf(a->name, sizeof(a->name), "%s", name);
@@ -442,8 +474,7 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         a->state[0] = '\0';
         a->restarts = 0;
         pthread_mutex_unlock(&s_lock);
-        a->wasm = code;
-        a->wasm_len = len;
+        a->module = module;
         a->tick_ms = tick;
         app_start(a);
         changed = 1;

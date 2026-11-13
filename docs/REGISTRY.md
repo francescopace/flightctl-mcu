@@ -63,6 +63,41 @@ REGISTRY=$(cat .secrets/registry/host) tools/fleet/apply.sh tools/fleet/zephyr-l
 
 When the registry has a CA, `apply.sh` adds both files to the fleet's template as a config provider named `registry` (`tools/fleet/registry-config.py`).
 
+## Fleets kept in Git
+
+Flight Control can take fleets from a Git repository: a `ResourceSync`, or Import Fleet in the UI. It applies the files as they are, so they cannot hold `${REGISTRY}`, and the password should not be in them. `tools/fleet/git-export.py` writes them for that: the registry spelled out, and the CA and `auth.json` mounted from two Kubernetes secrets (config of type `secretRef`), which `tools/fleet/registry-secrets.sh` makes from `.secrets/registry`. Flight Control's worker reads the secrets when it renders each device's spec; the device gets the same two files as with `apply.sh`. The Helm chart does not let the worker read secrets (`worker.clusterLevelSecretAccess: false`), and the fleet is then refused as invalid; the script also adds a Role that lets it read these two secrets only.
+
+```bash
+tools/fleet/registry-secrets.sh
+```
+
+```bash
+tools/fleet/git-export.py $(cat .secrets/registry/host) <your repo>/fleets tools/fleet/idf-lab.yaml
+```
+
+Commit the files, then point a `Repository` and a `ResourceSync` at them:
+
+```yaml
+apiVersion: flightctl.io/v1beta1
+kind: Repository
+metadata:
+  name: fleets
+spec:
+  type: git
+  url: https://git.example.com/you/fleets.git
+---
+apiVersion: flightctl.io/v1beta1
+kind: ResourceSync
+metadata:
+  name: fleets
+spec:
+  repository: fleets
+  targetRevision: main
+  path: /fleets
+```
+
+A fleet that a `ResourceSync` owns is changed through Git only: delete one applied with `apply.sh` before the first sync. The secrets are in the `flightctl` namespace by default (`FLEET_SECRETS_NAMESPACE`). The end-to-end test runs this against a repository served by `git daemon`.
+
 ## Moving a fleet from plain HTTP to TLS
 
 The devices must first run a firmware that knows TLS for the registry. Release it through the plain door, and once the fleet is up to date, apply the fleet again with the TLS door. Changing the registry address in `os.image` makes every device download its firmware again and restart, because Flight Control compares `os.image` as a string. Push a new release with a delta from the running one (`--delta-from`) to keep that download small.
@@ -76,5 +111,5 @@ A download over TLS opens a TLS session, which on these boards costs about 25 KB
 - **No public CA bundle.** The device trusts only the CA that the fleet gives it. A registry with a public certificate, such as `ghcr.io` or `quay.io`, takes its CA chain as `ca.crt`.
 - **No redirects.** A registry that sends blobs from another host, such as S3 or a CDN, gets a 307 redirect that the device does not follow. Serve blobs from the registry itself.
 - **No read-only account in `registry:3`.** Any account can push to it. A deployment should give its devices a pull-only account, such as a robot account in Harbor or Quay. Signatures still stop a device from installing an image it did not expect.
-- **The credentials stay in the fleet.** Inline config files are part of the fleet's spec, so whoever can read the fleet can read them. Flight Control 1.4 encrypts rendered config at rest. The files can also come from a Kubernetes secret (`secretRef` in the fleet): the server reads the secret and sends its keys to the device as files, as it does with inline ones (read in Flight Control's source, not tried).
+- **The credentials stay in the fleet.** Inline config files are part of the fleet's spec, so whoever can read the fleet can read them. Flight Control 1.4 encrypts rendered config at rest. The files can also come from a Kubernetes secret (`secretRef` in the fleet): the server reads the secret and sends its keys to the device as files, as it does with inline ones, once the worker may read it ([Fleets kept in Git](#fleets-kept-in-git); tried in the end-to-end test).
 - **A file removed from the fleet is not removed from the device.** The device keeps the last `auth.json` it was given until a new one replaces it.

@@ -12,7 +12,7 @@ It works end to end on real hardware, with signed images and certificate renewal
 
 ## Why
 
-Flight Control (upstream of Red Hat Edge Manager, [video overview](https://www.youtube.com/watch?v=BrLQr61dTik)) manages fleets of Linux edge devices. Its agent is written in Go and expects bootc, systemd and Podman.
+Flight Control (upstream of [Red Hat Edge Manager](https://docs.redhat.com/en/documentation/red_hat_edge_manager/)) manages fleets of Linux edge devices. Its agent is written in Go and expects bootc, systemd and Podman.
 
 A sensor node or a small controller on a production line is a microcontroller with a few hundred KB of RAM and an RTOS. It ends up managed by a vendor cloud, a custom MQTT backend, or nothing at all: the gateway that collects its data shows up in Flight Control, and the devices behind it don't.
 
@@ -29,7 +29,8 @@ Here the microcontroller speaks the Flight Control agent API itself. That API is
 | `spec.applications` | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
 | Registry credentials and CA (`auth.json`, `certs.d`) | The same files as on Linux, as config: TLS and a password to the [registry](docs/REGISTRY.md) |
 | Decommission | Key and certificate wiped; the device does not enroll again until its storage is erased |
-| `status` | Heap, flash, firmware version, RSSI, temperature, app state |
+| `spec.resources` | CPU, heap and storage sampled against the fleet's alert rules, as the Linux agent does. Without rules, CPU and storage take the Linux defaults; the heap warns under 10% free, since the network stack holds most of it. |
+| `status` | `resources` from those rules, heap, CPU use, firmware version, RSSI, temperature, app state |
 | Fleet rollout | Works unchanged |
 
 ## How it works
@@ -102,7 +103,7 @@ The requirements in full, the boards tried and how to add a chip, a board or an 
 
 ## Try it
 
-[docs/QUICKSTART.md](docs/QUICKSTART.md) sets up Flight Control on kind and a local registry, then enrolls a device: an Espressif board, or a simulated one on your machine if you have no board. For a Zephyr board, the build and flash steps are in [docs/ZEPHYR.md](docs/ZEPHYR.md).
+[docs/QUICKSTART.md](docs/QUICKSTART.md) sets up Flight Control on kind and a local registry, then enrolls a device: an Espressif board, or a simulated one on your machine if you have no board. kind is only the quickest way to try it: Flight Control also installs on Kubernetes or OpenShift, or on a Fedora or RHEL host as Podman quadlets, and the device works with any of them. For a Zephyr board, the build and flash steps are in [docs/ZEPHYR.md](docs/ZEPHYR.md).
 
 ## Documentation
 
