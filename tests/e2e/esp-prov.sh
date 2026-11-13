@@ -22,8 +22,12 @@ checkout() { # network_provisioning in $BASE/network_provisioning and, for a loc
   local np="$BASE/network_provisioning" idf="$BASE/esp-idf" zip="$BASE/network_provisioning.zip"
   if [[ "$(cat "$np/.version" 2>/dev/null)" != "$PROV_VERSION" ]]; then
     rm -rf "$np" && mkdir -p "$np"
-    curl -fsSL -o "$zip" \
-      "https://components-file.espressif.com/components/espressif/network_provisioning/$PROV_VERSION/espressif__network_provisioning-v$PROV_VERSION.zip"
+    url="https://components-file.espressif.com/components/espressif/network_provisioning/$PROV_VERSION/espressif__network_provisioning-v$PROV_VERSION.zip"
+    if command -v curl >/dev/null; then
+      curl -fsSL -o "$zip" "$url"
+    else # Zephyr's build image, where the host job runs, has no curl
+      python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' "$url" "$zip"
+    fi
     echo "$PROV_SHA256  $zip" | shasum -a 256 -c - >/dev/null
     unzip -q "$zip" -d "$np" && rm -f "$zip"
     echo "$PROV_VERSION" > "$np/.version"

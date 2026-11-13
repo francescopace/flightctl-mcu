@@ -50,8 +50,6 @@ jobs:
           NO_PUSH=1 wasm-apps/build.sh trend v1
       - name: host agent
         run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} port/host/build-ci.sh
-      - name: Zephyr's field provisioning against esp_prov
-        run: tests/e2e/prov-host.sh
       - uses: actions/upload-artifact@v7
         with:
           name: wasm-apps
@@ -60,6 +58,9 @@ jobs:
         with:
           name: host-agent
           path: build/host/fc-host-agent
+      # After the artifacts above: a failure here does not stop the jobs that need them.
+      - name: Zephyr's field provisioning against esp_prov
+        run: tests/e2e/prov-host.sh
       - name: unit tests (C with sanitizers, Python)
         run: CC=clang tests/unit.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
       # Last, so a finding does not stop the artifacts above. Starts from the
