@@ -12,7 +12,7 @@ pick up a newer release by itself. Checked against the latest releases on
 | [mbedTLS](https://github.com/Mbed-TLS/mbedtls) | 4.1.1 | comes with ESP-IDF and with Zephyr; `MBEDTLS_VERSION` in the workflows for the host builds | The core needs 4.1 or later (`CMakeLists.txt`). Not 4.2.0, the latest: neither ESP-IDF 6.0.3 nor Zephyr 4.5 has it. The host build takes the system's (4.2.0 from Homebrew works). |
 | [cJSON](https://github.com/DaveGamble/cJSON) | 1.7.19 | a copy in `third_party/cjson`, unmodified | On every port, ESP-IDF 6 included (it no longer has its own). |
 | [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) | 2.4.5 | `third_party/fetch-wamr.sh` | Fetched at build time. |
-| [detools](https://github.com/eerimoq/detools) (C library, with heatshrink) | 0.53.0 | `third_party/fetch-detools.sh` (tag and commit) | Applies firmware deltas. The Python package that makes them must be the same version (`tools/fw-push.py`, the workflow). Built with `-fwrapv`: see [DELTA.md](DELTA.md). |
+| [detools](https://github.com/eerimoq/detools) (C library, with heatshrink) | 0.53.1 | `third_party/fetch-detools.sh` (tag and commit) | Applies firmware deltas. The Python package that makes them must be the same version (`tools/fw-push.py`, the workflow). Built with `-fwrapv`: see [DELTA.md](DELTA.md). |
 
 ## Host port (Linux, macOS)
 

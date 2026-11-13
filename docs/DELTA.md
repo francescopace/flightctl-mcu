@@ -94,7 +94,9 @@ hostile delta and the device:
 
 detools' C library computes with sizes read from the patch in plain `int`s,
 and the fuzzer found a signed overflow in it within seconds (reported upstream:
-[eerimoq/detools#22](https://github.com/eerimoq/detools/issues/22)). It is
+[eerimoq/detools#22](https://github.com/eerimoq/detools/issues/22)). Version
+0.53.1 bounds it for in-place patches; sequential patches, which these devices
+use, still add the patch's offsets without a bound. It is
 built with wrapping arithmetic (`-fwrapv`) for that reason, and `fc_delta.c`
 refuses any seek outside the old image before detools counts it. `tests/fuzz/fuzz_delta.c`
 fuzzes the decoder in CI with the others.

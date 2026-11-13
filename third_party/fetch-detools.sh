@@ -5,8 +5,8 @@
 # (core/src/fc_delta.c); tools/fw-push.py makes them with the Python
 # package of the same version.
 set -euo pipefail
-DETOOLS_TAG="${DETOOLS_TAG:-0.53.0}"
-DETOOLS_COMMIT="${DETOOLS_COMMIT:-150ae7ee8e066cefca9d8fe075d282d012556931}"
+DETOOLS_TAG="${DETOOLS_TAG:-0.53.1}"
+DETOOLS_COMMIT="${DETOOLS_COMMIT:-a7cc5383e60959ba5d3f87da9bd7aa04aa39e3c8}"
 DIR="$(cd "$(dirname "$0")" && pwd)/detools"
 if [[ -d "$DIR/.git" && "$(git -C "$DIR" rev-parse HEAD)" == "$DETOOLS_COMMIT" ]]; then
   echo "detools already in $DIR ($DETOOLS_TAG)"

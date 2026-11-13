@@ -47,7 +47,7 @@ ZEPHYR_LAYER_TYPE = "application/vnd.zephyr.mcuboot-image"
 DELTA_TYPE = "application/vnd.flightctl-mcu.firmware.delta.v1+detools"
 DELTA_FROM = "io.flightctl-mcu.delta.from"
 DELTA_FROM_SIZE = "io.flightctl-mcu.delta.from-size"
-DETOOLS_VERSION = "0.53.0"  # the version third_party/fetch-detools.sh fetches for the device
+DETOOLS_VERSION = "0.53.1"  # the version third_party/fetch-detools.sh fetches for the device
 # What the device's decoder is built for (core/src/fc_delta.h): a 4 KB window.
 HEATSHRINK_WINDOW, HEATSHRINK_LOOKAHEAD = 12, 8
 EMPTY = b"{}"
@@ -108,15 +108,14 @@ def pull_image(base, repo, ref, chip):
 
 
 def detools_python(root):
-    """A python that has detools: this one, or build/detools-venv, made on first use."""
-    try:
-        import detools  # noqa: F401
+    """A python that has detools DETOOLS_VERSION: this one, or build/detools-venv, made or
+    updated on first use. Another version could make deltas the device reads differently."""
+    check = f"import detools.version as v, sys; sys.exit(v.__version__ != {DETOOLS_VERSION!r})"
+    if subprocess.run([sys.executable, "-c", check], capture_output=True).returncode == 0:
         return sys.executable
-    except ImportError:
-        pass
     venv = f"{root}/build/detools-venv"
     py = f"{venv}/bin/python"
-    if not os.path.exists(py) or subprocess.run([py, "-c", "import detools"], capture_output=True).returncode != 0:
+    if not os.path.exists(py) or subprocess.run([py, "-c", check], capture_output=True).returncode != 0:
         print(f"installing detools {DETOOLS_VERSION} in {venv}")
         subprocess.run([sys.executable, "-m", "venv", venv], check=True)
         subprocess.run([py, "-m", "pip", "install", "-q", f"detools=={DETOOLS_VERSION}"], check=True)
