@@ -16,6 +16,10 @@
 #   SKIP_DEPLOY=1 tests/e2e/e2e.sh   test against the cluster and registry already running
 #   DEVICE_KIND=zephyr tests/e2e/e2e.sh   the same test with the Zephyr build on native_sim
 #                             (port/zephyr/build.sh) as the device, instead of the host agent
+#   CERT_EXPIRY=0 tests/e2e/e2e.sh   without the waits for a certificate to expire (about
+#                             5 minutes): the device working once its first certificate has
+#                             expired, and enrolling again after it expired with the server
+#                             down. The renewal and the server restart are still tested.
 #
 # Needs: kind, helm, kubectl, flightctl, oras, clang + wasm-ld, python3 (PyYAML),
 # and the host agent built in build/host.
@@ -42,6 +46,7 @@ GIT_SERVER=""
 DEVICE=""
 OLD_DEVICE=""
 CERT_TTL=120
+CERT_EXPIRY="${CERT_EXPIRY:-1}"
 
 log() { printf '\n== %s\n' "$*"; }
 fail() {
@@ -328,12 +333,14 @@ echo "first certificate valid until $first"
 wait_for $CERT_TTL "certificate renewed" "ci.get('mgmtCertNotAfter', '$first') > '$first'"
 grep -q "management certificate renewed" "$WORK/agent.log" || fail "no renewal in the agent log"
 expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
-wait_s=$(( expiry - $(date +%s) + 5 ))
-(( wait_s > 0 )) && { echo "waiting ${wait_s}s for the first certificate to expire"; sleep "$wait_s"; }
-# The counters in customInfo change once an hour: a status accepted since is
-# shown by the next renewal, every quarter of CERT_TTL.
-last=$(custom mgmtCertNotAfter)
-wait_for 90 "status accepted after the first certificate expired" "ci.get('mgmtCertNotAfter', '') > '$last' and st['summary']['status'] == 'Online'"
+if [[ "$CERT_EXPIRY" == 1 ]]; then
+  wait_s=$(( expiry - $(date +%s) + 5 ))
+  (( wait_s > 0 )) && { echo "waiting ${wait_s}s for the first certificate to expire"; sleep "$wait_s"; }
+  # The counters in customInfo change once an hour: a status accepted since is
+  # shown by the next renewal, every quarter of CERT_TTL.
+  last=$(custom mgmtCertNotAfter)
+  wait_for 90 "status accepted after the first certificate expired" "ci.get('mgmtCertNotAfter', '') > '$last' and st['summary']['status'] == 'Online'"
+fi
 
 # Where the device reports its heap (the Zephyr build): how low it has been,
 # after two apps, their updates and the certificate renewal.
@@ -350,49 +357,51 @@ before=$(rendered)
 apply_fleet 30 ""
 wait_for 330 "spec applied after the restart" "st['config']['renderedVersion'] == d['metadata']['annotations']['device-controller/renderedVersion'] != '$before'"
 
-log "certificate expired while the server was down: the device enrolls again"
-# The certificate lives CERT_TTL seconds and cannot be renewed with the server
-# down. Once it has expired the device starts over under a new key, keeping
-# its apps and config; the allow list approves the new request.
-first=$(custom mgmtCertNotAfter)
-expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
-starts_before=$(starts)
-kubectl -n flightctl scale deployment/flightctl-api --replicas=0 >/dev/null
-wait_s=$(( expiry - $(date +%s) + 70 ))
-(( wait_s > 0 )) && { echo "server down, waiting ${wait_s}s for the certificate to expire"; sleep "$wait_s"; }
-kubectl -n flightctl scale deployment/flightctl-api --replicas=1 >/dev/null
-kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
-OLD_DEVICE=$DEVICE
-if [[ "$DEVICE_KIND" == zephyr ]]; then
-  # The Zephyr device reboots by itself and comes back under its new name,
-  # possibly before the server is back.
-  await_device "$starts_before" 180
-  grep -q "enrolling again as a new device" "$WORK/agent.log" || fail "no re-enrollment in the agent log"
-  echo "ok: the device dropped its expired identity and rebooted"
-else
-  for i in $(seq 1 60); do
-    kill -0 "$AGENT_PID" 2>/dev/null || break
-    (( i == 60 )) && fail "the device did not give up its expired certificate"
-    sleep 3
+if [[ "$CERT_EXPIRY" == 1 ]]; then
+  log "certificate expired while the server was down: the device enrolls again"
+  # The certificate lives CERT_TTL seconds and cannot be renewed with the server
+  # down. Once it has expired the device starts over under a new key, keeping
+  # its apps and config; the allow list approves the new request.
+  first=$(custom mgmtCertNotAfter)
+  expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
+  starts_before=$(starts)
+  kubectl -n flightctl scale deployment/flightctl-api --replicas=0 >/dev/null
+  wait_s=$(( expiry - $(date +%s) + 70 ))
+  (( wait_s > 0 )) && { echo "server down, waiting ${wait_s}s for the certificate to expire"; sleep "$wait_s"; }
+  kubectl -n flightctl scale deployment/flightctl-api --replicas=1 >/dev/null
+  kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
+  OLD_DEVICE=$DEVICE
+  if [[ "$DEVICE_KIND" == zephyr ]]; then
+    # The Zephyr device reboots by itself and comes back under its new name,
+    # possibly before the server is back.
+    await_device "$starts_before" 180
+    grep -q "enrolling again as a new device" "$WORK/agent.log" || fail "no re-enrollment in the agent log"
+    echo "ok: the device dropped its expired identity and rebooted"
+  else
+    for i in $(seq 1 60); do
+      kill -0 "$AGENT_PID" 2>/dev/null || break
+      (( i == 60 )) && fail "the device did not give up its expired certificate"
+      sleep 3
+    done
+    grep -q "enrolling again as a new device" "$WORK/agent.log" || fail "no re-enrollment in the agent log"
+    echo "ok: the device dropped its expired identity"
+    start_agent   # the agent stops for the restart; here we start it again
+  fi
+  [[ "$DEVICE" != "$OLD_DEVICE" ]] || fail "same device name after re-enrollment"
+  for i in $(seq 1 30); do
+    flightctl get "enrollmentrequest/$DEVICE" >/dev/null 2>&1 && break
+    (( i == 30 )) && fail "no enrollment request from the new identity"
+    sleep 2
   done
-  grep -q "enrolling again as a new device" "$WORK/agent.log" || fail "no re-enrollment in the agent log"
-  echo "ok: the device dropped its expired identity"
-  start_agent   # the agent stops for the restart; here we start it again
-fi
-[[ "$DEVICE" != "$OLD_DEVICE" ]] || fail "same device name after re-enrollment"
-for i in $(seq 1 30); do
-  flightctl get "enrollmentrequest/$DEVICE" >/dev/null 2>&1 && break
-  (( i == 30 )) && fail "no enrollment request from the new identity"
-  sleep 2
-done
-printf 'devices:\n  - name: %s\n    labels:\n      stage: ci\n' "$DEVICE" > "$WORK/allowlist.yaml"
-tools/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
-wait_for 120 "new identity Online" "st.get('summary', {}).get('status') == 'Online'"
-if [[ "$DEVICE_KIND" == zephyr ]]; then
-  echo "config across re-enrollment: not checked, the file is inside the flash image"
-else
-  grep -q '"threshold_c": 30' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "config lost across re-enrollment"
-  echo "ok: config kept"
+  printf 'devices:\n  - name: %s\n    labels:\n      stage: ci\n' "$DEVICE" > "$WORK/allowlist.yaml"
+  tools/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
+  wait_for 120 "new identity Online" "st.get('summary', {}).get('status') == 'Online'"
+  if [[ "$DEVICE_KIND" == zephyr ]]; then
+    echo "config across re-enrollment: not checked, the file is inside the flash image"
+  else
+    grep -q '"threshold_c": 30' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "config lost across re-enrollment"
+    echo "ok: config kept"
+  fi
 fi
 
 log "fleet from Git, the registry's credentials from Kubernetes secrets"

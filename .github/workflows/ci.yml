@@ -1,9 +1,10 @@
 name: ci
 
-# Stage 1 (parallel): firmware for every chip; host agent, WASM apps and a
-# quick fuzzing pass in one job; the Zephyr build. Stage 2: the end-to-end
-# tests, which reuse what stage 1 built instead of building it again. Long fuzzing runs nightly
-# (fuzz-nightly.yml).
+# Stage 1 (parallel): firmware for every chip, the emulated ones in a job of
+# their own; host agent and WASM apps; the Zephyr build; unit tests, field
+# provisioning and a quick fuzzing pass, which nothing waits for. Stage 2: the
+# end-to-end tests, which reuse what stage 1 built instead of building it
+# again. Long fuzzing runs nightly (fuzz-nightly.yml).
 
 on:
   push:
@@ -25,7 +26,7 @@ env:
 
 jobs:
   build:
-    name: host agent, WASM apps, unit tests, quick fuzzing
+    name: host agent, WASM apps
     runs-on: ubuntu-latest
     # Zephyr's build image, as for the Zephyr job: it has clang and lld (WASM
     # apps, fuzzers), ninja and PyYAML, so nothing is installed here. (The
@@ -58,12 +59,29 @@ jobs:
         with:
           name: host-agent
           path: build/host/fc-host-agent
-      # After the artifacts above: a failure here does not stop the jobs that need them.
+
+  # Out of build, so the end-to-end tests do not wait for them.
+  tests:
+    name: unit tests, field provisioning, quick fuzzing
+    runs-on: ubuntu-latest
+    container: ghcr.io/zephyrproject-rtos/ci-base:v0.30.0
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory '*'
+      - name: clang and lld on the PATH
+        run: echo "$(dirname "$(ls /usr/lib/llvm-*/bin/clang | tail -1)")" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/mbedtls
+        id: mbedtls
+        with:
+          version: ${{ env.MBEDTLS_VERSION }}
+      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
+      - name: host agent (the provisioning test runs its fc-prov-host)
+        run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} port/host/build-ci.sh
       - name: Zephyr's field provisioning against esp_prov
         run: tests/e2e/prov-host.sh
       - name: unit tests (C with sanitizers, Python)
         run: CC=clang tests/unit.sh -DMbedTLS_DIR=${{ steps.mbedtls.outputs.dir }}
-      # Last, so a finding does not stop the artifacts above. Starts from the
+      # Last, so a finding does not hide the tests above. Starts from the
       # corpus of the nightly runs (read only here).
       - uses: actions/cache/restore@v6
         with:
@@ -78,67 +96,47 @@ jobs:
           name: fuzz-findings
           path: build/fuzz/crash-*
 
-  firmware:
-    name: firmware (${{ matrix.target }}${{ matrix.profile == 'secure' && ', secure' || '' }})
+  # The chips the emulator tests run on, in a job of their own so those tests
+  # do not wait for the other chips; the BLE variant as an entry of its own,
+  # so the C3 does not build four images in a row.
+  firmware-emu:
+    name: firmware (${{ matrix.target }}${{ matrix.profile != 'plain' && format(', {0}', matrix.profile) || '' }})
     runs-on: ubuntu-latest
     container: espressif/idf:v6.0.3
-    env:
-      # Build variants and directories of the profile: secure, secure-release, build-<chip>-secure
-      V: ${{ matrix.profile == 'secure' && 'secure' || '' }}
-      P: ${{ matrix.profile == 'secure' && 'secure-' || '' }}
-      S: ${{ matrix.profile == 'secure' && '-secure' || '' }}
     strategy:
       fail-fast: false
       matrix:
-        target: [esp32, esp32s2, esp32s3, esp32c3, esp32c5, esp32c6]
-        profile: [plain]
-        # Secure Boot v2 + flash encryption + NVS encryption, for the emulated
-        # chips (signed with a throwaway key, see port/espidf/build-ci.sh).
+        target: [esp32c3, esp32c5]
+        # secure: Secure Boot v2 + flash encryption + NVS encryption (signed
+        # with a throwaway key, see port/espidf/build-ci.sh).
+        profile: [plain, secure]
         include:
-          - { target: esp32c3, profile: secure }
-          - { target: esp32c5, profile: secure }
+          - { target: esp32c3, profile: ble }
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory '*'
       - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
-      - uses: actions/cache@v6
+      - uses: ./.github/actions/firmware
         with:
-          path: .ccache
-          key: ccache-${{ matrix.target }}-${{ matrix.profile }}-${{ github.sha }}
-          restore-keys: ccache-${{ matrix.target }}-${{ matrix.profile }}-
-      - name: debug build
-        shell: bash
-        run: port/espidf/build-ci.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.V }}
-      # Secure profile: security version 1 (anti-rollback), so the device
-      # refuses the debug build (0) once it has confirmed the release.
-      - name: release profile (-Os)
-        shell: bash
-        env:
-          SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
-        run: port/espidf/build-ci.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}release
-      - name: broken build, for the rollback test (emulated chips only)
-        if: contains(fromJSON('["esp32c3", "esp32c5"]'), matrix.target)
-        shell: bash
-        env:
-          SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
-        run: port/espidf/build-ci.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ${{ env.P }}broken
-      - name: ble variant, for the BLE field provisioning test (C3)
-        if: matrix.target == 'esp32c3' && matrix.profile == 'plain'
-        shell: bash
-        run: port/espidf/build-ci.sh ${{ matrix.target }} ci-${GITHUB_SHA::7} ble
-      - uses: actions/upload-artifact@v7
+          target: ${{ matrix.target }}
+          profile: ${{ matrix.profile }}
+
+  firmware:
+    name: firmware (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.3
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [esp32, esp32s2, esp32s3, esp32c6]
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory '*'
+      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
+      - uses: ./.github/actions/firmware
         with:
-          name: firmware-${{ matrix.target }}${{ env.S }}
-          path: |
-            port/espidf/build-${{ matrix.target }}${{ env.S }}/flightctl_mcu_fw.bin
-            port/espidf/build-${{ matrix.target }}${{ env.S }}/merged-binary.bin
-            port/espidf/build-${{ matrix.target }}-${{ env.P }}release/flightctl_mcu_fw.bin
-            port/espidf/build-${{ matrix.target }}-${{ env.P }}release/flightctl_mcu_fw-unsigned.bin
-            port/espidf/build-${{ matrix.target }}-${{ env.P }}release/merged-binary.bin
-            port/espidf/build-${{ matrix.target }}-${{ env.P }}broken/flightctl_mcu_fw.bin
-            port/espidf/build-${{ matrix.target }}-ble/flightctl_mcu_fw.bin
-            port/espidf/build-${{ matrix.target }}-ble/flightctl_mcu_fw.elf
-            port/espidf/build-${{ matrix.target }}-ble/merged-binary.bin
+          target: ${{ matrix.target }}
+          profile: plain
 
   zephyr:
     name: Zephyr (native_sim)
@@ -191,8 +189,10 @@ jobs:
           name: wasm-apps
           path: wasm-apps/build
       # The test of the simulated device, with the Zephyr build as the device.
+      # Without the waits for a certificate to expire (about 5 minutes): the
+      # host e2e runs them, on the agent's same core.
       - name: e2e
-        run: PREBUILT_APPS=1 DEVICE_KIND=zephyr tests/e2e/e2e.sh
+        run: PREBUILT_APPS=1 DEVICE_KIND=zephyr CERT_EXPIRY=0 tests/e2e/e2e.sh
       - name: cluster state on failure
         if: failure()
         run: |
@@ -202,7 +202,6 @@ jobs:
   e2e:
     name: end-to-end (simulated device vs Flight Control on kind)
     needs: [build]
-    # Runs even when the quick fuzzing found something: the artifacts are there.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -239,7 +238,7 @@ jobs:
 
   emulator:
     name: end-to-end on an emulated ${{ matrix.chip }}${{ matrix.secure == 1 && ', secure' || '' }}${{ matrix.prov == 'ble' && ', BLE provisioning' || '' }} (esp-emu)
-    needs: [firmware, build]
+    needs: [firmware-emu, build]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -285,6 +284,12 @@ jobs:
         with:
           name: firmware-${{ matrix.chip }}${{ matrix.secure == 1 && '-secure' || '' }}
           path: port/espidf
+      - name: BLE variant
+        if: matrix.prov == 'ble'
+        uses: actions/download-artifact@v8
+        with:
+          name: firmware-${{ matrix.chip }}-ble
+          path: port/espidf
       - name: secure build too, which a plain device must refuse
         if: matrix.secure == 0
         uses: actions/download-artifact@v8
@@ -305,7 +310,9 @@ jobs:
           # Certificate renewal with 2-minute certificates in one job only: the
           # agent's code is the same on every chip, the host and Zephyr e2e run
           # it too, and short certificates make a slow step fail the whole run.
-          CERT: ${{ matrix.chip == 'esp32c3' && matrix.secure == 1 && 1 || 0 }}
+          # The plain C3 over SoftAP: the shortest run (the secure C3, the
+          # longest, would set the length of the whole workflow).
+          CERT: ${{ matrix.chip == 'esp32c3' && matrix.secure == 0 && matrix.prov == 'softap' && 1 || 0 }}
         run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} PROV=${{ matrix.prov }} tests/e2e/e2e-emu.sh
       - name: logs on failure
         if: failure()

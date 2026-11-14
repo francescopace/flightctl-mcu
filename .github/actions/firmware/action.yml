@@ -1,0 +1,79 @@
+name: firmware
+description: The ESP-IDF builds of one chip and profile, with ccache, uploaded as firmware-<chip>[-secure|-ble]
+inputs:
+  target:
+    description: ESP-IDF chip (esp32c3, ...)
+    required: true
+  profile:
+    description: >-
+      plain (debug and release builds), secure (Secure Boot v2, flash and NVS
+      encryption, signed with a throwaway key) or ble (the BLE provisioning
+      variant only)
+    required: true
+runs:
+  using: composite
+  steps:
+    # Saved from main only: a key per commit, and 8 of them per run, would
+    # fill the repository's cache with entries nothing restores.
+    - uses: actions/cache/restore@v6
+      with:
+        path: .ccache
+        key: ccache-${{ inputs.target }}-${{ inputs.profile }}-${{ github.sha }}
+        restore-keys: ccache-${{ inputs.target }}-${{ inputs.profile }}-
+    - name: debug build
+      if: inputs.profile != 'ble'
+      shell: bash
+      run: port/espidf/build-ci.sh ${{ inputs.target }} ci-${GITHUB_SHA::7} ${{ inputs.profile == 'secure' && 'secure' || '' }}
+    # Secure profile: security version 1 (anti-rollback), so the device
+    # refuses the debug build (0) once it has confirmed the release.
+    - name: release profile (-Os)
+      if: inputs.profile != 'ble'
+      shell: bash
+      env:
+        SECURE_VERSION: ${{ inputs.profile == 'secure' && '1' || '' }}
+      run: port/espidf/build-ci.sh ${{ inputs.target }} ci-${GITHUB_SHA::7} ${{ inputs.profile == 'secure' && 'secure-' || '' }}release
+    - name: broken build, for the rollback test (emulated chips only)
+      if: inputs.profile != 'ble' && contains(fromJSON('["esp32c3", "esp32c5"]'), inputs.target)
+      shell: bash
+      env:
+        SECURE_VERSION: ${{ inputs.profile == 'secure' && '1' || '' }}
+      run: port/espidf/build-ci.sh ${{ inputs.target }} ci-${GITHUB_SHA::7} ${{ inputs.profile == 'secure' && 'secure-' || '' }}broken
+    - name: ble variant, for the BLE field provisioning test
+      if: inputs.profile == 'ble'
+      shell: bash
+      run: port/espidf/build-ci.sh ${{ inputs.target }} ci-${GITHUB_SHA::7} ble
+    # What this run did not use goes before the save (a hit refreshes an
+    # entry), so the cache holds one commit's objects, not every past one.
+    - name: ccache, saved from main
+      if: github.ref == 'refs/heads/main'
+      shell: bash
+      run: |
+        . "$IDF_PATH/export.sh" >/dev/null
+        CCACHE_DIR="$PWD/.ccache" ccache --evict-older-than 10800s   # 3 hours
+        CCACHE_DIR="$PWD/.ccache" ccache --show-stats | grep -iE 'cache size' || true
+    - if: github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v6
+      with:
+        path: .ccache
+        key: ccache-${{ inputs.target }}-${{ inputs.profile }}-${{ github.sha }}
+    # The same paths for every profile, so the artifact's root is always
+    # port/espidf (upload-artifact takes the common ancestor of the paths).
+    - uses: actions/upload-artifact@v7
+      with:
+        name: firmware-${{ inputs.target }}${{ inputs.profile != 'plain' && format('-{0}', inputs.profile) || '' }}
+        path: |
+          port/espidf/build-${{ inputs.target }}/flightctl_mcu_fw.bin
+          port/espidf/build-${{ inputs.target }}/merged-binary.bin
+          port/espidf/build-${{ inputs.target }}-release/flightctl_mcu_fw.bin
+          port/espidf/build-${{ inputs.target }}-release/flightctl_mcu_fw-unsigned.bin
+          port/espidf/build-${{ inputs.target }}-release/merged-binary.bin
+          port/espidf/build-${{ inputs.target }}-broken/flightctl_mcu_fw.bin
+          port/espidf/build-${{ inputs.target }}-secure/flightctl_mcu_fw.bin
+          port/espidf/build-${{ inputs.target }}-secure/merged-binary.bin
+          port/espidf/build-${{ inputs.target }}-secure-release/flightctl_mcu_fw.bin
+          port/espidf/build-${{ inputs.target }}-secure-release/flightctl_mcu_fw-unsigned.bin
+          port/espidf/build-${{ inputs.target }}-secure-release/merged-binary.bin
+          port/espidf/build-${{ inputs.target }}-secure-broken/flightctl_mcu_fw.bin
+          port/espidf/build-${{ inputs.target }}-ble/flightctl_mcu_fw.bin
+          port/espidf/build-${{ inputs.target }}-ble/flightctl_mcu_fw.elf
+          port/espidf/build-${{ inputs.target }}-ble/merged-binary.bin

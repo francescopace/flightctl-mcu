@@ -10,8 +10,11 @@ set -euo pipefail
 TARGET="${1:?target}"; VERSION="${2:-ci}"; VARIANT="${3:-}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$IDF_PATH/export.sh" >/dev/null
-# ccache (in the ESP-IDF image): CI keeps .ccache between runs.
-export IDF_CCACHE_ENABLE=1 CCACHE_DIR="$ROOT/.ccache" CCACHE_MAXSIZE=500M
+# ccache (in the ESP-IDF image): CI keeps .ccache between runs. The compiler
+# is checked by content: ESP-IDF 6 copies picolibc.specs into the build
+# directory and passes it with -specs=, and by mtime (ccache's default) a new
+# build directory, as in every CI run, made every file a miss.
+export IDF_CCACHE_ENABLE=1 CCACHE_DIR="$ROOT/.ccache" CCACHE_MAXSIZE=500M CCACHE_COMPILERCHECK=content
 cd "$ROOT/port/espidf"
 BUILD="build-$TARGET${VARIANT:+-$VARIANT}"
 DEFAULTS="sdkconfig.defaults"
@@ -27,6 +30,7 @@ if [[ "$VARIANT" == secure* && ! -f /keys/secure_boot_signing_key.pem ]]; then
   mkdir -p /keys
   espsecure generate-signing-key --version 2 --scheme rsa3072 /keys/secure_boot_signing_key.pem >/dev/null
 fi
+ccache -z >/dev/null   # the stats at the end are this build's
 SDKCONFIG_DEFAULTS="$DEFAULTS" idf.py -B "$BUILD" -D IDF_TARGET="$TARGET" \
   -D SDKCONFIG="$BUILD/sdkconfig" -D FW_VERSION="$VERSION${VARIANT:+-$VARIANT}" build merge-bin
 # Secure Boot leaves the bootloader out of merge-bin: put it in.
