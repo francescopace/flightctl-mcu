@@ -19,6 +19,7 @@ Checks not made yet:
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
 - [ ] Two parts of decommissioning and the registry never tried: the `FactoryReset` target (the CLI and the UI send `Unenroll` only), and Bearer tokens against a real registry (Harbor, Quay); `registry:3` asks for Basic.
 - [ ] The Zephyr builds for boards in CI. They need the ARM and Xtensa toolchains; CI builds and tests `native_sim` only.
+- [ ] The Pico W on z14. It restarts about 8 s after its config files are written, when it would download its app, and no fatal error is reported; z13 ran the app. z14 has 5 KB less C heap, taken by the app interface.
 
 What the Zephyr port does not have, and the ESP-IDF firmware has:
 

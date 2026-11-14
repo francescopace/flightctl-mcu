@@ -184,7 +184,8 @@ file, downloads the signed WASM app from the registry and runs it.
 
 Memory, of 264 KB: 111 KB of static data in this build (the WiFi driver's and
 the network stack's buffers, the USB console), 45 KB of kernel heap (thread
-stacks, and 14 KB the WiFi driver and USB take), 108 KB of C heap. With both
+stacks, and 14 KB the WiFi driver and USB take), 108 KB of C heap (103 KB
+since z14, whose app interface takes 5 KB of static data). With both
 TLS connections open and the app running, 34 KB of that heap were free, and
 24 KB at the least; with Zephyr 4.5 and mbedTLS 4, 31 KB and 22.5 KB; with
 mbedTLS's threading layer (release z9, 2 KB less heap), 29.7 KB, and 15 KB at
@@ -288,7 +289,8 @@ What it took, beyond the board's two files in `port/zephyr/boards/`:
   heap is the larger of what the application asks and what the drivers add:
   the WiFi driver's 51 KB are not added to a size that is set, and with
   64 KB there were 28 KB left for thread stacks. It is 96 KB now, the C heap
-  128 KB, the agent's stacks 16 KB each: 98% of the region.
+  123 KB (128 KB before z14 and its app interface), the agent's stacks 16 KB
+  each: 98% of the region.
 - **The WiFi driver joins after the request returns**, and chooses the access
   point itself (`CONFIG_ESP32_WIFI_STA_SCAN_ALL`: the strongest). The Pico's
   way of giving up a weak join is for Infineon's driver only.

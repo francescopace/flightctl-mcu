@@ -105,18 +105,18 @@ tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
 Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `tools/fleet/idf-lab.yaml`, or edit them there. (The fleet of the boards with the Zephyr build is `tools/fleet/zephyr-lab.yaml`: the two ports are released apart for now.)
 
 ```bash
-tools/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v3.0
+tools/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v3.3
 ```
 
 ```bash
-wasm-apps/build.sh alarm v2.2
+wasm-apps/build.sh alarm v2.3
 ```
 
 ```bash
 tools/fleet/apply.sh
 ```
 
-The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest.
+The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest. Apps from `alarm:v2.3` on use the app interface of [APPS.md](APPS.md), which firmware before v3.3 does not have: give a fleet the firmware first, then the app.
 
 This is the plain door. For the one with TLS and a password, push to `$(cat .secrets/registry/host)` and apply with `REGISTRY=$(cat .secrets/registry/host)`. `apply.sh` then adds the registry's CA and the password to the fleet as config files. The devices must already run firmware that knows TLS, which this one does; see [REGISTRY.md](REGISTRY.md#moving-a-fleet-from-plain-http-to-tls). To keep the fleet in Git instead, see [REGISTRY.md](REGISTRY.md#fleets-kept-in-git).
 
