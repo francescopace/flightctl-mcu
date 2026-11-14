@@ -9,6 +9,9 @@
 #   SKIP_DEPLOY=1 tests/e2e/e2e-emu.sh    against the cluster and registry already running
 #   CHIP=esp32c5 tests/e2e/e2e-emu.sh     another emulated chip (esp32c3, esp32c5, esp32s3)
 #   ROLLBACK=0 tests/e2e/e2e-emu.sh       skip the rollback step (about 4 minutes)
+#   CERT=0 tests/e2e/e2e-emu.sh           skip the certificate renewal (about 3 minutes): the
+#                                  server keeps its normal certificate lifetime, so a
+#                                  slow step cannot outlast a 2-minute certificate
 #   PREBUILT=1 tests/e2e/e2e-emu.sh       use port/espidf/build-<chip>{,-release,-broken} and
 #                                  wasm-apps/build/alarm-v2 as they are (CI: the firmware
 #                                  and WASM jobs' builds), instead of building
@@ -70,6 +73,7 @@ else
 fi
 PROV="${PROV:-softap}"
 [[ "$SECURE" == 0 && "$PROV" == ble ]] && DEBUG_V=ble  # the device starts on the ble variant
+CERT="${CERT:-1}"
 CERT_TTL=120
 TAG="emu$(date +%s)"
 FLEET="emu-e2e"
@@ -181,8 +185,13 @@ if [[ -z "${SKIP_DEPLOY:-}" ]]; then
     -t "$(kubectl create token flightctl-admin -n flightctl --duration=2h)" >/dev/null
 fi
 
-log "server issues ${CERT_TTL}s management certificates"
-kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS=$CERT_TTL >/dev/null
+if [[ "$CERT" == 1 ]]; then
+  log "server issues ${CERT_TTL}s management certificates"
+  kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS=$CERT_TTL >/dev/null
+else
+  # A cluster left by an interrupted run may still issue short ones.
+  kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS- >/dev/null
+fi
 kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
 
 log "firmware for $CHIP${DEBUG_V:+ ($DEBUG_V)}: debug, release, broken"
@@ -437,27 +446,31 @@ if [[ -n "$VARIANT_DIR" ]]; then
   wait_for 120 "back to the release build" "upd.get('status') == 'UpToDate'"
 fi
 
-log "management certificate renewal"
-first=$(custom mgmtCertNotAfter)
-wait_for $CERT_TTL "certificate renewed" "ci.get('mgmtCertNotAfter', '$first') > '$first'"
-expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
-wait_s=$(( expiry - $(date +%s) + 5 ))
-(( wait_s > 0 )) && { echo "waiting ${wait_s}s for the first certificate to expire"; sleep "$wait_s"; }
-# The counters in customInfo change once an hour: a status accepted since is
-# shown by the next renewal, every quarter of CERT_TTL.
-last=$(custom mgmtCertNotAfter)
-wait_for 120 "status accepted after the first certificate expired" "ci.get('mgmtCertNotAfter', '') > '$last'"
+if [[ "$CERT" == 1 ]]; then
+  log "management certificate renewal"
+  first=$(custom mgmtCertNotAfter)
+  wait_for $CERT_TTL "certificate renewed" "ci.get('mgmtCertNotAfter', '$first') > '$first'"
+  expiry=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$first','%Y-%m-%dT%H:%M:%SZ')))")
+  wait_s=$(( expiry - $(date +%s) + 5 ))
+  (( wait_s > 0 )) && { echo "waiting ${wait_s}s for the first certificate to expire"; sleep "$wait_s"; }
+  # The counters in customInfo change once an hour: a status accepted since is
+  # shown by the next renewal, every quarter of CERT_TTL.
+  last=$(custom mgmtCertNotAfter)
+  wait_for 120 "status accepted after the first certificate expired" "ci.get('mgmtCertNotAfter', '') > '$last'"
+fi
 
 if [[ "$ROLLBACK" == 1 ]]; then
-  # The broken build keeps the device away from the server for a minute or
-  # more: a test certificate could expire meanwhile, and a device with an
-  # expired certificate cannot get back in yet (see the roadmap). Back to the
-  # server's normal lifetime, and wait for a renewal to bring one.
-  log "back to long-lived certificates"
-  kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS- >/dev/null
-  kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
-  day=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 86400)))")
-  wait_for 300 "certificate valid for more than a day" "ci.get('mgmtCertNotAfter', '') > '$day'"
+  if [[ "$CERT" == 1 ]]; then
+    # The broken build keeps the device away from the server for a minute or
+    # more: a test certificate could expire meanwhile, and a device with an
+    # expired certificate cannot get back in yet (see the roadmap). Back to the
+    # server's normal lifetime, and wait for a renewal to bring one.
+    log "back to long-lived certificates"
+    kubectl -n flightctl set env deployment/flightctl-api FLIGHTCTL_TEST_MGMT_CERT_EXPIRY_SECONDS- >/dev/null
+    kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
+    day=$(python3 -c "import time; print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 86400)))")
+    wait_for 300 "certificate valid for more than a day" "ci.get('mgmtCertNotAfter', '') > '$day'"
+  fi
 
   log "broken build is rolled back"
   # sdkconfig.broken: cannot reach Flight Control (wrong port), never confirmed

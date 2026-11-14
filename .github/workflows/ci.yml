@@ -302,6 +302,10 @@ jobs:
       - name: e2e on the emulator
         env:
           ESP_PROV_LOCAL: 1
+          # Certificate renewal with 2-minute certificates in one job only: the
+          # agent's code is the same on every chip, the host and Zephyr e2e run
+          # it too, and short certificates make a slow step fail the whole run.
+          CERT: ${{ matrix.chip == 'esp32c3' && matrix.secure == 1 && 1 || 0 }}
         run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} PROV=${{ matrix.prov }} tests/e2e/e2e-emu.sh
       - name: logs on failure
         if: failure()
