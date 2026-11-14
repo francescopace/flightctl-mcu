@@ -315,7 +315,13 @@ server listening, and the access point went away once the network was
 written back. Release z10, which has it, came to both boards as a delta
 (72 KB here, 56 KB on the Pico W) and changed nothing for a board with its
 network: both were Online with the app running about 90 s after the fleet
-changed. Not tried on the board: an installer joining the access point.
+changed. Provisioned from an iPhone with Espressif's app: Online with its
+app a second after the access point closed. What it took: Zephyr's STA+AP
+usage mode (`CONFIG_WIFI_USAGE_MODE_STA_AP`; with `ESP32_WIFI_AP_STA_MODE`
+alone the network manager keeps one interface, the access point's address
+and DHCP server land on the station's, and installers get none), 4 KB of
+stack for the DHCP server's thread, and no ICMP probe before a lease (with
+it, the board restarted a second after a client joined).
 
 Not tried: Secure Boot or flash encryption under Zephyr ([SECURITY.md](SECURITY.md#zephyr)). Not in CI: the
 build needs the Xtensa toolchain.

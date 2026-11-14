@@ -42,6 +42,10 @@
 /* Once the device has joined, how long it waits for the installer to ask,
  * so that the installer is told. */
 #define TELL_JOINED_S 20
+/* Once the installer has been told, how long the server stays up before the
+ * port closes the access point: the answer must reach it first, and an
+ * installer may ask again (ESP-IDF's provisioning manager waits too). */
+#define AFTER_TOLD_S 5
 
 /* ---- protobuf ---------------------------------------------------------- */
 
@@ -197,7 +201,7 @@ typedef struct {
     int net;
     fc_prov_join_t failed; /* why, for NET_FAILED */
     int told_joined;
-    time_t joined_at;
+    time_t joined_at, told_at;
     /* buffers, not on the stack: the main thread of a small device has a few KB */
     char head[HEAD_MAX + 1];
     uint8_t body[BODY_MAX], plain[BODY_MAX], answer[OUT_MAX], out[OUT_MAX], inner[OUT_MAX];
@@ -385,7 +389,10 @@ static size_t on_config(prov_t *p, const uint8_t *in, size_t len)
             pb_w c = {cbuf, 0, sizeof(cbuf), 0};
             pb_bytes(&c, 3, p->ssid, strlen(p->ssid));
             pb_msg(&r, 11, &c);
-            p->told_joined = 1;
+            if (!p->told_joined) {
+                p->told_joined = 1;
+                p->told_at = time(NULL);
+            }
             break;
         }
         case NET_JOINING:
@@ -692,7 +699,8 @@ int fc_prov_serve(const fc_prov_config_t *cfg, char ssid[33], char pass[65], int
             break; /* answered: the port joins after closing its access point */
         }
         join_check(p);
-        if (p->net == NET_JOINED && (p->told_joined || time(NULL) - p->joined_at >= TELL_JOINED_S)) {
+        if (p->net == NET_JOINED && ((p->told_joined && time(NULL) - p->told_at >= AFTER_TOLD_S) ||
+                                     time(NULL) - p->joined_at >= TELL_JOINED_S)) {
             break;
         }
         /* One installer at a time: a new connection (an app that reconnects) replaces the old one. */

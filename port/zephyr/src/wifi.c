@@ -11,7 +11,8 @@
  * once (Espressif's, CONFIG_ESP32_WIFI_AP_STA_MODE), it tries the network
  * with the access point still up and tells the installer whether it joined;
  * one that cannot closes the access point to try it, and opens it again if it
- * fails. A network is kept (fc_port_kv "wifi") once the device has joined it.
+ * fails. A network is kept (fc_port_kv "wifi") once the device has joined it,
+ * for the credentials it was given with: writing fc_creds again forgets it.
  * Only on boards built with a DHCP server (CONFIG_NET_DHCPV4_SERVER): not on
  * the Pico W, whose driver cannot open an access point (docs/ZEPHYR.md).
  */
@@ -26,6 +27,7 @@
 #include <zephyr/net/wifi_mgmt.h>
 
 #include "cJSON.h"
+#include "fc_crypto.h"
 #include "fc_port.h"
 #include "fc_prov.h"
 #include "fc_wifi_zephyr.h"
@@ -133,6 +135,10 @@ static void on_wifi(struct net_mgmt_event_callback *cb, uint64_t event, struct n
         k_sem_give(&s_scan_done);
     } else if (event == NET_EVENT_WIFI_CONNECT_RESULT && iface == s_sta) {
         s_connect_status = ((const struct wifi_status *)cb->info)->status;
+    } else if (event == NET_EVENT_WIFI_AP_STA_CONNECTED || event == NET_EVENT_WIFI_AP_STA_DISCONNECTED) {
+        const struct wifi_ap_sta_info *sta = cb->info;
+        fc_port_log(FC_LOG_INFO, "provisioning: a device %s the access point (..:%02x:%02x)",
+                    event == NET_EVENT_WIFI_AP_STA_CONNECTED ? "joined" : "left", sta->mac[4], sta->mac[5]);
     }
 }
 
@@ -244,24 +250,50 @@ static int ap_open(const char *pop, char name[16])
     p.bandwidth = WIFI_FREQ_BANDWIDTH_20MHZ;
     struct net_in_addr addr = {.s4_addr = {192, 168, 4, 1}}, mask = {.s4_addr = {255, 255, 255, 0}},
                        pool = {.s4_addr = {192, 168, 4, 2}};
-    if (net_mgmt(NET_REQUEST_WIFI_AP_ENABLE, s_ap, &p, sizeof(p)) != 0) {
-        fc_port_log(FC_LOG_ERROR, "WiFi: cannot open the provisioning access point");
-        return -1;
-    }
+    /* The address, the gateway installers are given, and the DHCP server
+     * first, then the access point, as Zephyr's AP+STA sample does. */
     net_if_ipv4_addr_add(s_ap, &addr, NET_ADDR_MANUAL, 0);
     net_if_ipv4_set_netmask_by_addr(s_ap, &addr, &mask);
-    if (net_dhcpv4_server_start(s_ap, &pool) != 0) {
-        fc_port_log(FC_LOG_ERROR, "WiFi: cannot start the DHCP server");
+    net_if_ipv4_set_gw(s_ap, &addr);
+    int rc = net_dhcpv4_server_start(s_ap, &pool);
+    if (rc != 0) {
+        fc_port_log(FC_LOG_ERROR, "WiFi: cannot start the DHCP server (%d)", rc);
+    }
+    if (net_mgmt(NET_REQUEST_WIFI_AP_ENABLE, s_ap, &p, sizeof(p)) != 0) {
+        fc_port_log(FC_LOG_ERROR, "WiFi: cannot open the provisioning access point");
+        net_dhcpv4_server_stop(s_ap);
+        net_if_ipv4_addr_rm(s_ap, &addr);
+        return -1;
     }
     return 0;
 }
 
 static void ap_close(void)
 {
-    struct net_in_addr addr = {.s4_addr = {192, 168, 4, 1}};
+    struct net_in_addr addr = {.s4_addr = {192, 168, 4, 1}}, none = {0};
     net_dhcpv4_server_stop(s_ap);
+    net_if_ipv4_set_gw(s_ap, &none);
     net_if_ipv4_addr_rm(s_ap, &addr);
     net_mgmt(NET_REQUEST_WIFI_AP_DISABLE, s_ap, NULL, 0);
+}
+
+/* The credentials partition, by a hash of it: a network given in the field is
+ * kept for these credentials only. Writing the partition again (a new proof of
+ * possession, another installation) forgets it, and the device asks again. */
+static char s_creds_id[17];
+
+static void creds_id(const cJSON *creds)
+{
+    char *text = cJSON_PrintUnformatted(creds);
+    unsigned char d[32];
+    fc_sha256_t h;
+    fc_sha256_start(&h);
+    fc_sha256_update(&h, text, text != NULL ? strlen(text) : 0);
+    fc_sha256_finish(&h, d);
+    free(text);
+    for (int i = 0; i < 8; i++) {
+        snprintf(s_creds_id + 2 * i, 3, "%02x", d[i]);
+    }
 }
 
 static void keep(const char *ssid, const char *pass)
@@ -269,6 +301,7 @@ static void keep(const char *ssid, const char *pass)
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "ssid", ssid);
     cJSON_AddStringToObject(o, "pass", pass);
+    cJSON_AddStringToObject(o, "creds", s_creds_id);
     char *text = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     if (text == NULL || fc_port_kv_set(KV_WIFI, text, strlen(text)) != 0) {
@@ -328,7 +361,8 @@ void fc_wifi_up(const cJSON *creds)
     net_mgmt_init_event_callback(&s_ip_cb, on_ip, NET_EVENT_IPV4_ADDR_ADD);
     net_mgmt_add_event_callback(&s_ip_cb);
     net_mgmt_init_event_callback(&s_wifi_cb, on_wifi,
-                                 NET_EVENT_WIFI_SCAN_RESULT | NET_EVENT_WIFI_SCAN_DONE | NET_EVENT_WIFI_CONNECT_RESULT);
+                                 NET_EVENT_WIFI_SCAN_RESULT | NET_EVENT_WIFI_SCAN_DONE | NET_EVENT_WIFI_CONNECT_RESULT |
+                                     NET_EVENT_WIFI_AP_STA_CONNECTED | NET_EVENT_WIFI_AP_STA_DISCONNECTED);
     net_mgmt_add_event_callback(&s_wifi_cb);
 
     const char *ssid = cJSON_GetStringValue(cJSON_GetObjectItem(creds, "wifi_ssid"));
@@ -339,10 +373,17 @@ void fc_wifi_up(const cJSON *creds)
     }
     char *kept = NULL;
     size_t len = 0;
+    creds_id(creds);
     if (fc_port_kv_get(KV_WIFI, &kept, &len) == 0) {
         cJSON *w = cJSON_Parse(kept);
         free(kept);
         const char *s = cJSON_GetStringValue(cJSON_GetObjectItem(w, "ssid"));
+        const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(w, "creds"));
+        if (s != NULL && (id == NULL || strcmp(id, s_creds_id) != 0)) {
+            fc_port_log(FC_LOG_INFO, "WiFi: the credentials were written again: the network \"%s\" is forgotten", s);
+            fc_port_kv_del(KV_WIFI);
+            s = NULL;
+        }
         if (s != NULL) {
             join(s, cJSON_GetStringValue(cJSON_GetObjectItem(w, "pass")), 0);
             cJSON_Delete(w);

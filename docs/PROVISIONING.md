@@ -111,12 +111,24 @@ the agent core's (`core/src/fc_prov.c`); the access point is the port's
 Where the radio can be an access point and a station at once (Espressif's,
 `CONFIG_ESP32_WIFI_AP_STA_MODE`), the device tries the network with the access
 point still up, and the installer is told whether it joined, or why not
-(wrong password, network not found). A radio that cannot closes the access
-point to try it and opens it again after three failed tries. The network is
-kept in the storage partition, in clear, as the device key is there; erasing
-the storage brings the access point back.
+(wrong password, network not found); the server stays up 5 s after that, so
+that the answer reaches the installer before the access point closes. A radio
+that cannot closes the access point to try it and opens it again after three
+failed tries. The network is kept in the storage partition, in clear, as the
+device key is there, for the credentials it was given with: writing `fc_creds`
+again (a new proof of possession, another installation) forgets it and brings
+the access point back, as erasing the storage does.
 
-Boards: the ESP32-S3-DevKitC. Not the Pico W: Infineon's driver in Zephyr 4.5
+Espressif's app can take the device from a QR code:
+`{"ver":"v1","name":"FC-xxxxxx","pop":"<secret>","password":"<secret>","transport":"softap","security":1}`,
+with `security` a number and `password` the access point's (the proof of
+possession here). The iOS app refuses a code whose `security` is a string.
+
+Boards: the ESP32-S3-DevKitC, provisioned from an iPhone with ESP SoftAP Prov
+(from its QR code): the phone got an address from the device, the session was
+set up, the device joined the network picked from its scan in 8 s, told the
+app, and was Online in Flight Control with its app running a second after the
+access point closed. Not the Pico W: Infineon's driver in Zephyr 4.5
 cannot open an access point on its CYW43439
 ([ZEPHYR.md](ZEPHYR.md#on-a-raspberry-pi-pico-w)), so it builds without it
 (no DHCP server: 2 KB of RAM it does not have to give).
