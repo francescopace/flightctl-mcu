@@ -19,6 +19,7 @@ Checks not made yet:
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
 - [ ] Two parts of decommissioning and the registry never tried: the `FactoryReset` target (the CLI and the UI send `Unenroll` only), and Bearer tokens against a real registry (Harbor, Quay); `registry:3` asks for Basic.
 - [ ] The Zephyr builds for boards in CI. They need the ARM and Xtensa toolchains; CI builds and tests `native_sim` only.
+- [ ] The ESP32-S2 cannot download firmware from the registry's TLS door while an app runs: a TLS connection needs a 16.7 KB receive buffer in internal RAM (on the S2, TLS buffers in PSRAM corrupted records), and with the app (17 KB of internal RAM) and the connection to the server the largest free block is about 15 KB. Through the plain door, or with the app removed for the download, it works. To decide: stop the apps for a firmware download on such a board, or keep the staged rollout.
 - [ ] Zephyr: the report of the last fatal error is printed at boot, before the Pico W's USB console is open, and is lost. Report it in the device's status too.
 
 What the Zephyr port does not have, and the ESP-IDF firmware has:
