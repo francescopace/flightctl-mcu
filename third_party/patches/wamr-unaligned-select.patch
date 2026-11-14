@@ -1,0 +1,85 @@
+diff --git a/core/iwasm/interpreter/wasm_loader.c b/core/iwasm/interpreter/wasm_loader.c
+index d3f4720..3f4c92e 100644
+--- a/core/iwasm/interpreter/wasm_loader.c
++++ b/core/iwasm/interpreter/wasm_loader.c
+@@ -13197,13 +13197,10 @@ re_scan:
+                                 int32 offset =
+                                     (int32)((uint8 *)handle_table[opcode_tmp]
+                                             - (uint8 *)handle_table[0]);
+-                                *(int32 *)(p_code_compiled_tmp
+-                                           - sizeof(int32)) = offset;
++                                STORE_U32(p_code_compiled_tmp - sizeof(int32), (uint32)(offset));
+ #else
+                                 /* emit uint32 label address in 32-bit target */
+-                                *(uint32 *)(p_code_compiled_tmp
+-                                            - sizeof(uint32)) =
+-                                    (uint32)(uintptr_t)handle_table[opcode_tmp];
++                                STORE_U32(p_code_compiled_tmp - sizeof(uint32), (uint32)((uint32)(uintptr_t)handle_table[opcode_tmp]));
+ #endif /* end of WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS */
+ #else  /* else of WASM_ENABLE_LABELS_AS_VALUES */
+ #if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
+@@ -13233,13 +13230,10 @@ re_scan:
+                                 int32 offset =
+                                     (int32)((uint8 *)handle_table[opcode_tmp]
+                                             - (uint8 *)handle_table[0]);
+-                                *(int32 *)(p_code_compiled_tmp
+-                                           - sizeof(int32)) = offset;
++                                STORE_U32(p_code_compiled_tmp - sizeof(int32), (uint32)(offset));
+ #else
+                                 /* emit uint32 label address in 32-bit target */
+-                                *(uint32 *)(p_code_compiled_tmp
+-                                            - sizeof(uint32)) =
+-                                    (uint32)(uintptr_t)handle_table[opcode_tmp];
++                                STORE_U32(p_code_compiled_tmp - sizeof(uint32), (uint32)((uint32)(uintptr_t)handle_table[opcode_tmp]));
+ #endif /* end of WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS */
+ #else  /* else of WASM_ENABLE_LABELS_AS_VALUES */
+ #if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
+@@ -13370,12 +13364,10 @@ re_scan:
+                         /* emit int32 relative offset in 64-bit target */
+                         int32 offset = (int32)((uint8 *)handle_table[opcode_tmp]
+                                                - (uint8 *)handle_table[0]);
+-                        *(int32 *)(p_code_compiled_tmp - sizeof(int32)) =
+-                            offset;
++                        STORE_U32(p_code_compiled_tmp - sizeof(int32), (uint32)(offset));
+ #else
+                         /* emit uint32 label address in 32-bit target */
+-                        *(uint32 *)(p_code_compiled_tmp - sizeof(uint32)) =
+-                            (uint32)(uintptr_t)handle_table[opcode_tmp];
++                        STORE_U32(p_code_compiled_tmp - sizeof(uint32), (uint32)((uint32)(uintptr_t)handle_table[opcode_tmp]));
+ #endif
+ #endif /* end of WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS */
+ #else  /* else of WASM_ENABLE_LABELS_AS_VALUES */
+diff --git a/core/iwasm/interpreter/wasm_mini_loader.c b/core/iwasm/interpreter/wasm_mini_loader.c
+index 1fbbb8d..d8bcb01 100644
+--- a/core/iwasm/interpreter/wasm_mini_loader.c
++++ b/core/iwasm/interpreter/wasm_mini_loader.c
+@@ -7273,13 +7273,10 @@ re_scan:
+                                 int32 offset =
+                                     (int32)((uint8 *)handle_table[opcode_tmp]
+                                             - (uint8 *)handle_table[0]);
+-                                *(int32 *)(p_code_compiled_tmp
+-                                           - sizeof(int32)) = offset;
++                                STORE_U32(p_code_compiled_tmp - sizeof(int32), (uint32)(offset));
+ #else
+                                 /* emit uint32 label address in 32-bit target */
+-                                *(uint32 *)(p_code_compiled_tmp
+-                                            - sizeof(uint32)) =
+-                                    (uint32)(uintptr_t)handle_table[opcode_tmp];
++                                STORE_U32(p_code_compiled_tmp - sizeof(uint32), (uint32)((uint32)(uintptr_t)handle_table[opcode_tmp]));
+ #endif
+ #endif /* end of WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS */
+ #else  /* else of WASM_ENABLE_LABELS_AS_VALUES */
+@@ -7360,11 +7357,10 @@ re_scan:
+                     /* emit int32 relative offset in 64-bit target */
+                     int32 offset = (int32)((uint8 *)handle_table[opcode_tmp]
+                                            - (uint8 *)handle_table[0]);
+-                    *(int32 *)(p_code_compiled_tmp - sizeof(int32)) = offset;
++                    STORE_U32(p_code_compiled_tmp - sizeof(int32), (uint32)(offset));
+ #else
+                     /* emit uint32 label address in 32-bit target */
+-                    *(uint32 *)(p_code_compiled_tmp - sizeof(uint32)) =
+-                        (uint32)(uintptr_t)handle_table[opcode_tmp];
++                    STORE_U32(p_code_compiled_tmp - sizeof(uint32), (uint32)((uint32)(uintptr_t)handle_table[opcode_tmp]));
+ #endif
+ #endif /* end of WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS */
+ #else  /* else of WASM_ENABLE_LABELS_AS_VALUES */

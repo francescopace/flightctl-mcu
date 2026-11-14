@@ -84,9 +84,25 @@ DEVICE=""
 log() { printf '\n== %s\n' "$*"; }
 fail() {
   echo "FAIL: $*" >&2
-  echo "--- emulator log (last 60 lines)" >&2
+  [[ -n "$DEVICE" ]] && device_state >&2
+  echo "--- emulator log (last 60 lines; all of it in $WORK/emu.log)" >&2
   grep -v '^\s*$' "$WORK/emu.log" 2>/dev/null | tail -60 >&2 || true
   exit 1
+}
+
+# What the device last reported: its update, its apps and its heap. The heap
+# is as the agent last read it (at the first status, after 5 minutes, then
+# hourly), not as it is now; restarts are current.
+device_state() {
+  flightctl get "device/$DEVICE" -o json 2>/dev/null | python3 -c "
+import json, sys
+st = json.load(sys.stdin).get('status') or {}
+ci = (st.get('systemInfo') or {}).get('customInfo') or {}
+upd = st.get('updated') or {}
+apps = ', '.join(f\"{a['name']} {a['status']} ({a.get('restarts', 0)} restarts)\" for a in st.get('applications') or [])
+print(f\"   heap at the agent's last read: free {ci.get('memFreeBytes')}, min {ci.get('memMinFreeBytes')}, largest block {ci.get('memInternalLargestBlock', '-')}\")
+print(f\"   update: {upd.get('status')} {upd.get('info', '')}\")
+print(f\"   apps: {apps or 'none'}\")" 2>/dev/null || true
 }
 
 cleanup() {
@@ -114,6 +130,7 @@ apps = st.get('applications') or []
 upd = st.get('updated') or {}
 sys.exit(0 if ($expr) else 1)" 2>/dev/null; then
       echo "ok: $what ($(( $(date +%s) - start )) s)"
+      device_state
       return 0
     fi
     (( $(date +%s) - start > timeout )) && fail "timed out after ${timeout}s waiting for: $what"
