@@ -39,7 +39,7 @@ const char *fc_oci_delta_outcome(const char **reason)
     return s_delta_outcome;
 }
 
-int fc_apps_init(const void *natives, int n_natives)
+int fc_apps_init(void)
 {
     return 0;
 }
@@ -59,6 +59,20 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
 void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
 {
     cJSON_AddStringToObject(summary, "status", "NoApplications");
+}
+
+void fc_apps_set_hw(const fc_hw_t *hw) {}
+void fc_apps_set_device(const char *name) {}
+static int s_files_changed;
+
+void fc_apps_file_changed(const char *path)
+{
+    s_files_changed++;
+}
+
+int fc_apps_check_file(const char *path, const char *data, char *err, size_t err_len)
+{
+    return 0;
 }
 
 static int on_config_file(const char *path, const char *data, size_t len, void *ctx)
@@ -90,6 +104,21 @@ static void apply(const char *version, const char *spec)
     snprintf(json, sizeof(json), "{\"metadata\":{\"annotations\":{\"device-controller/renderedVersion\":\"%s\"}},"
              "\"spec\":%s}", version, spec);
     apply_rendered(&s_a, json);
+}
+
+/* Every file comes again with each rendered version; an app restarted or
+ * told of a new config each time would lose its state for nothing. */
+static void apps_hear_only_of_files_that_changed(void)
+{
+    new_agent();
+    s_files_changed = 0;
+    const char *spec = "{\"config\":[{\"name\":\"a\",\"inline\":[{\"path\":\"/etc/fc/board.json\",\"content\":\"{}\"}]}]}";
+    apply("7", spec);
+    CHECK_INT(s_files_changed, 1);
+    apply("8", spec);
+    CHECK_INT(s_files_changed, 1);
+    apply("9", "{\"config\":[{\"name\":\"a\",\"inline\":[{\"path\":\"/etc/fc/board.json\",\"content\":\"{ }\"}]}]}");
+    CHECK_INT(s_files_changed, 2);
 }
 
 /* ---- dates ------------------------------------------------------------------ */
@@ -590,6 +619,7 @@ int main(void)
     RUN(x509_dates_convert_to_epoch);
     RUN(inline_config_is_written_and_the_version_kept);
     RUN(a_rejected_config_keeps_the_old_version);
+    RUN(apps_hear_only_of_files_that_changed);
     RUN(percent_encoded_base64_is_decoded);
     RUN(only_inline_config_is_supported);
     RUN(resource_monitors_are_kept_and_reported);

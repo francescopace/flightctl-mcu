@@ -14,6 +14,7 @@ What has been verified, where, and with which figures: microcontrollers managed 
 | Firmware deltas | A device on a known release downloads a patch from it and rebuilds the image from its own ([DELTA.md](DELTA.md)) | 1 to 12% of the image between builds of the same kind; on the Pico W and on the ESP32-S3 with both ports, the other ESP32 chips in the emulator |
 | Automatic rollback | The new firmware is confirmed only after the server accepts a status from it; otherwise the device goes back to the previous one | A broken firmware rolls itself back; the rollout stops at the canary and the other devices never receive it. On the ESP32-S3 with both ports, the Pico W and the emulated chips |
 | WASM apps without reboot | `spec.applications` of type `container` with a WASM OCI image, run by WAMR | Update from v1 to v2 on Xtensa, RISC-V and Arm with the same `.wasm` file, no reboot |
+| App interface | Hardware by name from a board map, grants (`FC_ALLOW`), timers and events, a config file per app, key/value storage, a safe state when an app stops ([APPS.md](APPS.md)) | Unit tests against a fake board, and the end-to-end tests. On an ESP32-C3 (v3.3) the `alarm` app opened the board's LED as `led0`, its pin inherited from the firmware, and a new threshold took it from alarm to ok without restarting it; the same on the Zephyr ESP32-S3 (z14), whose temperature and LED are simulated. GPIO interrupts not yet tried on a board |
 | Heterogeneous fleet | One fleet and one firmware reference, with per-device settings through labels and the template | S2, S3, C3, C5, C6 and classic ESP32 in the same fleet |
 | Certificate renewal | The device renews its management certificate for the same key, through the renewal signer the server approves on its own | With 2-minute certificates, in the emulator and on the simulated device: the device keeps reporting after the first one expires. Not on a board, where a certificate lasts a year |
 | Signed images | Firmware and apps signed in cosign's format; the device checks the signature against a key in its credentials | Unsigned images and images signed with another key are refused; `cosign verify` accepts the signatures |
@@ -28,16 +29,18 @@ What has been verified, where, and with which figures: microcontrollers managed 
 
 ### Firmware size
 
-Release v3.2, ESP-IDF 6.0.3, debug build (`-Og`):
+Release v3.3, with the app interface, ESP-IDF 6.0.3, debug build (`-Og`):
 
 | Chip | Image | Free in the 1,664 KB OTA slot |
 |---|---|---|
-| ESP32 | 1,167 KB | 30% |
-| ESP32-S2 | 1,140 KB | 31% |
-| ESP32-S3 | 1,166 KB | 30% |
-| ESP32-C3 | 1,241 KB | 25% |
-| ESP32-C5 | 1,337 KB | 20% |
-| ESP32-C6 | 1,337 KB | 20% |
+| ESP32 | 1,188 KB | 29% |
+| ESP32-S2 | 1,160 KB | 30% |
+| ESP32-S3 | 1,186 KB | 29% |
+| ESP32-C3 | 1,263 KB | 24% |
+| ESP32-C5 | 1,358 KB | 18% |
+| ESP32-C6 | 1,359 KB | 18% |
+
+The app interface (GPIO, LEDs, timers, events, config, storage and the board map) added about 20 KB to each image against v3.2.
 
 The release profile (`VARIANT=release`: `-Os`, quieter logs) is about 15% smaller, on the C3 and the S3. BLE provisioning built in (`VARIANT=ble`) adds about 270 KB: 1,502 KB on the C3 with release v3.1, 10% of the slot free.
 
@@ -69,7 +72,7 @@ Internal heap with the `alarm` app running and both agent connections open, firm
 
 The S2 has the least room: its largest internal block is only just above the 16.7 KB a TLS handshake needs. The lowest point is when a TLS handshake and a firmware download run together.
 
-With release v3.1 (ESP-IDF 6.0.3) the C3 had 70 KB free and 48 KB at the lowest after three hours. Release v3.2, which adds the resource alerts, leaves about 4 KB less: 65.6 KB free five minutes after boot with `alarm`, against 69.8 KB for v3.1 at the same point. With Zephyr: about 30 KB free on the Pico W, 50 KB on the ESP32-S3 ([DEVICES.md](DEVICES.md#boards-tried)).
+With release v3.1 (ESP-IDF 6.0.3) the C3 had 70 KB free and 48 KB at the lowest after three hours. Release v3.2, which adds the resource alerts, leaves about 4 KB less: 65.6 KB free five minutes after boot with `alarm`, against 69.8 KB for v3.1 at the same point. With Zephyr: about 30 KB free on the Pico W, 50 KB on the ESP32-S3 ([DEVICES.md](DEVICES.md#boards-tried)). The app interface takes about 5 KB more static RAM (the board map, each app's handles and event queue): with v3.3 and z14 that is 5 KB less heap than these figures, which were measured before it.
 
 What a WASM app costs, on the C3 (debug builds): the heap five minutes after boot with and without the `trend` app (1.9 KB of `.wasm`) differs by 21.4 KB with v3.1 and 17.7 KB with v3.2, which no longer keeps the `.wasm` in RAM once the module is loaded. Split on a host with the same module, what is left is the module loaded by WAMR's fast interpreter (about 5 KB), the instance and its WAMR stack (about 3.5 KB), the module's linear memory (about 1 KB) and the app's thread stack (8 KB).
 

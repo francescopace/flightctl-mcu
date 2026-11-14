@@ -17,7 +17,6 @@
 #include "fc_port.h"
 #include "fc_port_zephyr.h"
 #include "fc_wifi_zephyr.h"
-#include "wasm_export.h"
 
 /* The fc_creds partition, written by tools/provision.py --format zephyr:
  * "FCC1", the length of what follows (32 bits, little-endian), then a JSON
@@ -81,20 +80,20 @@ static void wait_for_time(void)
 #endif
 
 
-/* Simulated hardware for WASM apps, as on the host: a temperature that swings
- * 30..46 C over two minutes, a 40 C threshold, an LED printed on change. */
-static int32_t sim_temp_mc(wasm_exec_env_t env)
+/* Simulated hardware for WASM apps, as on the host: a chip temperature that
+ * swings 30..46 C over two minutes, and an LED (led0) printed when it
+ * changes. No GPIO yet. */
+static int sim_sensor(const char *name, int32_t *value)
 {
+    if (strcmp(name, "die_temp") != 0) {
+        return FC_HW_ENOENT;
+    }
     long t = (long)(k_uptime_get() / 1000) % 120;
-    return 30000 + (int32_t)(t < 60 ? t : 120 - t) * 266;
+    *value = 30000 + (int32_t)(t < 60 ? t : 120 - t) * 266;
+    return 0;
 }
 
-static int32_t sim_threshold_mc(wasm_exec_env_t env)
-{
-    return 40000;
-}
-
-static void sim_led(wasm_exec_env_t env, int32_t r, int32_t g, int32_t b)
+static int sim_led_rgb(const fc_hw_led_t *led, uint8_t r, uint8_t g, uint8_t b)
 {
     static int32_t last = -1;
     int32_t v = (r << 16) | (g << 8) | b;
@@ -102,12 +101,32 @@ static void sim_led(wasm_exec_env_t env, int32_t r, int32_t g, int32_t b)
         printk("LED r=%d g=%d b=%d\n", (int)r, (int)g, (int)b);
         last = v;
     }
+    return 0;
 }
 
-static NativeSymbol s_natives[] = {
-    {"temp_mc", (void *)sim_temp_mc, "()i", NULL},
-    {"threshold_mc", (void *)sim_threshold_mc, "()i", NULL},
-    {"led", (void *)sim_led, "(iii)", NULL},
+static int sim_led_open(const fc_hw_led_t *led)
+{
+    return 0;
+}
+
+static void sim_led_close(const fc_hw_led_t *led)
+{
+    sim_led_rgb(led, 0, 0, 0);
+}
+
+static char *sim_board(void)
+{
+    return strdup("{\"led\": {\"led0\": {\"dt\": \"simulated\"}}}");
+}
+
+static const fc_hw_t s_hw = {
+    .board = CONFIG_BOARD_TARGET,
+    .firmware = CONFIG_FC_FW_VERSION,
+    .board_defaults = sim_board,
+    .led_open = sim_led_open,
+    .led_rgb = sim_led_rgb,
+    .led_close = sim_led_close,
+    .sensor_read = sim_sensor,
 };
 
 /* Nothing can be done, and maybe no one was watching when it was first
@@ -167,8 +186,7 @@ int main(void)
         .status_interval_s = 60,
         .metrics_interval_s = CONFIG_FC_METRICS_INTERVAL,
         .ota_verify_timeout_s = CONFIG_FC_OTA_VERIFY_TIMEOUT,
-        .wasm_natives = s_natives,
-        .wasm_natives_count = sizeof(s_natives) / sizeof(s_natives[0]),
+        .hw = &s_hw,
     };
     fc_agent_run(&cfg);
     stop("the agent stopped");

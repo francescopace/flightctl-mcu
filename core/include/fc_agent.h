@@ -8,6 +8,8 @@
 
 #include <stddef.h>
 
+#include "fc_hw.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,10 +54,8 @@ typedef struct {
     void (*custom_info)(void *cjson_obj, void *app_ctx);
     void *app_ctx;
 
-    /* Host functions for WASM apps: a WAMR NativeSymbol array registered
-     * under module "env" (may be NULL). */
-    const void *wasm_natives;
-    int wasm_natives_count;
+    /* The hardware WASM apps reach (fc_hw.h); may be NULL. */
+    const fc_hw_t *hw;
 } fc_agent_config_t;
 
 /* Runs the agent: enrolls if needed, then loops forever. Returns only on a

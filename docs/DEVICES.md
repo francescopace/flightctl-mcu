@@ -44,7 +44,7 @@ The S2 Mini and the C6 DevKitC flash only over their native USB port, started in
 
 PSRAM is not used, so a single image runs on every board variant of a chip. The exception is the S2, which needs its PSRAM (see the table).
 
-With ESP-IDF 6.0.3 (release v3.2, debug build) the firmware images are 1,140 to 1,337 KB, leaving 20–31% of the 1,664 KB OTA slot free, and 1,502 KB with BLE provisioning built in (C3, release v3.1), which leaves 10% ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself is about 35 KB (49 KB with cJSON, detools and its ESP-IDF port; C3, debug build) and WAMR about 68 KB.
+With ESP-IDF 6.0.3 (release v3.3, debug build) the firmware images are 1,160 to 1,359 KB, leaving 18–30% of the 1,664 KB OTA slot free, and 1,502 KB with BLE provisioning built in (C3, release v3.1), which leaves 10% ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself is about 35 KB (49 KB with cJSON, detools and its ESP-IDF port; C3, debug build) and WAMR about 68 KB.
 
 With Zephyr 4.5 and firmware updates through MCUboot ([ZEPHYR.md](ZEPHYR.md)):
 

@@ -35,3 +35,7 @@ target_compile_options(${wamr_lib} PRIVATE -include ${CMAKE_CURRENT_LIST_DIR}/wa
 if(NOT CONFIG_HEAP_HAS_EXEC_HEAP)
     target_compile_definitions(${wamr_lib} PRIVATE MALLOC_CAP_EXEC=MALLOC_CAP_INVALID)
 endif()
+# Instruction metering, which WAMR's ESP-IDF component has no option for: an
+# app call that runs past its budget traps, so an app in an endless loop can
+# always be stopped (core/src/fc_apps.c). Public, so the core sees it too.
+target_compile_definitions(${wamr_lib} PUBLIC WASM_ENABLE_INSTRUCTION_METERING=1)

@@ -149,7 +149,7 @@ spec:
           appType: container
           image: $FLEET_REGISTRY/flightctl-mcu/alarm:$2
           envVars:
-            TICK_MS: "100"
+            FC_ALLOW: "led0"
       config:
         - name: alarm
           inline:

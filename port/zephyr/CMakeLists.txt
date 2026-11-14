@@ -35,6 +35,9 @@ set(WAMR_BUILD_LIBC_BUILTIN 0)
 set(WAMR_BUILD_LIBC_WASI 0)
 set(WAMR_BUILD_SIMD 0)
 set(WAMR_BUILD_REF_TYPES 0)
+# Instruction metering: an app call that runs past its budget traps, so an
+# app in an endless loop can always be stopped (core/src/fc_apps.c).
+set(WAMR_BUILD_INSTRUCTION_METERING 1)
 set(WAMR_ROOT_DIR ${ROOT}/third_party/wamr)
 include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 
@@ -52,6 +55,8 @@ target_sources(app PRIVATE
     ${ROOT}/core/src/fc_identity.c
     ${ROOT}/core/src/fc_oci.c
     ${ROOT}/core/src/fc_apps.c
+    ${ROOT}/core/src/fc_appapi.c
+    ${ROOT}/core/src/fc_board.c
     ${ROOT}/core/src/fc_resources.c
     ${ROOT}/core/src/fc_delta.c
     ${ROOT}/third_party/cjson/cJSON.c

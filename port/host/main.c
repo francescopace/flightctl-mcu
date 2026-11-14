@@ -12,24 +12,20 @@
 #include <time.h>
 
 #include "fc_agent.h"
-#include "wasm_export.h"
 
 void fc_port_host_init(const char *data_dir, int debug);
 
-/* Simulated hardware for WASM apps: a temperature that swings 30..46 C over
- * two minutes, a fixed 40 C threshold and an LED printed on change. */
-static int32_t host_temp_mc(wasm_exec_env_t env)
+/* Simulated hardware for WASM apps: a board with an LED (led0) printed when
+ * it changes, a button that is never pressed (button0), free GPIOs 2..15 for
+ * the fleet's board.json, outputs printed when they change, and a chip
+ * temperature that swings 30..46 C over two minutes. */
+static int32_t host_temp_mc(void)
 {
     long t = time(NULL) % 120;
     return 30000 + (int32_t)(t < 60 ? t : 120 - t) * 266;
 }
 
-static int32_t host_threshold_mc(wasm_exec_env_t env)
-{
-    return 40000;
-}
-
-static void host_led(wasm_exec_env_t env, int32_t r, int32_t g, int32_t b)
+static void host_led(int32_t r, int32_t g, int32_t b)
 {
     static int32_t last = -1;
     int32_t v = (r << 16) | (g << 8) | b;
@@ -39,10 +35,88 @@ static void host_led(wasm_exec_env_t env, int32_t r, int32_t g, int32_t b)
     }
 }
 
-static NativeSymbol s_natives[] = {
-    {"temp_mc", (void *)host_temp_mc, "()i", NULL},
-    {"threshold_mc", (void *)host_threshold_mc, "()i", NULL},
-    {"led", (void *)host_led, "(iii)", NULL},
+#define HOST_PINS 16
+static int s_level[HOST_PINS];
+
+static char *host_board(void)
+{
+    return strdup("{\"gpio\": {\"button0\": {\"pin\": 0, \"active_low\": true}},"
+                  " \"led\": {\"led0\": {\"pin\": 1}}}");
+}
+
+static int host_pin_reserved(int pin)
+{
+    return pin < 0 || pin >= HOST_PINS;
+}
+
+static int host_gpio_setup(int pin, int mode)
+{
+    if (pin == 0) {
+        s_level[0] = 1; /* the button, released */
+    }
+    return 0;
+}
+
+static int host_gpio_read(int pin)
+{
+    return s_level[pin];
+}
+
+static int host_gpio_write(int pin, int level)
+{
+    if (s_level[pin] != (level != 0)) {
+        fprintf(stderr, "GPIO %d = %d\n", pin, level != 0);
+    }
+    s_level[pin] = level != 0;
+    return 0;
+}
+
+static int host_gpio_irq(int pin, int edge, void (*cb)(void *), void *ctx)
+{
+    return 0; /* nothing presses the button */
+}
+
+static void host_gpio_release(int pin) {}
+
+static int host_led_open(const fc_hw_led_t *led)
+{
+    return 0;
+}
+
+static int host_led_rgb(const fc_hw_led_t *led, uint8_t r, uint8_t g, uint8_t b)
+{
+    host_led(r, g, b);
+    return 0;
+}
+
+static void host_led_close(const fc_hw_led_t *led)
+{
+    host_led(0, 0, 0);
+}
+
+static int host_sensor(const char *name, int32_t *value)
+{
+    if (strcmp(name, "die_temp") != 0) {
+        return FC_HW_ENOENT;
+    }
+    *value = host_temp_mc();
+    return 0;
+}
+
+static const fc_hw_t s_hw = {
+    .board = "host",
+    .firmware = "flightctl-mcu/0.1.0",
+    .board_defaults = host_board,
+    .pin_reserved = host_pin_reserved,
+    .gpio_setup = host_gpio_setup,
+    .gpio_read = host_gpio_read,
+    .gpio_write = host_gpio_write,
+    .gpio_irq = host_gpio_irq,
+    .gpio_release = host_gpio_release,
+    .led_open = host_led_open,
+    .led_rgb = host_led_rgb,
+    .led_close = host_led_close,
+    .sensor_read = host_sensor,
 };
 
 static char *read_file(const char *path)
@@ -127,8 +201,7 @@ int main(int argc, char **argv)
         .labels = labels,
         .agent_version = "flightctl-mcu/0.1.0",
         .status_interval_s = 60,
-        .wasm_natives = s_natives,
-        .wasm_natives_count = sizeof(s_natives) / sizeof(s_natives[0]),
+        .hw = &s_hw,
     };
     return fc_agent_run(&cfg) == 0 ? 0 : 1;
 }

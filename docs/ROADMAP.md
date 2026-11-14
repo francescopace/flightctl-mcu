@@ -32,7 +32,13 @@ What Flight Control offers and the agent does not answer yet:
 
 What an app can do and hold:
 
-- [ ] The app interface for 1.0. Today an app has `set_state`, `log`, the temperature, the threshold and the LED. It is to get GPIO with interrupts, I2C, SPI, UART, ADC and PWM under names the firmware gives each board, its config, a key/value store, timers and events, and a way out for its data (MQTT, metrics).
+- [ ] The app interface for 1.0 ([APPS.md](APPS.md)). An app has its state, log, config, a key/value store, timers and events, and GPIO with interrupts and LEDs under the names of a board map that the fleet extends; a call that does not return is stopped. To come:
+  - I2C, SPI, UART (with RS-485), ADC and PWM, on ESP-IDF, then on Zephyr through the devicetree; GPIO on Zephyr;
+  - MQTT: one connection for all the apps. With the agent's two, a C3 at its lowest has room for one more TLS handshake at a time; the ESP32-S2 may not fit it;
+  - metrics for Flight Control's Telemetry Gateway, which takes OTLP over gRPC only: an HTTP/2 and gRPC client, the one the remote terminal needs, and a protobuf encoder;
+  - the instruction budget of a call, measured on a C3 so that it comes to about a second there;
+  - whether apps get WAMR's small libc (`memcpy`, `snprintf`...), a few KB of firmware, since building a payload by hand is the biggest burden on a real app;
+  - for MQTT payloads, a pool shared by the apps' event queues, which could otherwise hold 8 KB per app.
 - [ ] A size limit for an app that the chip can hold. The device accepts a `.wasm` up to 64 KB, which no chip can run: in RAM an app costs about 3 times its `.wasm` once loaded, plus its linear memory, about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)). The limit should follow the heap, and the thread stack, the largest part of what a small app costs, can shrink.
 
 Towards a deployment:

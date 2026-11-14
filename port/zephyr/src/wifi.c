@@ -201,6 +201,25 @@ static int join(const char *ssid, const char *pass, int tries)
 
 /* ---- in the field ---------------------------------------------------------- */
 
+/* The credentials partition, by a hash of it: a network given in the field is
+ * kept for these credentials only. Writing the partition again (a new proof of
+ * possession, another installation) forgets it, and the device asks again. */
+static char s_creds_id[17];
+
+static void creds_id(const cJSON *creds)
+{
+    char *text = cJSON_PrintUnformatted(creds);
+    unsigned char d[32];
+    fc_sha256_t h;
+    fc_sha256_start(&h);
+    fc_sha256_update(&h, text, text != NULL ? strlen(text) : 0);
+    fc_sha256_finish(&h, d);
+    free(text);
+    for (int i = 0; i < 8; i++) {
+        snprintf(s_creds_id + 2 * i, 3, "%02x", d[i]);
+    }
+}
+
 #ifdef CONFIG_NET_DHCPV4_SERVER
 
 /* With the access point up (fc_prov_config_t.join): the station interface
@@ -277,25 +296,6 @@ static void ap_close(void)
     net_mgmt(NET_REQUEST_WIFI_AP_DISABLE, s_ap, NULL, 0);
 }
 
-/* The credentials partition, by a hash of it: a network given in the field is
- * kept for these credentials only. Writing the partition again (a new proof of
- * possession, another installation) forgets it, and the device asks again. */
-static char s_creds_id[17];
-
-static void creds_id(const cJSON *creds)
-{
-    char *text = cJSON_PrintUnformatted(creds);
-    unsigned char d[32];
-    fc_sha256_t h;
-    fc_sha256_start(&h);
-    fc_sha256_update(&h, text, text != NULL ? strlen(text) : 0);
-    fc_sha256_finish(&h, d);
-    free(text);
-    for (int i = 0; i < 8; i++) {
-        snprintf(s_creds_id + 2 * i, 3, "%02x", d[i]);
-    }
-}
-
 static void keep(const char *ssid, const char *pass)
 {
     cJSON *o = cJSON_CreateObject();
@@ -367,6 +367,7 @@ void fc_wifi_up(const cJSON *creds)
 
     const char *ssid = cJSON_GetStringValue(cJSON_GetObjectItem(creds, "wifi_ssid"));
     const char *pop = cJSON_GetStringValue(cJSON_GetObjectItem(creds, "prov_pop"));
+    (void)pop; /* without an access point (the Pico W) there is no provisioning in the field */
     if (ssid != NULL && ssid[0] != '\0') {
         join(ssid, cJSON_GetStringValue(cJSON_GetObjectItem(creds, "wifi_pass")), 0);
         return;

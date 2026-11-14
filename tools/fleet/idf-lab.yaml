@@ -6,10 +6,11 @@
 # temperature alarm" app. (The ones with the Zephyr build are in
 # zephyr-lab.yaml: the two are released apart for now.)
 # Change threshold_c and re-apply: devices pick it up on the next long-poll,
-# without reboot. Fields: threshold_c, hysteresis_c, sample_ms, led_gpio, led_ws2812.
-# Per-device LED: label the device led-gpio=<n> (default -1 = board default)
-# and led-order=<grb|rgb|...> (WS2812 colour byte order, default grb);
-# for a plain single-colour LED: led-ws2812=false, led-active-low=true|false.
+# without reboot. The app's fields: threshold_c, hysteresis_c, sample_ms.
+# Per-device LED, led0 in /etc/fc/board.json: label the device led-gpio=<n>
+# (default -1: the board's) and led-order=<grb|rgb|...> (WS2812 colour byte
+# order, default grb); for a plain single-colour LED: led-ws2812=false,
+# led-active-low=true|false.
 apiVersion: flightctl.io/v1beta1
 kind: Fleet
 metadata:
@@ -38,16 +39,20 @@ spec:
     spec:
       # Multi-chip OCI index (tools/fw-push.py): each device picks its chip.
       os:
-        image: ${REGISTRY}/flightctl-mcu/fw:v3.2
-      # LED logic as a WASM app (wasm-apps/alarm): replaced without reboot.
+        image: ${REGISTRY}/flightctl-mcu/fw:v3.3
+      # The alarm as a WASM app (wasm-apps/alarm): replaced without reboot.
       applications:
         - name: alarm
           appType: container
-          image: ${REGISTRY}/flightctl-mcu/alarm:v2.2
+          image: ${REGISTRY}/flightctl-mcu/alarm:v2.3
           envVars:
-            TICK_MS: "100"
+            FC_ALLOW: "led0"
       config:
+        - name: board
+          inline:
+            - path: /etc/fc/board.json
+              content: '{"led": {"led0": {"pin": {{ getOrDefault .metadata.labels "led-gpio" "-1" }}, "order": "{{ getOrDefault .metadata.labels "led-order" "grb" }}", "ws2812": {{ getOrDefault .metadata.labels "led-ws2812" "true" }}, "active_low": {{ getOrDefault .metadata.labels "led-active-low" "false" }}}}}'
         - name: alarm
           inline:
             - path: /etc/fc-app/alarm.json
-              content: '{"threshold_c": 40, "hysteresis_c": 1, "sample_ms": 2000, "led_gpio": {{ getOrDefault .metadata.labels "led-gpio" "-1" }}, "led_order": "{{ getOrDefault .metadata.labels "led-order" "grb" }}", "led_ws2812": {{ getOrDefault .metadata.labels "led-ws2812" "true" }}, "led_active_low": {{ getOrDefault .metadata.labels "led-active-low" "false" }}}'
+              content: '{"threshold_c": 40, "hysteresis_c": 1, "sample_ms": 2000}'

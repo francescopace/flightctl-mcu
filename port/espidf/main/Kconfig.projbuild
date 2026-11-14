@@ -64,8 +64,8 @@ config FC_LED_GPIO
     int "Default LED GPIO (overridable from config)"
     default 48
     help
-        ESP32-S3-DevKitC-1 v1.0: 48, v1.1: 38. The fleet config field
-        led_gpio overrides it at runtime.
+        ESP32-S3-DevKitC-1 v1.0: 48, v1.1: 38. It is led0 in the board map
+        WASM apps open; the fleet's /etc/fc/board.json can move it.
 
 config FC_LED_WS2812
     bool "LED is a WS2812 (addressable RGB)"

@@ -884,13 +884,22 @@ static int apply_inline_file(agent_t *a, const cJSON *file, char *err, size_t er
         len = out_len;
     }
     /* The application validates first, so a rejected file is never stored and
-     * the last good one is still there after a reboot. */
+     * the last good one is still there after a reboot. Every file comes again
+     * with each rendered version: apps hear only of those that changed. */
+    char *stored = NULL;
+    size_t stored_len = 0;
+    int same = fc_port_read_file(path, &stored, &stored_len) == 0 && stored_len == len && memcmp(stored, data, len) == 0;
+    free(stored);
     int rc = 0;
-    if (a->cfg->on_config_file != NULL && a->cfg->on_config_file(path, data, len, a->cfg->app_ctx) != 0) {
+    if (fc_apps_check_file(path, data, err, err_len) != 0) {
+        rc = -1;
+    } else if (a->cfg->on_config_file != NULL && a->cfg->on_config_file(path, data, len, a->cfg->app_ctx) != 0) {
         snprintf(err, err_len, "%s: rejected by application", path);
         rc = -1;
     } else if ((rc = fc_port_write_file(path, data, len)) != 0) {
         snprintf(err, err_len, "%s: write failed", path);
+    } else if (!same) {
+        fc_apps_file_changed(path);
     }
     free(buf);
     return rc;
@@ -1232,7 +1241,8 @@ static void resume_firmware_update(agent_t *a)
 
 int fc_agent_apps_start(const fc_agent_config_t *cfg)
 {
-    return fc_apps_init(cfg->wasm_natives, cfg->wasm_natives_count);
+    fc_apps_set_hw(cfg->hw);
+    return fc_apps_init();
 }
 
 int fc_agent_run(const fc_agent_config_t *cfg)
@@ -1253,6 +1263,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     if (fc_http_global_init() != 0 || fc_identity_load(&a.id) != 0) {
         return -1;
     }
+    fc_apps_set_device(a.id.name);
     make_boot_id(a.boot_id);
     fc_oci_set_signing_key(cfg->signing_pub_pem);
     if (cfg->signing_pub_pem == NULL) {

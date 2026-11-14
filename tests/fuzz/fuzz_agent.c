@@ -50,7 +50,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         char dir[] = "/tmp/fc-fuzz-XXXXXX";
         fc_port_host_init(mkdtemp(dir), 0);
         fc_http_global_init();
-        fc_apps_init(NULL, 0);
+        fc_apps_init();
         a.cfg = &cfg;
         pthread_mutex_init(&a.lock, NULL);
         pthread_cond_init(&a.status_wake, NULL);

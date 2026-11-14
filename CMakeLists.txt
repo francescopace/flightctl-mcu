@@ -34,6 +34,9 @@ set(WAMR_BUILD_LIBC_BUILTIN 0)
 set(WAMR_BUILD_LIBC_WASI 0)
 set(WAMR_BUILD_SIMD 0)
 set(WAMR_BUILD_REF_TYPES 0)
+# Instruction metering: an app call that runs past its budget traps, so an
+# app in an endless loop can always be stopped (fc_apps.c).
+set(WAMR_BUILD_INSTRUCTION_METERING 1)
 include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 add_library(vmlib STATIC ${WAMR_RUNTIME_LIB_SOURCE})
 target_compile_options(vmlib PRIVATE -w)
@@ -64,6 +67,8 @@ add_library(fc_core STATIC
     core/src/fc_identity.c
     core/src/fc_oci.c
     core/src/fc_apps.c
+    core/src/fc_appapi.c
+    core/src/fc_board.c
     core/src/fc_resources.c
     core/src/fc_prov.c
     third_party/cjson/cJSON.c
@@ -102,7 +107,7 @@ if(FC_FUZZ)
     fc_fuzzer(fuzz_http ${CJSON})
     fc_fuzzer(fuzz_oci port/host/fc_port_host.c ${CJSON} ${DELTA_SRCS})
     fc_fuzzer(fuzz_delta ${DELTA_SRCS})
-    fc_fuzzer(fuzz_agent core/src/fc_http.c core/src/fc_identity.c core/src/fc_apps.c core/src/fc_resources.c port/host/fc_port_host.c ${CJSON})
+    fc_fuzzer(fuzz_agent core/src/fc_http.c core/src/fc_identity.c core/src/fc_apps.c core/src/fc_appapi.c core/src/fc_board.c core/src/fc_resources.c port/host/fc_port_host.c ${CJSON})
     target_link_libraries(fuzz_agent PRIVATE vmlib)
 endif()
 
@@ -131,7 +136,7 @@ if(FC_UNIT)
     fc_unit(test_identity core/src/fc_identity.c core/src/fc_http.c third_party/cjson/cJSON.c)
     fc_unit(test_agent core/src/fc_identity.c core/src/fc_http.c core/src/fc_resources.c third_party/cjson/cJSON.c)
     fc_unit(test_resources third_party/cjson/cJSON.c)
-    fc_unit(test_apps third_party/cjson/cJSON.c)
+    fc_unit(test_apps third_party/cjson/cJSON.c core/src/fc_appapi.c core/src/fc_board.c)
     target_link_libraries(test_apps PRIVATE vmlib)
     fc_unit(test_threads third_party/cjson/cJSON.c)
 endif()

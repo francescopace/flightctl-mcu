@@ -23,15 +23,15 @@ spec:
       # One OCI index with an image per board (tools/fw-push.py
       # PLATFORM=zephyr.signed.bin ...): each device takes its own.
       os:
-        image: ${REGISTRY}/flightctl-mcu/fw:z13
+        image: ${REGISTRY}/flightctl-mcu/fw:z14
       # The same WASM app as on the ESP-IDF boards; here its temperature and
       # its LED are simulated (port/zephyr/src/main.c).
       applications:
         - name: alarm
           appType: container
-          image: ${REGISTRY}/flightctl-mcu/alarm:v2.2
+          image: ${REGISTRY}/flightctl-mcu/alarm:v2.3
           envVars:
-            TICK_MS: "100"
+            FC_ALLOW: "led0"
       config:
         - name: alarm
           inline:

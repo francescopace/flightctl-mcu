@@ -129,7 +129,7 @@ EOF
           appType: container
           image: $REGISTRY/flightctl-mcu/$image:$app
           envVars:
-            TICK_MS: "100"
+            FC_ALLOW: "led0"
 EOF
     fi
   }

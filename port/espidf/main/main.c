@@ -1,5 +1,5 @@
 /*
- * flightctl-mcu firmware: the alarm app, WiFi + SNTP, then the Flight Control agent.
+ * flightctl-mcu firmware: WiFi + SNTP, then the Flight Control agent.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +30,7 @@
 #define PROV_HOW "on access point"
 #endif
 #endif
-#include "alarm.h"
+#include "hw.h"
 #include "cJSON.h"
 #include "fc_agent.h"
 #include "freertos/FreeRTOS.h"
@@ -401,7 +401,7 @@ static int on_config_file(const char *path, const char *data, size_t len, void *
     if (strcmp(path, SECURE_BOOT_CONFIG) == 0) {
         return secure_boot_config(data);
     }
-    return alarm_on_config_file(path, data, len, ctx);
+    return 0;
 }
 
 void app_main(void)
@@ -416,15 +416,12 @@ void app_main(void)
     ESP_ERROR_CHECK(fc_port_espidf_init() == 0 ? ESP_OK : ESP_FAIL);
     start_ota_guard();
     ESP_LOGI(TAG, "flightctl-mcu firmware %s", esp_app_get_description()->version);
-    alarm_start(); /* runs offline too, with the last stored config */
 
     static creds_t creds;
     load_creds(&creds);
     static char labels[256];
     snprintf(labels, sizeof(labels), "chip=%s,%s", CONFIG_IDF_TARGET, creds.labels);
 
-    int n_natives = 0;
-    const void *natives = alarm_wasm_natives(&n_natives);
     fc_agent_config_t cfg = {
         .server_host = creds.host,
         .server_port = creds.port,
@@ -438,9 +435,7 @@ void app_main(void)
         .metrics_interval_s = CONFIG_FC_METRICS_INTERVAL,
         .ota_verify_timeout_s = CONFIG_FC_OTA_VERIFY_TIMEOUT,
         .on_config_file = on_config_file,
-        .custom_info = alarm_custom_info,
-        .wasm_natives = natives,
-        .wasm_natives_count = n_natives,
+        .hw = hw_espidf(),
     };
     fc_agent_apps_start(&cfg); /* WASM apps saved by a previous run, before the network */
 
