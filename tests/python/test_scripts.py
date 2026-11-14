@@ -28,6 +28,7 @@ soak = load("soak", "tools/soak/collect.py")
 approve = load("auto_approve", "tools/auto-approve/auto-approve.py")
 registry = load("registry_client", "tools/registry/registry_client.py")
 sbom = load("sbom", "tools/sbom.py")
+advisories = load("advisories", "tools/advisories.py")
 
 
 class SignTest(unittest.TestCase):
@@ -283,7 +284,7 @@ class SbomTest(unittest.TestCase):
         for c in doc["components"]:
             by_name.setdefault(c["name"], []).append(c)
         self.assertEqual([c["version"] for c in by_name["esp-idf"]], ["6.0.3"])  # once for both chips
-        self.assertEqual(by_name["mbedtls"][0]["cpe"], "cpe:2.3:a:arm:mbed_tls:4.1.1:*:*:*:*:*:*:*")
+        self.assertEqual(by_name["mbedtls"][0]["cpe"], "cpe:2.3:a:trustedfirmware:mbed_tls:4.1.1:*:*:*:*:*:*:*")
         self.assertIn("network_provisioning", by_name)
         for name in ("flightctl-mcu", "cJSON", "wasm-micro-runtime", "detools"):
             self.assertIn(name, by_name)
@@ -299,6 +300,43 @@ class SbomTest(unittest.TestCase):
             self.assertIn(name, names)
         refs = [c["bom-ref"] for c in doc["components"]]
         self.assertEqual(len(refs), len(set(refs)))
+
+
+class AdvisoriesTest(unittest.TestCase):
+    MBEDTLS = [("a", "trustedfirmware", "mbed_tls"), ("a", "arm", "mbed_tls")]
+
+    def cve(self, *matches):
+        return {"configurations": [{"nodes": [{"cpeMatch": list(matches)}]}]}
+
+    def test_version_ranges_as_nvd_writes_them(self):
+        m = {"vulnerable": True, "criteria": "cpe:2.3:a:trustedfirmware:mbed_tls:*:*:*:*:*:*:*:*",
+             "versionStartIncluding": "4.0.0", "versionEndExcluding": "4.1.0"}
+        self.assertTrue(advisories.affects(self.cve(m), self.MBEDTLS, "4.0.0"))
+        self.assertFalse(advisories.affects(self.cve(m), self.MBEDTLS, "4.1.0"))
+        self.assertFalse(advisories.affects(self.cve(m), self.MBEDTLS, "4.1.1"))
+        self.assertFalse(advisories.affects(self.cve(m), self.MBEDTLS, "3.6.7"))
+        # 3.10 is after 3.9, not before it
+        old = {"vulnerable": True, "criteria": "cpe:2.3:a:arm:mbed_tls:*:*:*:*:*:*:*:*", "versionEndIncluding": "3.9"}
+        self.assertFalse(advisories.affects(self.cve(old), self.MBEDTLS, "3.10.0"))
+
+    def test_exact_versions_other_products_and_non_vulnerable_entries(self):
+        exact = {"vulnerable": True, "criteria": "cpe:2.3:a:arm:mbed_tls:3.6.7:*:*:*:*:*:*:*"}
+        self.assertTrue(advisories.affects(self.cve(exact), self.MBEDTLS, "3.6.7"))
+        self.assertFalse(advisories.affects(self.cve(exact), self.MBEDTLS, "3.6.8"))
+        other = {"vulnerable": True, "criteria": "cpe:2.3:a:other:mbed_tls:*:*:*:*:*:*:*:*"}
+        self.assertFalse(advisories.affects(self.cve(other), self.MBEDTLS, "3.6.7"))
+        platform = dict(exact, vulnerable=False)
+        self.assertFalse(advisories.affects(self.cve(platform), self.MBEDTLS, "3.6.7"))
+
+    def test_osv_record_names_the_shipped_versions_by_package_url(self):
+        cve = {"id": "CVE-2026-1", "published": "2026-01-01T00:00:00.000", "lastModified": "2026-02-01T00:00:00.000",
+               "descriptions": [{"lang": "en", "value": "A flaw. More."}],
+               "metrics": {"cvssMetricV31": [{"type": "Primary", "cvssData": {"vectorString": "CVSS:3.1/AV:N"}}]}}
+        rec = advisories.osv_record(cve, {"pkg:github/mbed-tls/mbedtls": {"v4.1.1"}})
+        self.assertEqual(rec["aliases"], ["CVE-2026-1"])  # Trustify makes the vulnerability from the CVE alias
+        self.assertEqual(rec["affected"][0]["package"]["purl"], "pkg:github/mbed-tls/mbedtls")
+        self.assertEqual(rec["affected"][0]["versions"], ["v4.1.1"])
+        self.assertEqual(rec["severity"], [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N"}])
 
 
 if __name__ == "__main__":

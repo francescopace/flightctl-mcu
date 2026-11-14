@@ -34,7 +34,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WS = os.path.join(ROOT, "third_party", "zephyr-ws")
 
 # The mbedTLS each ESP-IDF release ships (components/mbedtls). docs/DEPENDENCIES.md.
-MBEDTLS_IN_ESP_IDF = {"6.0.3": "4.1.1"}
+MBEDTLS_IN_ESP_IDF = {"5.5.6": "3.6.7", "6.0.3": "4.1.1"}
 
 # Zephyr modules each board's image is built with, besides those of every build.
 ZEPHYR_COMMON = ("mbedtls", "tf-psa-crypto", "mcuboot", "littlefs", "picolibc", "zcbor")
@@ -56,6 +56,8 @@ def grep(path, pattern):
     return m.group(1)
 
 
+# CPE names as NVD's dictionary has them (checked November 2026). MCUboot,
+# littlefs, picolibc and detools are not in it: they get none.
 def cpe(vendor, product, version, part="a"):
     return f"cpe:2.3:{part}:{vendor}:{product}:{version}:*:*:*:*:*:*:*"
 
@@ -120,7 +122,7 @@ def esp_idf_components(chips):
             if mbedtls is None:
                 sys.exit(f"which mbedTLS comes with ESP-IDF {idf}? Add it to MBEDTLS_IN_ESP_IDF in {__file__}")
             out.append(component("mbedtls", mbedtls, f"pkg:github/mbed-tls/mbedtls@v{mbedtls}",
-                                 cpe_id=cpe("arm", "mbed_tls", mbedtls), license_id="Apache-2.0",
+                                 cpe_id=cpe("trustedfirmware", "mbed_tls", mbedtls), license_id="Apache-2.0",
                                  description=f"from ESP-IDF {idf}", ref=f"esp-idf-{idf}-mbedtls"))
         for name, version in deps.items():
             if name == "idf" or (name, version) in seen:
@@ -157,22 +159,21 @@ def zephyr_module(name, revs):
     if name == "mbedtls":
         v = grep("third_party/zephyr-ws/modules/crypto/mbedtls/include/mbedtls/build_info.h",
                  r'#define MBEDTLS_VERSION_STRING\s+"([^"]+)"')
-        return component("mbedtls", v, f"pkg:github/mbed-tls/mbedtls@v{v}", cpe_id=cpe("arm", "mbed_tls", v),
+        return component("mbedtls", v, f"pkg:github/mbed-tls/mbedtls@v{v}", cpe_id=cpe("trustedfirmware", "mbed_tls", v),
                          license_id="Apache-2.0", description=f"Zephyr's module, {rev}", ref=f"zephyr-mbedtls-{v}")
     if name == "tf-psa-crypto":
         v = grep("third_party/zephyr-ws/modules/crypto/tf-psa-crypto/include/tf-psa-crypto/build_info.h",
                  r'#define TF_PSA_CRYPTO_VERSION_STRING\s+"([^"]+)"')
         return component("TF-PSA-Crypto", v, f"pkg:github/mbed-tls/tf-psa-crypto@v{v}",
-                         cpe_id=cpe("arm", "trusted_firmware-psa_crypto", v), license_id="Apache-2.0")
+                         cpe_id=cpe("trustedfirmware", "tf-psa-crypto", v), license_id="Apache-2.0")
     if name == "mcuboot":
         v = zephyr_version("third_party/zephyr-ws/bootloader/mcuboot/boot/zephyr/VERSION")
-        return component("mcuboot", v, f"pkg:github/mcu-tools/mcuboot@v{v}", cpe_id=cpe("mcuboot", "mcuboot", v),
-                         license_id="Apache-2.0", description="the bootloader, built with the image")
+        return component("mcuboot", v, f"pkg:github/mcu-tools/mcuboot@v{v}", license_id="Apache-2.0", description="the bootloader, built with the image")
     if name == "littlefs":
         n = int(grep("third_party/zephyr-ws/modules/fs/littlefs/lfs.h", r"#define LFS_VERSION (0x[0-9a-fA-F]+)"), 16)
         v = f"{n >> 16}.{n & 0xffff}"
         return component("littlefs", v, f"pkg:github/littlefs-project/littlefs@v{v}",
-                         cpe_id=cpe("arm", "littlefs", v), license_id="BSD-3-Clause")
+                         license_id="BSD-3-Clause")
     if name == "picolibc":
         v = grep("third_party/zephyr-ws/modules/lib/picolibc/meson.build", r"^\s+version: '([^']+)'")
         return component("picolibc", v, f"pkg:github/picolibc/picolibc@{v}", license_id="BSD-3-Clause")
