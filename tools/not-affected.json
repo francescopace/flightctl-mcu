@@ -1,0 +1,33 @@
+{
+  "_": "CVEs that NVD matches to a component's version but that do not apply to what the firmware builds and calls. tools/advisories.py leaves them out of Trustify. justification: CycloneDX's impact analysis values. Check each again when the component, or what the firmware uses of it, changes.",
+  "CVE-2025-57052": {
+    "component": "cjson",
+    "justification": "code_not_present",
+    "detail": "In cJSON_Utils.c (JSON pointers), which is not built: the firmware compiles cJSON.c only (third_party/cjson)."
+  },
+  "CVE-2026-67215": {
+    "component": "cjson",
+    "justification": "code_not_present",
+    "detail": "In cJSON_Utils.c (JSON Patch), which is not built: the firmware compiles cJSON.c only."
+  },
+  "CVE-2026-67217": {
+    "component": "cjson",
+    "justification": "code_not_present",
+    "detail": "In cJSON_Utils.c (JSON Patch), which is not built: the firmware compiles cJSON.c only."
+  },
+  "CVE-2026-67216": {
+    "component": "cjson",
+    "justification": "code_not_reachable",
+    "detail": "In cJSON_Compare(), which the firmware never calls."
+  },
+  "CVE-2026-16554": {
+    "component": "cjson",
+    "justification": "requires_environment",
+    "detail": "Needs a string of about 859 million control characters to overflow a 32-bit size; the devices have less than 1 MB of RAM, and nothing they print comes near."
+  },
+  "CVE-2025-66442": {
+    "component": "mbed_tls",
+    "justification": "requires_environment",
+    "detail": "A timing side channel that only LLVM's select-optimize introduces; the firmware is built with GCC (ESP-IDF's and Zephyr's toolchains)."
+  }
+}

@@ -137,5 +137,11 @@ organization's summaries (one critical, three high, two medium):
 
 So a match by version is not a vulnerability of the firmware: what a release
 compiles and calls decides. Flight Control has no way to mark a finding as not
-applicable; the records written here say "affected" for every version NVD
-covers. cJSON has no release with these fixed (1.7.19 is the latest).
+applicable, so those that do not apply are kept out of Trustify:
+`tools/not-affected.json` lists each with its component, a justification
+(CycloneDX's impact analysis values: `code_not_present`, `code_not_reachable`,
+`requires_environment`...) and the reason, and `tools/advisories.py` leaves them
+out and prints them apart. The six above are in it; with it, the lab's devices
+have no open vulnerability. Check an entry again when its component changes,
+or what the firmware uses of it: cJSON has no release with these fixed yet
+(1.7.19 is the latest), and building `cJSON_Utils.c` would bring three back.

@@ -37,7 +37,7 @@ What an app can do and hold:
 
 Towards a deployment:
 
-- [ ] Known vulnerabilities in the firmware, in the UI's security overview. Each release has its SBOM, in the registry and, with `TRUSTIFY_URL`, in Trustify ([SBOM.md](SBOM.md)); Flight Control finds it by the image digest the devices report. Tried with Trustify 0.4.12: its own feeds reach no C component, so `tools/advisories.py` brings NVD's CVEs for them; Flight Control shows them on the devices. Left: a way to say that a CVE does not apply to what a release builds (six such on the lab's releases), which Flight Control has no field for. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
+- [ ] Known vulnerabilities in the firmware, in the UI's security overview. Each release has its SBOM, in the registry and, with `TRUSTIFY_URL`, in Trustify ([SBOM.md](SBOM.md)); Flight Control finds it by the image digest the devices report. Tried with Trustify 0.4.12: its own feeds reach no C component, so `tools/advisories.py` brings NVD's CVEs for them; Flight Control shows them on the devices. CVEs that do not apply to what a release builds are listed with their reason (`tools/not-affected.json`) and kept out; Flight Control has no field for it. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
 
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):
 

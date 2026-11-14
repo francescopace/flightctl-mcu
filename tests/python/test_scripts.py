@@ -328,6 +328,16 @@ class AdvisoriesTest(unittest.TestCase):
         platform = dict(exact, vulnerable=False)
         self.assertFalse(advisories.affects(self.cve(platform), self.MBEDTLS, "3.6.7"))
 
+    def test_cves_that_do_not_apply_are_left_out(self):
+        entries = advisories.load_not_affected()
+        for cid, e in entries.items():
+            self.assertRegex(cid, r"^CVE-\d{4}-\d+$")
+            self.assertIn(e["justification"], ("code_not_present", "code_not_reachable", "requires_configuration",
+                                               "requires_dependency", "requires_environment", "protected_by_compiler",
+                                               "protected_at_runtime", "protected_at_perimeter",
+                                               "protected_by_mitigating_control"))
+            self.assertTrue(e["detail"] and e["component"])
+
     def test_osv_record_names_the_shipped_versions_by_package_url(self):
         cve = {"id": "CVE-2026-1", "published": "2026-01-01T00:00:00.000", "lastModified": "2026-02-01T00:00:00.000",
                "descriptions": [{"lang": "en", "value": "A flaw. More."}],

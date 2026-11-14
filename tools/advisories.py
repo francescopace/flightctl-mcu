@@ -17,6 +17,11 @@ devices running those releases.
 A record names only the versions the given SBOMs ship, so give it every
 release that devices run. Run it again from time to time: NVD keeps adding
 CVEs. $NVD_API_KEY raises NVD's rate limit (5 requests in 30 s without).
+
+A match by version is not always a vulnerability of the firmware: what it
+builds and calls decides. CVEs found not to apply are listed, with the reason,
+in tools/not-affected.json (or --not-affected FILE): they are left out of
+Trustify and printed apart.
 """
 import argparse
 import json
@@ -29,6 +34,7 @@ import urllib.parse
 import urllib.request
 
 NVD = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+NOT_AFFECTED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "not-affected.json")
 
 # Other names NVD files the same products under, besides the SBOM's CPE.
 ALSO = {
@@ -143,9 +149,20 @@ def osv_record(cve, affected):
     }
 
 
-def find(paths, key=None, log=print):
-    """{CVE id: OSV record} for the components of these SBOMs."""
-    records = {}
+def load_not_affected(path=NOT_AFFECTED):
+    """{CVE id: {component, justification, detail}}; the file's "_" is its note."""
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        entries = json.load(f)
+    entries.pop("_", None)
+    return entries
+
+
+def find(paths, key=None, log=print, not_affected=None):
+    """({CVE id: OSV record}, {CVE id: not-affected entry}) for the components of these SBOMs."""
+    not_affected = not_affected or {}
+    records, left_out = {}, {}
     for (part, vendor, product, version), purls in sorted(components(paths).items()):
         names = [(part, vendor, product)] + ALSO.get((vendor, product), [])
         seen = 0
@@ -158,13 +175,17 @@ def find(paths, key=None, log=print):
                 if cve.get("vulnStatus") == "Rejected" or not affects(cve, names, version):
                     continue
                 seen += 1
+                entry = not_affected.get(cve["id"])
+                if entry and entry.get("component") == product:
+                    left_out[cve["id"]] = entry
+                    continue
                 rec = records.get(cve["id"]) or {"cve": cve, "affected": {}}
                 for purl in purls:
                     base, _, ver = purl.split("?")[0].partition("@")
                     rec["affected"].setdefault(base, set()).add(urllib.parse.unquote(ver))
                 records[cve["id"]] = rec
         log(f"{vendor}:{product} {version}: {seen} CVE matches")
-    return {cid: osv_record(r["cve"], r["affected"]) for cid, r in sorted(records.items())}
+    return {cid: osv_record(r["cve"], r["affected"]) for cid, r in sorted(records.items())}, left_out
 
 
 def upload(url, record):
@@ -187,8 +208,11 @@ def main():
     p.add_argument("sbom", nargs="+", help="CycloneDX SBOMs of the releases devices run (tools/sbom.py)")
     p.add_argument("--out", help="write each OSV record into this directory")
     p.add_argument("--upload", default=os.environ.get("TRUSTIFY_URL"), help="Trustify's URL ($TRUSTIFY_URL)")
+    p.add_argument("--not-affected", default=NOT_AFFECTED, help="CVEs that do not apply (default: %(default)s)")
     a = p.parse_args()
-    records = find(a.sbom, os.environ.get("NVD_API_KEY"))
+    records, left_out = find(a.sbom, os.environ.get("NVD_API_KEY"), not_affected=load_not_affected(a.not_affected))
+    for cid, entry in sorted(left_out.items()):
+        print(f"{cid}  not affected ({entry['justification']}): {entry['detail']}")
     for cid, rec in records.items():
         versions = "; ".join(f"{x['package']['name']} {', '.join(x['versions'])}" for x in rec["affected"])
         sev = rec["severity"][0]["score"] if rec["severity"] else "no CVSS"
@@ -199,7 +223,8 @@ def main():
                 json.dump(rec, f, indent=2)
         if a.upload:
             upload(a.upload, rec)
-    print(f"{len(records)} CVEs" + (f", in Trustify at {a.upload}" if a.upload else ""))
+    print(f"{len(records)} CVEs" + (f", in Trustify at {a.upload}" if a.upload else "")
+          + f"; {len(left_out)} that do not apply left out")
 
 
 if __name__ == "__main__":
