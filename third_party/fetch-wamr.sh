@@ -7,8 +7,17 @@
 #   `select` of 64-bit values with a plain 32-bit store into code that is only
 #   2-byte aligned on chips without unaligned access. On a Cortex-M0+ (the
 #   Pico W) that is a HardFault while the app loads. The loader's other
-#   stores use STORE_U32, which splits them; the patch does the same. Not
-#   fixed upstream as of WAMR 2.4.5 and main.
+#   stores use STORE_U32, which splits them; the patch does the same.
+#   wamr-espidf-realloc.patch: on ESP-IDF, os_malloc puts the data 4 or 8
+#   bytes into the block (8-byte aligned) and the block's address before it;
+#   os_realloc let realloc move the block and then took the new block's
+#   offset, which may differ: the data came back shifted by 4 bytes, with the
+#   address written over one word. The loader's constant table, grown that
+#   way, lost a constant, so its two passes disagreed on the code's size and
+#   the second wrote past its buffer: an ESP32-C6 restarted at every boot
+#   while loading alarm:v2.3, other chips by the luck of the heap's layout.
+#   The patch moves the data to the new offset.
+# Neither is fixed upstream as of WAMR 2.4.5 and main.
 set -euo pipefail
 WAMR_TAG="${WAMR_TAG:-WAMR-2.4.5}"
 HERE="$(cd "$(dirname "$0")" && pwd)"

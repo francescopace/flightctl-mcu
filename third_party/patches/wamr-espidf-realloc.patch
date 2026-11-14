@@ -1,0 +1,27 @@
+diff --git a/core/shared/platform/esp-idf/espidf_malloc.c b/core/shared/platform/esp-idf/espidf_malloc.c
+index 08ec883..4b3254b 100644
+--- a/core/shared/platform/esp-idf/espidf_malloc.c
++++ b/core/shared/platform/esp-idf/espidf_malloc.c
+@@ -42,6 +42,9 @@ os_realloc(void *ptr, unsigned size)
+ 
+     addr_field = ptr - sizeof(uintptr_t);
+     mem_origin = (void *)(*addr_field);
++    /* Where the data starts in the block (4 or 8 bytes in): realloc keeps
++       it there in the new block. */
++    uintptr_t offset_old = (uintptr_t)ptr - (uintptr_t)mem_origin;
+     mem_new = realloc(mem_origin, size + 8 + sizeof(uintptr_t));
+     if (!mem_new) {
+         return NULL;
+@@ -54,6 +57,12 @@ os_realloc(void *ptr, unsigned size)
+                 (void *)((uintptr_t)(mem_new + 8) & (~(uintptr_t)7));
+         }
+ 
++        /* A new block aligned differently puts the data at another offset:
++           move it there before the address field is written over it. */
++        if ((uintptr_t)mem_new_fixed - (uintptr_t)mem_new != offset_old) {
++            memmove(mem_new_fixed, (uint8 *)mem_new + offset_old, size);
++        }
++
+         addr_field = mem_new_fixed - sizeof(uintptr_t);
+         *addr_field = (uintptr_t)mem_new;
+ 

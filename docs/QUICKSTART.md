@@ -105,7 +105,7 @@ tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
 Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to your LAN IP on port 5001; set `REGISTRY=host:port` to use another one. Use the same tags as in `tools/fleet/idf-lab.yaml`, or edit them there. (The fleet of the boards with the Zephyr build is `tools/fleet/zephyr-lab.yaml`: the two ports are released apart for now.)
 
 ```bash
-tools/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v3.3
+tools/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v3.4
 ```
 
 ```bash
