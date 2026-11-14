@@ -14,7 +14,7 @@ What it does today is in the [README](../README.md#what-maps-to-what), and how i
 
 Checks not made yet:
 
-- [ ] ESP-IDF 6.0 on the other four boards (C5, C6, S2, classic ESP32). On hardware the S3 and the C3 ran it; the others ran ESP-IDF 5.5, and 6.0 in the emulator (C5).
+- [ ] ESP-IDF 6.0 on the ESP32-C5 board. On hardware the S3, the C3, the C6, the S2 and the classic ESP32 run it (v3.4); the C5 ran ESP-IDF 5.5, and 6.0 in the emulator.
 - [ ] The way back from a firmware that does not work, on the C6. It is tested in the emulator, on the ESP32-S3 with both ports and, for Zephyr, on the Pico W.
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
 - [ ] Two parts of decommissioning and the registry never tried: the `FactoryReset` target (the CLI and the UI send `Unenroll` only), and Bearer tokens against a real registry (Harbor, Quay); `registry:3` asks for Basic.
