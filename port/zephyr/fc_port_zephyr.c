@@ -287,12 +287,20 @@ static const char *fatal_reason(uint32_t reason)
     }
 }
 
+static int s_restart_was_crash;
+
+int fc_zephyr_restart_was_crash(void)
+{
+    return s_restart_was_crash;
+}
+
 static void report_last_fatal(void)
 {
     if (s_fatal.magic != FATAL_MAGIC) {
         return;
     }
     s_fatal.magic = 0;
+    s_restart_was_crash = 1;
     s_fatal.thread[sizeof(s_fatal.thread) - 1] = '\0';
     fc_port_log(FC_LOG_ERROR, "restarted after a %s (%u) in thread \"%s\", %u ms after boot, pc 0x%08x lr 0x%08x",
                 fatal_reason(s_fatal.reason), (unsigned)s_fatal.reason, s_fatal.thread, (unsigned)s_fatal.uptime_ms,

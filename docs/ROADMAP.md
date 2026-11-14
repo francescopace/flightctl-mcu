@@ -19,7 +19,6 @@ Checks not made yet:
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
 - [ ] Two parts of decommissioning and the registry never tried: the `FactoryReset` target (the CLI and the UI send `Unenroll` only), and Bearer tokens against a real registry (Harbor, Quay); `registry:3` asks for Basic.
 - [ ] The Zephyr builds for boards in CI. They need the ARM and Xtensa toolchains; CI builds and tests `native_sim` only.
-- [ ] A device whose saved app crashes the firmware at boot restarts for good, never reaching the server to be given another spec: an ESP32-C6 did, until it was flashed over USB (the WAMR fault is fixed, the trap remains). After a few such restarts in a row the agent should start without its saved apps and let the server decide.
 - [ ] Zephyr: the report of the last fatal error is printed at boot, before the Pico W's USB console is open, and is lost. Report it in the device's status too.
 
 What the Zephyr port does not have, and the ESP-IDF firmware has:

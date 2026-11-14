@@ -36,6 +36,8 @@ static void make_v2(void)
 void fc_agent_notify_status(void) {}
 
 /* The registry: three images. */
+static int f_fetches; /* downloads asked for */
+
 int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_type, size_t max_size,
                        unsigned char **out, size_t *out_len, char *digest, size_t digest_len, char *err,
                        size_t err_len)
@@ -55,6 +57,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(t_env),
 #undef V
     };
+    f_fetches++;
     const unsigned char *src = NULL;
     size_t len = 0;
     for (size_t i = 0; i < sizeof(reg) / sizeof(reg[0]); i++) {
@@ -172,7 +175,14 @@ static int f_sensor(const char *name, int32_t *v)
     return 0;
 }
 
-static const fc_hw_t s_fake = {
+/* How the fake device last restarted: 1 a crash, 0 not. */
+static int f_crash;
+static int f_restart_was_crash(void)
+{
+    return f_crash;
+}
+
+static fc_hw_t s_fake = {
     .board = "fake",
     .firmware = "test",
     .board_defaults = f_defaults,
@@ -186,6 +196,7 @@ static const fc_hw_t s_fake = {
     .led_rgb = f_led_rgb,
     .led_close = f_led_close,
     .sensor_read = f_sensor,
+    .restart_was_crash = f_restart_was_crash,
 };
 
 /* An edge on a pin, as the port's task reports it. */
@@ -606,6 +617,118 @@ static void test_example_apps(void)
     remove_all();
 }
 
+
+/* A restart: a crash (1) or not (0). */
+static void restart(int crash)
+{
+    f_crash = crash;
+    power_cycle();
+    f_crash = 0;
+}
+
+static int bad(const char *name, const char *image, const char *env)
+{
+    return guard_is_bad(name, image, env);
+}
+
+static void test_guard_crash_at_start(void)
+{
+    /* An app the device crashes on as it starts, at every boot: after two
+     * crashes it is not started, and the device goes on to the server. */
+    char err[200];
+    CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    restart(1);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1"); /* once could be anything */
+    restart(1);
+    CHECK_STR(state_of("app"), "Error " GUARD_ERROR);
+    CHECK(find("app")->module == NULL);
+    /* The same spec neither downloads nor loads it again. */
+    f_fetches = 0;
+    CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), -1);
+    CHECK(strstr(err, "crashed the device") != NULL);
+    CHECK_INT(f_fetches, 0);
+    CHECK_STR(state_of("app"), "Error " GUARD_ERROR);
+    /* Still so after a restart that was not a crash. */
+    restart(0);
+    CHECK_STR(state_of("app"), "Error " GUARD_ERROR);
+    /* Other env vars: tried again. */
+    CHECK_INT(apply_one("app", "reg/app:v1", "{\"TICK_MS\": \"200\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    CHECK(!bad("app", "reg/app:v1", "{}"));
+    CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    remove_all();
+    CHECK(stub_kv(KV_GUARD) == NULL);
+}
+
+static void test_guard_other_restarts(void)
+{
+    char err[200];
+    CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    /* Restarts that were not crashes clear the count. */
+    restart(1);
+    restart(0);
+    restart(1);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    /* An app past its first minute is not blamed for a later crash. */
+    s_settle_ms = 50;
+    restart(0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    for (int i = 0; i < 100 && stub_kv(KV_GUARD) != NULL; i++) {
+        usleep(10 * 1000);
+    }
+    CHECK(stub_kv(KV_GUARD) == NULL); /* settled on its own thread */
+    restart(1);
+    s_settle_ms = GUARD_SETTLE_MS;
+    restart(1);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    remove_all();
+}
+
+static void test_guard_blames_the_module_loading(void)
+{
+    /* A spec brings a second app whose module crashes the device as it
+     * loads, beside one that runs: only the second one is stopped. */
+    char err[200];
+    CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    for (int i = 0; i < 2; i++) {
+        guard_begin("new", "reg/new:v1", "{}", 1); /* as fc_apps_apply does before the download */
+        restart(1);
+        CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    }
+    CHECK(bad("new", "reg/new:v1", "{}"));
+    CHECK(!bad("app", "reg/app:v1", "{}"));
+    const char *apps[] = {"app", "reg/app:v1", NULL, "new", "reg/new:v1", NULL, NULL};
+    f_fetches = 0;
+    CHECK_INT(apply_apps(apps, err, sizeof(err)), -1);
+    CHECK_INT(f_fetches, 0);
+    CHECK_STR(state_of("new"), "Error " GUARD_ERROR);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    /* Out of the spec, then back: tried again. */
+    CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK(!bad("new", "reg/new:v1", "{}"));
+    remove_all();
+}
+
+static void test_guard_new_firmware(void)
+{
+    char err[200];
+    CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    restart(1);
+    restart(1);
+    CHECK_STR(state_of("app"), "Error " GUARD_ERROR);
+    /* Another firmware tries it again. */
+    s_fake.firmware = "test2";
+    restart(0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    remove_all();
+    CHECK(stub_kv(KV_GUARD) == NULL);
+    s_fake.firmware = "test";
+}
+
 static void test_remove(void)
 {
     char err[160];
@@ -630,6 +753,10 @@ int main(void)
     RUN(test_not_loadable);
     RUN(test_reboot);
     RUN(test_saved_module_broken);
+    RUN(test_guard_crash_at_start);
+    RUN(test_guard_other_restarts);
+    RUN(test_guard_blames_the_module_loading);
+    RUN(test_guard_new_firmware);
     RUN(test_remove);
     RUN(test_endless_loop);
     RUN(test_fc_imports);

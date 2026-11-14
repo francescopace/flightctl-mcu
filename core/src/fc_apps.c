@@ -218,6 +218,197 @@ static void wake(app_t *a)
     pthread_mutex_unlock(a->ev_lock);
 }
 
+/* ---- apps that crash the device as they start --------------------------------
+ *
+ * An app the device starts at boot (or a module it loads) that crashes the
+ * firmware would restart it for good: the saved app starts again before the
+ * network is up, and the device never reaches the server to be given another
+ * spec. So the device keeps a record, KV_GUARD, of the apps in their first
+ * GUARD_SETTLE_MS after they were started, and of the one whose module is
+ * being loaded:
+ *   {"fw": firmware, "loading": name, "apps": {name: {"image", "env", "n", "bad"}}}
+ * At boot, after a restart that was a crash (fc_hw_t.restart_was_crash), the
+ * app being loaded is counted, or, if none was, every app still in its first
+ * GUARD_SETTLE_MS. An app counted GUARD_CRASHES times in a row is "bad": it
+ * is not started again, and the status says why, until its image, its env
+ * vars or the firmware change (another firmware forgets the record), or it
+ * leaves the spec. A restart that was not a crash clears the counts. */
+#define KV_GUARD        "apps.guard"
+#define GUARD_CRASHES   2
+#ifndef GUARD_SETTLE_MS
+#define GUARD_SETTLE_MS 60000
+#endif
+#define GUARD_ERROR     "crashed the device as it started: not run again until its image, env or firmware change"
+static int64_t s_settle_ms = GUARD_SETTLE_MS;
+static pthread_mutex_t s_guard_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static const char *firmware_now(void)
+{
+    return g_fc_hw && g_fc_hw->firmware ? g_fc_hw->firmware : "";
+}
+
+/* The record for this firmware: a fresh one if there is none or it was
+ * written by another firmware. */
+static cJSON *guard_load(void)
+{
+    char *s = NULL;
+    size_t len = 0;
+    cJSON *g = fc_port_kv_get(KV_GUARD, &s, &len) == 0 ? cJSON_Parse(s) : NULL;
+    free(s);
+    const char *fw = cJSON_GetStringValue(cJSON_GetObjectItem(g, "fw"));
+    if (!cJSON_IsObject(g) || fw == NULL || strcmp(fw, firmware_now()) != 0) {
+        cJSON_Delete(g);
+        g = cJSON_CreateObject();
+        cJSON_AddStringToObject(g, "fw", firmware_now());
+    }
+    if (!cJSON_IsObject(cJSON_GetObjectItem(g, "apps"))) {
+        cJSON_DeleteItemFromObject(g, "apps");
+        cJSON_AddObjectToObject(g, "apps");
+    }
+    return g;
+}
+
+static void guard_save(cJSON *g)
+{
+    const char *loading = cJSON_GetStringValue(cJSON_GetObjectItem(g, "loading"));
+    if (cJSON_GetArraySize(cJSON_GetObjectItem(g, "apps")) == 0 && (loading == NULL || !loading[0])) {
+        fc_port_kv_del(KV_GUARD);
+        return;
+    }
+    char *s = cJSON_PrintUnformatted(g);
+    if (s) {
+        fc_port_kv_set(KV_GUARD, s, strlen(s));
+        free(s);
+    }
+}
+
+static int guard_same(const cJSON *e, const char *image, const char *env)
+{
+    const char *i = cJSON_GetStringValue(cJSON_GetObjectItem(e, "image"));
+    const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(e, "env"));
+    return i && v && strcmp(i, image) == 0 && strcmp(v, env ? env : "{}") == 0;
+}
+
+/* At boot, before any app starts: counts the restart against the apps that
+ * were starting if it was a crash, forgets the counts if it was not. */
+static void guard_boot(void)
+{
+    pthread_mutex_lock(&s_guard_lock);
+    char *s = NULL;
+    size_t len = 0;
+    int had = fc_port_kv_get(KV_GUARD, &s, &len) == 0;
+    free(s);
+    cJSON *g = guard_load(); /* another firmware's record is dropped here */
+    if (!had) {
+        cJSON_Delete(g);
+        pthread_mutex_unlock(&s_guard_lock);
+        return;
+    }
+    int crash = g_fc_hw && g_fc_hw->restart_was_crash ? g_fc_hw->restart_was_crash() == 1 : 0;
+    const char *ls = cJSON_GetStringValue(cJSON_GetObjectItem(g, "loading"));
+    char loading[48];
+    snprintf(loading, sizeof(loading), "%s", ls ? ls : "");
+    cJSON *apps = cJSON_GetObjectItem(g, "apps");
+    cJSON *e = apps ? apps->child : NULL;
+    while (e != NULL) {
+        cJSON *next = e->next;
+        if (!cJSON_IsTrue(cJSON_GetObjectItem(e, "bad"))) {
+            if (!crash) {
+                cJSON_DeleteItemFromObject(apps, e->string);
+            } else if (!loading[0] || strcmp(loading, e->string) == 0) {
+                int n = (int)cJSON_GetNumberValue(cJSON_GetObjectItem(e, "n")) + 1;
+                cJSON_DeleteItemFromObject(e, "n");
+                cJSON_AddNumberToObject(e, "n", n);
+                fc_port_log(FC_LOG_WARN, "app %s was starting when the device crashed (%d in a row)", e->string, n);
+                if (n >= GUARD_CRASHES) {
+                    cJSON_AddTrueToObject(e, "bad");
+                    fc_port_log(FC_LOG_ERROR, "app %s: %s", e->string, GUARD_ERROR);
+                }
+            }
+        }
+        e = next;
+    }
+    cJSON_DeleteItemFromObject(g, "loading");
+    guard_save(g);
+    cJSON_Delete(g);
+    pthread_mutex_unlock(&s_guard_lock);
+}
+
+/* 1 if this app, with this image and env, crashed the device as it started. */
+static int guard_is_bad(const char *name, const char *image, const char *env)
+{
+    pthread_mutex_lock(&s_guard_lock);
+    cJSON *g = guard_load();
+    cJSON *e = cJSON_GetObjectItem(cJSON_GetObjectItem(g, "apps"), name);
+    int bad = e && cJSON_IsTrue(cJSON_GetObjectItem(e, "bad")) && guard_same(e, image, env);
+    cJSON_Delete(g);
+    pthread_mutex_unlock(&s_guard_lock);
+    return bad;
+}
+
+/* Before an app starts (loading: its module is about to be loaded): it is
+ * in its first GUARD_SETTLE_MS from now. Its count goes on only for the same
+ * image and env. */
+static void guard_begin(const char *name, const char *image, const char *env, int loading)
+{
+    pthread_mutex_lock(&s_guard_lock);
+    cJSON *g = guard_load();
+    cJSON *apps = cJSON_GetObjectItem(g, "apps");
+    cJSON *e = cJSON_GetObjectItem(apps, name);
+    int n = e && guard_same(e, image, env) ? (int)cJSON_GetNumberValue(cJSON_GetObjectItem(e, "n")) : 0;
+    cJSON_DeleteItemFromObject(apps, name);
+    e = cJSON_AddObjectToObject(apps, name);
+    cJSON_AddStringToObject(e, "image", image);
+    cJSON_AddStringToObject(e, "env", env ? env : "{}");
+    cJSON_AddNumberToObject(e, "n", n);
+    cJSON_DeleteItemFromObject(g, "loading");
+    if (loading) {
+        cJSON_AddStringToObject(g, "loading", name);
+    }
+    guard_save(g);
+    cJSON_Delete(g);
+    pthread_mutex_unlock(&s_guard_lock);
+}
+
+/* The module was loaded, or not: no longer the one being loaded. */
+static void guard_loaded(void)
+{
+    pthread_mutex_lock(&s_guard_lock);
+    cJSON *g = guard_load();
+    if (cJSON_GetObjectItem(g, "loading") != NULL) {
+        cJSON_DeleteItemFromObject(g, "loading");
+        guard_save(g);
+    }
+    cJSON_Delete(g);
+    pthread_mutex_unlock(&s_guard_lock);
+}
+
+/* The app ran its first GUARD_SETTLE_MS, did not start after all, or left
+ * the spec (all: forget it even if it was bad). */
+static void guard_forget(const char *name, int all)
+{
+    pthread_mutex_lock(&s_guard_lock);
+    cJSON *g = guard_load();
+    cJSON *apps = cJSON_GetObjectItem(g, "apps");
+    cJSON *e = cJSON_GetObjectItem(apps, name);
+    if (e != NULL && (all || !cJSON_IsTrue(cJSON_GetObjectItem(e, "bad")))) {
+        cJSON_DeleteItemFromObject(apps, name);
+        guard_save(g);
+    }
+    cJSON_Delete(g);
+    pthread_mutex_unlock(&s_guard_lock);
+}
+
+/* On the app's thread: once it has been up GUARD_SETTLE_MS, it is past the
+ * start. */
+static void guard_tick(app_t *a, int64_t now)
+{
+    if (!a->settled && now >= a->settle_at_ms) {
+        a->settled = 1;
+        guard_forget(a->name, 0);
+    }
+}
+
 /* ---- runner -------------------------------------------------------------- */
 
 /* Loads a module so that the .wasm buffer can be freed as soon as this
@@ -357,6 +548,7 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
     int64_t next_tick = fc_apps_now_ms() + a->tick_ms;
     while (ok && !stopping(a)) {
         int64_t now = fc_apps_now_ms();
+        guard_tick(a, now);
         if (tick != NULL && now >= next_tick) {
             uint32_t argv[1] = {0};
             ok = call_fc(a, env, tick, 0, argv, "tick") == 0;
@@ -401,6 +593,9 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
         }
         if (tick != NULL && next_tick < until) {
             until = next_tick;
+        }
+        if (!a->settled && a->settle_at_ms < until) {
+            until = a->settle_at_ms;
         }
         if (ok) {
             wait_event(a, until);
@@ -452,6 +647,7 @@ static void *runner(void *arg)
         if (!stopping(a)) {
             for (int i = 0; i < RESTART_DELAY_S * 10 && !stopping(a); i++) {
                 usleep(100 * 1000);
+                guard_tick(a, fc_apps_now_ms());
             }
             if (!stopping(a)) {
                 pthread_mutex_lock(&s_lock);
@@ -471,6 +667,8 @@ static void app_start(app_t *a)
         return; /* the status already says why */
     }
     set_stop(a, 0);
+    a->settle_at_ms = fc_apps_now_ms() + s_settle_ms;
+    a->settled = 0;
     set_status(a, "Preparing", NULL);
     pthread_attr_init(&a->thread_attr);
     a->thread_running = pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK) == 0 &&
@@ -630,6 +828,7 @@ int fc_apps_init(void)
     wasm_runtime_register_natives("fc", fc, (uint32_t)n_fc);
     fc_board_load(g_fc_hw);
     s_inited = 1;
+    guard_boot();
 
     char *saved = NULL;
     size_t len = 0;
@@ -652,17 +851,26 @@ int fc_apps_init(void)
         if (fc_port_kv_get(key, &code, &code_len) != 0) {
             continue;
         }
-        char ebuf[96];
-        a->module = load_app((unsigned char *)code, code_len, ebuf, sizeof(ebuf));
-        free(code);
         a->used = 1;
         snprintf(a->name, sizeof(a->name), "%s", name);
         snprintf(a->image, sizeof(a->image), "%s", cJSON_GetStringValue(cJSON_GetObjectItem(o, "image")));
         snprintf(a->digest, sizeof(a->digest), "%s", cJSON_GetStringValue(cJSON_GetObjectItem(o, "digest")));
         a->tick_ms = (int)cJSON_GetNumberValue(cJSON_GetObjectItem(o, "tick_ms"));
         set_env(a, cJSON_GetStringValue(cJSON_GetObjectItem(o, "env")));
+        if (guard_is_bad(a->name, a->image, a->env_json)) {
+            /* Kept, so the status says why; the spec does not start it again. */
+            free(code);
+            set_status(a, "Error", GUARD_ERROR);
+            continue;
+        }
+        char ebuf[96];
+        guard_begin(a->name, a->image, a->env_json, 1);
+        a->module = load_app((unsigned char *)code, code_len, ebuf, sizeof(ebuf));
+        guard_loaded();
+        free(code);
         if (a->module == NULL) {
             /* Shown in the status; the next spec downloads the image again. */
+            guard_forget(a->name, 0);
             fc_port_log(FC_LOG_WARN, "app %s: cannot load the saved module: %s", a->name, ebuf);
             set_status(a, "Error", ebuf);
             continue;
@@ -725,6 +933,7 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         if (a->used && !keep) {
             fc_port_log(FC_LOG_INFO, "removing app %s", a->name);
             app_release(a);
+            guard_forget(a->name, 1);
             char key[64];
             wasm_key(a->name, key, sizeof(key));
             fc_port_kv_del(key);
@@ -751,6 +960,26 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         app_t *a = find(name);
         int tick = tick_ms_of(app);
         char *env = env_of(app);
+        if (guard_is_bad(name, image, env)) {
+            /* Neither downloaded nor loaded again: an error in the status,
+             * not retried until the image, the env vars or the firmware
+             * change. A version that runs, if any, keeps running. */
+            snprintf(err, err_len, "app %s: %s", name, GUARD_ERROR);
+            rc = -1;
+            if (a == NULL && (a = alloc_slot()) != NULL) {
+                pthread_mutex_lock(&s_lock);
+                a->used = 1;
+                snprintf(a->name, sizeof(a->name), "%s", name);
+                snprintf(a->image, sizeof(a->image), "%s", image);
+                pthread_mutex_unlock(&s_lock);
+                set_env(a, env);
+            }
+            if (a != NULL && a->module == NULL) {
+                set_status(a, "Error", GUARD_ERROR);
+            }
+            free(env);
+            continue;
+        }
         /* Same image: nothing to do, unless its saved module failed to load
          * at boot, in which case it is downloaded again. */
         if (a != NULL && strcmp(a->image, image) == 0 && a->module != NULL) {
@@ -760,6 +989,7 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
                 app_stop(a);
                 set_env(a, env);
                 a->tick_ms = tick;
+                guard_begin(a->name, a->image, a->env_json, 0);
                 app_start(a);
                 changed = 1;
             }
@@ -770,8 +1000,11 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         size_t len = 0;
         wasm_module_t module = NULL;
         char digest[72], ferr[160];
+        guard_begin(name, image, env, 1); /* a module that crashes as it loads is this app's */
         int f = fetch_module(image, &code, &len, &module, digest, sizeof(digest), ferr, sizeof(ferr));
+        guard_loaded();
         if (f != 0) {
+            guard_forget(name, 0);
             snprintf(err, err_len, "app %s: %s", name, ferr);
             *retry |= f < 0;
             rc = -1;
@@ -780,6 +1013,7 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         }
         if (a == NULL && (a = alloc_slot()) == NULL) {
             snprintf(err, err_len, "app %s: too many apps (max %d)", name, MAX_APPS);
+            guard_forget(name, 0);
             wasm_runtime_unload(module);
             free(code);
             free(env);
@@ -796,6 +1030,7 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         if (!stored) {
             snprintf(err, err_len, "app %s: cannot store the module (%u bytes)", name, (unsigned)len);
             fc_port_log(FC_LOG_WARN, "%s", err);
+            guard_forget(name, 0);
             wasm_runtime_unload(module);
             free(env);
             *retry = 1;

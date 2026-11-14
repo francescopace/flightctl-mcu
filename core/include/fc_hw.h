@@ -74,6 +74,12 @@ typedef struct {
 
     /* A sensor of the chip by name ("die_temp", milli-degrees C). */
     int (*sensor_read)(const char *name, int32_t *value);
+
+    /* 1 if the device last restarted because the firmware crashed (a fault,
+     * an abort, a watchdog), 0 if it was powered on or restarted on purpose.
+     * Apps that keep crashing it as they start are then not started again
+     * (fc_apps.c). NULL: it cannot tell, and no app is blamed. */
+    int (*restart_was_crash)(void);
 } fc_hw_t;
 
 #ifdef __cplusplus

@@ -127,6 +127,7 @@ static const fc_hw_t s_hw = {
     .led_rgb = sim_led_rgb,
     .led_close = sim_led_close,
     .sensor_read = sim_sensor,
+    .restart_was_crash = fc_zephyr_restart_was_crash,
 };
 
 /* Nothing can be done, and maybe no one was watching when it was first

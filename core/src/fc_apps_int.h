@@ -76,6 +76,8 @@ typedef struct app {
     /* reported (under s_lock in fc_apps.c) */
     char status[12]; /* Preparing, Running, Error, Stopped */
     int restarts;
+    int64_t settle_at_ms; /* when it is past its start (fc_apps.c, guard) */
+    int settled;
     char state[64];
     char error[96];
 

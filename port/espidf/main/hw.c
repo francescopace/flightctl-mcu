@@ -16,6 +16,7 @@
 #include "driver/gpio.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_private/esp_gpio_reserve.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -206,6 +207,14 @@ static int sensor_read(const char *name, int32_t *value)
 #endif
 }
 
+/* A panic (fault, abort) or a watchdog; not a brownout, a power-on or a
+ * restart the firmware asked for. */
+static int restart_was_crash(void)
+{
+    esp_reset_reason_t r = esp_reset_reason();
+    return r == ESP_RST_PANIC || r == ESP_RST_INT_WDT || r == ESP_RST_TASK_WDT || r == ESP_RST_WDT;
+}
+
 const fc_hw_t *hw_espidf(void)
 {
     static fc_hw_t hw;
@@ -226,6 +235,7 @@ const fc_hw_t *hw_espidf(void)
         .led_rgb = led_rgb,
         .led_close = led_close,
         .sensor_read = sensor_read,
+        .restart_was_crash = restart_was_crash,
     };
     return &hw;
 }
