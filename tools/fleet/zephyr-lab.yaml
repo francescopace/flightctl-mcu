@@ -23,7 +23,10 @@ spec:
       # One OCI index with an image per board (tools/fw-push.py
       # PLATFORM=zephyr.signed.bin ...): each device takes its own.
       os:
-        image: ${REGISTRY}/flightctl-mcu/fw:z15
+        # z16 by its digest: the Pico W rolled back its first try of fw:z16
+        # (its WiFi chip went silent in the trial boot) and the agent does not
+        # try a rolled-back reference again.
+        image: ${REGISTRY}/flightctl-mcu/fw@sha256:ed46221fe85c459dedd5696a98c417c16ff351b51fd7fa63d8714da394129359
       # The same WASM app as on the ESP-IDF boards; here its temperature and
       # its LED are simulated (port/zephyr/src/main.c).
       applications:

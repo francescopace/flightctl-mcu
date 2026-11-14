@@ -236,6 +236,14 @@ What the board taught the port:
   point's address, and asking the chip to prefer the strongest changed
   nothing, so `main.c` gives up a join weaker than -60 dBm and joins again,
   up to five times. Where every access point is weak, the last join stays.
+- **The chip can stop answering after the board restarts.** After 1 crash in
+  40, made on purpose at random moments while the board was on the network,
+  every command to the chip timed out (5 s) and the board never joined
+  again; a restart brought it back, since the driver powers the chip again
+  only at boot. So `wifi.c`, after a failed join, asks the chip its version:
+  after two failed joins with a chip that does not answer, the board
+  restarts (since z16). A chip that answers means the network is not
+  there: the board keeps trying, and its apps keep running.
 - **One DNS query at a time** is Zephyr's default; the agent's two threads
   ask together at start. **Four connections in all** is another: the two to
   Flight Control, DHCP and DNS use them up, and the one to the registry was

@@ -26,6 +26,10 @@
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
 
+#ifdef CONFIG_WIFI_AIROC
+#include "airoc_wifi.h"
+#endif
+
 #include "cJSON.h"
 #include "fc_crypto.h"
 #include "fc_port.h"
@@ -40,6 +44,13 @@
  * (CONFIG_ESP32_WIFI_STA_SCAN_ALL, in the board's file). */
 #define WIFI_GOOD_DBM (-60)
 #define WIFI_JOINS    5
+/* Infineon's chip (the Pico W's CYW43439) can stop answering its driver: every
+ * command then times out after 5 s, joins fail for ever, and only powering the
+ * chip again brings it back, which the driver does at boot. So many failed
+ * joins in a row with a chip that does not answer restart the board; with a
+ * chip that answers, the network is just not there, and the device keeps
+ * trying (its apps keep running). */
+#define CHIP_SILENT_JOINS 2
 /* A network from the field, tried with the access point closed: so many
  * times before the access point opens again. */
 #define FIELD_TRIES 3
@@ -158,10 +169,25 @@ static struct wifi_connect_req_params params(const char *ssid, const char *pass)
 
 /* Joins a network and waits for an address: 0, or -1 after `tries` tries
  * (0: until it works). */
+/* Whether the WiFi chip answers its driver: 1, 0, or -1 when this cannot be told. */
+static int chip_answers(void)
+{
+#ifdef CONFIG_WIFI_AIROC
+    whd_interface_t ifp = airoc_wifi_get_whd_interface();
+    uint32_t version = 0;
+    if (ifp == NULL) {
+        return -1;
+    }
+    return whd_wifi_get_ioctl_value(ifp, 1 /* WLC_GET_VERSION */, &version) == WHD_SUCCESS;
+#else
+    return -1;
+#endif
+}
+
 static int join(const char *ssid, const char *pass, int tries)
 {
     struct wifi_connect_req_params p = params(ssid, pass);
-    int joins = 0;
+    int joins = 0, silent = 0;
     for (int t = 1;; t++) {
         fc_port_log(FC_LOG_INFO, "WiFi: joining \"%s\"", ssid);
         k_sem_reset(&s_ip_up);
@@ -190,6 +216,15 @@ static int join(const char *ssid, const char *pass, int tries)
                 return 0;
             }
             net_mgmt(NET_REQUEST_WIFI_DISCONNECT, s_sta, NULL, 0);
+        }
+        if (chip_answers() == 0) {
+            if (++silent >= CHIP_SILENT_JOINS) {
+                fc_port_log(FC_LOG_ERROR, "WiFi: the chip does not answer: restarting to power it again");
+                k_sleep(K_MSEC(500)); /* the line out on the console */
+                fc_port_reboot();
+            }
+        } else {
+            silent = 0;
         }
         if (tries > 0 && t >= tries) {
             return -1;

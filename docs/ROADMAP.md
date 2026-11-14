@@ -20,7 +20,6 @@ Checks not made yet:
 - [ ] Two parts of decommissioning and the registry never tried: the `FactoryReset` target (the CLI and the UI send `Unenroll` only), and Bearer tokens against a real registry (Harbor, Quay); `registry:3` asks for Basic.
 - [ ] The Zephyr builds for boards in CI. They need the ARM and Xtensa toolchains; CI builds and tests `native_sim` only.
 - [ ] Zephyr: the report of the last fatal error is printed at boot, before the Pico W's USB console is open, and is lost. Report it in the device's status too.
-- [ ] The Pico W's WiFi (CYW43439) sometimes cannot join again after the board restarts (`whd_wifi_prepare_join failed`, every 10 s) until it restarts once more.
 
 What the Zephyr port does not have, and the ESP-IDF firmware has:
 
