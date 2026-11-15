@@ -31,12 +31,12 @@ CONFIG_MBEDTLS_X509_CSR_WRITE_C=y
 # bundle of public root CAs (the linker already left it out: no size change).
 # CONFIG_MBEDTLS_CERTIFICATE_BUNDLE is not set
 
-# Performance: the code optimized for speed (-O2) instead of ESP-IDF's
-# debug default (-Og), assertions kept but without their messages. The
-# release profile (sdkconfig.release) goes back to -Os for size. The CPU
-# runs at the chip's highest clock: set per chip where it is not ESP-IDF's
-# default (sdkconfig.defaults.<chip>).
-CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# Optimization, as in the Zephyr build: the firmware for size (-Os), WAMR,
+# which runs the apps, for speed (-O2, CMakeLists.txt), assertions kept but
+# without their messages. The agent waits on the network; RAM and the OTA
+# slots are what is short. The CPU runs at the chip's highest clock: set per
+# chip where it is not ESP-IDF's default (sdkconfig.defaults.<chip>).
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
 
 # Console on USB-Serial/JTAG (native USB port of the devkit).

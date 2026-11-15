@@ -32,6 +32,9 @@ project(flightctl_mcu_fw)
 #   run, and asking for it now fails as it did at run time.
 idf_component_get_property(wamr_lib wamr COMPONENT_LIB)
 target_compile_options(${wamr_lib} PRIVATE -include ${CMAKE_CURRENT_LIST_DIR}/wamr_idf6.h -Wno-format-security)
+# WAMR, which runs the apps, optimized for speed (-O2, after the firmware's
+# -Os, sdkconfig.defaults), as in the Zephyr build.
+target_compile_options(${wamr_lib} PRIVATE -O2)
 if(NOT CONFIG_HEAP_HAS_EXEC_HEAP)
     target_compile_definitions(${wamr_lib} PRIVATE MALLOC_CAP_EXEC=MALLOC_CAP_INVALID)
 endif()
