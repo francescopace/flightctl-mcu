@@ -30,9 +30,8 @@
 # release signed with that key alone retires the first one; before that, a
 # third, spare key is revoked through the fleet's config.
 #
-# Halfway, the fleet moves to the registry's door with TLS and a password
-# (docs/REGISTRY.md): the release is downloaded again through it, and the rest
-# of the run pulls through it. Last, the device is decommissioned: it wipes
+# The device pulls through the registry's door with TLS and a password
+# (docs/REGISTRY.md): it speaks nothing else. Last, the device is decommissioned: it wipes
 # its key and certificate and does not enroll again.
 #
 # A valid image of the other security variant is refused too: a plain device
@@ -59,7 +58,7 @@ source tools/local-ip.sh
 IP="${HOST_IP:-$(local_ip)}"
 REGISTRY="${REGISTRY:-$IP:5001}"            # where the test pushes: the plain door
 TLS_REGISTRY="${TLS_REGISTRY:-registry.$IP.nip.io:5443}"  # the same images, TLS and a password
-FLEET_REGISTRY="$REGISTRY"                  # what the fleet names
+FLEET_REGISTRY="$TLS_REGISTRY"              # what the fleet names: devices pull over TLS only
 CHIP="${CHIP:-esp32c3}"
 ROLLBACK="${ROLLBACK:-1}"
 SECURE="${SECURE:-0}"
@@ -376,14 +375,6 @@ apply_fleet "release.$TAG" "v2.$TAG-unsigned"
 wait_for 120 "unsigned app refused" "upd.get('status') == 'OutOfDate' and 'not signed' in upd.get('info', '')"
 apply_fleet "release.$TAG" "v2.$TAG"
 wait_for 120 "back to the signed app" "upd.get('status') == 'UpToDate'"
-
-log "registry with TLS and a password"
-# The fleet gives the device the registry's CA and auth.json; the image
-# reference changes, so the release comes again, whole, over TLS.
-FLEET_REGISTRY="$TLS_REGISTRY"
-apply_fleet "release.$TAG" "v2.$TAG"
-wait_for 420 "release and app from the TLS door" \
-  "(st.get('os') or {}).get('image', '').startswith('$TLS_REGISTRY/') and upd.get('status') == 'UpToDate' and apps and apps[0]['status'] == 'Running'"
 
 if [[ "$SECURE" == 1 ]]; then
   log "firmware signed with another Secure Boot key refused"

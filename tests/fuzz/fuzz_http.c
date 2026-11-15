@@ -1,32 +1,67 @@
 /*
- * Fuzzes the HTTP response reader (status line, headers, Content-Length and
- * chunked framing) through the real read loop: the input is served from a
- * file descriptor as if it came from the server.
+ * Fuzzes the HTTP/2 client as the server would: the input is what the server
+ * sends (frames, HPACK header blocks, Huffman strings), read through the real
+ * request path; what the client writes is dropped. The input is also decoded
+ * as one header block on its own.
  */
 #include "../../core/src/fc_http.c"
 
-#include <unistd.h>
+typedef struct {
+    const uint8_t *data;
+    size_t size, off;
+} mem_t;
+
+static int mem_read(conn_t *c, unsigned char *buf, size_t len)
+{
+    mem_t *m = c->tctx;
+    size_t n = m->size - m->off < len ? m->size - m->off : len;
+    memcpy(buf, m->data + m->off, n);
+    m->off += n;
+    return (int)n; /* 0 at the end: the server closed */
+}
+
+static int mem_write(conn_t *c, const unsigned char *buf, size_t len)
+{
+    return (int)len;
+}
+
+static int mem_wait(conn_t *c, int timeout_ms)
+{
+    return 1; /* data, or the end, which a read reports */
+}
+
+static void mem_close(conn_t *c) {}
+
+static const transport_t MEM = {mem_read, mem_write, mem_wait, mem_close};
+static mem_t s_mem;
+
+static conn_t *mem_open(const fc_http_target_t *t)
+{
+    return conn_new(&MEM, &s_mem);
+}
+
+static int sink(const void *data, size_t len, void *ctx)
+{
+    return 0;
+}
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-    static FILE *f;
-    if (f == NULL) {
-        f = tmpfile();
-    }
-    int fd = fileno(f);
-    if (ftruncate(fd, 0) != 0 || pwrite(fd, data, size, 0) != (ssize_t)size || lseek(fd, 0, SEEK_SET) != 0) {
-        return 0;
-    }
-    conn_t c;
-    memset(&c, 0, sizeof(c));
-    c.plain = 1;
-    c.net.fd = fd;
-    fc_http_target_t t = {.host = "fuzz", .port = 80, .plain = 1, .timeout_s = 1};
-    fc_http_response_t resp = {0};
-    int keep, got_any;
-    if (read_response(&c, &t, "GET", "/fuzz", &resp, &keep, &got_any) == 0) {
+    hpack_resp_t h;
+    hpack_decode(data, size, &h);
+    free(h.www_authenticate);
+
+    s_open_hook = mem_open;
+    fc_http_target_t t = {.host = "fuzz", .port = 443, .ca_pem = "x", .timeout_s = 1};
+    s_mem = (mem_t){data, size, 0};
+    fc_http_response_t resp;
+    if (fc_http_request(&t, "PUT", "/fuzz", "application/json", "{}", 2, &resp) == 0) {
         fc_http_free(&resp);
     }
+    s_mem = (mem_t){data, size, 0};
+    int status;
+    long total;
+    fc_http_get_stream(&t, "/blob", sink, NULL, &status, &total);
     return 0;
 }
 

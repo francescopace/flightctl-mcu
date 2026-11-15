@@ -21,6 +21,7 @@
 #include "fc_oci.h"
 #include "fc_port.h"
 #include "fc_resources.h"
+#include "fc_tls_pool.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/x509_crt.h"
 
@@ -95,8 +96,9 @@ typedef struct {
     time_t cert_next_try;
     int cert_backoff_s;
     char csr_name[96];     /* renewal request waiting for its certificate */
-    /* Kept connections, one per thread. */
-    fc_http_session_t *spec_sess, *status_sess;
+    /* The kept HTTP/2 connection: the spec's long-poll and the status
+     * thread's requests go over it at once, each on its stream. */
+    fc_http_session_t *sess;
     char boot_id[40];
 
     pthread_mutex_t lock;
@@ -193,7 +195,7 @@ static fc_http_target_t enrollment_target(const agent_t *a, int timeout_s)
     return t;
 }
 
-/* A request with the management certificate, on the calling thread's kept
+/* A request with the management certificate, on the agent's kept
  * connection. The certificate is copied: a renewal on the status thread may
  * replace and free it while a long-poll is still running. */
 static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, const char *method, const char *path,
@@ -526,7 +528,7 @@ static int put_status(agent_t *a)
     char path[128];
     snprintf(path, sizeof(path), API "/devices/%s/status", a->id.name);
     fc_http_response_t r;
-    int rc = mgmt_request(a, a->status_sess, 60, "PUT", path, "application/json", body, strlen(body), &r);
+    int rc = mgmt_request(a, a->sess, 60, "PUT", path, "application/json", body, strlen(body), &r);
     free(body);
     if (rc != 0) {
         return -1;
@@ -732,7 +734,7 @@ static int request_renewal(agent_t *a)
             return -1;
         }
         fc_port_log(FC_LOG_INFO, "renewing the management certificate (%s)", a->csr_name);
-        rc = mgmt_request(a, a->status_sess, 60, "POST", API "/certificatesigningrequests", "application/json", body,
+        rc = mgmt_request(a, a->sess, 60, "POST", API "/certificatesigningrequests", "application/json", body,
                           strlen(body), &r);
         free(body);
         if (rc != 0) {
@@ -748,7 +750,7 @@ static int request_renewal(agent_t *a)
     } else {
         char path[160];
         snprintf(path, sizeof(path), API "/certificatesigningrequests/%s", a->csr_name);
-        if (mgmt_request(a, a->status_sess, 60, "GET", path, NULL, NULL, 0, &r) != 0) {
+        if (mgmt_request(a, a->sess, 60, "GET", path, NULL, NULL, 0, &r) != 0) {
             return 0; /* network trouble: poll again */
         }
         if (r.status != 200) {
@@ -1039,11 +1041,8 @@ static void apply_rendered(agent_t *a, const char *json)
         }
     }
 
-    /* Downloads below may open a TLS connection to the registry: the spec's
-     * own, idle while this runs, is closed first, so a board short of RAM
-     * holds two at most (this and the status thread's). The next long-poll
-     * opens it again. */
-    fc_http_session_close(a->spec_sess);
+    /* Downloads below open a TLS connection to the registry, the second the
+     * device holds beside the agent's (fc_tls_pool.h). */
 
     /* WASM apps: replaced without reboot; a failed download keeps the old one. */
     char aerr[160] = "";
@@ -1152,7 +1151,7 @@ static void *spec_thread(void *arg)
             snprintf(path, sizeof(path), API "/devices/%s/rendered", a->id.name);
         }
         fc_http_response_t r;
-        if (mgmt_request(a, a->spec_sess, SPEC_POLL_TIMEOUT_S, "GET", path, NULL, NULL, 0, &r) != 0) {
+        if (mgmt_request(a, a->sess, SPEC_POLL_TIMEOUT_S, "GET", path, NULL, NULL, 0, &r) != 0) {
             sleep(RETRY_DELAY_S);
             continue;
         }
@@ -1313,6 +1312,9 @@ static void resume_firmware_update(agent_t *a)
 
 int fc_agent_apps_start(const fc_agent_config_t *cfg)
 {
+    /* The TLS buffers before any app takes the heap: a port may start the
+     * apps before the network. */
+    fc_tls_pool_init();
     fc_apps_set_hw(cfg->hw);
     return fc_apps_init();
 }
@@ -1342,8 +1344,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     if (cfg->signing_pub_pem == NULL) {
         fc_port_log(FC_LOG_WARN, "no signing key: firmware and app signatures are not checked");
     }
-    a.spec_sess = fc_http_session_new();
-    a.status_sess = fc_http_session_new();
+    a.sess = fc_http_session_new();
     kv_load_str(KV_RENDERED, a.rendered_version, sizeof(a.rendered_version));
     kv_load_str(KV_OS_IMAGE, a.os_image, sizeof(a.os_image));
     kv_load_str(KV_OS_DIGEST, a.os_digest, sizeof(a.os_digest));

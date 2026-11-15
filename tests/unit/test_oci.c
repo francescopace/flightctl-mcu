@@ -22,12 +22,17 @@ typedef struct {
 static route_t s_routes[64];
 static int s_nroutes;
 
+#define CA "-----BEGIN CERTIFICATE-----\nregistry CA\n-----END CERTIFICATE-----\n"
+
+/* Empties the registry. The device has its CA, for any port of "reg": it
+ * reaches registries over TLS only. */
 static void reg_reset(void)
 {
     for (int i = 0; i < s_nroutes; i++) {
         free(s_routes[i].body);
     }
     s_nroutes = 0;
+    fc_port_write_file("/etc/containers/certs.d/reg/ca.crt", CA, strlen(CA));
 }
 
 static void serve(const char *path, const char *body, size_t len)
@@ -57,7 +62,7 @@ static route_t *route(const char *path)
 static const char *s_require, *s_challenge, *s_token, *s_token_basic;
 static fc_http_target_t s_last;       /* the last request's target */
 static char s_last_host[128], s_last_auth[256];
-static int s_last_ca, s_with_auth_plain;
+static int s_last_ca, s_with_auth_no_ca;
 
 static void note(const fc_http_target_t *t)
 {
@@ -65,8 +70,8 @@ static void note(const fc_http_target_t *t)
     snprintf(s_last_host, sizeof(s_last_host), "%s", t->host);
     snprintf(s_last_auth, sizeof(s_last_auth), "%s", t->authorization ? t->authorization : "");
     s_last_ca = t->ca_pem != NULL && strstr(t->ca_pem, "registry CA") != NULL;
-    if (t->plain && t->authorization != NULL) {
-        s_with_auth_plain++;
+    if (t->ca_pem == NULL && t->authorization != NULL) {
+        s_with_auth_no_ca++;
     }
 }
 
@@ -377,8 +382,8 @@ static void push_firmware(const char *tag, const unsigned char *full, size_t ful
 /* A device with an OTA slot, running `fw`. */
 static void device_running(const unsigned char *fw, size_t len)
 {
-    reg_reset();
     stub_reset();
+    reg_reset();
     fc_oci_set_signing_key(NULL);
     stub_ota_enabled = 1;
     stub_fw = fw;
@@ -556,7 +561,6 @@ static void the_outcome_written_by_an_older_firmware_is_read(void)
 
 /* ---- registry access ---------------------------------------------------------- */
 
-#define CA "-----BEGIN CERTIFICATE-----\nregistry CA\n-----END CERTIFICATE-----\n"
 
 static void reg_auth_reset(void)
 {
@@ -564,40 +568,39 @@ static void reg_auth_reset(void)
     reg_reset();
     fc_oci_set_signing_key(NULL);
     s_require = s_challenge = s_token = s_token_basic = NULL;
-    s_with_auth_plain = 0;
+    s_with_auth_no_ca = 0;
 }
 
-static void a_registry_is_reached_over_tls_when_the_device_has_its_ca(void)
+static void a_registry_is_reached_over_tls_with_its_ca_only(void)
 {
     reg_auth_reset();
-    char md[72], err[160] = "";
+    char md[72], err[200] = "";
     unsigned char *out = NULL;
     size_t len = 0;
     push_image("app", "v1", "WASM", "application/vnd.wasm.content.layer.v1+wasm", md);
-    CHECK_INT(fetch("reg:5001/app:v1", err, sizeof(err), &out, &len), 0);
-    CHECK_INT(s_last.plain, 1); /* no CA: plain HTTP, as before */
-    free(out);
+    /* No CA: refused, before anything is asked of the registry. */
+    s_last.host = NULL;
+    CHECK(fetch("bare:5001/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "/etc/containers/certs.d/bare/ca.crt");
+    CHECK(s_last.host == NULL);
 
-    fc_port_write_file("/etc/containers/certs.d/reg:5001/ca.crt", CA, strlen(CA));
-    CHECK_INT(fetch("reg:5001/app:v1", err, sizeof(err), &out, &len), 0);
-    CHECK_INT(s_last.plain, 0);
+    fc_port_write_file("/etc/containers/certs.d/bare:5001/ca.crt", CA, strlen(CA));
+    CHECK_INT(fetch("bare:5001/app:v1", err, sizeof(err), &out, &len), 0);
     CHECK_INT(s_last_ca, 1);
+    CHECK_INT(s_last.port, 5001);
     free(out);
 
     /* Without a port, TLS is on 443; the CA is keyed by the host alone. */
-    fc_port_write_file("/etc/containers/certs.d/reg/ca.crt", CA, strlen(CA));
     CHECK_INT(fetch("reg/app:v1", err, sizeof(err), &out, &len), 0);
     CHECK_INT(s_last.port, 443);
     free(out);
     /* A CA for the host is for any port of it: the form a fleet can give
      * (Flight Control refuses ':' in a config file's path). */
     CHECK_INT(fetch("reg:7000/app:v1", err, sizeof(err), &out, &len), 0);
-    CHECK_INT(s_last.plain, 0);
+    CHECK_INT(s_last_ca, 1);
     CHECK_INT(s_last.port, 7000);
     free(out);
-    CHECK_INT(fetch("other:5001/app:v1", err, sizeof(err), &out, &len), 0);
-    CHECK_INT(s_last.plain, 1);
-    free(out);
+    CHECK(fetch("other:5001/app:v1", err, sizeof(err), &out, &len) != 0);
 }
 
 static void basic_credentials_are_sent_when_asked(void)
@@ -633,32 +636,24 @@ static void basic_credentials_are_sent_when_asked(void)
     fc_port_write_file("/etc/ostree/auth.json", auth, strlen(auth));
     fc_port_write_file("/etc/containers/auth.json", "{}", 2);
     CHECK(fetch("reg:5443/teams/app:v1", err, sizeof(err), &out, &len) != 0);
-    CHECK_INT(s_with_auth_plain, 0);
+    CHECK_INT(s_with_auth_no_ca, 0);
 }
 
-static void credentials_never_go_over_plain_http(void)
+static void refused_credentials_are_not_shown(void)
 {
     reg_auth_reset();
     char md[72], err[200] = "";
     unsigned char *out = NULL;
     size_t len = 0;
     push_image("app", "v1", "WASM", "application/vnd.wasm.content.layer.v1+wasm", md);
-    s_require = "Basic dTpzZWNyZXQ="; /* u:secret */
+    s_require = "Basic other";
     s_challenge = "Basic realm=\"registry\"";
     const char *auth = "{\"auths\":{\"reg:5001\":{\"auth\":\"dTpzZWNyZXQ=\"}}}";
     fc_port_write_file("/etc/containers/auth.json", auth, strlen(auth));
     CHECK(fetch("reg:5001/app:v1", err, sizeof(err), &out, &len) != 0);
-    CHECK_INT(s_with_auth_plain, 0);
-    CHECK_CONTAINS(err, "/etc/containers/certs.d/reg/ca.crt");
-    CHECK(strstr(err, "dTpzZWNyZXQ=") == NULL);
-
-    /* With TLS, refused credentials are said so, without them. */
-    fc_port_write_file("/etc/containers/certs.d/reg:5001/ca.crt", CA, strlen(CA));
-    s_require = "Basic other";
-    err[0] = '\0';
-    CHECK(fetch("reg:5001/app:v1", err, sizeof(err), &out, &len) != 0);
     CHECK(strstr(err, "dTpzZWNyZXQ=") == NULL);
     CHECK_CONTAINS(err, "HTTP 401");
+    CHECK_INT(s_with_auth_no_ca, 0);
 }
 
 static void a_bearer_token_is_asked_for(void)
@@ -694,7 +689,7 @@ static void a_bearer_token_is_asked_for(void)
     s_challenge = "Bearer realm=\"http://reg:5443/token\"";
     CHECK(fetch("reg:5443/app:v1", err, sizeof(err), &out, &len) != 0);
     CHECK_CONTAINS(err, "not on https");
-    CHECK_INT(s_with_auth_plain, 0);
+    CHECK_INT(s_with_auth_no_ca, 0);
 }
 
 static void challenges_are_parsed(void)
@@ -732,9 +727,9 @@ int main(void)
     RUN(a_bad_delta_falls_back_to_the_whole_image);
     RUN(an_image_the_device_refuses_is_not_downloaded_again);
     RUN(the_outcome_written_by_an_older_firmware_is_read);
-    RUN(a_registry_is_reached_over_tls_when_the_device_has_its_ca);
+    RUN(a_registry_is_reached_over_tls_with_its_ca_only);
     RUN(basic_credentials_are_sent_when_asked);
-    RUN(credentials_never_go_over_plain_http);
+    RUN(refused_credentials_are_not_shown);
     RUN(a_bearer_token_is_asked_for);
     RUN(challenges_are_parsed);
     reg_reset();

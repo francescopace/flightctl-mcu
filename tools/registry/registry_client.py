@@ -31,7 +31,7 @@ def _read(path):
 
 
 def ca_for(hostport):
-    """The CA file for this registry, or None (plain HTTP)."""
+    """The CA file for this registry, or None (plain HTTP, for pushing only: devices pull over TLS)."""
     if os.environ.get("REGISTRY_CA"):
         return os.environ["REGISTRY_CA"]
     if _read(os.path.join(SECRETS, "host")) == hostport and os.path.exists(os.path.join(SECRETS, "ca.crt")):

@@ -17,7 +17,11 @@ CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64=y
 CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
 CONFIG_MBEDTLS_SSL_TLS1_3_KEXM_EPHEMERAL=y
 CONFIG_MBEDTLS_HAVE_TIME_DATE=y
-CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+# Fixed TLS buffers: the receive buffer of each connection is one of the two
+# blocks the agent reserves at its start (core/include/fc_tls_pool.h),
+# through mbedtls_platform_set_calloc_free. Dynamic buffers, sized to each
+# record, would need a block of that size from the heap for every record.
+# CONFIG_MBEDTLS_DYNAMIC_BUFFER is not set
 # The device writes its certificate request (ESP-IDF 6 leaves X.509 writing
 # out unless asked); it writes no certificates.
 CONFIG_MBEDTLS_X509_CREATE_C=y

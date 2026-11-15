@@ -7,7 +7,8 @@ containers (and the Linux agent) look for them:
                                              refuses ':' in a path)
     /etc/containers/auth.json
 
-Nothing is added for a registry without a CA (plain HTTP). The CA and the
+A registry without a CA here gets nothing, and a warning: devices pull over
+TLS only, so the fleet must give them its CA some other way. The CA and the
 credentials are those of tools/registry/registry_client.py (.secrets/registry,
 made by tools/registry/up.sh). They end up in the fleet's spec on the server:
 anyone who can read the fleet can read them.
@@ -40,7 +41,9 @@ def main():
         sys.exit(__doc__)
     files = files_for(sys.argv[1])
     if not files:
-        sys.stdout.write(sys.stdin.read())  # plain HTTP: the fleet as it is
+        sys.stderr.write(f"warning: no CA for {sys.argv[1]}: devices pull over TLS only, "
+                         "and the fleet gives them none\n")
+        sys.stdout.write(sys.stdin.read())
         return
     import yaml
     docs = [d for d in yaml.safe_load_all(sys.stdin) if d is not None]

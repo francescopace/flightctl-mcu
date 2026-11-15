@@ -4,9 +4,9 @@
  *
  *   ref = host[:port]/repo[:tag|@sha256:...]
  *
- * The registry is reached over TLS when the fleet gives the device its CA,
- * and with the credentials of an auth.json when it asks for them (see
- * "registry access" below); otherwise over plain HTTP.
+ * The registry is reached over TLS and HTTP/2, with the CA the fleet gives
+ * the device, and with the credentials of an auth.json when it asks for
+ * them (see "registry access" below). A registry without a CA is refused.
  *
  * The reference may name an image index (one manifest per chip, selected by
  * platform.architecture == fc_port_fw_platform()) or a single manifest. The
@@ -67,7 +67,7 @@ typedef struct {
     char hostport[134]; /* host[:port] as the reference has it: certs.d and auth.json are keyed by it */
     int port_given;
     /* Registry access, for one pull (reg_open, reg_close). */
-    char *ca_pem;        /* the registry's CA: TLS; NULL: plain HTTP */
+    char *ca_pem;        /* the registry's CA */
     char *basic;         /* base64 of user:password, from an auth.json; NULL: none */
     char *authorization; /* the header sent, once the registry has asked */
     char *challenge;     /* the registry's last WWW-Authenticate */
@@ -136,15 +136,15 @@ static int digest_of(const void *data, size_t len, char out[72])
 /* ---- registry access ------------------------------------------------------
  * As containers have it on Linux, and with the files the Linux agent reads,
  * given to the device as config files in the fleet:
- *  - TLS when the device has the registry's CA, in
+ *  - TLS, with the registry's CA in
  *    /etc/containers/certs.d/<host:port>/ca.crt or, for any port of that
  *    host, certs.d/<host>/ca.crt (Flight Control refuses ':' in the path of
- *    a config file); plain HTTP otherwise.
+ *    a config file). Without one the pull fails: plain HTTP is not spoken.
  *  - Credentials from the first auth.json of AUTH_FILES with an entry for
  *    the registry (podman's format: {"auths":{"<host:port>":{"auth":
  *    "<base64 of user:password>"}}}; a key may also name a repository).
  *    They are sent only when the registry asks for them, as Basic or for a
- *    Bearer token, and never over plain HTTP.
+ *    Bearer token.
  * Nothing about the credentials goes into errors or the log. */
 #define CERTS_DIR "/etc/containers/certs.d/"
 static const char *const AUTH_FILES[] = {"/etc/ostree/auth.json", "/etc/containers/auth.json",
@@ -262,7 +262,12 @@ static int reg_open(const char *image, oci_ref_t *r, char *err, size_t err_len)
         return -1;
     }
     r->ca_pem = read_ca(r->hostport);
-    if (r->ca_pem != NULL && !r->port_given) {
+    if (r->ca_pem == NULL) {
+        snprintf(err, err_len, "registry %s: no CA (" CERTS_DIR "%s/ca.crt): only TLS is spoken", r->hostport,
+                 r->host);
+        return -1;
+    }
+    if (!r->port_given) {
         r->port = 443;
     }
     for (size_t i = 0; i < sizeof(AUTH_FILES) / sizeof(AUTH_FILES[0]) && r->basic == NULL; i++) {
@@ -282,7 +287,6 @@ static fc_http_target_t target(const oci_ref_t *r, const char *accept)
 {
     fc_http_target_t t = {.host = r->host,
                           .port = r->port,
-                          .plain = r->ca_pem == NULL,
                           .ca_pem = r->ca_pem,
                           .authorization = r->authorization,
                           .accept = accept,
@@ -453,13 +457,6 @@ static int reg_authenticate(oci_ref_t *r, char *err, size_t err_len)
     r->authorization = NULL;
     if (r->challenge == NULL) {
         snprintf(err, err_len, "registry %s: HTTP 401 without a challenge", r->hostport);
-        return -1;
-    }
-    if (r->ca_pem == NULL) {
-        snprintf(err, err_len,
-                 "registry %s asks for credentials: they go over TLS only, and the device has no CA for it "
-                 "(" CERTS_DIR "%s/ca.crt)",
-                 r->hostport, r->host);
         return -1;
     }
     if (strncasecmp(r->challenge, "Bearer", 6) == 0) {
@@ -734,16 +731,13 @@ static int fetch_blob(oci_ref_t *r, const char *blob_digest, long blob_size, fc_
     fc_http_target_t t = target(r, "application/octet-stream");
     int status;
     long total;
-    /* One connection to the registry at a time: a device short of RAM may
-     * not hold two TLS sessions to it. */
-    fc_http_session_close(r->sess);
+    /* On the connection the manifests came over: one to the registry. */
     int rc = fc_http_get_stream(&t, path, sink, &s, &status, &total);
     if (rc != 0 && status == 401 && s.done == 0 && r->challenge != NULL) {
         /* A token that ran out since the manifests: get another, once. */
         if (reg_authenticate(r, err, err_len) != 0) {
             return -1;
         }
-        fc_http_session_close(r->sess);
         t = target(r, "application/octet-stream");
         rc = fc_http_get_stream(&t, path, sink, &s, &status, &total);
     }
