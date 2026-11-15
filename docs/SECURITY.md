@@ -40,7 +40,7 @@ not written every minute.
 Devices on firmware older than this check (v3.0) do not have it.
 
 The variant is tested on emulated chips (esp-emu, which runs the chip's real
-ROM) in CI. It has not been burned on a real board, and this project does not
+ROM) by the end-to-end workflow. It has not been burned on a real board, and this project does not
 plan to: a burn cannot be undone.
 
 ## Two signing keys
@@ -66,6 +66,28 @@ TARGET=esp32c3 FW_VERSION=v4 VARIANT=secure SECURE_BOOT_KEY=secure_boot_key.pem 
 `fw-push.py --variant secure-release` pushes it. An OTA update thus passes two
 checks: the cosign signature of the artifact, then the Secure Boot signature of
 the image.
+
+### Signing a CI build
+
+CI builds the secure variant without a key: the `firmware-<chip>-secure`
+artifact of a CI run has, in `build-<chip>-secure` (debug) and
+`build-<chip>-secure-release`, the app and the bootloader padded for a
+signature, the partition table and what merging them takes. Signed with your
+key, they are the same as a build made with it. The chip trusts the key that
+signs the bootloader of the first image it boots, so do not flash one signed
+with a key you do not hold.
+
+```bash
+B=build-esp32c5-secure-release
+espsecure sign-data --version 2 --keyfile secure_boot_key.pem --output $B/fw-signed.bin $B/flightctl_mcu_fw.bin
+espsecure sign-data --version 2 --keyfile secure_boot_key.pem --output $B/bl-signed.bin $B/bootloader/bootloader.bin
+mv $B/fw-signed.bin $B/flightctl_mcu_fw.bin && mv $B/bl-signed.bin $B/bootloader/bootloader.bin
+```
+
+Then `port/espidf/merge-secure.py port/espidf/$B` gives the factory image
+(`merged-binary.bin`, provisioned with `tools/provision.py`), and
+`fw-push.py --variant secure-release` the update. An HSM signs the same
+files with `port/espidf/sign-external.py`.
 
 ## Device key in hardware
 
@@ -280,8 +302,8 @@ write; esptool then needs `--no-stub`. Not yet tried on a real board.
 ## What the CI checks
 
 The emulator runs the real ROM and models the eFuses, the XTS-AES flash
-encryption and its decrypting cache. `SECURE=1 tests/e2e/e2e-emu.sh` (C3 and C5 in
-CI, with a throwaway Secure Boot key):
+encryption and its decrypting cache. `SECURE=1 tests/e2e/e2e-emu.sh` (C5, S3 and C6 in
+the e2e workflow, signed with throwaway Secure Boot keys):
 
 - the first boot burns the eFuses, encrypts the flash and moves `fc_creds` into
   the encrypted store;
@@ -290,21 +312,19 @@ CI, with a throwaway Secure Boot key):
 - the same release build, signed with another Secure Boot key and properly
   cosign-signed, is refused, and the device stays on its firmware;
 - the plain release build signed with the device's own Secure Boot key is
-  refused as another variant (when the test builds the images: CI's prebuilt
-  ones come without their key). On the plain run, the plain device refuses
+  refused as another variant. On the plain run, the plain device refuses
   the secure release build;
 - the debug build (security version 0) is refused once the release (1) is
   confirmed (anti-rollback);
 - the broken build is rolled back, as without Secure Boot;
-- when the test builds the images: the bootloader trusts three keys; the
-  third, a spare, is revoked through the fleet's config, revoking the key in
-  use is refused, and a release signed with the second key alone retires the
-  first (key rotation). CI's prebuilt images come without their keys.
+- the bootloader trusts three keys; the third, a spare, is revoked through
+  the fleet's config, revoking the key in use is refused, and a release
+  signed with the second key alone retires the first (key rotation).
 
 On the C5 the test also checks the device key: burned into eFuse, read
 protected, the peripheral's signature verified (`deviceKey: "ecdsa"`); every
 request after that, enrollment and certificate renewals included, is signed
-by the peripheral. On the C3 the key stays in the encrypted store
+by the peripheral. On the S3 and the C6 the key stays in the encrypted store
 (`deviceKey: "storage"`).
 
 Tried by hand in the emulator:
@@ -329,7 +349,7 @@ What the Zephyr builds have, on any board started by MCUboot:
   when building (0 by default), as the ESP-IDF variant's security version:
 
   ```bash
-  SECURE_VERSION=1 BOARD=rpi_pico/rp2040/w/mcuboot port/zephyr/build.sh
+  SECURE_VERSION=1 BOARD=esp32s3_devkitc/esp32s3/procpu port/zephyr/build.sh
   ```
 
   MCUboot installs no update below the running image's counter
@@ -338,20 +358,13 @@ What the Zephyr builds have, on any board started by MCUboot:
   device accepts`); the device reports its counter as `secureVersion`. Unlike
   ESP-IDF's eFuse, the counter is the running image's, in flash: it stops a
   signed vulnerable release from being put back over the air, not someone who
-  writes the flash over USB or SWD. Verified on the Pico W: running counter 1,
+  writes the flash over USB or SWD. Verified on a Raspberry Pi Pico W, a board since removed: running counter 1,
   a release with counter 0 was refused in 20 s, without a restart.
-- **A build for the field has no USB console.** The console on USB, and the
-  bootloader it opens at 1200 baud for a new UF2 (`src/board_rp2.c`), come only
-  with `-S cdc-acm-console`, which the development builds add.
 
 What they do not have:
 
 - **The device key, the credentials and a network given in the field are in
   the storage partitions in clear**, and the flash is not encrypted.
-  - The RP2040 (Pico W) has no secure boot, no encryption and no protected
-    memory, and its SWD port cannot be turned off: whoever holds the board
-    can read and write everything. Encrypting the key with something from the
-    chip, such as its unique ID, would hide nothing, since that can be read too.
   - On Espressif's chips, Secure Boot v2 and flash encryption come with
     Espressif's port of MCUboot, built on its own and not with Zephyr's
     sysbuild: `CONFIG_ESP_FLASH_ENCRYPTION` excludes the MCUboot this build

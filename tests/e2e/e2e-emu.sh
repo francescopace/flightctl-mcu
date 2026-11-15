@@ -14,7 +14,9 @@
 #                                  slow step cannot outlast a 2-minute certificate
 #   PREBUILT=1 tests/e2e/e2e-emu.sh       use port/espidf/build-<chip>{,-release,-broken} and
 #                                  wasm-apps/build/alarm-v2 as they are (CI: the firmware
-#                                  and WASM jobs' builds), instead of building
+#                                  and WASM jobs' builds), instead of building. Secure
+#                                  builds come unsigned (port/espidf/build-ci.sh): the test
+#                                  signs them with throwaway keys, into build-<chip>-signed-*
 #   SECURE=1 tests/e2e/e2e-emu.sh         the secure variant (port/espidf/sdkconfig.secure): Secure
 #                                  Boot v2, flash encryption (release mode) and NVS
 #                                  encryption, burned into the emulated chip's eFuses on
@@ -37,7 +39,7 @@
 # A valid image of the other security variant is refused too: a plain device
 # gets the secure release build (PREBUILT: port/espidf/build-<chip>-secure-release
 # must be there), a secure device the plain release build signed with its own
-# key (only when building: prebuilt images come without their key).
+# key.
 #
 # The plain run gets its WiFi network in the field: provisioned with a proof
 # of possession and no network, the device opens an access point, which the
@@ -205,26 +207,53 @@ else
 fi
 kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
 
+new_key() { python3 -m espsecure generate-signing-key --version 2 --scheme rsa3072 "$1" >/dev/null; }
+
+# sign_prebuilt <variant> [merge]: a secure build as CI makes it, unsigned
+# (port/espidf/build-<chip>-<variant>), signed with SECURE_BOOT_KEY into
+# port/espidf/build-<chip>-signed-<variant>; with "merge", its bootloader too,
+# which also trusts the next and spare keys, and the merged flash image.
+sign_prebuilt() {
+  local src="port/espidf/build-$CHIP-$1" dst="port/espidf/build-$CHIP-signed-$1"
+  [[ -f "$src/flightctl_mcu_fw.bin" ]] || fail "no $src"
+  python3 -c "import sys; d=open(sys.argv[1],'rb').read(); sys.exit(d[-0x1000:-0x1000+1] == b'\xe7')" \
+    "$src/flightctl_mcu_fw.bin" || fail "$src is signed already: not a CI build"
+  rm -rf "$dst" && mkdir -p "$dst" && cp -R "$src/." "$dst/"
+  cp "$src/flightctl_mcu_fw.bin" "$dst/flightctl_mcu_fw-unsigned.bin"
+  python3 -m espsecure sign-data --version 2 --keyfile "$SECURE_BOOT_KEY" \
+    --output "$dst/flightctl_mcu_fw.bin" "$src/flightctl_mcu_fw.bin" >/dev/null || fail "signing $src"
+  if [[ "${2:-}" == merge ]]; then
+    python3 -m espsecure sign-data --version 2 --keyfile "$SECURE_BOOT_KEY" \
+      --output "$dst/bootloader/bootloader.bin" "$src/bootloader/bootloader.bin" >/dev/null ||
+      fail "signing $src's bootloader"
+    python3 port/espidf/merge-secure.py --extra-key "$NEXT_KEY" --extra-key "$SPARE_KEY" "$dst" \
+      >"$WORK/merge-$1.log" 2>&1 || { cat "$WORK/merge-$1.log"; fail "merged image of $dst"; }
+  fi
+}
+
 log "firmware for $CHIP${DEBUG_V:+ ($DEBUG_V)}: debug, release, broken"
 rm -rf "$WORK" && mkdir -p "$WORK"
+if [[ -z "${SECURE_BOOT_KEY:-}" ]]; then
+  export SECURE_BOOT_KEY="$WORK/secure_boot_test.pem"
+  new_key "$SECURE_BOOT_KEY"
+fi
+if [[ "$SECURE" == 1 ]]; then
+  NEXT_KEY="$WORK/secure_boot_next.pem"
+  SPARE_KEY="$WORK/secure_boot_spare.pem"
+  new_key "$NEXT_KEY" && new_key "$SPARE_KEY"
+fi
 if [[ -n "${PREBUILT:-}" ]]; then
   SUFFIX=""
+  if [[ "$SECURE" == 1 ]]; then
+    SUFFIX="-signed"
+    sign_prebuilt "$DEBUG_V" merge
+    sign_prebuilt "$RELEASE_V"
+    [[ "$ROLLBACK" == 1 ]] && sign_prebuilt "$BROKEN_V"
+  fi
 else
   SUFFIX="-e2e"
-  if [[ -z "${SECURE_BOOT_KEY:-}" ]]; then
-    export SECURE_BOOT_KEY="$WORK/secure_boot_test.pem"
-    python3 -m espsecure generate-signing-key --version 2 --scheme rsa3072 "$SECURE_BOOT_KEY" >/dev/null
-  fi
-  if [[ "$SECURE" == 1 ]]; then
-    NEXT_KEY="$WORK/secure_boot_next.pem"
-    SPARE_KEY="$WORK/secure_boot_spare.pem"
-    for k in "$NEXT_KEY" "$SPARE_KEY"; do
-      python3 -m espsecure generate-signing-key --version 2 --scheme rsa3072 "$k" >/dev/null
-    done
-    SV=1
-  else
-    SV=""
-  fi
+  SV=""
+  [[ "$SECURE" == 1 ]] && SV=1
   build "build-$CHIP-e2e${DEBUG_V:+-$DEBUG_V}" e2e "$DEBUG_V"
   build "build-$CHIP-e2e-$RELEASE_V" e2e-release "$RELEASE_V" "$SV"
   [[ "$ROLLBACK" == 1 ]] && build "build-$CHIP-e2e-$BROKEN_V" e2e-broken "$BROKEN_V" "$SV"
@@ -234,12 +263,18 @@ VARIANT_DIR=""
 if [[ "$SECURE" == 0 ]]; then
   [[ -n "${PREBUILT:-}" ]] || build "build-$CHIP-e2e-secure-release" e2e-release secure-release
   VARIANT_DIR="port/espidf/build-$CHIP$SUFFIX-secure-release"
-elif [[ -z "${PREBUILT:-}" ]]; then
-  build "build-$CHIP-e2e-release" e2e-release release
-  VARIANT_DIR="port/espidf/build-$CHIP-e2e-release-signed"
+else
+  # The plain release signed with this device's own key: refused all the same.
+  PLAIN_RELEASE="port/espidf/build-$CHIP-release"
+  if [[ -z "${PREBUILT:-}" ]]; then
+    build "build-$CHIP-e2e-release" e2e-release release
+    PLAIN_RELEASE="port/espidf/build-$CHIP-e2e-release"
+  fi
+  [[ -f "$PLAIN_RELEASE/flightctl_mcu_fw.bin" ]] || fail "no $PLAIN_RELEASE"
+  VARIANT_DIR="port/espidf/build-$CHIP-variant-signed"
   mkdir -p "$VARIANT_DIR"
   python3 -m espsecure sign-data --version 2 --keyfile "$SECURE_BOOT_KEY" \
-    --output "$VARIANT_DIR/flightctl_mcu_fw.bin" "port/espidf/build-$CHIP-e2e-release/flightctl_mcu_fw.bin" >/dev/null
+    --output "$VARIANT_DIR/flightctl_mcu_fw.bin" "$PLAIN_RELEASE/flightctl_mcu_fw.bin" >/dev/null
 fi
 DEBUG_DIR="port/espidf/build-$CHIP$SUFFIX${DEBUG_V:+-$DEBUG_V}"
 RELEASE_DIR="port/espidf/build-$CHIP$SUFFIX-$RELEASE_V"
@@ -293,11 +328,11 @@ if [[ "$SECURE" == 1 ]]; then
 fi
 if [[ -n "${NEXT_KEY:-}" ]]; then
   # Key rotation: the release build signed with the next key only
-  NEXT_DIR="port/espidf/build-$CHIP-e2e-$RELEASE_V-nextkey"
+  NEXT_DIR="port/espidf/build-$CHIP$SUFFIX-$RELEASE_V-nextkey"
   mkdir -p "$NEXT_DIR"
   python3 -m espsecure sign-data --version 2 --keyfile "$NEXT_KEY" \
     --output "$NEXT_DIR/flightctl_mcu_fw.bin" "$RELEASE_DIR/flightctl_mcu_fw-unsigned.bin" >/dev/null
-  tools/fw-push.py --variant "e2e-$RELEASE_V-nextkey" "$REGISTRY/flightctl-mcu/fw:nextkey.$TAG" "$CHIP" >/dev/null
+  tools/fw-push.py --variant "${SUFFIX#-}-$RELEASE_V-nextkey" "$REGISTRY/flightctl-mcu/fw:nextkey.$TAG" "$CHIP" >/dev/null
   rm -rf "$NEXT_DIR"
 fi
 [[ -n "${PREBUILT:-}" ]] || NO_PUSH=1 wasm-apps/build.sh alarm v2 >/dev/null

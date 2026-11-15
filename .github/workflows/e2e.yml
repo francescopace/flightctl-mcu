@@ -1,0 +1,310 @@
+name: e2e
+
+# The end-to-end tests against Flight Control on kind, on what a CI run built
+# (ci.yml). Only the broken firmware for the rollback test is built here, as
+# nothing else uses it. The secure images come unsigned: the test signs them
+# with throwaway Secure Boot keys.
+# Three ways in:
+#   - nightly, on the last successful CI run of main, unless that commit has
+#     passed here already;
+#   - by hand: Actions > e2e > Run workflow, optionally with a CI run's id;
+#   - from a CI run, by re-running its skipped "e2e" job (ci.yml).
+# The certificate waits are all in: the host and Zephyr runs wait for a
+# certificate to expire, the plain C5 renews 2-minute certificates.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # an hour after fuzz-nightly
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: id of the CI run whose builds to test (default the last successful one on main)
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      run-id:
+        description: id of the CI run whose builds to test
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  FLIGHTCTL_VERSION: v1.4.0
+  ESP_EMU_VERSION: 0.51.0
+
+jobs:
+  source:
+    name: the CI run to test
+    runs-on: ubuntu-latest
+    outputs:
+      run-id: ${{ steps.pick.outputs.run-id }}
+      sha: ${{ steps.pick.outputs.sha }}
+      skip: ${{ steps.done.outputs.cache-hit == 'true' }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          if [[ -z "$RUN_ID" ]]; then
+            RUN_ID=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --event push \
+              --status success --limit 1 --json databaseId -q '.[0].databaseId')
+            [[ -n "$RUN_ID" ]] || { echo "no successful CI run on main"; exit 1; }
+          fi
+          SHA=$(gh run view -R "$GITHUB_REPOSITORY" "$RUN_ID" --json headSha -q .headSha)
+          echo "CI run $RUN_ID, commit $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "run-id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+      # A commit that passed is not tested again by the nightly run (a marker
+      # in the Actions cache, saved by the last job). By hand it always runs.
+      - id: done
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v6
+        with:
+          path: .e2e-passed
+          key: e2e-passed-${{ steps.pick.outputs.sha }}
+          lookup-only: true
+      - if: steps.done.outputs.cache-hit == 'true'
+        run: echo "commit already passed, nothing to do" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The broken build of each emulated chip: it cannot reach Flight Control and
+  # is rolled back (sdkconfig.broken). Kept for a day only.
+  broken:
+    name: broken firmware (${{ matrix.chip }}${{ matrix.profile == 'secure' && ', secure' || '' }})
+    needs: source
+    if: needs.source.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.3
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [esp32c5, esp32s3, esp32c6]
+        profile: [plain, secure]
+    env:
+      VARIANT: ${{ matrix.profile == 'secure' && 'secure-' || '' }}broken
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - run: git config --global --add safe.directory '*'
+      - run: third_party/fetch-wamr.sh
+      # The CI's cache of compiled objects (saved from main by ci.yml).
+      - uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.chip }}-${{ matrix.profile }}-${{ needs.source.outputs.sha }}
+          restore-keys: ccache-${{ matrix.chip }}-${{ matrix.profile }}-
+      # Secure: security version 1, as the release (anti-rollback).
+      - name: build
+        env:
+          SHA: ${{ needs.source.outputs.sha }}
+          SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
+        run: port/espidf/build-ci.sh ${{ matrix.chip }} "ci-${SHA::7}" "$VARIANT"
+      # The app alone, as it comes over the air (secure: unsigned).
+      - uses: actions/upload-artifact@v7
+        with:
+          name: broken-${{ matrix.chip }}${{ matrix.profile == 'secure' && '-secure' || '' }}
+          path: port/espidf/build-${{ matrix.chip }}-${{ env.VARIANT }}/flightctl_mcu_fw.bin
+          retention-days: 1
+
+  host:
+    name: end-to-end (simulated device vs Flight Control on kind)
+    needs: source
+    if: needs.source.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - name: tools
+        run: |
+          kind version && helm version --short && kubectl version --client
+          sudo curl -fsSL -o /usr/local/bin/flightctl \
+            https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
+          sudo chmod +x /usr/local/bin/flightctl
+          # PyYAML comes with the runner: install it only if that changes.
+          python3 -c 'import yaml' || { sudo apt-get update && sudo apt-get install -y python3-yaml; }
+      - uses: oras-project/setup-oras@v2
+      - uses: sigstore/cosign-installer@v4.1.3 # e2e checks that cosign accepts our signatures
+      - name: host agent and WASM apps from the CI run (not rebuilt)
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ needs.source.outputs.run-id }}
+          github-token: ${{ github.token }}
+          name: host-agent
+          path: build/host
+      - uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ needs.source.outputs.run-id }}
+          github-token: ${{ github.token }}
+          name: wasm-apps
+          path: wasm-apps/build
+      - run: chmod +x build/host/fc-host-agent
+      - name: e2e
+        run: PREBUILT_APPS=1 tests/e2e/e2e.sh
+      - name: cluster state on failure
+        if: failure()
+        run: |
+          kubectl get pods -A || true
+          kubectl get events -n flightctl --sort-by=.lastTimestamp | tail -40 || true
+
+  zephyr:
+    name: end-to-end (Zephyr on ${{ matrix.kind == 'qemu' && 'an emulated Arm Cortex-M3' || 'native_sim' }} vs Flight Control on kind)
+    needs: source
+    if: needs.source.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { kind: zephyr, artifact: zephyr-native-sim, dir: port/zephyr/build-native_sim_native_64/zephyr }
+          - { kind: qemu, artifact: zephyr-mps2-an385, dir: port/zephyr/build-mps2_an385/zephyr }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - name: tools
+        run: |
+          kind version && helm version --short && kubectl version --client
+          sudo curl -fsSL -o /usr/local/bin/flightctl \
+            https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
+          sudo chmod +x /usr/local/bin/flightctl
+          python3 -c 'import yaml' || { sudo apt-get update && sudo apt-get install -y python3-yaml; }
+          if [[ "${{ matrix.kind }}" == qemu ]]; then sudo apt-get update && sudo apt-get install -y qemu-system-arm; fi
+      - uses: oras-project/setup-oras@v2
+      - name: Zephyr build and WASM apps from the CI run (not rebuilt)
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ needs.source.outputs.run-id }}
+          github-token: ${{ github.token }}
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.dir }}
+      - uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ needs.source.outputs.run-id }}
+          github-token: ${{ github.token }}
+          name: wasm-apps
+          path: wasm-apps/build
+      - run: chmod +x ${{ matrix.dir }}/zephyr.exe
+        if: matrix.kind == 'zephyr'
+      # With the waits for a certificate to expire: the Zephyr build reboots
+      # under its new identity.
+      - name: e2e
+        run: PREBUILT_APPS=1 DEVICE_KIND=${{ matrix.kind }} tests/e2e/e2e.sh
+      - name: cluster state on failure
+        if: failure()
+        run: |
+          kubectl get pods -A || true
+          kubectl get events -n flightctl --sort-by=.lastTimestamp | tail -40 || true
+
+  emulator:
+    name: end-to-end on an emulated ${{ matrix.chip }}${{ matrix.secure == 1 && ', secure' || '' }} (esp-emu)
+    needs: [source, broken]
+    if: needs.source.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # The supported chips esp-emu runs (not the classic ESP32).
+        chip: [esp32c5, esp32s3, esp32c6]
+        secure: [0, 1]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - name: tools
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/flightctl \
+            https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
+          sudo chmod +x /usr/local/bin/flightctl
+          # PyYAML comes with the runner: install it only if that changes.
+          python3 -c 'import yaml' || { sudo apt-get update && sudo apt-get install -y python3-yaml; }
+          # NVS partition generator for provisioning (else the ESP-IDF image is pulled)
+          pip install esp-idf-nvs-partition-gen==0.3.0
+          # espsecure: the secure test signs a firmware with a key the chip does not know
+          pip install esptool==5.3.1
+          # detools: the release is pushed with a delta from the debug build
+          # (the version tools/fw-push.py pins).
+          # It has C extensions: the Python headers only if pip needs them.
+          pip install detools==0.53.1 ||
+            { sudo apt-get update && sudo apt-get install -y python3-dev && pip install detools==0.53.1; }
+      - uses: oras-project/setup-oras@v2
+      - name: esp-emu (checksum verified)
+        run: |
+          cd /tmp
+          base=https://github.com/espressif/esp-emulator/releases/download/v$ESP_EMU_VERSION
+          name=esp-emu-$ESP_EMU_VERSION-x86_64-unknown-linux-gnu
+          curl -fsSLO "$base/$name.tar.gz" && curl -fsSLO "$base/SHA256SUMS"
+          grep " $name.tar.gz\$" SHA256SUMS | sha256sum -c -
+          tar xzf "$name.tar.gz" && sudo install -m 755 "$name/esp-emu" /usr/local/bin/esp-emu
+          esp-emu --version
+      - name: firmware from the CI run (not rebuilt)
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ needs.source.outputs.run-id }}
+          github-token: ${{ github.token }}
+          name: firmware-${{ matrix.chip }}${{ matrix.secure == 1 && '-secure' || '' }}
+          path: port/espidf
+      - name: broken build (this workflow's)
+        uses: actions/download-artifact@v8
+        with:
+          name: broken-${{ matrix.chip }}${{ matrix.secure == 1 && '-secure' || '' }}
+          path: port/espidf/build-${{ matrix.chip }}-${{ matrix.secure == 1 && 'secure-' || '' }}broken
+      # The other variant's release, which the device must refuse (a secure
+      # device gets the plain one signed with its own key).
+      - name: the other variant's build too
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ needs.source.outputs.run-id }}
+          github-token: ${{ github.token }}
+          name: firmware-${{ matrix.chip }}${{ matrix.secure == 0 && '-secure' || '' }}
+          path: port/espidf
+      - name: WASM apps from the CI run (not rebuilt)
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ needs.source.outputs.run-id }}
+          github-token: ${{ github.token }}
+          name: wasm-apps
+          path: wasm-apps/build
+      - name: esp_prov's dependencies (the plain run provisions WiFi in the field)
+        if: matrix.secure == 0
+        run: pip install protobuf cryptography
+      - name: e2e on the emulator
+        env:
+          ESP_PROV_LOCAL: 1
+          # Certificate renewal with 2-minute certificates in one job only: the
+          # agent's code is the same on every chip, the host and Zephyr runs
+          # test it too, and short certificates make a slow step fail the
+          # whole run. The plain C5: the fastest of the emulated chips.
+          CERT: ${{ matrix.chip == 'esp32c5' && matrix.secure == 0 && 1 || 0 }}
+        run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} tests/e2e/e2e-emu.sh
+      - name: logs on failure
+        if: failure()
+        run: |
+          tail -80 build/e2e-emu/emu.log || true
+          kubectl get pods -A || true
+      - name: the whole emulator log on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: emu-log-${{ matrix.chip }}-${{ matrix.secure }}
+          path: build/e2e-emu/emu.log
+          if-no-files-found: ignore
+
+  passed:
+    name: mark the commit as passed
+    needs: [source, broken, host, zephyr, emulator]
+    runs-on: ubuntu-latest
+    steps:
+      - run: mkdir .e2e-passed && echo "${{ needs.source.outputs.sha }}" > .e2e-passed/sha
+      - uses: actions/cache/save@v6
+        with:
+          path: .e2e-passed
+          key: e2e-passed-${{ needs.source.outputs.sha }}

@@ -1,10 +1,10 @@
 name: ci
 
-# Stage 1 (parallel): firmware for every chip, the emulated ones in a job of
-# their own; host agent and WASM apps; the Zephyr build; unit tests, field
-# provisioning and a quick fuzzing pass, which nothing waits for. Stage 2: the
-# end-to-end tests, which reuse what stage 1 built instead of building it
-# again. Long fuzzing runs nightly (fuzz-nightly.yml).
+# Builds and quick tests, all in parallel: firmware for every chip, host agent
+# and WASM apps, the Zephyr builds, unit tests, field provisioning and a quick
+# fuzzing pass. The end-to-end tests are e2e.yml, which tests these builds:
+# nightly, by hand, or from here by re-running the "e2e" job, skipped on the
+# first attempt. Long fuzzing runs nightly (fuzz-nightly.yml).
 
 on:
   push:
@@ -15,14 +15,14 @@ on:
   workflow_dispatch:
 
 # A newer push to the same branch makes the running workflow pointless.
+# A re-run (the e2e job) is a group of its own: it neither cancels a newer
+# push's run nor is cancelled by it.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ github.run_attempt > 1 && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 env:
   MBEDTLS_VERSION: v4.1.1
-  FLIGHTCTL_VERSION: v1.4.0
-  ESP_EMU_VERSION: 0.51.0
 
 jobs:
   build:
@@ -60,7 +60,6 @@ jobs:
           name: host-agent
           path: build/host/fc-host-agent
 
-  # Out of build, so the end-to-end tests do not wait for them.
   tests:
     name: unit tests, field provisioning, quick fuzzing
     runs-on: ubuntu-latest
@@ -96,47 +95,33 @@ jobs:
           name: fuzz-findings
           path: build/fuzz/crash-*
 
-  # The chips the emulator tests run on, in a job of their own so those tests
-  # do not wait for the other chips; the BLE variant as an entry of its own,
-  # so the C3 does not build four images in a row.
-  firmware-emu:
+  # Every chip, uploaded for the e2e workflow (and kept 90 days): plain and
+  # secure for the chips it emulates (secure: Secure Boot v2 + flash and NVS
+  # encryption, unsigned: see port/espidf/build-ci.sh).
+  firmware:
     name: firmware (${{ matrix.target }}${{ matrix.profile != 'plain' && format(', {0}', matrix.profile) || '' }})
     runs-on: ubuntu-latest
     container: espressif/idf:v6.0.3
     strategy:
       fail-fast: false
       matrix:
-        target: [esp32c3, esp32c5]
-        # secure: Secure Boot v2 + flash encryption + NVS encryption (signed
-        # with a throwaway key, see port/espidf/build-ci.sh).
-        profile: [plain, secure]
         include:
-          - { target: esp32c3, profile: ble }
+          - { target: esp32c5, profile: plain }
+          - { target: esp32c5, profile: secure }
+          - { target: esp32s3, profile: plain }
+          - { target: esp32s3, profile: secure }
+          - { target: esp32c6, profile: plain }
+          - { target: esp32c6, profile: secure }
+          - { target: esp32, profile: plain }
+          - { target: esp32c3, profile: plain }
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory '*'
-      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
+      - run: third_party/fetch-wamr.sh
       - uses: ./.github/actions/firmware
         with:
           target: ${{ matrix.target }}
           profile: ${{ matrix.profile }}
-
-  firmware:
-    name: firmware (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    container: espressif/idf:v6.0.3
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [esp32, esp32s2, esp32s3, esp32c6]
-    steps:
-      - uses: actions/checkout@v7
-      - run: git config --global --add safe.directory '*'
-      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
-      - uses: ./.github/actions/firmware
-        with:
-          target: ${{ matrix.target }}
-          profile: plain
 
   zephyr:
     name: Zephyr (native_sim)
@@ -160,169 +145,40 @@ jobs:
           name: zephyr-native-sim
           path: port/zephyr/build-native_sim_native_64/zephyr/zephyr.exe
 
-  e2e-zephyr:
-    name: end-to-end (Zephyr on native_sim vs Flight Control on kind)
-    needs: [zephyr, build]
-    if: ${{ !cancelled() }}
+  zephyr-qemu:
+    name: Zephyr (mps2/an385, Arm Cortex-M3 on Ethernet)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    container: ghcr.io/zephyrproject-rtos/ci-base:v0.30.0
     steps:
       - uses: actions/checkout@v7
-      - name: tools
-        run: |
-          kind version && helm version --short && kubectl version --client
-          sudo curl -fsSL -o /usr/local/bin/flightctl \
-            https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
-          sudo chmod +x /usr/local/bin/flightctl
-          # PyYAML comes with the runner: install it only if that changes.
-          python3 -c 'import yaml' || { sudo apt-get update && sudo apt-get install -y python3-yaml; }
-      - uses: oras-project/setup-oras@v2
-      - name: Zephyr build from the Zephyr job (not rebuilt)
-        uses: actions/download-artifact@v8
+      - run: git config --global --add safe.directory '*'
+      - run: third_party/fetch-wamr.sh
+      - uses: actions/cache@v6
         with:
-          name: zephyr-native-sim
-          path: port/zephyr/build-native_sim_native_64/zephyr
-      - run: chmod +x port/zephyr/build-native_sim_native_64/zephyr/zephyr.exe
-      - name: WASM apps from the WASM job (not rebuilt)
-        uses: actions/download-artifact@v8
+          path: third_party/zephyr-ws
+          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh') }}
+      - run: third_party/fetch-zephyr.sh
+      # The Arm toolchain alone (about 2 GB), kept between runs.
+      - uses: actions/cache@v6
         with:
-          name: wasm-apps
-          path: wasm-apps/build
-      # The test of the simulated device, with the Zephyr build as the device.
-      # Without the waits for a certificate to expire (about 5 minutes): the
-      # host e2e runs them, on the agent's same core.
-      - name: e2e
-        run: PREBUILT_APPS=1 DEVICE_KIND=zephyr CERT_EXPIRY=0 tests/e2e/e2e.sh
-      - name: cluster state on failure
-        if: failure()
-        run: |
-          kubectl get pods -A || true
-          kubectl get events -n flightctl --sort-by=.lastTimestamp | tail -40 || true
+          path: third_party/zephyr-sdk
+          key: zephyr-sdk-arm-${{ hashFiles('third_party/fetch-zephyr-sdk.sh') }}
+      - run: ZEPHYR_SDK_TOOLCHAINS=arm-zephyr-eabi third_party/fetch-zephyr-sdk.sh
+      - name: build
+        run: BOARD=mps2/an385 port/zephyr/build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zephyr-mps2-an385
+          path: port/zephyr/build-mps2_an385/zephyr/zephyr.bin
 
+  # The end-to-end tests on this run's builds: skipped on the first attempt,
+  # run by re-running this job once everything else has passed.
   e2e:
-    name: end-to-end (simulated device vs Flight Control on kind)
-    needs: [build]
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - name: tools
-        run: |
-          kind version && helm version --short && kubectl version --client
-          sudo curl -fsSL -o /usr/local/bin/flightctl \
-            https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
-          sudo chmod +x /usr/local/bin/flightctl
-          # PyYAML comes with the runner: install it only if that changes.
-          python3 -c 'import yaml' || { sudo apt-get update && sudo apt-get install -y python3-yaml; }
-      - uses: oras-project/setup-oras@v2
-      - uses: sigstore/cosign-installer@v4.1.3 # e2e checks that cosign accepts our signatures
-      - name: host agent from the host job (not rebuilt)
-        uses: actions/download-artifact@v8
-        with:
-          name: host-agent
-          path: build/host
-      - run: chmod +x build/host/fc-host-agent
-      - name: WASM apps from the WASM job (not rebuilt)
-        uses: actions/download-artifact@v8
-        with:
-          name: wasm-apps
-          path: wasm-apps/build
-      - name: e2e
-        run: PREBUILT_APPS=1 tests/e2e/e2e.sh
-      - name: cluster state on failure
-        if: failure()
-        run: |
-          kubectl get pods -A || true
-          kubectl get events -n flightctl --sort-by=.lastTimestamp | tail -40 || true
-
-  emulator:
-    name: end-to-end on an emulated ${{ matrix.chip }}${{ matrix.secure == 1 && ', secure' || '' }}${{ matrix.prov == 'ble' && ', BLE provisioning' || '' }} (esp-emu)
-    needs: [firmware-emu, build]
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        chip: [esp32c3, esp32c5]
-        secure: [0, 1]
-        prov: [softap]
-        # an extra job, not a change to the plain C3 one: prov differs
-        include:
-          - { chip: esp32c3, secure: 0, prov: ble }
-    steps:
-      - uses: actions/checkout@v7
-      - name: tools
-        run: |
-          sudo curl -fsSL -o /usr/local/bin/flightctl \
-            https://github.com/flightctl/flightctl/releases/download/$FLIGHTCTL_VERSION/flightctl-linux-amd64
-          sudo chmod +x /usr/local/bin/flightctl
-          # PyYAML comes with the runner: install it only if that changes.
-          python3 -c 'import yaml' || { sudo apt-get update && sudo apt-get install -y python3-yaml; }
-          # NVS partition generator for provisioning (else the ESP-IDF image is pulled)
-          pip install esp-idf-nvs-partition-gen==0.3.0
-          # espsecure: the secure test signs a firmware with a key the chip does not know
-          pip install esptool==5.3.1
-          # detools: the release is pushed with a delta from the debug build
-          # (the version third_party/fetch-detools.sh fetches for the device).
-          # It has C extensions: the Python headers only if pip needs them.
-          pip install detools==0.53.1 ||
-            { sudo apt-get update && sudo apt-get install -y python3-dev && pip install detools==0.53.1; }
-      - uses: oras-project/setup-oras@v2
-      - name: esp-emu (checksum verified)
-        run: |
-          cd /tmp
-          base=https://github.com/espressif/esp-emulator/releases/download/v$ESP_EMU_VERSION
-          name=esp-emu-$ESP_EMU_VERSION-x86_64-unknown-linux-gnu
-          curl -fsSLO "$base/$name.tar.gz" && curl -fsSLO "$base/SHA256SUMS"
-          grep " $name.tar.gz\$" SHA256SUMS | sha256sum -c -
-          tar xzf "$name.tar.gz" && sudo install -m 755 "$name/esp-emu" /usr/local/bin/esp-emu
-          esp-emu --version
-      - name: firmware from the firmware job (not rebuilt)
-        uses: actions/download-artifact@v8
-        with:
-          name: firmware-${{ matrix.chip }}${{ matrix.secure == 1 && '-secure' || '' }}
-          path: port/espidf
-      - name: BLE variant
-        if: matrix.prov == 'ble'
-        uses: actions/download-artifact@v8
-        with:
-          name: firmware-${{ matrix.chip }}-ble
-          path: port/espidf
-      - name: secure build too, which a plain device must refuse
-        if: matrix.secure == 0
-        uses: actions/download-artifact@v8
-        with:
-          name: firmware-${{ matrix.chip }}-secure
-          path: port/espidf
-      - name: WASM apps from the WASM job (not rebuilt)
-        uses: actions/download-artifact@v8
-        with:
-          name: wasm-apps
-          path: wasm-apps/build
-      - name: esp_prov's dependencies (the plain run provisions WiFi in the field)
-        if: matrix.secure == 0
-        run: pip install protobuf cryptography ${{ matrix.prov == 'ble' && 'bumble' || '' }}
-      - name: e2e on the emulator
-        env:
-          ESP_PROV_LOCAL: 1
-          # Certificate renewal with 2-minute certificates in one job only: the
-          # agent's code is the same on every chip, the host and Zephyr e2e run
-          # it too, and short certificates make a slow step fail the whole run.
-          # The plain C3 over SoftAP: the shortest run (the secure C3, the
-          # longest, would set the length of the whole workflow).
-          CERT: ${{ matrix.chip == 'esp32c3' && matrix.secure == 0 && matrix.prov == 'softap' && 1 || 0 }}
-        run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} PROV=${{ matrix.prov }} tests/e2e/e2e-emu.sh
-      - name: logs on failure
-        if: failure()
-        run: |
-          tail -80 build/e2e-emu/emu.log || true
-          kubectl get pods -A || true
-      - name: the whole emulator log on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: emu-log-${{ matrix.chip }}-${{ matrix.secure }}-${{ matrix.prov }}
-          path: build/e2e-emu/emu.log
-          if-no-files-found: ignore
+    needs: [build, tests, firmware, zephyr, zephyr-qemu]
+    if: github.run_attempt > 1
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/e2e.yml
+    with:
+      run-id: ${{ github.run_id }}
