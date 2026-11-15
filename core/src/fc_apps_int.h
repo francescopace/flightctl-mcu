@@ -72,6 +72,8 @@ typedef struct app {
     pthread_attr_t thread_attr; /* until the thread is joined: on Zephyr it owns the stack */
     int thread_running;
     int stop; /* set by the agent's thread, read by the runner: __atomic */
+    long stack_unused;   /* lowest seen since app_start, -1 none: __atomic */
+    int64_t stack_at_ms; /* runner: when it last read it */
 
     /* reported (under s_lock in fc_apps.c) */
     char status[12]; /* Preparing, Running, Error, Stopped */

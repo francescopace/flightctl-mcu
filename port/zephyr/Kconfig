@@ -12,12 +12,13 @@ config FC_HEAP_SIZE
 	  modules and their memory. The device reports how much of it is free.
 
 config FC_AGENT_STACK_SIZE
-	int "Stack of each of the agent's two threads, in bytes (0: the core's default)"
+	int "Stack of the agent's status thread, in bytes (0: the core's default)"
 	default 0
 	help
-	  The core asks for 24 KB on a microcontroller. A board short of RAM can
-	  give less once it has measured what the threads use (CONFIG_INIT_STACKS
-	  and, on the Pico, the console's stack report).
+	  The core asks for 12 KB on a microcontroller. The agent's other loop,
+	  the spec's, runs on the main thread (CONFIG_MAIN_STACK_SIZE). A board
+	  short of RAM can give less once it has measured what the threads use
+	  (customInfo stackMinFreeBytes).
 
 config FC_ENTROPY_RP2_ROSC
 	bool "Entropy from the RP2040's ring oscillator"

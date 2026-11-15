@@ -35,6 +35,7 @@
 #include "fc_agent.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
 #include "nvs_flash.h"
 
 int fc_port_espidf_init(void);
@@ -454,6 +455,8 @@ void app_main(void)
     wifi_start(&creds);
     time_sync();
 
-
+    /* The agent's spec loop runs on this task from here: at the priority of
+     * its other thread and the apps', not the main task's (1). */
+    vTaskPrioritySet(NULL, CONFIG_PTHREAD_TASK_PRIO_DEFAULT);
     fc_agent_run(&cfg);
 }

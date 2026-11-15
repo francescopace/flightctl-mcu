@@ -132,6 +132,10 @@ typedef struct {
     int decom_since_step;
     char decom_target[16];
     char decom_since[32];
+    /* Stack never used by each thread, the lowest seen (fc_port_stack_unused;
+     * -1 unknown): spec (the caller's thread, from boot) under lock, status
+     * in add_metrics. */
+    long stack_spec, stack_status;
 } agent_t;
 
 static int hex_digit(char c)
@@ -212,6 +216,34 @@ static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, cons
 
 /* ---- status ------------------------------------------------------------ */
 
+/* The lower of a thread's last reading and this one: a stack's unused part
+ * only shrinks, but an app's thread is a new one after each restart. */
+static long stack_low(long seen, long now)
+{
+    return now < 0 ? seen : seen < 0 || now < seen ? now : seen;
+}
+
+/* stackMinFreeBytes: how much of each thread's stack was never used, which is
+ * what can be taken from it (spec: the main task's; status:
+ * FC_AGENT_STACK_SIZE). Called
+ * from the status thread with the lock held. */
+static void add_stacks(agent_t *a, cJSON *m)
+{
+    a->stack_status = stack_low(a->stack_status, fc_port_stack_unused());
+    const char *names[] = {"spec", "status", "apps"};
+    long v[] = {a->stack_spec, a->stack_status, fc_apps_stack_unused()};
+    char text[96];
+    size_t n = 0;
+    for (size_t i = 0; i < sizeof(v) / sizeof(v[0]); i++) {
+        if (v[i] >= 0 && n < sizeof(text)) {
+            n += (size_t)snprintf(text + n, sizeof(text) - n, "%s%s=%ld", n ? " " : "", names[i], v[i]);
+        }
+    }
+    if (n > 0 && n < sizeof(text)) {
+        cJSON_AddStringToObject(m, "stackMinFreeBytes", text);
+    }
+}
+
 /* The counters, read again when they are due and kept as text (a few hundred
  * bytes, not a cJSON tree): they go into customInfo as they were until then. */
 static void add_metrics(agent_t *a, cJSON *custom, const fc_sysinfo_t *si)
@@ -241,6 +273,7 @@ static void add_metrics(agent_t *a, cJSON *custom, const fc_sysinfo_t *si)
             cJSON_AddStringToObject(m, "cpuPercent", num);
         }
         fc_port_metrics(m);
+        add_stacks(a, m);
         char *text = cJSON_PrintUnformatted(m);
         cJSON_Delete(m);
         if (text != NULL) {
@@ -1052,7 +1085,9 @@ static void apply_rendered(agent_t *a, const char *json)
         snprintf(a->reported_rendered, sizeof(a->reported_rendered), "%s", prev_rendered);
         pthread_mutex_unlock(&a->lock);
         request_status(a);
-        fc_port_log(FC_LOG_INFO, "firmware %s installed, rebooting", image);
+        /* The stack figure first: the Pico's USB console cuts long lines. */
+        fc_port_log(FC_LOG_INFO, "stack never used: %ld bytes; firmware %s installed, rebooting",
+                    fc_port_stack_unused(), image);
         sleep(3); /* let the status update go out */
         cJSON_Delete(dev);
         fc_port_reboot();
@@ -1074,7 +1109,9 @@ static void *spec_thread(void *arg)
     agent_t *a = arg;
     for (;;) {
         char known[32];
+        long stack = fc_port_stack_unused();
         pthread_mutex_lock(&a->lock);
+        a->stack_spec = stack_low(a->stack_spec, stack);
         snprintf(known, sizeof(known), "%s",
                  a->attempted_version[0] ? a->attempted_version : a->rendered_version);
         pthread_mutex_unlock(&a->lock);
@@ -1249,6 +1286,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
 {
     static agent_t a;
     memset(&a, 0, sizeof(a));
+    a.stack_spec = a.stack_status = -1;
     a.cfg = cfg;
     pthread_mutex_init(&a.lock, NULL);
     pthread_cond_init(&a.status_wake, NULL);
@@ -1295,33 +1333,35 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     }
     fc_port_log(FC_LOG_INFO, "enrolled, starting management loop");
 
-    pthread_t spec, status;
-    /* One attribute object per thread, kept for as long as the thread runs:
-     * on Zephyr it owns the thread's stack. */
-    pthread_attr_t status_attr, spec_attr;
+    /* The spec loop runs on the caller's thread (the main task), which would
+     * otherwise only wait: one stack less. Its stack has seen enrollment too. */
+    a.stack_spec = fc_port_stack_unused();
+    pthread_t status;
+    /* The attribute object is kept for as long as the thread runs: on Zephyr
+     * it owns the thread's stack. */
+    pthread_attr_t status_attr;
     pthread_attr_init(&status_attr);
-    pthread_attr_init(&spec_attr);
-    /* TLS handshakes (ECDSA, X.509 parsing) need a generous stack on MCUs.
-     * A build that has measured what its threads use can say so. */
+    /* The status thread's TLS handshakes (ECDSA, X.509 parsing) and its
+     * certificate renewals: 4 KB of stack measured on the ESP32-S2, the
+     * classic ESP32 and the Pico W. A board can say what it gives. */
 #if defined(FC_AGENT_STACK_SIZE)
     size_t stack = FC_AGENT_STACK_SIZE;
 #elif defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
-    size_t stack = 24 * 1024;
+    size_t stack = 12 * 1024;
 #else
     size_t stack = 256 * 1024; /* 64-bit hosts need more */
 #endif
     s_running = &a;
     /* The stack size too: where it cannot be had (Zephyr takes it from a
      * heap), the thread would start on a default stack of 1 KB. */
-    if (pthread_attr_setstacksize(&status_attr, stack) != 0 || pthread_attr_setstacksize(&spec_attr, stack) != 0 ||
-        pthread_create(&status, &status_attr, status_thread, &a) != 0 ||
-        pthread_create(&spec, &spec_attr, spec_thread, &a) != 0) {
-        fc_port_log(FC_LOG_ERROR, "cannot start the agent's threads (two stacks of %u KB)", (unsigned)(stack / 1024));
+    if (pthread_attr_setstacksize(&status_attr, stack) != 0 ||
+        pthread_create(&status, &status_attr, status_thread, &a) != 0) {
+        fc_port_log(FC_LOG_ERROR, "cannot start the agent's status thread (a stack of %u KB)", (unsigned)(stack / 1024));
         return -1;
     }
-    /* The spec thread ends when the device is decommissioned; the status
+    /* The spec loop ends when the device is decommissioned; the status
      * thread then finishes it and restarts the device. */
-    pthread_join(spec, NULL);
+    spec_thread(&a);
     pthread_join(status, NULL);
     return 0;
 }

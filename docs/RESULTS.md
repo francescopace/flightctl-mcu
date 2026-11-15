@@ -19,7 +19,7 @@ What has been verified, where, and with which figures: microcontrollers managed 
 | Heterogeneous fleet | One fleet and one firmware reference, with per-device settings through labels and the template | S2, S3, C3, C5, C6 and classic ESP32 in the same fleet |
 | Certificate renewal | The device renews its management certificate for the same key, through the renewal signer the server approves on its own | With 2-minute certificates, in the emulator and on the simulated device: the device keeps reporting after the first one expires. Not on a board, where a certificate lasts a year |
 | Signed images | Firmware and apps signed in cosign's format; the device checks the signature against a key in its credentials | Unsigned images and images signed with another key are refused; `cosign verify` accepts the signatures |
-| Registry with TLS and a password | The registry's CA and an `auth.json` from the fleet ([REGISTRY.md](REGISTRY.md)) | On the C3 (ESP-IDF), the Pico W and the ESP32-S3 (Zephyr), and in every end-to-end test |
+| Registry with TLS and a password | The registry's CA and an `auth.json` from the fleet ([REGISTRY.md](REGISTRY.md)) | On the C3 and, since v3.7, the S2 (ESP-IDF), the Pico W and the ESP32-S3 (Zephyr), and in every end-to-end test |
 | Decommissioning | Key and certificate wiped, no enrollment until the storage is erased | On the same three boards, 2.4 to 3 s from the request to `Completed`, and in the end-to-end tests |
 | Automatic approval | An allow list of device names or MACs with their labels | Used by the end-to-end tests |
 | Known vulnerabilities | An SBOM per release, in the registry and in Trustify; Flight Control finds it by the image digest the devices report ([SBOM.md](SBOM.md)) | With Flight Control 1.4.0 and Trustify 0.4.12: Trustify's own feeds reach none of these components; the CVEs NVD has for them (`tools/advisories.py`) were shown on the lab's devices within a minute, six for the three releases they run, none of which applies to the code built: listed with the reason and kept out, the devices have none open ([SBOM.md](SBOM.md#from-nvd-toolsadvisoriespy)) |
@@ -71,7 +71,25 @@ Internal heap with the `alarm` app running and both agent connections open, firm
 | Classic ESP32 | 73.4 KB | 56.1 KB | 65.5 KB | 2 |
 | ESP32-S2 | 27.6 KB internal (+2 MB PSRAM) | – | 18.4 KB | 2 |
 
-The S2 has the least room: its largest internal block is only just above the 16.7 KB a TLS handshake needs. The lowest point is when a TLS handshake and a firmware download run together.
+On v3.0 the S2 had the least room: its largest internal block was only just above the 16.7 KB a TLS handshake needs, and the lowest point was a TLS handshake and a firmware download running together. Since v3.7 it has about twice as much (below).
+
+Since v3.7 and z19 the agent's spec loop runs on the main task instead of a thread of its own, and its status thread has a smaller stack (problem 17). With `alarm` running and both connections open; the ESP boards two hours after boot, `alarm` installed again in the second hour:
+
+| Board | Internal free, before → after | Largest internal block, before → after |
+|---|---|---|
+| ESP32-S2 (v3.6 → v3.7) | 34.6 → 71.4 KB | 24.6 → 47.1 KB |
+| Classic ESP32 (v3.6 → v3.7) | 100.0 → 137.2 KB | 53.2 → 77.8 KB |
+| Pico W, kernel heap (z18 → z21) | 3.7 → 9.8 KB (lowest 2.6 → 8.8 KB) | – |
+
+Stack used at most, of the stack each has (customInfo `stackMinFreeBytes`, and on the Pico W the log line before a firmware update's restart; in this table only, a KB is 1,024 bytes, as stack sizes are given):
+
+| Board | Spec loop, on the main task | Status thread | App thread |
+|---|---|---|---|
+| ESP32-S2, v3.7 | 8.7 of 24 KB (installing an app) | 4.1 of 12 KB | 3.3 of 8 KB |
+| Classic ESP32, v3.7 | 8.9 of 24 KB (installing an app) | 4.2 of 12 KB | 3.4 of 8 KB |
+| Pico W, z20 and z21 | 9.2 of 14 KB (downloading firmware over TLS, whole or as a delta); 9.1 (installing an app); 4.6 (polling) | 3.8 of 8 KB | 2.2 of 8 KB |
+
+The spec loop's figures include the main task's start-up, which runs on the same stack first. Installing an app or downloading firmware takes about twice the stack of polling: z19 gave the Pico W's main thread 10 KB, sized without either, and an app install left 0.9 KB of it unused. A certificate renewal runs on the status thread and has not been measured on a board.
 
 With release v3.1 (ESP-IDF 6.0.3) the C3 had 70 KB free and 48 KB at the lowest after three hours. Release v3.2, which adds the resource alerts, leaves about 4 KB less: 65.6 KB free five minutes after boot with `alarm`, against 69.8 KB for v3.1 at the same point. With Zephyr: about 30 KB free on the Pico W, 50 KB on the ESP32-S3 ([DEVICES.md](DEVICES.md#boards-tried)). The app interface takes about 5 KB more static RAM (the board map, each app's handles and event queue): with v3.3 and z14 that is 5 KB less heap than these figures, which were measured before it.
 
@@ -175,7 +193,9 @@ November 2026, against Flight Control 1.4.0, with the registry's door with TLS a
 
 After decommissioning each board wiped its key and management certificate, restarted, showed as `Decommissioned`, and kept running its app without asking to enroll again. Erased, each enrolled again as a new device.
 
-Not measured: the RAM used during a download over TLS (the reboot that follows a firmware download clears the low-water mark).
+Since v3.7 the ESP32-S2 downloads its firmware over TLS with `alarm` running: the whole 1,162 KB image, restarted on it in under a minute (problem 17). On the Pico W (z20) a download over TLS, whole or as a delta, took 9.2 KB of the main thread's stack, with the app running.
+
+Not measured: the heap used during a download over TLS (the reboot that follows a firmware download clears the low-water mark).
 
 Also found: Flight Control serves inline content given in base64 percent-encoded (limitation 12 below).
 
@@ -239,6 +259,11 @@ Also found: Flight Control serves inline content given in base64 percent-encoded
 16. **Each app was held in RAM twice, and could be lost on a full flash.**
     - The agent kept the `.wasm` bytes and gave WAMR a second copy to load, for as long as the app ran. A new version was stored only after the old one was stopped, without checking the write: on a full or failing flash the app ran until the next reboot and was then gone.
     - Fix: the module is loaded once, with WAMR copying what it needs, and the bytes are freed right after. A new version is stored first; if that fails, the running version keeps running and the update is retried. A stored module that no longer loads is reported in the status and downloaded again with the next spec.
+17. **ESP32-S2: no firmware download over TLS while an app runs.**
+    - With `alarm` running and both connections open, v3.6 left the S2 34.6 KB of internal RAM. A third TLS connection, to the registry, needs a 16.7 KB receive buffer in one block; when it opened, the largest free block was about 15 KB, and the download failed again and again. It worked over plain HTTP, or with the app removed.
+    - Not enough on their own: closing the status connection during the download, reserving more internal RAM, and TLS buffers in PSRAM (problem 6).
+    - The cause was the agent's two threads: each had a 24 KB stack in internal RAM, while the main task's 24 KB sat idle after start-up.
+    - Fix: the spec loop runs on the main task, and the status thread gets 12 KB, of which it uses about 4 KB (v3.7). The S2 has 71 KB of internal RAM free with the app running, in blocks of up to 47 KB, and downloads its firmware over TLS. On the Pico W the main thread grew from 8 to 14 KB (z21), paid for by the kernel heap, which no longer holds the spec loop's 10 KB stack and gives the status thread 8 KB instead of 10.
 
 ## Flight Control 1.4.0
 

@@ -61,6 +61,13 @@ void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
     cJSON_AddStringToObject(summary, "status", "NoApplications");
 }
 
+static long s_apps_stack = -1;
+
+long fc_apps_stack_unused(void)
+{
+    return s_apps_stack;
+}
+
 void fc_apps_set_hw(const fc_hw_t *hw) {}
 void fc_apps_set_device(const char *name) {}
 static int s_files_changed;
@@ -90,6 +97,8 @@ static void new_agent(void)
     free(s_a.metrics);
     fc_identity_free(&s_a.id);
     memset(&s_a, 0, sizeof(s_a));
+    s_a.stack_spec = s_a.stack_status = -1;
+    s_apps_stack = -1;
     s_a.cfg = &s_cfg;
     pthread_mutex_init(&s_a.lock, NULL);
     pthread_cond_init(&s_a.status_wake, NULL);
@@ -389,6 +398,32 @@ static const char *custom_info(cJSON *st, const char *key)
         cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(st, "systemInfo"), "customInfo"), key));
 }
 
+/* stackMinFreeBytes: each thread's lowest reading, the threads the port
+ * cannot read left out, and nothing at all when it can read none. */
+static void stack_headroom_is_reported_per_thread(void)
+{
+    new_agent();
+    cJSON *st = build_status(&s_a);
+    CHECK(custom_info(st, "stackMinFreeBytes") == NULL);
+    cJSON_Delete(st);
+
+    new_agent();
+    s_a.stack_spec = 7000;
+    s_apps_stack = 2500;
+    stub_stack_unused = 6000;
+    st = build_status(&s_a);
+    CHECK_STR(custom_info(st, "stackMinFreeBytes"), "spec=7000 status=6000 apps=2500");
+    cJSON_Delete(st);
+    stub_stack_unused = 6500; /* a later, higher reading does not raise it */
+    s_a.metrics_at = 0;
+    st = build_status(&s_a);
+    CHECK_STR(custom_info(st, "stackMinFreeBytes"), "spec=7000 status=6000 apps=2500");
+    cJSON_Delete(st);
+    CHECK_INT(stack_low(-1, 300), 300);
+    CHECK_INT(stack_low(300, -1), 300);
+    CHECK_INT(stack_low(300, 200), 200);
+}
+
 /* Each change in customInfo is an event in Flight Control 1.4: the counters
  * are read once an interval, and repeated as they were in between. */
 static void counters_are_read_again_only_when_due(void)
@@ -632,6 +667,7 @@ int main(void)
     RUN(an_expired_certificate_starts_over_as_a_new_device);
     RUN(status_requests_are_urgent_or_grouped);
     RUN(counters_are_read_again_only_when_due);
+    RUN(stack_headroom_is_reported_per_thread);
     RUN(a_status_with_nothing_new_is_the_same);
     RUN(the_last_firmware_download_is_in_os_last_delta);
     RUN(a_decommissioning_spec_is_not_applied);

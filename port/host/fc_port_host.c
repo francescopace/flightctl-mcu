@@ -185,6 +185,11 @@ void fc_port_custom_info(void *obj)
 
 void fc_port_metrics(void *obj) {}
 
+long fc_port_stack_unused(void)
+{
+    return -1;
+}
+
 /* The absolute path flattened into a single file name under files/. */
 static void file_key(const char *path, char key[300])
 {

@@ -230,6 +230,29 @@ void fc_port_metrics(void *obj)
     fc_heap_stats(&total, &free_now, &free_min);
     snprintf(num, sizeof(num), "%u", (unsigned)free_min);
     cJSON_AddStringToObject((cJSON *)obj, "memMinFreeBytes", num);
+#if K_HEAP_MEM_POOL_SIZE > 0 && defined(CONFIG_SYS_HEAP_RUNTIME_STATS)
+    /* The kernel heap, apart from the C heap above: the threads' stacks
+     * (the agent's and each app's) come from it, and the WiFi driver's. */
+    extern struct k_heap _system_heap;
+    struct sys_memory_stats st = {0};
+    if (sys_heap_runtime_stats_get(&_system_heap.heap, &st) == 0) {
+        snprintf(num, sizeof(num), "%u", (unsigned)st.free_bytes);
+        cJSON_AddStringToObject((cJSON *)obj, "memKernelFreeBytes", num);
+        snprintf(num, sizeof(num), "%u", (unsigned)(st.free_bytes + st.allocated_bytes - st.max_allocated_bytes));
+        cJSON_AddStringToObject((cJSON *)obj, "memKernelMinFreeBytes", num);
+    }
+#endif
+}
+
+long fc_port_stack_unused(void)
+{
+#if defined(CONFIG_INIT_STACKS) && defined(CONFIG_THREAD_STACK_INFO)
+    size_t unused;
+    if (k_thread_stack_space_get(k_current_get(), &unused) == 0) {
+        return (long)unused;
+    }
+#endif
+    return -1;
 }
 
 void fc_port_reboot(void)

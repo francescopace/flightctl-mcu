@@ -54,7 +54,7 @@ flowchart LR
   WAMR --> FW
 ```
 
-The agent runs two threads. One holds a long-poll on the rendered device spec and applies whatever comes back: config, firmware, apps. The other sends the status, periodically and at once when something changes. Firmware and `.wasm` apps come from the registry. Apps run in WAMR and reach the hardware only through host functions the firmware exports.
+The agent runs two loops. One holds a long-poll on the rendered device spec and applies whatever comes back: config, firmware, apps; it runs on the firmware's main task, which has nothing else to do. The other, on a thread of its own, sends the status, periodically and at once when something changes. Firmware and `.wasm` apps come from the registry. Apps run in WAMR and reach the hardware only through host functions the firmware exports.
 
 ```mermaid
 flowchart TB

@@ -40,6 +40,8 @@ With ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmwa
 | ESP32-C6 | RISC-V | everything except rollback, which was not exercised | ~163 KB |
 | ESP32-S2 | Xtensa LX7 | everything works, using the PSRAM in the package (S2FNR2, as on the Lolin S2 Mini): internal RAM alone is not enough for TLS; no serial log on the S2 Mini, because the console is on UART0 | ~28 KB internal + 2 MB PSRAM |
 
+Since v3.7 the agent's spec loop runs on the main task and its status thread has a smaller stack, which frees internal RAM: on the S2, 71 KB instead of 35 KB; on the classic ESP32, 137 KB instead of 100 KB ([RESULTS.md](RESULTS.md#ram)). The other chips have not run v3.7.
+
 The S2 Mini and the C6 DevKitC flash only over their native USB port, started in download mode (plug them in holding BOOT).
 
 PSRAM is not used, so a single image runs on every board variant of a chip. The exception is the S2, which needs its PSRAM (see the table).

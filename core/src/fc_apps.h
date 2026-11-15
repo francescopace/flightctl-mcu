@@ -32,3 +32,7 @@ void fc_apps_file_changed(const char *path);
 /* Fills status.applications (array), status.applicationsSummary (object)
  * and adds "app.<name>" entries (state set by the app) to customInfo. */
 void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info);
+
+/* The least stack any app's thread left unused so far (fc_port_stack_unused),
+ * or -1 when no app has run or the port cannot tell. */
+long fc_apps_stack_unused(void);

@@ -71,6 +71,7 @@ void stub_reset(void)
     }
     stub_reboots = 0;
     stub_metrics_reads = 0;
+    stub_stack_unused = -1;
     fc_port_hwkey_forget();
     stub_ota_enabled = 0;
     stub_ota_len = 0;
@@ -139,12 +140,18 @@ void fc_port_sysinfo(fc_sysinfo_t *si)
 void fc_port_custom_info(void *obj) {}
 
 int stub_metrics_reads;
+long stub_stack_unused = -1;
 
 void fc_port_metrics(void *obj)
 {
     char n[16];
     snprintf(n, sizeof(n), "%d", ++stub_metrics_reads);
     cJSON_AddStringToObject((cJSON *)obj, "reads", n);
+}
+
+long fc_port_stack_unused(void)
+{
+    return stub_stack_unused;
 }
 
 int fc_port_write_file(const char *path, const void *data, size_t len)

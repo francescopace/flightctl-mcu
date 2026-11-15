@@ -59,6 +59,11 @@ void fc_port_sysinfo(fc_sysinfo_t *si);
 void fc_port_custom_info(void *obj);
 void fc_port_metrics(void *obj);
 
+/* Bytes of the calling thread's stack it has never touched since it started,
+ * or -1 when the port cannot tell. The agent reports the lowest it saw for
+ * each of its threads and the apps' (customInfo stackMinFreeBytes). */
+long fc_port_stack_unused(void);
+
 /* Writes a config file delivered through spec.config. `path` is the absolute
  * path from the device spec; the port maps it onto its own storage. */
 int fc_port_write_file(const char *path, const void *data, size_t len);

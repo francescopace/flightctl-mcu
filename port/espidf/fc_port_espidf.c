@@ -293,6 +293,12 @@ void fc_port_metrics(void *obj)
     }
 }
 
+long fc_port_stack_unused(void)
+{
+    /* ESP-IDF's FreeRTOS counts stacks in bytes; a pthread is a task. */
+    return (long)uxTaskGetStackHighWaterMark(NULL);
+}
+
 int fc_port_write_file(const char *path, const void *data, size_t len)
 {
     char key[300];

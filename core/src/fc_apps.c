@@ -516,6 +516,35 @@ static int call_fc(app_t *a, wasm_exec_env_t env, wasm_function_inst_t f, uint32
 
 /* init(), then tick() every TICK_MS, timers and events through on_event(),
  * until the app stops or traps. */
+/* Once a second at most: on Zephyr reading it scans the unused stack. */
+static void note_stack(app_t *a, int64_t now)
+{
+    if (now - a->stack_at_ms < 1000) {
+        return;
+    }
+    a->stack_at_ms = now;
+    long n = fc_port_stack_unused();
+    long seen = __atomic_load_n(&a->stack_unused, __ATOMIC_RELAXED);
+    if (n >= 0 && (seen < 0 || n < seen)) {
+        __atomic_store_n(&a->stack_unused, n, __ATOMIC_RELAXED);
+    }
+}
+
+long fc_apps_stack_unused(void)
+{
+    long low = -1;
+    pthread_mutex_lock(&s_lock);
+    for (int i = 0; i < MAX_APPS; i++) {
+        const app_t *a = &s_apps[i];
+        long n = a->used && a->thread_running ? __atomic_load_n(&a->stack_unused, __ATOMIC_RELAXED) : -1;
+        if (n >= 0 && (low < 0 || n < low)) {
+            low = n;
+        }
+    }
+    pthread_mutex_unlock(&s_lock);
+    return low;
+}
+
 static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
 {
     wasm_function_inst_t init = wasm_runtime_lookup_function(inst, "init");
@@ -549,6 +578,7 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
     while (ok && !stopping(a)) {
         int64_t now = fc_apps_now_ms();
         guard_tick(a, now);
+        note_stack(a, now);
         if (tick != NULL && now >= next_tick) {
             uint32_t argv[1] = {0};
             ok = call_fc(a, env, tick, 0, argv, "tick") == 0;
@@ -667,6 +697,8 @@ static void app_start(app_t *a)
         return; /* the status already says why */
     }
     set_stop(a, 0);
+    __atomic_store_n(&a->stack_unused, -1L, __ATOMIC_RELAXED);
+    a->stack_at_ms = 0;
     a->settle_at_ms = fc_apps_now_ms() + s_settle_ms;
     a->settled = 0;
     set_status(a, "Preparing", NULL);
