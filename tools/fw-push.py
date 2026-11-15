@@ -2,7 +2,7 @@
 """Pushes the firmware builds as one multi-chip OCI artifact.
 
     tools/fw-push.py [--variant NAME] [--delta-from TAG ...] <registry>/flightctl-mcu/fw:v2 [esp32s3 esp32c3 ...]
-    tools/fw-push.py ... <registry>/flightctl-mcu/fw:v2 rpi_pico_w=port/zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin
+    tools/fw-push.py ... <registry>/flightctl-mcu/fw:z3 esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
 
 Layout (OCI 1.1; the registry reached as tools/registry/registry_client.py says;
 stdlib only):

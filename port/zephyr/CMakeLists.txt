@@ -73,20 +73,6 @@ endif()
 if(CONFIG_WIFI AND CONFIG_NET_DHCPV4_SERVER)
     target_sources(app PRIVATE ${ROOT}/core/src/fc_prov.c)
 endif()
-if(CONFIG_FC_ENTROPY_RP2_ROSC)
-    target_sources(app PRIVATE ${ROOT}/port/zephyr/fc_entropy_rp2.c)
-endif()
-# Infineon's WiFi driver (the Pico W's) keeps 20 packet buffers. Zephyr 4.5
-# made them 2400 bytes each, 16 KB more than a board with 264 KB of RAM can
-# give: 1600, what they were up to Zephyr 4.3 and what the board ran with, is
-# an Ethernet frame and the chip's header.
-if(CONFIG_WIFI_AIROC)
-    zephyr_compile_definitions(AIROC_WIFI_PACKET_POOL_SIZE=1600)
-endif()
-# Raspberry Pi Pico boards: the USB console's conveniences.
-if(CONFIG_SOC_FAMILY_RPI_PICO)
-    target_sources(app PRIVATE src/board_rp2.c)
-endif()
 # The C heap is the port's unless the build keeps Zephyr's.
 if(NOT CONFIG_COMMON_LIBC_MALLOC)
     target_sources(app PRIVATE ${ROOT}/port/zephyr/fc_heap_zephyr.c)
@@ -105,9 +91,8 @@ if(CONFIG_FC_AGENT_STACK_SIZE)
     target_compile_definitions(app PRIVATE FC_AGENT_STACK_SIZE=${CONFIG_FC_AGENT_STACK_SIZE})
 endif()
 # WAMR, which runs the apps, optimized for speed (-O2, after Zephyr's -Os);
-# the rest stays optimized for size. With -O2 for everything the Pico W's
-# image is 23 KB larger than its slot and the ESP32-S3's data 5.6 KB larger
-# than its RAM.
+# the rest stays optimized for size. With -O2 for everything the ESP32-S3's
+# data is 5.6 KB larger than its RAM.
 set_source_files_properties(${WAMR_RUNTIME_LIB_SOURCE} PROPERTIES COMPILE_OPTIONS "-O2")
 set_source_files_properties(${DETOOLS_SRCS} PROPERTIES
     COMPILE_DEFINITIONS "malloc=fc_delta_alloc;free=fc_delta_free"

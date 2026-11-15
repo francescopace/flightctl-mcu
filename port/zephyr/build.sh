@@ -5,7 +5,7 @@
 # The Zephyr tree comes from third_party/fetch-zephyr.sh; the build goes to
 # port/zephyr/build-<board>. The default board is native_sim: the agent as a Linux
 # process on Zephyr's kernel, network stack and file system.
-# A board named .../mcuboot (rpi_pico/rp2040/w/mcuboot) or an Espressif one
+# A board named .../mcuboot or an Espressif one
 # (esp32s3_devkitc/esp32s3/procpu), or any board with MCUBOOT=1, is built with
 # MCUboot, for firmware updates:
 # the bootloader in <build>/mcuboot, the application in <build>/zephyr, signed

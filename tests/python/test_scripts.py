@@ -294,9 +294,9 @@ class SbomTest(unittest.TestCase):
     @unittest.skipUnless(os.path.isdir(os.path.join(ROOT, "third_party", "zephyr-ws", "zephyr")),
                          "no Zephyr tree (third_party/fetch-zephyr.sh)")
     def test_zephyr_components_from_the_tree(self):
-        doc = sbom.make_sbom("reg/fw:z9", self.DIGEST, [], ["rpi_pico_w", "esp32s3_devkitc"])
+        doc = sbom.make_sbom("reg/fw:z9", self.DIGEST, [], ["esp32s3_devkitc"])
         names = [c["name"] for c in doc["components"]]
-        for name in ("zephyr", "mbedtls", "mcuboot", "littlefs", "hal_infineon", "hal_espressif"):
+        for name in ("zephyr", "mbedtls", "mcuboot", "littlefs", "hal_espressif"):
             self.assertIn(name, names)
         refs = [c["bom-ref"] for c in doc["components"]]
         self.assertEqual(len(refs), len(set(refs)))

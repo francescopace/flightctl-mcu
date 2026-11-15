@@ -1,7 +1,7 @@
 /*
  * The WiFi network, on boards that have one: given at the factory (fc_creds,
- * wifi_ssid), or by an installer in the field (core/src/fc_prov.c), as the
- * ESP-IDF firmware does it (docs/PROVISIONING.md).
+ * wifi_ssid), or by an installer in the field (core/src/fc_prov.c), as on
+ * ESP-IDF (docs/PROVISIONING.md).
  *
  * In the field: with no network at the factory and none kept from an earlier
  * provisioning, a device that has a proof of possession (prov_pop) scans for
@@ -13,8 +13,7 @@
  * one that cannot closes the access point to try it, and opens it again if it
  * fails. A network is kept (fc_port_kv "wifi") once the device has joined it,
  * for the credentials it was given with: writing fc_creds again forgets it.
- * Only on boards built with a DHCP server (CONFIG_NET_DHCPV4_SERVER): not on
- * the Pico W, whose driver cannot open an access point (docs/ZEPHYR.md).
+ * Only on boards built with a DHCP server (CONFIG_NET_DHCPV4_SERVER).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,31 +25,12 @@
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
 
-#ifdef CONFIG_WIFI_AIROC
-#include "airoc_wifi.h"
-#endif
-
 #include "cJSON.h"
 #include "fc_crypto.h"
 #include "fc_port.h"
 #include "fc_prov.h"
 #include "fc_wifi_zephyr.h"
 
-/* Where several access points carry the network, the Pico W's chip may join a
- * far one (Infineon's driver takes no access point's address, and telling the
- * chip to prefer the strongest changed nothing): there, name lookups and
- * handshakes time out. A weak join is given up for another one, a few times.
- * Espressif's driver scans every channel and joins the strongest
- * (CONFIG_ESP32_WIFI_STA_SCAN_ALL, in the board's file). */
-#define WIFI_GOOD_DBM (-60)
-#define WIFI_JOINS    5
-/* Infineon's chip (the Pico W's CYW43439) can stop answering its driver: every
- * command then times out after 5 s, joins fail for ever, and only powering the
- * chip again brings it back, which the driver does at boot. So many failed
- * joins in a row with a chip that does not answer restart the board; with a
- * chip that answers, the network is just not there, and the device keeps
- * trying (its apps keep running). */
-#define CHIP_SILENT_JOINS 2
 /* A network from the field, tried with the access point closed: so many
  * times before the access point opens again. */
 #define FIELD_TRIES 3
@@ -169,44 +149,16 @@ static struct wifi_connect_req_params params(const char *ssid, const char *pass)
 
 /* Joins a network and waits for an address: 0, or -1 after `tries` tries
  * (0: until it works). */
-/* Whether the WiFi chip answers its driver: 1, 0, or -1 when this cannot be told. */
-static int chip_answers(void)
-{
-#ifdef CONFIG_WIFI_AIROC
-    whd_interface_t ifp = airoc_wifi_get_whd_interface();
-    uint32_t version = 0;
-    if (ifp == NULL) {
-        return -1;
-    }
-    return whd_wifi_get_ioctl_value(ifp, 1 /* WLC_GET_VERSION */, &version) == WHD_SUCCESS;
-#else
-    return -1;
-#endif
-}
-
 static int join(const char *ssid, const char *pass, int tries)
 {
     struct wifi_connect_req_params p = params(ssid, pass);
-    int joins = 0, silent = 0;
     for (int t = 1;; t++) {
         fc_port_log(FC_LOG_INFO, "WiFi: joining \"%s\"", ssid);
         k_sem_reset(&s_ip_up);
         if (net_mgmt(NET_REQUEST_WIFI_CONNECT, s_sta, &p, sizeof(p)) == 0) {
-            struct wifi_iface_status st = {0};
-            int known = net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, s_sta, &st, sizeof(st)) == 0;
-            /* Infineon's driver has joined when the request returns; others
-             * (Espressif's) join after it, and choose the access point
-             * themselves. */
-            if (IS_ENABLED(CONFIG_WIFI_AIROC) && known && st.rssi < WIFI_GOOD_DBM && ++joins < WIFI_JOINS) {
-                fc_port_log(FC_LOG_INFO, "WiFi: access point ..:%02x:%02x is weak (%d dBm), looking for a nearer one",
-                            st.bssid[4], st.bssid[5], st.rssi);
-                net_mgmt(NET_REQUEST_WIFI_DISCONNECT, s_sta, NULL, 0);
-                k_sleep(K_SECONDS(1));
-                t--;
-                continue;
-            }
             if (k_sem_take(&s_ip_up, K_SECONDS(30)) == 0) {
-                known = net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, s_sta, &st, sizeof(st)) == 0;
+                struct wifi_iface_status st = {0};
+                int known = net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, s_sta, &st, sizeof(st)) == 0;
                 if (known) {
                     fc_port_log(FC_LOG_INFO, "WiFi: connected (channel %d, %d dBm, access point ..:%02x:%02x)",
                                 st.channel, st.rssi, st.bssid[4], st.bssid[5]);
@@ -216,15 +168,6 @@ static int join(const char *ssid, const char *pass, int tries)
                 return 0;
             }
             net_mgmt(NET_REQUEST_WIFI_DISCONNECT, s_sta, NULL, 0);
-        }
-        if (chip_answers() == 0) {
-            if (++silent >= CHIP_SILENT_JOINS) {
-                fc_port_log(FC_LOG_ERROR, "WiFi: the chip does not answer: restarting to power it again");
-                k_sleep(K_MSEC(500)); /* the line out on the console */
-                fc_port_reboot();
-            }
-        } else {
-            silent = 0;
         }
         if (tries > 0 && t >= tries) {
             return -1;
@@ -402,7 +345,7 @@ void fc_wifi_up(const cJSON *creds)
 
     const char *ssid = cJSON_GetStringValue(cJSON_GetObjectItem(creds, "wifi_ssid"));
     const char *pop = cJSON_GetStringValue(cJSON_GetObjectItem(creds, "prov_pop"));
-    (void)pop; /* without an access point (the Pico W) there is no provisioning in the field */
+    (void)pop; /* without an access point there is no provisioning in the field */
     if (ssid != NULL && ssid[0] != '\0') {
         join(ssid, cJSON_GetStringValue(cJSON_GetObjectItem(creds, "wifi_pass")), 0);
         return;

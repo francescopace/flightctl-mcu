@@ -10,9 +10,9 @@ set -euo pipefail
 ZEPHYR_TAG="${ZEPHYR_TAG:-v4.5.0}"
 ZEPHYR_COMMIT="${ZEPHYR_COMMIT:-41d10b59730406bbab4ca9f1fbbe9e96aafb4966}"
 ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.30.0}"
-# mbedtls: TLS. littlefs: storage. mcuboot, zcbor: firmware slots. The rest:
-# the Raspberry Pi Pico W (RP2040, CYW43439 WiFi).
-MODULES="${ZEPHYR_MODULES:-mbedtls tf-psa-crypto littlefs mcuboot zcbor cmsis cmsis_6 hal_rpi_pico hal_infineon hal_espressif picolibc}"
+# mbedtls: TLS. littlefs: storage. mcuboot, zcbor: firmware slots. cmsis:
+# Arm Cortex-M. hal_espressif: the ESP32-S3.
+MODULES="${ZEPHYR_MODULES:-mbedtls tf-psa-crypto littlefs mcuboot zcbor cmsis cmsis_6 hal_espressif picolibc}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WS="$ROOT/third_party/zephyr-ws"
 # The tree is there at this version: nothing to do, or only the modules that

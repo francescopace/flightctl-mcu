@@ -3,7 +3,7 @@
 index are built from, at the versions this repository pins.
 
     tools/sbom.py --digest sha256:<index> --ref <registry>/flightctl-mcu/fw:v3 \\
-        [--esp-idf esp32c3,esp32s3 ...] [--zephyr rpi_pico_w,esp32s3_devkitc ...] [-o FILE]
+        [--esp-idf esp32c3,esp32s3 ...] [--zephyr esp32s3_devkitc ...] [-o FILE]
     tools/sbom.py ... --upload https://trustify.example.com   (or $TRUSTIFY_URL)
 
 tools/fw-push.py makes one for each release it pushes (docs/SBOM.md). Its root
@@ -39,7 +39,6 @@ MBEDTLS_IN_ESP_IDF = {"5.5.6": "3.6.7", "6.0.3": "4.1.1"}
 # Zephyr modules each board's image is built with, besides those of every build.
 ZEPHYR_COMMON = ("mbedtls", "tf-psa-crypto", "mcuboot", "littlefs", "picolibc", "zcbor")
 ZEPHYR_BOARD_MODULES = {
-    "rpi_pico_w": ("hal_rpi_pico", "hal_infineon", "cmsis", "cmsis_6"),
     "esp32s3_devkitc": ("hal_espressif",),
 }
 

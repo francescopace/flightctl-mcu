@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # For real boards (native_sim needs none of this): the Zephyr SDK's toolchains
 # for them, into third_party/zephyr-sdk (git-ignored), and the binary firmware
-# of their WiFi chips, into the Zephyr tree: Infineon's for the Raspberry Pi
-# Pico W's CYW43439, Espressif's for the ESP32-S3, each under its licence.
+# of their WiFi chips, into the Zephyr tree: Espressif's for the ESP32-S3,
+# under its licence.
 # Run after third_party/fetch-zephyr.sh. Uses west: this machine's, or the one
 # in the Zephyr build image.
 set -euo pipefail
 ZEPHYR_SDK_VERSION="${ZEPHYR_SDK_VERSION:-1.0.1}" # what Zephyr v4.5 asks for (SDK_VERSION)
 ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.30.0}"
-# The Pico W (Cortex-M0+) and the ESP32-S3 (Xtensa LX7).
+# Arm Cortex-M and the ESP32-S3 (Xtensa LX7).
 TOOLCHAINS="${ZEPHYR_SDK_TOOLCHAINS:-arm-zephyr-eabi xtensa-espressif_esp32s3_zephyr-elf}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WS="$ROOT/third_party/zephyr-ws"
