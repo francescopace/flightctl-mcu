@@ -37,6 +37,9 @@ set(WAMR_BUILD_REF_TYPES 0)
 # Instruction metering: an app call that runs past its budget traps, so an
 # app in an endless loop can always be stopped (fc_apps.c).
 set(WAMR_BUILD_INSTRUCTION_METERING 1)
+# Tail calls (return_call), which clang emits with -mtail-call and current
+# toolchains by default: CoreMark as wasm-coremark publishes it uses them.
+set(WAMR_BUILD_TAIL_CALL 1)
 include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 add_library(vmlib STATIC ${WAMR_RUNTIME_LIB_SOURCE})
 target_compile_options(vmlib PRIVATE -w)

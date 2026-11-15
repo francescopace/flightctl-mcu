@@ -20,7 +20,12 @@ build() { # name source include [defines...]
 
 SDK="$ROOT/wasm-apps/sdk"
 for src in "$ROOT"/tests/unit/wasm/*.c; do
-    build "$(basename "$src" .c)" "$src" "$SDK"
+    name="$(basename "$src" .c)"
+    if [[ "$name" == t_tail ]]; then
+        build "$name" "$src" "$SDK" -mtail-call
+    else
+        build "$name" "$src" "$SDK"
+    fi
 done
 build app_alarm_v1 "$ROOT/wasm-apps/alarm/alarm.c" "$SDK" -DAPP_VERSION=1
 build app_alarm_v2 "$ROOT/wasm-apps/alarm/alarm.c" "$SDK" -DAPP_VERSION=2

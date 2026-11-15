@@ -66,7 +66,7 @@ TARGET=esp32c3 FW_VERSION=v1 port/espidf/build.sh
 port/espidf/flash.sh /dev/cu.usbmodem1101
 ```
 
-That is a debug build. `VARIANT=release` builds with `-Os` and quieter logs, about 15% smaller, in `port/espidf/build-<chip>-release`; push those with `fw-push.py --variant release`.
+That build is optimized for speed (`-O2`), with the CPU at the chip's highest clock. `VARIANT=release` builds with `-Os` and quieter logs, for a smaller image, in `port/espidf/build-<chip>-release`; push those with `fw-push.py --variant release`.
 
 Nothing above touches the chip's eFuses. The `secure` variant does: Secure Boot v2, flash encryption and NVS encryption, for devices in the field. It is never built by default, only with `VARIANT=secure` and a Secure Boot key of your own, in its own directory (`port/espidf/build-<chip>-secure`). Its first boot burns the chip's eFuses for good; read [SECURITY.md](SECURITY.md) first, which also has the factory procedure. `flash.sh` will not flash it without being told, and a device takes over the air only firmware of its own variant: a plain device refuses a secure build, and the reverse.
 

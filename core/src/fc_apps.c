@@ -12,10 +12,19 @@
  * init(), tick() and on_event(type, handle, value), and reaches the hardware
  * of the board map (fc_board.c) the fleet grants it in FC_ALLOW. Timers and
  * events are run here, on the app's thread. A module built for the earlier
- * interface (imports from "env") is refused when downloaded. A trap stops the app;
+ * interface (its functions imported from "env") is refused when downloaded. A trap stops the app;
  * it is restarted after a back-off and counted in
  * status.applications[].restarts. So does a call that runs past its
  * instruction budget, so an app in an endless loop can always be stopped.
+ *
+ * A module built for no device in particular (a benchmark such as CoreMark)
+ * runs too: the export its env var FC_ENTRY names, or _start() in a module
+ * with neither tick() nor on_event(), is called once, with no instruction
+ * budget, and the app is Completed when it returns, its result in its state.
+ * It may import env.clock_ms. Removing or updating it stops the call
+ * (wasm_runtime_set_instruction_count_limit(0) from another thread, which
+ * third_party/patches/wamr-metering-stop.patch makes WAMR check at branches
+ * and calls).
  */
 #include "fc_apps.h"
 
@@ -43,6 +52,14 @@
 #define THREAD_STACK    (256 * 1024) /* a host: its threads cannot have less than 16 KB or so */
 #endif
 #define RESTART_DELAY_S 5
+/* A module run once starts when the agent has had nothing on hand for
+ * ENTRY_QUIET_MS, at most ENTRY_WAIT_MS after it was started (see
+ * wait_quiet). */
+#ifndef ENTRY_WAIT_MS
+#define ENTRY_WAIT_MS 30000
+#endif
+#define ENTRY_QUIET_MS 2000
+static int64_t s_entry_wait_ms = ENTRY_WAIT_MS;
 /* Instructions one call into an app may run (init, tick, on_event) before it
  * traps, so that an app in an endless loop can always be stopped. Counted by
  * WAMR's instruction metering, where the port builds WAMR with it; host
@@ -451,16 +468,82 @@ static const char *export_sig(wasm_module_t m, const char *name, char *buf, size
     return NULL;
 }
 
-/* Whether this firmware can run a module: 0, or -1 with the reason. */
-static int check_module(wasm_module_t m, char *err, size_t err_len)
+/* "env": the module wasm-ld and Emscripten import from by default. The device
+ * has clock_ms there, as CoreMark's builds import it, with an i32 or an i64
+ * result: milliseconds since the app started. The earlier app interface put
+ * its functions there too; those are named so the module can be rebuilt. */
+static void env_clock_ms(wasm_exec_env_t env, uint64_t *args)
+{
+    app_t *a = wasm_runtime_get_user_data(env);
+    /* Raw: the result goes in args[0]. An i32 result is its low half, so one
+     * function serves both types. NULL: called while the module is
+     * instantiated, before the app's context exists. */
+    args[0] = (uint64_t)(fc_apps_now_ms() - (a ? a->started_ms : 0));
+}
+
+static NativeSymbol s_env_natives[] = {
+    {"clock_ms", (void *)env_clock_ms, NULL, NULL}, /* checked in check_module */
+};
+
+static int earlier_interface(const char *name)
+{
+    static const char *const old[] = {"set_state", "log", "led", "temp_mc", "threshold_mc"};
+    for (size_t i = 0; i < sizeof(old) / sizeof(old[0]); i++) {
+        if (strcmp(name, old[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int check_env_import(const wasm_import_t *im, char *err, size_t err_len)
+{
+    if (im->kind == WASM_IMPORT_EXPORT_KIND_FUNC && strcmp(im->name, "clock_ms") == 0) {
+        wasm_func_type_t t = im->u.func_type;
+        wasm_valkind_t r = wasm_func_type_get_result_count(t) == 1 ? wasm_func_type_get_result_valkind(t, 0) : 0xff;
+        if (wasm_func_type_get_param_count(t) == 0 && (r == WASM_I32 || r == WASM_I64)) {
+            return 0;
+        }
+        snprintf(err, err_len, "imports env.clock_ms with a type other than () -> i32 or i64");
+        return -1;
+    }
+    if (earlier_interface(im->name)) {
+        snprintf(err, err_len, "built for the earlier app interface (imports env.%.20s): rebuild with fc_app.h",
+                 im->name);
+    } else {
+        snprintf(err, err_len, "imports env.%.40s, which this firmware does not have", im->name);
+    }
+    return -1;
+}
+
+/* Whether the module imports from "fc". A module run once has no app context
+ * around its call (handles, events, the wait limits), so it may not yet. */
+static int imports_fc(wasm_module_t m)
+{
+    int32_t n = wasm_runtime_get_import_count(m);
+    for (int32_t i = 0; i < n; i++) {
+        wasm_import_t im;
+        wasm_runtime_get_import_type(m, i, &im);
+        if (strcmp(im.module_name, "fc") == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Whether this firmware can run a module: 0, or -1 with the reason. entry:
+ * the app's FC_ENTRY, or "". */
+static int check_module(wasm_module_t m, const char *entry, char *err, size_t err_len)
 {
     int32_t n = wasm_runtime_get_import_count(m);
     for (int32_t i = 0; i < n; i++) {
         wasm_import_t im;
         wasm_runtime_get_import_type(m, i, &im);
         if (strcmp(im.module_name, "env") == 0) {
-            snprintf(err, err_len, "built for the earlier app interface (imports from \"env\"): rebuild with fc_app.h");
-            return -1;
+            if (check_env_import(&im, err, err_len) != 0) {
+                return -1;
+            }
+            continue;
         }
         if (strcmp(im.module_name, "fc") != 0) {
             snprintf(err, err_len, "imports from module \"%.30s\", which the device does not have", im.module_name);
@@ -482,20 +565,104 @@ static int check_module(wasm_module_t m, char *err, size_t err_len)
             return -1;
         }
     }
-    if (export_sig(m, "tick", sig, sizeof(sig)) == NULL && export_sig(m, "on_event", sig, sizeof(sig)) == NULL) {
-        snprintf(err, err_len, "exports neither tick() nor on_event()");
+    int fc_app = export_sig(m, "tick", sig, sizeof(sig)) != NULL || export_sig(m, "on_event", sig, sizeof(sig)) != NULL;
+    if (entry[0]) {
+        const char *s = export_sig(m, entry, sig, sizeof(sig));
+        if (s == NULL || s[0] != '>' || strlen(s) > 2) {
+            snprintf(err, err_len, "FC_ENTRY: exports no %.31s() without parameters", entry);
+            return -1;
+        }
+    } else if (!fc_app && export_sig(m, "_start", sig, sizeof(sig)) == NULL) {
+        snprintf(err, err_len, "exports neither tick() nor on_event() nor _start(), and has no FC_ENTRY");
+        return -1;
+    }
+    if ((entry[0] || !fc_app) && imports_fc(m)) {
+        snprintf(err, err_len, "runs once (FC_ENTRY or _start) and imports from \"fc\": not supported yet");
         return -1;
     }
     return 0;
 }
 
-/* One call into the app, within its instruction budget. 0: it trapped. */
-static int call_app(wasm_exec_env_t env, wasm_function_inst_t f, uint32_t argc, uint32_t *argv)
+/* 1 for a module run once: FC_ENTRY, or _start without tick() or on_event(). */
+static int runs_once(const app_t *a, wasm_module_t m)
+{
+    char sig[16];
+    return a->entry[0] || (export_sig(m, "tick", sig, sizeof(sig)) == NULL &&
+                           export_sig(m, "on_event", sig, sizeof(sig)) == NULL &&
+                           export_sig(m, "_start", sig, sizeof(sig)) != NULL);
+}
+
+/* Before a module run once starts: waits until the agent has had nothing on
+ * hand (fc_agent_busy) for ENTRY_QUIET_MS. Right after an app changes the
+ * agent applies the spec and sends two status updates (the second grouped
+ * 15 s later), each a TLS exchange: on a chip with one core they took CPU
+ * from the first second of the run, which a benchmark such as CoreMark
+ * calibrates itself on (its timed run then lasted less than the 10 s it
+ * requires, and its score was 0). The instance is made after the wait, so
+ * that its memory is not held while the agent needs some. Gives up after
+ * ENTRY_WAIT_MS, and returns early when the app is stopped. */
+static void wait_quiet(app_t *a)
+{
+    int64_t now = fc_apps_now_ms(), until = now + s_entry_wait_ms, quiet_since = now;
+    while (!stopping(a) && now < until) {
+        if (fc_agent_busy()) {
+            quiet_since = now;
+        } else if (now - quiet_since >= ENTRY_QUIET_MS) {
+            return;
+        }
+        usleep(100 * 1000);
+        now = fc_apps_now_ms();
+        guard_tick(a, now);
+    }
+}
+
+/* The export run once, or NULL for an app of init/tick/on_event. */
+static const char *entry_of(const app_t *a, wasm_module_inst_t inst)
+{
+    if (a->entry[0]) {
+        return a->entry;
+    }
+    if (wasm_runtime_lookup_function(inst, "tick") == NULL && wasm_runtime_lookup_function(inst, "on_event") == NULL &&
+        wasm_runtime_lookup_function(inst, "_start") != NULL) {
+        return "_start";
+    }
+    return NULL;
+}
+
+/* Lets the next call into the app run limit instructions (-1: no limit), and
+ * makes it the one app_stop interrupts: 0 when the app is stopping. Under
+ * s_lock, as app_stop sets the limit to 0 after it sets stop. */
+static int arm_call(app_t *a, wasm_exec_env_t env, int limit)
+{
+    pthread_mutex_lock(&s_lock);
+    int ok = !stopping(a);
+    if (ok) {
+#if WASM_ENABLE_INSTRUCTION_METERING
+        wasm_runtime_set_instruction_count_limit(env, limit);
+#endif
+        a->run_env = env;
+    }
+    pthread_mutex_unlock(&s_lock);
+    return ok;
+}
+
+static void disarm_call(app_t *a)
+{
+    pthread_mutex_lock(&s_lock);
+    a->run_env = NULL;
+    pthread_mutex_unlock(&s_lock);
+}
+
+/* One call into the app, within its instruction budget. 0: it trapped, or
+ * the app is stopping. */
+static int call_app(app_t *a, wasm_exec_env_t env, wasm_function_inst_t f, uint32_t argc, uint32_t *argv)
 {
 #if WASM_ENABLE_INSTRUCTION_METERING
-    wasm_runtime_set_instruction_count_limit(env, s_call_budget);
+    int budget = s_call_budget;
+#else
+    int budget = -1;
 #endif
-    return wasm_runtime_call_wasm(env, f, argc, argv);
+    return arm_call(a, env, budget) && wasm_runtime_call_wasm(env, f, argc, argv);
 }
 
 /* One call into the app: 0, or -1 when it trapped (status set). */
@@ -503,7 +670,7 @@ static int call_fc(app_t *a, wasm_exec_env_t env, wasm_function_inst_t f, uint32
                    const char *what)
 {
     a->call_start_ms = fc_apps_now_ms();
-    if (call_app(env, f, argc, argv)) {
+    if (call_app(a, env, f, argc, argv)) {
         return 0;
     }
     if (!stopping(a)) {
@@ -640,15 +807,122 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
     a->inst = NULL;
 }
 
+/* A value as text without printf's 64-bit or floating-point conversions,
+ * which not every port's libc has: floats in thousandths. */
+static void format_result(wasm_valkind_t kind, const uint32_t *cell, char *out, size_t len)
+{
+    int64_t v;
+    int milli = 0;
+    if (kind == WASM_I32) {
+        v = (int32_t)cell[0];
+    } else if (kind == WASM_I64) {
+        memcpy(&v, cell, sizeof(v));
+    } else {
+        double d;
+        if (kind == WASM_F32) {
+            float f;
+            memcpy(&f, cell, sizeof(f));
+            d = f;
+        } else {
+            memcpy(&d, cell, sizeof(d));
+        }
+        if (!(d == d) || d > 9e15 || d < -9e15) {
+            snprintf(out, len, "%s", d == d ? "out of range" : "nan");
+            return;
+        }
+        v = (int64_t)(d * 1000 + (d < 0 ? -0.5 : 0.5));
+        milli = 1;
+    }
+    char digits[24];
+    int n = 0;
+    uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
+    do {
+        digits[n++] = (char)('0' + u % 10);
+        u /= 10;
+        if (milli && n == 3) {
+            digits[n++] = '.';
+        }
+    } while (u != 0 || (milli && n < 5));
+    size_t k = 0;
+    if (v < 0 && k + 1 < len) {
+        out[k++] = '-';
+    }
+    while (n > 0 && k + 1 < len) {
+        out[k++] = digits[--n];
+    }
+    out[k] = '\0';
+}
+
+/* The export an app runs once (FC_ENTRY, or _start), with no instruction
+ * budget: app_stop interrupts it. 1: it returned, and the app is Completed;
+ * 0: it trapped, or the app is stopping. */
+static int run_entry(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env, const char *name)
+{
+    wasm_function_inst_t f = wasm_runtime_lookup_function(inst, name);
+    uint32_t nres = f ? wasm_func_get_result_count(f, inst) : 0;
+    if (f == NULL || wasm_func_get_param_count(f, inst) != 0 || nres > 1 || imports_fc(a->module)) {
+        char why[80];
+        if (f != NULL && imports_fc(a->module)) {
+            snprintf(why, sizeof(why), "runs once (FC_ENTRY) and imports from \"fc\": not supported yet");
+        } else {
+            snprintf(why, sizeof(why), "FC_ENTRY: exports no %.31s() without parameters", name);
+        }
+        fc_port_log(FC_LOG_WARN, "app %s: %s", a->name, why);
+        set_status(a, "Error", why);
+        return 1; /* not run again until its image or env change */
+    }
+    a->inst = inst;
+    pthread_mutex_lock(&s_lock);
+    a->state[0] = '\0';
+    pthread_mutex_unlock(&s_lock);
+    set_status(a, "Running", NULL);
+    fc_port_log(FC_LOG_INFO, "app %s running %s() (%s)", a->name, name, a->image);
+    uint32_t argv[2] = {0, 0};
+    a->call_start_ms = fc_apps_now_ms();
+    int ok = arm_call(a, env, -1) && wasm_runtime_call_wasm(env, f, 0, argv);
+    if (!ok) {
+        if (!stopping(a)) {
+            const char *ex = wasm_runtime_get_exception(inst);
+            fc_port_log(FC_LOG_WARN, "app %s trapped in %s(): %s", a->name, name, ex ? ex : "?");
+            set_status(a, "Error", ex);
+        }
+        return 0;
+    }
+    char val[32] = "";
+    if (nres == 1) {
+        wasm_valkind_t kind;
+        wasm_func_get_result_types(f, inst, &kind);
+        format_result(kind, argv, val, sizeof(val));
+    }
+    int64_t ms = fc_apps_now_ms() - a->call_start_ms;
+    pthread_mutex_lock(&s_lock);
+    snprintf(a->state, sizeof(a->state), nres ? "%.31s() returned %s" : "%.31s() returned", name, val);
+    pthread_mutex_unlock(&s_lock);
+    fc_port_log(FC_LOG_INFO, "app %s: %s (in %ld ms)", a->name, a->state, (long)ms);
+    set_status(a, "Completed", NULL);
+    return 1;
+}
+
 static void *runner(void *arg)
 {
     app_t *a = arg;
     char ebuf[128];
     wasm_runtime_init_thread_env();
     wasm_module_t module = a->module;
+    int completed = 0;
     while (!stopping(a)) {
+        if (runs_once(a, module)) {
+            wait_quiet(a);
+            if (stopping(a)) {
+                break;
+            }
+        }
+        a->started_ms = fc_apps_now_ms();
         wasm_module_inst_t inst = wasm_runtime_instantiate(module, WASM_STACK, 0, ebuf, sizeof(ebuf));
         wasm_exec_env_t env = inst ? wasm_runtime_create_exec_env(inst, WASM_STACK) : NULL;
+        pthread_mutex_lock(&s_lock);
+        a->live = inst != NULL;
+        pthread_mutex_unlock(&s_lock);
         if (inst == NULL || env == NULL) {
             const char *why = inst == NULL ? ebuf : "exec env: out of memory";
             fc_port_log(FC_LOG_WARN, "app %s: %s", a->name, why);
@@ -657,22 +931,42 @@ static void *runner(void *arg)
             wasm_runtime_set_user_data(env, a);
             wasm_function_inst_t abi = wasm_runtime_lookup_function(inst, "fc_abi_version");
             uint32_t abi_argv[1] = {0};
-            if (abi != NULL && call_app(env, abi, 0, abi_argv) && abi_argv[0] > FC_APP_ABI_VERSION) {
+            if (abi != NULL && call_app(a, env, abi, 0, abi_argv) && abi_argv[0] > FC_APP_ABI_VERSION) {
                 snprintf(ebuf, sizeof(ebuf), "app needs interface v%u, this device has v%d", (unsigned)abi_argv[0],
                          FC_APP_ABI_VERSION);
                 fc_port_log(FC_LOG_WARN, "app %s: %s", a->name, ebuf);
                 set_status(a, "Error", ebuf);
+                disarm_call(a);
                 wasm_runtime_destroy_exec_env(env);
                 wasm_runtime_deinstantiate(inst);
+                pthread_mutex_lock(&s_lock);
+                a->live = 0;
+                pthread_mutex_unlock(&s_lock);
                 goto done;
             }
-            run_fc(a, inst, env);
+            const char *entry = entry_of(a, inst);
+            if (entry == NULL) {
+                run_fc(a, inst, env);
+            } else if (run_entry(a, inst, env, entry)) {
+                completed = 1;
+            }
         }
+        disarm_call(a);
+        a->inst = NULL;
         if (env) {
             wasm_runtime_destroy_exec_env(env);
         }
         if (inst) {
             wasm_runtime_deinstantiate(inst);
+        }
+        pthread_mutex_lock(&s_lock);
+        a->live = 0;
+        pthread_mutex_unlock(&s_lock);
+        if (completed) {
+            /* Ran to its end (or cannot run): not started again, and past
+             * its start for the record of apps that crash the device. */
+            guard_forget(a->name, 0);
+            break;
         }
         if (!stopping(a)) {
             for (int i = 0; i < RESTART_DELAY_S * 10 && !stopping(a); i++) {
@@ -715,6 +1009,14 @@ static void app_stop(app_t *a)
 {
     if (a->thread_running) {
         set_stop(a, 1);
+        pthread_mutex_lock(&s_lock);
+#if WASM_ENABLE_INSTRUCTION_METERING
+        if (a->run_env != NULL) {
+            /* The call in progress traps at its next branch or call. */
+            wasm_runtime_set_instruction_count_limit(a->run_env, 0);
+        }
+#endif
+        pthread_mutex_unlock(&s_lock);
         wake(a);
         pthread_join(a->thread, NULL);
         pthread_attr_destroy(&a->thread_attr);
@@ -735,6 +1037,15 @@ static void app_release(app_t *a)
 
 /* ---- env vars ---------------------------------------------------------------- */
 
+/* envVars.FC_ENTRY, or "". */
+static void entry_from_env(const char *json, char *out, size_t len)
+{
+    cJSON *o = cJSON_Parse(json ? json : "{}");
+    const char *e = cJSON_GetStringValue(cJSON_GetObjectItem(o, "FC_ENTRY"));
+    snprintf(out, len, "%s", e ? e : "");
+    cJSON_Delete(o);
+}
+
 /* Takes the app's envVars (JSON) and what the device reads in them. */
 static void set_env(app_t *a, const char *json)
 {
@@ -745,6 +1056,7 @@ static void set_env(app_t *a, const char *json)
     const char *allow = cJSON_GetStringValue(cJSON_GetObjectItem(o, "FC_ALLOW"));
     snprintf(a->allow, sizeof(a->allow), "%s", allow ? allow : "");
     cJSON_Delete(o);
+    entry_from_env(a->env_json, a->entry, sizeof(a->entry));
 }
 
 static char *env_of(const cJSON *app)
@@ -819,10 +1131,10 @@ static app_t *alloc_slot(void)
 }
 
 /* Loads a module and checks it is an app this firmware runs. */
-static wasm_module_t load_app(unsigned char *code, size_t len, char *ebuf, size_t elen)
+static wasm_module_t load_app(unsigned char *code, size_t len, const char *entry, char *ebuf, size_t elen)
 {
     wasm_module_t m = load_module(code, len, ebuf, elen);
-    if (m != NULL && check_module(m, ebuf, elen) != 0) {
+    if (m != NULL && check_module(m, entry, ebuf, elen) != 0) {
         wasm_runtime_unload(m);
         m = NULL;
     }
@@ -858,6 +1170,7 @@ int fc_apps_init(void)
     int n_fc = 0;
     NativeSymbol *fc = fc_appapi_natives(&n_fc);
     wasm_runtime_register_natives("fc", fc, (uint32_t)n_fc);
+    wasm_runtime_register_natives_raw("env", s_env_natives, sizeof(s_env_natives) / sizeof(s_env_natives[0]));
     fc_board_load(g_fc_hw);
     s_inited = 1;
     guard_boot();
@@ -897,7 +1210,7 @@ int fc_apps_init(void)
         }
         char ebuf[96];
         guard_begin(a->name, a->image, a->env_json, 1);
-        a->module = load_app((unsigned char *)code, code_len, ebuf, sizeof(ebuf));
+        a->module = load_app((unsigned char *)code, code_len, a->entry, ebuf, sizeof(ebuf));
         guard_loaded();
         free(code);
         if (a->module == NULL) {
@@ -927,14 +1240,14 @@ static int tick_ms_of(const cJSON *app)
  * stored, then freed) and *module the loaded module, which is what runs. A
  * module WAMR cannot load, or that this firmware cannot run, is rejected
  * before a working app is replaced. */
-static int fetch_module(const char *image, unsigned char **out, size_t *len, wasm_module_t *module, char *digest,
-                        size_t dlen, char *err, size_t err_len)
+static int fetch_module(const char *image, const char *entry, unsigned char **out, size_t *len,
+                        wasm_module_t *module, char *digest, size_t dlen, char *err, size_t err_len)
 {
     if (fc_oci_fetch_layer(image, "wasm", LAYER_WASM, MAX_WASM_SIZE, out, len, digest, dlen, err, err_len) != 0) {
         return -1;
     }
     char ebuf[96];
-    *module = load_app(*out, *len, ebuf, sizeof(ebuf));
+    *module = load_app(*out, *len, entry, ebuf, sizeof(ebuf));
     if (*module == NULL) {
         snprintf(err, err_len, "%s: not a loadable WASM module: %s", image, ebuf);
         free(*out);
@@ -1028,16 +1341,37 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
             free(env);
             continue;
         }
+        /* A version with no instance (it could not start, waits to restart,
+         * waits to run once, or ran to its end) is released before the new
+         * one is loaded: kept, it would split the heap's largest block, where
+         * the new module goes, and a 64 KB linear memory then no longer fit
+         * on a classic ESP32 (it failed at every restart until the app was
+         * removed and given again). One that runs keeps running until the
+         * new one is ready. */
+        if (a != NULL && a->module != NULL) {
+            pthread_mutex_lock(&s_lock);
+            int idle = !a->live;
+            pthread_mutex_unlock(&s_lock);
+            if (idle) {
+                fc_port_log(FC_LOG_INFO, "app %s: not running, released before %s is loaded", name, image);
+                app_release(a);
+            }
+        }
         unsigned char *code = NULL;
         size_t len = 0;
         wasm_module_t module = NULL;
         char digest[72], ferr[160];
         guard_begin(name, image, env, 1); /* a module that crashes as it loads is this app's */
-        int f = fetch_module(image, &code, &len, &module, digest, sizeof(digest), ferr, sizeof(ferr));
+        char entry[sizeof(a->entry)];
+        entry_from_env(env, entry, sizeof(entry));
+        int f = fetch_module(image, entry, &code, &len, &module, digest, sizeof(digest), ferr, sizeof(ferr));
         guard_loaded();
         if (f != 0) {
             guard_forget(name, 0);
             snprintf(err, err_len, "app %s: %s", name, ferr);
+            if (a != NULL && a->module == NULL) {
+                set_status(a, "Error", ferr); /* nothing runs: say why */
+            }
             *retry |= f < 0;
             rc = -1;
             free(env);
@@ -1062,6 +1396,9 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         if (!stored) {
             snprintf(err, err_len, "app %s: cannot store the module (%u bytes)", name, (unsigned)len);
             fc_port_log(FC_LOG_WARN, "%s", err);
+            if (a->module == NULL) {
+                set_status(a, "Error", "cannot store the module");
+            }
             guard_forget(name, 0);
             wasm_runtime_unload(module);
             free(env);
@@ -1143,7 +1480,7 @@ void fc_apps_file_changed(const char *path)
 
 void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
 {
-    int n = 0, running = 0, errors = 0;
+    int n = 0, running = 0, errors = 0, completed = 0;
     pthread_mutex_lock(&s_lock);
     for (int i = 0; i < MAX_APPS; i++) {
         app_t *a = &s_apps[i];
@@ -1154,6 +1491,7 @@ void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
         int up = strcmp(a->status, "Running") == 0;
         running += up;
         errors += strcmp(a->status, "Error") == 0;
+        completed += strcmp(a->status, "Completed") == 0; /* ran to its end: not degraded */
         cJSON *o = cJSON_CreateObject();
         cJSON_AddStringToObject(o, "name", a->name);
         cJSON_AddStringToObject(o, "appType", "container");
@@ -1168,7 +1506,7 @@ void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
     }
     pthread_mutex_unlock(&s_lock);
     const char *st = n == 0 ? "NoApplications" : errors ? (running ? "Degraded" : "Error")
-                                                        : running == n ? "Healthy" : "Degraded";
+                                                        : running + completed == n ? "Healthy" : "Degraded";
     cJSON_AddStringToObject(summary, "status", st);
     if (n == 0) {
         cJSON_AddStringToObject(summary, "info", "No applications");

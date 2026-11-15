@@ -4,6 +4,8 @@
  * 320 KB, split into the credentials and the agent's storage as in the build
  * without MCUboot.
  */
+
+#include "rpi_pico_rp2040_clock.dtsi"
 /delete-node/ &storage_partition;
 
 &flash0 {

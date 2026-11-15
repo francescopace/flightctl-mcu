@@ -34,6 +34,9 @@ static void make_v2(void)
 }
 
 void fc_agent_notify_status(void) {}
+/* The agent's work on hand: test_entry_waits sets it. */
+static int f_busy;
+int fc_agent_busy(void) { return __atomic_load_n(&f_busy, __ATOMIC_ACQUIRE); }
 
 /* The registry: three images. */
 static int f_fetches; /* downloads asked for */
@@ -55,6 +58,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(t_env),
+        V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother),
 #undef V
     };
     f_fetches++;
@@ -422,8 +426,152 @@ static void test_fc_refused(void)
     CHECK_INT(apply_one("r", "reg/t_mixed", NULL, err, sizeof(err)), -1);
     CHECK(strstr(err, "built for the earlier app interface") != NULL);
     CHECK_INT(apply_one("r", "reg/t_env", NULL, err, sizeof(err)), -1);
-    CHECK(strstr(err, "built for the earlier app interface (imports from \"env\")") != NULL);
+    CHECK(strstr(err, "built for the earlier app interface (imports env.set_state)") != NULL);
+    CHECK_INT(apply_one("r", "reg/t_envtype", NULL, err, sizeof(err)), -1);
+    CHECK(strstr(err, "imports env.clock_ms with a type other than () -> i32 or i64") != NULL);
+    CHECK_INT(apply_one("r", "reg/t_envother", NULL, err, sizeof(err)), -1);
+    CHECK(strstr(err, "imports env.memcpy, which this firmware does not have") != NULL);
+    CHECK_INT(apply_one("r", "reg/t_entry", NULL, err, sizeof(err)), -1); /* run() only, and no FC_ENTRY */
+    CHECK(strstr(err, "exports neither tick() nor on_event() nor _start(), and has no FC_ENTRY") != NULL);
+    CHECK_INT(apply_one("r", "reg/t_entry", "{\"FC_ENTRY\": \"walk\"}", err, sizeof(err)), -1);
+    CHECK(strstr(err, "FC_ENTRY: exports no walk() without parameters") != NULL);
+    CHECK_INT(apply_one("r", "reg/app:v1", "{\"FC_ENTRY\": \"tick\"}", err, sizeof(err)), -1);
+    CHECK(strstr(err, "runs once (FC_ENTRY or _start) and imports from \"fc\": not supported yet") != NULL);
     CHECK_STR(state_of("r"), "none");
+}
+
+/* A module built for no device in particular, as CoreMark is: FC_ENTRY's
+ * export runs once, past the budget of a call, reads env.clock_ms, and its
+ * result is the app's state. */
+static void test_entry(void)
+{
+    char err[160];
+    s_call_budget = 200000; /* run() takes 300 ms: far more than this */
+    CHECK_INT(apply_one("e", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("e", "Completed run() returned 1234.568", 3000), "Completed run() returned 1234.568");
+    usleep(200 * 1000); /* not run again */
+    CHECK_STR(state_of("e"), "Completed run() returned 1234.568");
+    pthread_mutex_lock(&s_lock);
+    CHECK_INT(find("e")->restarts, 0);
+    pthread_mutex_unlock(&s_lock);
+    cJSON *apps = cJSON_CreateArray(), *summary = cJSON_CreateObject(), *info = cJSON_CreateObject();
+    fc_apps_status(apps, summary, info);
+    CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(summary, "status")), "Healthy");
+    CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(info, "app.e")), "run() returned 1234.568");
+    cJSON_Delete(apps);
+    cJSON_Delete(summary);
+    cJSON_Delete(info);
+    remove_all();
+    s_call_budget = FC_APP_CALL_BUDGET;
+}
+
+/* _start() that never returns, in a module with neither tick() nor
+ * on_event(): removing it stops the call in progress. */
+static void test_entry_stopped(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("s", "reg/t_start", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("s", "Running ", 3000), "Running ");
+    usleep(100 * 1000);
+    int64_t t0 = fc_apps_now_ms();
+    remove_all();
+    int64_t ms = fc_apps_now_ms() - t0;
+    CHECK(ms < 500);
+    CHECK_STR(state_of("s"), "none");
+    /* Updated (new env vars) while in its loop: stopped and run again. */
+    CHECK_INT(apply_one("s", "reg/t_start", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("s", "Running ", 3000), "Running ");
+    t0 = fc_apps_now_ms();
+    CHECK_INT(apply_one("s", "reg/t_start", "{\"TICK_MS\": \"50\"}", err, sizeof(err)), 0);
+    CHECK(fc_apps_now_ms() - t0 < 500);
+    CHECK_STR(wait_state_of("s", "Running ", 3000), "Running ");
+    remove_all();
+}
+
+/* A module run once starts when the agent has had nothing on hand for
+ * ENTRY_QUIET_MS; or after s_entry_wait_ms in any case. */
+static void test_entry_waits(void)
+{
+    char err[160];
+    s_entry_wait_ms = 6000;
+    __atomic_store_n(&f_busy, 1, __ATOMIC_RELEASE);
+    CHECK_INT(apply_one("e", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
+    usleep(1500 * 1000); /* run() takes 300 ms: it has not started */
+    CHECK_STR(state_of("e"), "Preparing ");
+    pthread_mutex_lock(&s_lock);
+    CHECK_INT(find("e")->live, 0); /* no instance while it waits */
+    pthread_mutex_unlock(&s_lock);
+    int64_t t0 = fc_apps_now_ms();
+    __atomic_store_n(&f_busy, 0, __ATOMIC_RELEASE);
+    CHECK_STR(wait_state_of("e", "Completed run() returned 1234.568", 4000), "Completed run() returned 1234.568");
+    int64_t ms = fc_apps_now_ms() - t0;
+    CHECK(ms >= ENTRY_QUIET_MS && ms < ENTRY_QUIET_MS + 1500);
+    remove_all();
+    /* The agent never quiet: it starts anyway. */
+    s_entry_wait_ms = 300;
+    __atomic_store_n(&f_busy, 1, __ATOMIC_RELEASE);
+    CHECK_INT(apply_one("e", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("e", "Completed run() returned 1234.568", 3000), "Completed run() returned 1234.568");
+    remove_all();
+    /* Removed while it waits: gone at once. */
+    s_entry_wait_ms = 6000;
+    CHECK_INT(apply_one("e", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
+    usleep(200 * 1000);
+    t0 = fc_apps_now_ms();
+    remove_all();
+    CHECK(fc_apps_now_ms() - t0 < 500);
+    CHECK_STR(state_of("e"), "none");
+    __atomic_store_n(&f_busy, 0, __ATOMIC_RELEASE);
+    s_entry_wait_ms = 0;
+}
+
+/* An app that does not run is released before its new image is loaded, and
+ * says why when the new one cannot be had. */
+static void test_replace_idle(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("r", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("r", "Completed run() returned 1234.568", 3000), "Completed run() returned 1234.568");
+    CHECK(apply_one("r", "reg/nothing", NULL, err, sizeof(err)) != 0);
+    CHECK(find("r")->module == NULL); /* released: it had ended */
+    CHECK_STR(state_of("r"), "Error reg/nothing: not found");
+    /* After a restart the stored module, the old one, is what there is. */
+    power_cycle();
+    CHECK_STR(wait_state_of("r", "Completed run() returned 1234.568", 3000), "Completed run() returned 1234.568");
+    /* The new image, once it can be had. */
+    CHECK_INT(apply_one("r", "reg/t_tail", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("r", "Completed _start() returned 100000", 3000), "Completed _start() returned 100000");
+    remove_all();
+    /* One that waits to restart (it trapped) has no instance: released. */
+    CHECK_INT(apply_one("r", "reg/app:loop", NULL, err, sizeof(err)), 0);
+    for (int i = 0; i < 300; i++) {
+        pthread_mutex_lock(&s_lock);
+        int waiting = strcmp(find("r")->status, "Error") == 0 && !find("r")->live;
+        pthread_mutex_unlock(&s_lock);
+        if (waiting) {
+            break;
+        }
+        usleep(10 * 1000);
+    }
+    CHECK(apply_one("r", "reg/nothing", NULL, err, sizeof(err)) != 0);
+    CHECK(find("r")->module == NULL);
+    remove_all();
+    /* One that runs keeps running when its new image cannot be had. */
+    CHECK_INT(apply_one("r", "reg/t_start", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("r", "Running ", 3000), "Running ");
+    CHECK(apply_one("r", "reg/nothing", NULL, err, sizeof(err)) != 0);
+    CHECK(find("r")->module != NULL);
+    CHECK_STR(state_of("r"), "Running ");
+    remove_all();
+}
+
+/* return_call: 100000 calls deep with WASM_STACK of 2 KB. */
+static void test_tail_calls(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("t", "reg/t_tail", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("t", "Completed _start() returned 100000", 3000), "Completed _start() returned 100000");
+    remove_all();
 }
 
 static void test_fc_timer(void)
@@ -744,6 +892,7 @@ int main(void)
 {
     stub_reset();
     make_v2();
+    s_entry_wait_ms = 0; /* test_entry_waits tries the wait */
     fc_apps_set_hw(&s_fake);
     if (fc_apps_init() != 0) {
         return 1;
@@ -761,6 +910,11 @@ int main(void)
     RUN(test_endless_loop);
     RUN(test_fc_imports);
     RUN(test_fc_refused);
+    RUN(test_entry);
+    RUN(test_entry_stopped);
+    RUN(test_entry_waits);
+    RUN(test_replace_idle);
+    RUN(test_tail_calls);
     RUN(test_fc_info);
     RUN(test_fc_timer);
     RUN(test_fc_config);

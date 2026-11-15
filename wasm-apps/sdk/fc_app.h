@@ -27,7 +27,9 @@
  *   The prototypes are declared below, so a definition with another signature
  *   does not compile. The device checks them too when it loads the app, and
  *   refuses an app that exports neither tick nor on_event, or that imports
- *   from module "env" (built for the interface before 1.0: rebuild it).
+ *   env.set_state, env.log or env.led (built for the interface before 1.0:
+ *   rebuild it). A module built for no device (FC_ENTRY, docs/APPS.md) is
+ *   another matter: it does not use this header.
  *
  *   All of them run on the app's own thread, one at a time: the app needs no
  *   locks. A call may run a budget of instructions, about a second of work

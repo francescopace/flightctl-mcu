@@ -14,6 +14,7 @@ What has been verified, where, and with which figures: microcontrollers managed 
 | Firmware deltas | A device on a known release downloads a patch from it and rebuilds the image from its own ([DELTA.md](DELTA.md)) | 1 to 12% of the image between builds of the same kind; on the Pico W and on the ESP32-S3 with both ports, the other ESP32 chips in the emulator |
 | Automatic rollback | The new firmware is confirmed only after the server accepts a status from it; otherwise the device goes back to the previous one | A broken firmware rolls itself back; the rollout stops at the canary and the other devices never receive it. On the ESP32-S3 with both ports, the Pico W and the emulated chips |
 | WASM apps without reboot | `spec.applications` of type `container` with a WASM OCI image, run by WAMR | Update from v1 to v2 on Xtensa, RISC-V and Arm with the same `.wasm` file, no reboot |
+| Modules built for no device | A module published for any WebAssembly runtime runs unmodified: the export named in `FC_ENTRY` (or `_start`) is called once with no instruction budget, `env.clock_ms` gives it the time, tail calls are built in; the result is the app's state, the app `Completed` ([APPS.md](APPS.md#modules-built-for-no-device)) | CoreMark's two published builds on the ESP32-S2 and the classic ESP32 with v3.8, scores below ([CoreMark](#coremark)); removing the app stops a run at once (unit tests) |
 | App interface | Hardware by name from a board map, grants (`FC_ALLOW`), timers and events, a config file per app, key/value storage, a safe state when an app stops ([APPS.md](APPS.md)) | Unit tests against a fake board, and the end-to-end tests. On an ESP32-C3 (v3.3) the `alarm` app opened the board's LED as `led0`, its pin inherited from the firmware, and a new threshold took it from alarm to ok without restarting it; the same on the Zephyr ESP32-S3 (z14), whose temperature and LED are simulated. On the Pico W the app runs from z15, with a fix to WAMR's loader: it wrote code with a 32-bit store at an address not aligned to 4 bytes, which the Cortex-M0+ does not allow. v3.4 fixes WAMR's `realloc` on ESP-IDF, which could return a buffer's data shifted by 4 bytes: with v3.3 an ESP32-C6 corrupted its heap at every boot while loading `alarm`, and the emulated C5 in CI did at times ([fetch-wamr.sh](../third_party/fetch-wamr.sh)); on v3.4 the C6, the S2 and the classic ESP32 run `alarm`, the C6 with `led0` as its WS2812 LED and the app reloaded from flash after a restart. GPIO interrupts not yet tried on a board |
 | Apps that crash the device as they start | An app whose start crashed the firmware twice in a row (while its module loaded, or in its first minute) is not started again: `Error` in the status, the spec not retried, the device on to the server; tried again when its image, env vars or the firmware change ([APPS.md](APPS.md#how-an-app-runs)) | Unit tests: a saved app crashing at every boot, a module crashing as it loads beside an app that runs (only it is stopped), single crashes and other restarts, a new firmware. In the emulator, an ESP32-C6 build without the WAMR `realloc` fix, from the flash of the C6 that crashed at every boot: two crashes, then `alarm` not started and the firmware going on. Releases v3.5 and z17 run `alarm` on the C6, the S3 and the Pico W. On Zephyr the crash is told by the fatal error kept in RAM across the restart, seen on the Pico W; no app has crashed a Zephyr board since |
 | Heterogeneous fleet | One fleet and one firmware reference, with per-device settings through labels and the template | S2, S3, C3, C5, C6 and classic ESP32 in the same fleet |
@@ -30,20 +31,22 @@ What has been verified, where, and with which figures: microcontrollers managed 
 
 ### Firmware size
 
-Release v3.3, with the app interface, ESP-IDF 6.0.3, debug build (`-Og`); v3.4 is the same within 1 KB:
+Release v3.8, ESP-IDF 6.0.3, built for speed (`-O2`):
 
 | Chip | Image | Free in the 1,664 KB OTA slot |
 |---|---|---|
-| ESP32 | 1,188 KB | 29% |
-| ESP32-S2 | 1,160 KB | 30% |
-| ESP32-S3 | 1,186 KB | 29% |
-| ESP32-C3 | 1,263 KB | 24% |
-| ESP32-C5 | 1,358 KB | 18% |
-| ESP32-C6 | 1,359 KB | 18% |
+| ESP32 | 1,121 KB | 32% |
+| ESP32-S2 | 1,093 KB | 34% |
+| ESP32-S3 | 1,118 KB | 32% |
+| ESP32-C3 | 1,192 KB | 28% |
+| ESP32-C5 | 1,282 KB | 22% |
+| ESP32-C6 | 1,288 KB | 22% |
+
+The debug build (`-Og`) that releases up to v3.7 were was about 6% larger (v3.3: 1,160 to 1,359 KB).
 
 The app interface (GPIO, LEDs, timers, events, config, storage and the board map) added about 20 KB to each image against v3.2.
 
-The release profile (`VARIANT=release`: `-Os`, quieter logs) is about 15% smaller, on the C3 and the S3. BLE provisioning built in (`VARIANT=ble`) adds about 270 KB: 1,502 KB on the C3 with release v3.1, 10% of the slot free.
+The release profile (`VARIANT=release`: `-Os`, quieter logs) was about 15% smaller than the debug build, on the C3 and the S3. BLE provisioning built in (`VARIANT=ble`) adds about 270 KB: 1,502 KB on the C3 with release v3.1, 10% of the slot free.
 
 The largest parts, on the C3:
 
@@ -96,6 +99,20 @@ With release v3.1 (ESP-IDF 6.0.3) the C3 had 70 KB free and 48 KB at the lowest 
 What a WASM app costs, on the C3 (debug builds): the heap five minutes after boot with and without the `trend` app (1.9 KB of `.wasm`) differs by 21.4 KB with v3.1 and 17.7 KB with v3.2, which no longer keeps the `.wasm` in RAM once the module is loaded. Split on a host with the same module, what is left is the module loaded by WAMR's fast interpreter (about 5 KB), the instance and its WAMR stack (about 3.5 KB), the module's linear memory (about 1 KB) and the app's thread stack (8 KB).
 
 Flashing the firmware does not touch the key storage: a board keeps its identity unless its whole flash is erased, and then enrolls again as a new device. The firmware logs a warning when it generates a new key, and an error when the key storage is unusable and has to be erased.
+
+### CoreMark
+
+[CoreMark](https://github.com/eembc/coremark) 1.0 from its two published WebAssembly builds, unmodified ([APPS.md](APPS.md#modules-built-for-no-device)), run by WAMR's fast interpreter with its instruction count on. Iterations per second; every run valid (CRCs right, a timed part of 10 s or more), each started by a new image or new env vars, with the agent connected:
+
+| Board | wasm3's build (64 KB of memory) | wasm-coremark's build (128 KB) | Native, one core at 240 MHz (Espressif's datasheets) |
+|---|---|---|---|
+| Classic ESP32, v3.8 | 15.16–15.29 (3 runs) | does not fit: no free block of 128 KB | about 505 |
+| ESP32-S2, v3.8 | 15.42–15.54 (5 runs) | 18.18 | about 473 |
+| Classic ESP32, v3.7 build settings (`-Og`, 160 MHz) | 6.83–6.87 | does not fit | |
+| ESP32-S2, v3.7 build settings | 5.07 | 6.22 | |
+| Pico W, z22 | does not fit: about 19 KB of heap free with `alarm` | – | |
+
+v3.8 builds the firmware for speed (`-O2` instead of ESP-IDF's debug default `-Og`) and runs the ESP32, the S2 and the S3 at 240 MHz instead of 160: CoreMark runs 2.2 times faster on the classic ESP32 and 3 times faster on the S2. The interpreter is about 30 times slower than native code; the instruction count, which lets any app be stopped, is part of that. The S2 holds both builds' memory in its PSRAM, the classic ESP32 in internal RAM, where it needs a free block of 64 KB: v3.8 gives the classic ESP32's WiFi fewer buffers, 10 KB more heap (164 KB free after boot, largest block 110 KB). Over five minutes of runs its heap went down to 2.2 KB at the lowest, while the agent kept reporting: a run leaves it close to nothing. The Zephyr builds keep `-Os`, with WAMR alone at `-O2`, as `-O2` everywhere does not fit (the Pico W's image by 23 KB, the ESP32-S3's data by 5.6 KB); the Pico W runs at 133 MHz instead of 125.
 
 ### Timings
 
@@ -265,6 +282,16 @@ Also found: Flight Control serves inline content given in base64 percent-encoded
     - The cause was the agent's two threads: each had a 24 KB stack in internal RAM, while the main task's 24 KB sat idle after start-up.
     - Fix: the spec loop runs on the main task, and the status thread gets 12 KB, of which it uses about 4 KB (v3.7). The S2 has 71 KB of internal RAM free with the app running, in blocks of up to 47 KB, and downloads its firmware over TLS. On the Pico W the main thread grew from 8 to 14 KB (z21), paid for by the kernel heap, which no longer holds the spec loop's 10 KB stack and gives the status thread 8 KB instead of 10.
 
+18. **CoreMark on the ESP32-S2 scored 0 in most runs.**
+    - CoreMark times a short run first and sizes the real one from it. A run started with the app took its CPU, on the S2's one core, with the agent's TLS exchanges right after a change (the spec applied, the status updates): calibrated on a slowed run, the timed part lasted 8 s, under the 10 s CoreMark requires, so it invalidated itself. The computed results were right.
+    - Fix: a module run once starts when the agent has had nothing on hand for 2 s (v3.8). Every run on the S2 since was valid: seven, four of them started by new env vars only.
+19. **Classic ESP32: CoreMark's 64 KB stopped fitting.**
+    - The linear memory needs one free block of 64 KB, beside the agent's TLS buffers and the module. After a few failed starts (the 128 KB build, then the 64 KB one) no block was large enough until a restart, and at boot a run started before the agent connected left its first TLS handshake without the 16.7 KB block it needs.
+    - Fix (v3.8): fewer WiFi buffers on the classic ESP32, as on the S2 and the C5 (10 KB more heap); an app with no instance (waiting to restart, or ended) is released before its new version loads; a run waits for the agent at boot. The 64 KB build then started at the first try after the 128 KB one had failed.
+20. **Pico W: two apps kept the agent from starting.**
+    - Each app thread takes its stack from the kernel heap, which has room for one besides the agent's status thread. With two apps saved, both threads started at boot before the status thread, which could then not be created: the agent stopped, the apps ran, and the device was never heard from again, until reflashed over USB.
+    - Fix: the saved apps start after the agent's status thread (z22); a second app is then `Error`, "cannot start thread", in the status. Without a second app, z21 and earlier are not affected.
+
 ## Flight Control 1.4.0
 
 12 November 2026. The service on kind was upgraded in place from 1.3.1 with the Helm chart, with a Raspberry Pi Pico W enrolled and online: it stayed enrolled, came back `Online` and `UpToDate` by itself, and its free heap dipped from 22 to 17 KB at the lowest while the server restarted.
@@ -356,6 +383,7 @@ All of these were read again in the source of 1.4.0 and of Flight Control's main
   - The device key is in flash in clear, except in the `secure` variant (see [SECURITY.md](SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
 - **Provisioning**: credentials are written over USB (`tools/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control 1.4.0 cannot revoke it (its main branch can).
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
-- **Hardware coverage**: automatic rollback was not exercised on the C6 ([DEVICES.md](DEVICES.md#boards-tried)).
+- **Hardware coverage**: automatic rollback was not exercised on the C6 ([DEVICES.md](DEVICES.md#boards-tried)). v3.8 and z22 (built for speed, at 240 and 133 MHz) were tried on the S2, the classic ESP32 and the Pico W only; the C3, C5, C6 and S3 builds have not been started on a board.
+- **Memory for apps**: the Pico W runs one app; CoreMark's 64 KB fits on the S2 (PSRAM) and the classic ESP32, not on the Pico W, and wasm-coremark's 128 KB on the S2 only. With a second app installed and its module loaded, the Pico W once failed to read the registry's CA from the fleet ("invalid base64") until the app was removed: likely a lack of memory, not confirmed.
 
 What comes next is in the [roadmap](ROADMAP.md).

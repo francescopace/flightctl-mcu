@@ -63,6 +63,7 @@ typedef struct app {
     int tick_ms;
     char *env_json; /* the app's envVars as JSON, as the spec gave them */
     char allow[160]; /* envVars.FC_ALLOW */
+    char entry[32];  /* envVars.FC_ENTRY: an export run once, with no budget */
     /* Loaded once and owned by the slot; the runner only instantiates it.
      * NULL when the stored module could not be loaded. The .wasm bytes are
      * not kept in RAM (load_module). */
@@ -74,9 +75,12 @@ typedef struct app {
     int stop; /* set by the agent's thread, read by the runner: __atomic */
     long stack_unused;   /* lowest seen since app_start, -1 none: __atomic */
     int64_t stack_at_ms; /* runner: when it last read it */
+    wasm_exec_env_t run_env; /* under s_lock: the call app_stop interrupts */
+    int64_t started_ms;      /* when the instance started: env.clock_ms */
+    int live;                /* under s_lock: an instance exists (the runner) */
 
     /* reported (under s_lock in fc_apps.c) */
-    char status[12]; /* Preparing, Running, Error, Stopped */
+    char status[12]; /* Preparing, Running, Completed, Error, Stopped */
     int restarts;
     int64_t settle_at_ms; /* when it is past its start (fc_apps.c, guard) */
     int settled;

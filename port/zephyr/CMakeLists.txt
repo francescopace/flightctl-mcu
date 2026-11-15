@@ -38,6 +38,9 @@ set(WAMR_BUILD_REF_TYPES 0)
 # Instruction metering: an app call that runs past its budget traps, so an
 # app in an endless loop can always be stopped (core/src/fc_apps.c).
 set(WAMR_BUILD_INSTRUCTION_METERING 1)
+# Tail calls (return_call), which clang emits with -mtail-call and current
+# toolchains by default: CoreMark as wasm-coremark publishes it uses them.
+set(WAMR_BUILD_TAIL_CALL 1)
 set(WAMR_ROOT_DIR ${ROOT}/third_party/wamr)
 include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 
@@ -101,6 +104,11 @@ target_compile_definitions(app PRIVATE
 if(CONFIG_FC_AGENT_STACK_SIZE)
     target_compile_definitions(app PRIVATE FC_AGENT_STACK_SIZE=${CONFIG_FC_AGENT_STACK_SIZE})
 endif()
+# WAMR, which runs the apps, optimized for speed (-O2, after Zephyr's -Os);
+# the rest stays optimized for size. With -O2 for everything the Pico W's
+# image is 23 KB larger than its slot and the ESP32-S3's data 5.6 KB larger
+# than its RAM.
+set_source_files_properties(${WAMR_RUNTIME_LIB_SOURCE} PROPERTIES COMPILE_OPTIONS "-O2")
 set_source_files_properties(${DETOOLS_SRCS} PROPERTIES
     COMPILE_DEFINITIONS "malloc=fc_delta_alloc;free=fc_delta_free"
     COMPILE_OPTIONS "-w;-fwrapv")

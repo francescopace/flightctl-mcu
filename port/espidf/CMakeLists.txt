@@ -39,3 +39,6 @@ endif()
 # app call that runs past its budget traps, so an app in an endless loop can
 # always be stopped (core/src/fc_apps.c). Public, so the core sees it too.
 target_compile_definitions(${wamr_lib} PUBLIC WASM_ENABLE_INSTRUCTION_METERING=1)
+# Tail calls (return_call), which the component has no option for either:
+# CoreMark as wasm-coremark publishes it uses them.
+target_compile_definitions(${wamr_lib} PUBLIC WASM_ENABLE_TAIL_CALL=1)

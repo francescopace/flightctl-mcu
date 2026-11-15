@@ -25,11 +25,32 @@ The app exports `fc_abi_version` (with `FC_APP_ABI()`), and then any of these:
 - `tick()`: called every `TICK_MS` milliseconds (an env var of the app, from 10 to 60000, 100 by default). `fc_time_ms` gives the time.
 - `on_event(type, handle, value)`: called for each GPIO edge, timer, UART data, MQTT message, new config, or change in the broker connection.
 
-`fc_app.h` declares these prototypes, so a definition with another signature does not compile. The device refuses, when it downloads it, an app that exports neither `tick` nor `on_event`, that imports a function the firmware does not have, or that imports from the module `env`: that one was built with the interface of earlier firmware and must be rebuilt.
+`fc_app.h` declares these prototypes, so a definition with another signature does not compile. The device refuses, when it downloads it, an app that exports neither `tick` nor `on_event` (nor runs once, below), or that imports a function the firmware does not have. One that imports `env.set_state`, `env.log` or `env.led` was built with the interface of earlier firmware and must be rebuilt.
 
 All of them run on the app's thread, one at a time, so the app needs no locks. Each call may run a budget of instructions and wait at most a second in the device's functions (`FC_CALL_LIMIT_MS`). A trap, or a call past either limit, stops the app; the device restarts it after a few seconds and counts it in `status.applications[].restarts`. An app in an endless loop is stopped that way too, so it can always be updated or removed.
 
 A trap is the app's; a crash of the firmware is the device's, and it restarts. The device starts its saved apps at boot, before it reaches the server, so an app whose start crashes the firmware (a fault in the runtime as it loads the module, or in a driver the app opens) would restart it for good. The device counts such restarts: one that comes while an app's module is loading is that app's, otherwise it is every app's still in its first minute. An app counted twice in a row is not started again. Its status is `Error`, "crashed the device as it started", the spec is not retried, and the device goes on to the server, where the fleet can change it. It is tried again when its image or its env vars change, when the firmware changes, or after it leaves the spec. A restart that was not a crash (power, an update) resets the count; a crash is a fault, an abort or a watchdog on ESP-IDF, a fatal error on Zephyr.
+
+## Modules built for no device
+
+A module built for no device in particular, such as a benchmark, runs as it was published. The fleet names the export to call in the app's env var `FC_ENTRY`; a module with neither `tick` nor `on_event` that exports `_start` needs none. The device calls that export once, with no arguments:
+
+- once the agent has had nothing on hand for 2 s (no status update due or being sent, no spec being applied), and at most 30 s after the app started; until then the app is `Preparing`, and its memory is not taken yet. Right after a change the agent applies the spec and sends two status updates, each a TLS exchange: on a chip with one core they would take CPU from the first seconds of the run, where a benchmark such as CoreMark calibrates itself. At boot it also waits for the agent to connect;
+- with no instruction budget: it may run for as long as it needs. Removing or updating the app stops it within a few instructions, at its next branch or call;
+- on the app's thread, at the priority of the agent's threads, so they take turns on the CPU;
+- when it returns, the app is `Completed` and not run again until its image or env vars change, or the device restarts. What it returned is its state, in `customInfo["app.<name>"]`, such as `run() returned 12.500`; a float is given to the thousandth. A trap is an `Error`, and it is run again after a few seconds, as any app.
+
+Such a module may import `env.clock_ms`, as CoreMark does: the milliseconds since the app started, as an i32 or an i64. That is the only function the device has in `env`, the module that clang's `wasm-ld --allow-undefined` and Emscripten import from by default; any other is refused when downloaded. It may also use tail calls (`return_call`). It may not yet import from `fc`: its call has none of an app's handles, events or limits on waits around it.
+
+[CoreMark](../wasm-apps/coremark/fetch.sh) runs that way, from either published build: wasm3's, 7.7 KB with 64 KB of memory, or wasm-coremark's, 12.5 KB with 128 KB. Neither exports `__heap_base`, so the device holds all their memory, in one block (see below). `run()` runs for at least 10 seconds and returns the score, in iterations per second (0 when the run was not valid); the scores measured are in [RESULTS.md](RESULTS.md#coremark):
+
+```yaml
+        - name: coremark
+          appType: container
+          image: <registry>/flightctl-mcu/coremark:wasm3
+          envVars:
+            FC_ENTRY: run
+```
 
 An app that polls a sensor every second needs only `tick`. An app that waits for a button or a command sleeps between events and costs no CPU. Other periods are timers (`fc_timer_start`), stopped with `fc_close`.
 
@@ -111,21 +132,22 @@ Two more ways are part of the interface, for when the firmware has them ([ROADMA
 
 | | |
 |---|---|
-| Apps per device | 2 |
+| Apps per device | 2; 1 on the Pico W, whose kernel heap has room for one app thread (a second app is `Error`, "cannot start thread") |
 | Module | 64 KB |
-| Linear memory | one 64 KB page, shrunk to what the module uses (see below) |
+| Linear memory | one 64 KB page, shrunk to what the module uses (see below); a module that does not export `__heap_base` and `__data_end` keeps all it declares |
 | Open handles per app (GPIOs, LEDs, timers...) | 12 |
 | Timers per app | 4 |
 | Storage per app | 4 KB |
 | Queued events | 16 per app; past that the oldest go, and the app hears how many with `FC_EV_OVERFLOW` |
 | One call of `init`, `tick` or `on_event` | 20 million instructions, and 1 s of waiting |
+| The export in `FC_ENTRY`, or `_start` | no limit, stopped when the app is removed or updated |
 | One wait (`fc_sleep_ms`, `fc_uart_read`) | 100 ms |
 
 The instruction budget is a first figure, to be measured on a C3, the slowest chip, so that it comes to about a second there.
 
 What limits an app on a small chip is the heap, not the 64 KB the device accepts for a `.wasm`. Each app takes the module as WAMR's fast interpreter loads it (about 2.5 to 3.5 times the `.wasm`), its linear memory (static data and the 1 KB stack), about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)).
 
-There is no libc: `fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `fc_config_double`, `fc_config_milli`, `FC_STR`). They are compiled into the app, so they can change without touching the interface. Build and push with `wasm-apps/build.sh <app> <version>`, and keep its link flags. Exporting `__heap_base` and `__data_end` lets WAMR shrink the WebAssembly memory page to what the module actually uses, without which an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses.
+There is no libc: `fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `fc_config_double`, `fc_config_milli`, `FC_STR`). They are compiled into the app, so they can change without touching the interface. Build and push with `wasm-apps/build.sh <app> <version>`, and keep its link flags. Exporting `__heap_base` and `__data_end` lets WAMR shrink the WebAssembly memory page to what the module actually uses, without which an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses. Tail calls are the one feature beyond the MVP it has.
 
 ## Examples
 
@@ -135,3 +157,5 @@ Neither has a `tick`: timers wake them, and they sleep in between.
 - [trend](../wasm-apps/trend/trend.c): no grants needed. It reports whether the temperature is rising or falling, and how fast. With `metrics` granted it will also send the temperature and the rate as metrics. About 2 KB.
 
 On a chip without a temperature sensor both set their state to say so and stay idle, with no timer running.
+
+- [CoreMark](../wasm-apps/coremark/fetch.sh), as published, not rebuilt: `wasm-apps/coremark/fetch.sh` downloads both builds and checks them against their SHA-256, then `wasm-apps/push.sh coremark wasm3` pushes one. See [Modules built for no device](#modules-built-for-no-device).

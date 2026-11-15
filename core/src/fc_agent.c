@@ -101,6 +101,9 @@ typedef struct {
 
     pthread_mutex_t lock;
     pthread_cond_t status_wake;
+    int apps_ready; /* under lock: the saved apps are loaded, the status may list them */
+    int putting;    /* under lock: a status update is being built or sent */
+    int applying;   /* under lock: a new spec is being applied */
     int status_urgent;      /* the agent's own change: report soon */
     int status_dirty;       /* an app or the firmware changed something */
     char rendered_version[32]; /* last version applied without errors */
@@ -573,6 +576,21 @@ static void request_status(agent_t *a)
 
 static agent_t *s_running;
 
+int fc_agent_busy(void)
+{
+    agent_t *a = s_running;
+    if (a == NULL) {
+        /* Not started yet: at boot it is about to connect, and its first
+         * TLS handshake needs a 16.7 KB block, which a classic ESP32 did not
+         * have with CoreMark's 64 KB taken. */
+        return 1;
+    }
+    pthread_mutex_lock(&a->lock);
+    int busy = a->status_urgent || a->status_dirty || a->putting || a->applying;
+    pthread_mutex_unlock(&a->lock);
+    return busy;
+}
+
 void fc_agent_notify_status(void)
 {
     if (s_running != NULL) {
@@ -796,6 +814,13 @@ static void *status_thread(void *arg)
     agent_t *a = arg;
     int interval = a->cfg->status_interval_s > 0 ? a->cfg->status_interval_s : 60;
     time_t last_ok = time(NULL), last_put = 0;
+    /* The first status lists the saved apps: they start once this thread
+     * runs (fc_agent_run). */
+    pthread_mutex_lock(&a->lock);
+    while (!a->apps_ready) {
+        pthread_cond_wait(&a->status_wake, &a->lock);
+    }
+    pthread_mutex_unlock(&a->lock);
     for (;;) {
         /* Wait until a status is due: the interval, an urgent change, an
          * app change (grouped), or a certificate renewal. */
@@ -832,6 +857,7 @@ static void *status_thread(void *arg)
         }
         a->status_urgent = 0;
         a->status_dirty = 0;
+        a->putting = 1;
         pthread_mutex_unlock(&a->lock);
 
         if (time(NULL) - last_ok > STATUS_STALL_REBOOT_S) {
@@ -851,6 +877,9 @@ static void *status_thread(void *arg)
             renew_cert_if_due(a);
         }
         int ok = put_status(a) == 0;
+        pthread_mutex_lock(&a->lock);
+        a->putting = 0;
+        pthread_mutex_unlock(&a->lock);
         last_put = time(NULL);
         if (ok) {
             last_ok = last_put;
@@ -1128,8 +1157,14 @@ static void *spec_thread(void *arg)
             continue;
         }
         if (r.status == 200) {
+            pthread_mutex_lock(&a->lock);
+            a->applying = 1;
+            pthread_mutex_unlock(&a->lock);
             apply_rendered(a, r.body);
             request_status(a);
+            pthread_mutex_lock(&a->lock);
+            a->applying = 0;
+            pthread_mutex_unlock(&a->lock);
             pthread_mutex_lock(&a->lock);
             int decommissioning = a->decom != DECOM_NONE;
             pthread_mutex_unlock(&a->lock);
@@ -1309,9 +1344,6 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     }
     a.spec_sess = fc_http_session_new();
     a.status_sess = fc_http_session_new();
-    if (fc_agent_apps_start(cfg) != 0) {
-        fc_port_log(FC_LOG_WARN, "WASM runtime unavailable: applications will be rejected");
-    }
     kv_load_str(KV_RENDERED, a.rendered_version, sizeof(a.rendered_version));
     kv_load_str(KV_OS_IMAGE, a.os_image, sizeof(a.os_image));
     kv_load_str(KV_OS_DIGEST, a.os_digest, sizeof(a.os_digest));
@@ -1359,6 +1391,20 @@ int fc_agent_run(const fc_agent_config_t *cfg)
         fc_port_log(FC_LOG_ERROR, "cannot start the agent's status thread (a stack of %u KB)", (unsigned)(stack / 1024));
         return -1;
     }
+    /* The saved apps start after the status thread, unless the port
+     * started them earlier (fc_agent_apps_start, before the network): each
+     * app thread's stack comes from the same heap as the status thread's
+     * where the system has one (Zephyr). On a Pico W with two apps saved,
+     * they took it all at boot, the status thread could not start and the
+     * device was never heard from again. An app that finds no room for its
+     * thread is in Error instead, which the status reports. */
+    if (fc_agent_apps_start(cfg) != 0) {
+        fc_port_log(FC_LOG_WARN, "WASM runtime unavailable: applications will be rejected");
+    }
+    pthread_mutex_lock(&a.lock);
+    a.apps_ready = 1;
+    pthread_cond_signal(&a.status_wake);
+    pthread_mutex_unlock(&a.lock);
     /* The spec loop ends when the device is decommissioned; the status
      * thread then finishes it and restarts the device. */
     spec_thread(&a);

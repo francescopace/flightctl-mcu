@@ -1,3 +1,15 @@
 # ESP32 DevKit (classic): plain LED on GPIO 2, no RGB LED.
 CONFIG_FC_LED_GPIO=2
 # CONFIG_FC_LED_WS2812 is not set
+
+# The chip's highest clock (ESP-IDF's default is 160 MHz).
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# WASM apps with a 64 KB linear memory (CoreMark): it must find 64 KB in
+# one block next to the agent's TLS buffers. Fewer WiFi buffers, as on the
+# S2 and the C5, for heap (WiFi code stays in IRAM, a region of its own on
+# this chip).
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_RX_BA_WIN=4
