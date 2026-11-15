@@ -25,6 +25,10 @@ Checks not made yet:
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
 - [ ] Bearer tokens against a real registry (Harbor, Quay), never tried: `registry:3` asks for Basic.
 
+What the ESP-IDF firmware does not have, and the Zephyr port has:
+
+- [ ] What a crash was, in the status after the restart. ESP-IDF reports `resetReason` (`panic`, a watchdog) only; Zephyr also gives `lastFatalError`, with the reason, the thread, the uptime and the `pc`. The same on ESP-IDF, from the panic handler's record kept across the restart: the exception, the task, the `pc` and a few return addresses, decoded against the release's ELF. Coredumps are for after 1.0 ([below](#after-10)).
+
 What the Zephyr port does not have, and the ESP-IDF firmware has:
 
 - [ ] Protection of the device beyond signed images and anti-rollback: the device key is in the storage partition in clear, the flash is not encrypted. On the ESP32-S3 it takes Espressif's MCUboot port; a chip with TF-M (RP2350, nRF54L, STM32U5) would keep the key protected ([SECURITY.md](SECURITY.md#zephyr)).
@@ -70,7 +74,7 @@ Not planned here: burning eFuses on a real board. Secure Boot, flash encryption 
 
 Proposed for 2.0, from what similar products offer ([COMPARISON.md](COMPARISON.md)):
 
-- [ ] Crash reports: the backtrace of a panic in the status at the next boot, on both ports, and the full coredump sent off the device, to be decoded against the release's ELF. Flight Control has no place for a file from a device; the coredump could go to the registry as an artifact, with write credentials of its own.
+- [ ] Crash reports beyond `lastFatalError`: the full coredump sent off the device, to be decoded against the release's ELF. Flight Control has no place for a file from a device; the coredump could go to the registry as an artifact, with write credentials of its own.
 - [ ] Cellular (LTE-M, NB-IoT): a modem as the link, through ESP-IDF's PPP or Zephyr's cellular drivers. A long-poll held open over cellular costs data and power, so it comes with the battery-powered devices above.
 - [ ] Devices without IP (BLE, Thread) through a Linux gateway in the same fleet: the gateway's Flight Control agent, or an app on it, holds the device's identity and passes its spec, status and firmware.
 - [ ] More silicon: Nordic nRF (nRF7002 WiFi, nRF91 cellular), RP2350, STM32U5, the last two with TF-M to keep the device key protected.

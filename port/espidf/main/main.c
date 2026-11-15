@@ -246,9 +246,9 @@ static void sta_config(wifi_config_t *wc, const char *ssid, const char *pass)
  * Espressif's provisioning app. Security 1: X25519 key exchange, the session
  * authenticated by the proof of possession, which is also the access point's
  * WPA2 password. The network is tried with the access point still up, so the
- * installer is told whether it worked. Once joined, it is kept by the WiFi
- * driver (in the default NVS partition, encrypted in the secure variant);
- * erasing it (or the flash) starts provisioning again. */
+ * installer is told whether it worked. Once joined, it is kept with the
+ * credentials (keep_network); provisioning the device again, or erasing the
+ * flash, starts field provisioning again. */
 static int field_join(void *ctx, const char *ssid, const char *pass)
 {
     wifi_config_t wc;
@@ -304,6 +304,30 @@ static int scan(fc_prov_ap_t *aps)
     return count;
 }
 
+/* The network given in the field, kept with the credentials (encrypted in the
+ * secure variant): the next boot joins it as a network given at the factory.
+ * Not by the WiFi driver: the network it was given while tried, in RAM, is
+ * the same, and setting it again with flash storage did not write it. */
+static bool keep_network(const char *ssid, const char *pass)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open_from_partition(CREDS_PART, CREDS_NS, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_set_str(h, "wifi_ssid", ssid);
+        if (err == ESP_OK) {
+            err = nvs_set_str(h, "wifi_pass", pass);
+        }
+        if (err == ESP_OK) {
+            err = nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "WiFi: keeping the network: %s", esp_err_to_name(err));
+    }
+    return err == ESP_OK;
+}
+
 static void field_provisioning(const char *pop)
 {
     fc_prov_ap_t *aps = calloc(FC_PROV_SCAN_MAX, sizeof(*aps));
@@ -340,20 +364,17 @@ static void field_provisioning(const char *pop)
     free(aps);
 
     /* Joined: close the access point and keep the network. */
-    wifi_config_t wc;
-    sta_config(&wc, ssid, pass);
-    memset(pass, 0, sizeof(pass));
     s_reconnect = true;
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
-    if (esp_wifi_set_config(WIFI_IF_STA, &wc) != ESP_OK) {
+    if (!keep_network(ssid, pass)) {
         ESP_LOGW(TAG, "WiFi: cannot keep the network: it will be asked for again after a restart");
     }
-    memset(&wc, 0, sizeof(wc));
+    memset(pass, 0, sizeof(pass));
     ESP_LOGI(TAG, "field provisioning: done");
 }
 
-/* A network from an earlier field provisioning, kept by the WiFi driver. */
+/* A network from a field provisioning by an earlier firmware, which left it to
+ * the WiFi driver to keep (Espressif's network_provisioning). */
 static bool kept_network(void)
 {
     wifi_config_t wc = {0};

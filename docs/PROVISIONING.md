@@ -62,10 +62,11 @@ access point closes, and the device enrolls. The protocol is served by the
 agent core (`core/src/fc_prov.c`), the same code on both ports; the access
 point and the scan are the port's (`port/espidf/main/main.c`).
 
-The network is kept by the WiFi driver, in the default NVS partition (under
-flash encryption in the secure variant). The device uses it from then on;
-erasing the flash brings the access point back. A network given at the
-factory (`--wifi-ssid`) always wins, and is not stored by the driver.
+The network is kept with the device's credentials, as if it had been given at
+the factory: in `fc_creds`, or in the encrypted store in the secure variant.
+The device uses it from then on; provisioning the device again, or erasing the
+flash, brings the access point back. A network given at the factory
+(`--wifi-ssid`) replaces it.
 
 `CONFIG_FC_FIELD_PROVISIONING` (on by default) adds 17.4 KB of flash on the
 ESP32-S3 (ESP-IDF 6.0.3, debug build) and no static RAM to speak of (16

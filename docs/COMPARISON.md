@@ -8,7 +8,7 @@ flightctl-mcu next to the services and open-source projects that manage microcon
 
 | | Self-hosted | Open source | ESP-IDF | Zephyr | Linux in the same fleets | Delta updates | Remote config | Crash reports | Apps without reflashing |
 |---|---|---|---|---|---|---|---|---|---|
-| **flightctl-mcu** | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | 🔜 💡 | ✅ |
+| **flightctl-mcu** | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 🔜 💡 | ✅ |
 | **Golioth** | ❌ | 🟡 | ✅ | ✅ | 🟡 | ➖ | ✅ | ➖ | 🟡 |
 | **Memfault** | ❌ | 🟡 | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ | ❌ |
 | **Mender MCU** | ❌ | 🟡 | ❌ | ✅ | ✅ | ❌ | ➖ | ➖ | ❌ |
@@ -59,7 +59,7 @@ These three manage ESP-IDF or Zephyr devices as a product, and are the nearest t
 | **Staged rollouts** | ✅ Flight Control's batches with a failure threshold | ✅ cohorts | ✅ cohorts and percentages | 🟡 phased deployments, on paid plans |
 | **Remote configuration** | ✅ files the firmware can reject | ✅ settings | ➖ | ➖ |
 | **Health and alerts** | ✅ CPU, heap, storage against the fleet's rules | 🟡 device state and logs | ✅ metrics and alerts | 🟡 inventory |
-| **Crash reports** | 🔜 the last fatal error in the status (Zephyr) · 💡 backtraces and coredumps off the device | ➖ | ✅ its core feature | ➖ |
+| **Crash reports** | 🟡 after a restart, `resetReason` in the status; on Zephyr also `lastFatalError` (reason, thread, `pc`) · 🔜 `lastFatalError` on ESP-IDF · 💡 backtraces and coredumps off the device | ➖ | ✅ its core feature | ➖ |
 | **Remote log** | 🔜 through the remote terminal | ✅ | ✅ with crashes | ➖ |
 | **Remote commands** | 🔜 Flight Control's terminal, with a fixed set of commands | ✅ RPC | ➖ | ➖ |
 | **Data from apps** | 🔜 MQTT to your broker, metrics as OTLP to Flight Control | ✅ LightDB Stream and pipelines | 🟡 metrics only | ➖ |
