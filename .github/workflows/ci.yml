@@ -42,7 +42,7 @@ jobs:
         id: mbedtls
         with:
           version: ${{ env.MBEDTLS_VERSION }}
-      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
+      - run: third_party/fetch-wamr.sh
       - name: WASM apps (alarm v1 and v2, trend v1)
         run: |
           export PATH="$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)"):$PATH"
@@ -74,7 +74,7 @@ jobs:
         id: mbedtls
         with:
           version: ${{ env.MBEDTLS_VERSION }}
-      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
+      - run: third_party/fetch-wamr.sh
       - name: host agent (the provisioning test runs its fc-prov-host)
         run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} port/host/build-ci.sh
       - name: Zephyr's field provisioning against esp_prov
@@ -146,7 +146,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory '*'
-      - run: third_party/fetch-wamr.sh && third_party/fetch-detools.sh
+      - run: third_party/fetch-wamr.sh
       # The Zephyr tree (about 900 MB) changes only with the pinned version.
       - uses: actions/cache@v6
         with:

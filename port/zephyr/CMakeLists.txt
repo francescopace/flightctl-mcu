@@ -44,11 +44,6 @@ set(WAMR_BUILD_TAIL_CALL 1)
 set(WAMR_ROOT_DIR ${ROOT}/third_party/wamr)
 include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 
-# detools (third_party/fetch-detools.sh): firmware deltas, as in the other
-# builds (CMakeLists.txt at the root).
-set(DETOOLS ${ROOT}/third_party/detools/c)
-set(DETOOLS_SRCS ${DETOOLS}/detools.c ${DETOOLS}/heatshrink/heatshrink_decoder.c)
-
 target_sources(app PRIVATE
     src/main.c
     ${ROOT}/port/zephyr/fc_port_zephyr.c
@@ -63,7 +58,6 @@ target_sources(app PRIVATE
     ${ROOT}/core/src/fc_resources.c
     ${ROOT}/core/src/fc_delta.c
     ${ROOT}/third_party/cjson/cJSON.c
-    ${DETOOLS_SRCS}
     ${WAMR_RUNTIME_LIB_SOURCE})
 # Boards with WiFi: the network, given at the factory, or in the field where
 # the board can open an access point (with a DHCP server for installers).
@@ -78,15 +72,12 @@ if(NOT CONFIG_COMMON_LIBC_MALLOC)
     target_sources(app PRIVATE ${ROOT}/port/zephyr/fc_heap_zephyr.c)
 endif()
 target_include_directories(app PRIVATE
-    ${ROOT}/core/include ${ROOT}/core/src ${ROOT}/third_party/cjson ${ROOT}/port/zephyr
-    ${DETOOLS} ${DETOOLS}/heatshrink)
+    ${ROOT}/core/include ${ROOT}/core/src ${ROOT}/third_party/cjson ${ROOT}/port/zephyr)
 # WAMR 2.4.5's Zephyr port includes <autoconf.h> and <version.h>, which Zephyr
 # generates under zephyr/ and no longer puts on the include path as they are.
 target_include_directories(app PRIVATE ${ZEPHYR_BINARY_DIR}/include/generated/zephyr)
 target_compile_definitions(app PRIVATE
-    CJSON_NESTING_LIMIT=32
-    DETOOLS_CONFIG_FILE_IO=0 DETOOLS_CONFIG_COMPRESSION_NONE=0 DETOOLS_CONFIG_COMPRESSION_LZMA=0
-    DETOOLS_CONFIG_COMPRESSION_CRLE=0 HEATSHRINK_DYNAMIC_ALLOC=1)
+    CJSON_NESTING_LIMIT=32)
 if(CONFIG_FC_AGENT_STACK_SIZE)
     target_compile_definitions(app PRIVATE FC_AGENT_STACK_SIZE=${CONFIG_FC_AGENT_STACK_SIZE})
 endif()
@@ -94,6 +85,3 @@ endif()
 # the rest stays optimized for size. With -O2 for everything the ESP32-S3's
 # data is 5.6 KB larger than its RAM.
 set_source_files_properties(${WAMR_RUNTIME_LIB_SOURCE} PROPERTIES COMPILE_OPTIONS "-O2")
-set_source_files_properties(${DETOOLS_SRCS} PROPERTIES
-    COMPILE_DEFINITIONS "malloc=fc_delta_alloc;free=fc_delta_free"
-    COMPILE_OPTIONS "-w;-fwrapv")

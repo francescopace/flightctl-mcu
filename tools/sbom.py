@@ -15,7 +15,7 @@ components' package URLs and CPEs. --upload sends it to Trustify the way
 Flight Control's own client does (POST /api/v2/sbom, label sha256~<digest>).
 
 Versions come from where they are set: cJSON's header, the fetch scripts
-(WAMR, detools, Zephyr), the ESP-IDF lock files (port/espidf/dependencies.lock.<chip>),
+(WAMR, Zephyr), the ESP-IDF lock files (port/espidf/dependencies.lock.<chip>),
 and the Zephyr tree's own files (third_party/zephyr-ws). The mbedTLS that comes
 with an ESP-IDF release is not in this repository: MBEDTLS_IN_ESP_IDF names it.
 """
@@ -56,7 +56,7 @@ def grep(path, pattern):
 
 
 # CPE names as NVD's dictionary has them (checked November 2026). MCUboot,
-# littlefs, picolibc and detools are not in it: they get none.
+# littlefs and picolibc are not in it: they get none.
 def cpe(vendor, product, version, part="a"):
     return f"cpe:2.3:{part}:{vendor}:{product}:{version}:*:*:*:*:*:*:*"
 
@@ -88,7 +88,6 @@ def core_components():
     cjson = ".".join(grep("third_party/cjson/cJSON.h", rf"#define CJSON_VERSION_{p} (\d+)")
                      for p in ("MAJOR", "MINOR", "PATCH"))
     wamr = grep("third_party/fetch-wamr.sh", r'WAMR_TAG="\$\{WAMR_TAG:-([^}]+)\}"')
-    detools = grep("third_party/fetch-detools.sh", r'DETOOLS_TAG="\$\{DETOOLS_TAG:-([^}]+)\}"')
     return [
         component("flightctl-mcu", version, f"pkg:github/francescopace/flightctl-mcu@{commit}", "application",
                   license_id="Apache-2.0", description="The Flight Control agent for microcontrollers"),
@@ -98,8 +97,6 @@ def core_components():
                   f"pkg:github/bytecodealliance/wasm-micro-runtime@{wamr}",
                   cpe_id=cpe("bytecodealliance", "webassembly_micro_runtime", wamr.removeprefix("WAMR-")),
                   license_id="Apache-2.0", description="WAMR, fast interpreter only"),
-        component("detools", detools, f"pkg:github/eerimoq/detools@{detools}", license_id="BSD-2-Clause",
-                  description="C library, with the heatshrink decoder it includes: applies firmware deltas"),
     ]
 
 

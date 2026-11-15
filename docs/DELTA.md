@@ -30,7 +30,9 @@ tool Espressif's `esp_delta_ota` uses: bsdiff's algorithm, in a patch that is
 applied in order (`sequential`), compressed with heatshrink. `fw-push.py`
 uses the `detools` Python package if it is installed, or installs it in a
 virtual environment in `build/detools-venv` the first time (it has C
-extensions: a compiler and the Python headers are needed).
+extensions: a compiler and the Python headers are needed). The device does
+not use detools: it decodes that format with its own code
+(`core/src/fc_delta.c`).
 
 ## In the registry
 
@@ -82,24 +84,21 @@ images, and what it rebuilds is the signed image, byte for byte.
 ## A delta is not trusted until the end
 
 The device decodes a delta before it can check its digest, which comes with
-the last byte, possibly over a registry that is plain HTTP. What stands between a
+the last byte, from a registry that anyone with an account can push to. What stands between a
 hostile delta and the device:
 
 - the decoder reads only inside the running image and writes at most the new
   image's size into a slot that is not committed (`core/src/fc_delta.c`);
-- it gets one allocation of at most 5 KB: a delta asking for a larger window
-  is refused;
+- it allocates about 2.5 KB for its state and the window the delta asks for,
+  at most 4 KB: a delta asking for a larger window is refused;
 - the rebuilt image is committed only if its sha256 is the one in the signed
   manifest.
 
-detools' C library computes with sizes read from the patch in plain `int`s,
-and the fuzzer found a signed overflow in it within seconds (reported upstream:
-[eerimoq/detools#22](https://github.com/eerimoq/detools/issues/22)). Version
-0.53.1 bounds it for in-place patches; sequential patches, which these devices
-use, still add the patch's offsets without a bound. It is
-built with wrapping arithmetic (`-fwrapv`) for that reason, and `fc_delta.c`
-refuses any seek outside the old image before detools counts it. `tests/fuzz/fuzz_delta.c`
-fuzzes the decoder in CI with the others.
+The decoder is ours rather than detools' C library, which applies many kinds
+of patch: these devices need one, and its loop is short. Every size read from
+the patch is kept in a `size_t` and checked against what is left of the two
+images before it is used, where detools' library computes with plain `int`s
+that a patch can overflow. `tests/fuzz/fuzz_delta.c` fuzzes the decoder in CI with the others.
 
 ## Other ports
 
@@ -129,11 +128,7 @@ MCUboot (`fw-push.py ... PLATFORM=zephyr.signed.bin`).
 - **A device flashed over USB** takes a delta only if what was flashed is,
   byte for byte, an image that was pushed (it is, when both come from the same
   build).
-- **Tried on two boards.** A Raspberry Pi Pico W with Zephyr and MCUboot
-  ([ZEPHYR.md](ZEPHYR.md)): a delta of 8.6 KB rebuilt a 734 KB image from the
-  running one in 10 s, download included; and a delta took the board from
-  its Zephyr 4.3 build to the 4.5 one (232 KB, a third of the image). An
-  ESP32-S3 with both ports: the ESP-IDF firmware went from its debug build to
+- **Tried on a board.** An ESP32-S3 with both ports: the ESP-IDF firmware went from its debug build to
   the release one with a delta of 511 KB (half of the image: the two are
   compiled differently) in 13 s, the Zephyr one from a build to the next
   with 19 KB (2.2%) in 8 s. The other ESP32 chips: emulator only.

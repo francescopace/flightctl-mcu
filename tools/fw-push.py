@@ -51,7 +51,7 @@ ZEPHYR_LAYER_TYPE = "application/vnd.zephyr.mcuboot-image"
 DELTA_TYPE = "application/vnd.flightctl-mcu.firmware.delta.v1+detools"
 DELTA_FROM = "io.flightctl-mcu.delta.from"
 DELTA_FROM_SIZE = "io.flightctl-mcu.delta.from-size"
-DETOOLS_VERSION = "0.53.1"  # the version third_party/fetch-detools.sh fetches for the device
+DETOOLS_VERSION = "0.53.1"  # makes the deltas; the device decodes their format (core/src/fc_delta.c)
 # What the device's decoder is built for (core/src/fc_delta.h): a 4 KB window.
 HEATSHRINK_WINDOW, HEATSHRINK_LOOKAHEAD = 12, 8
 EMPTY = b"{}"

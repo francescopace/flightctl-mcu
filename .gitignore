@@ -9,7 +9,6 @@ port/espidf/sdkconfig.wifi
 port/espidf/sdkconfig.local
 tools/auto-approve/allowlist.yaml
 third_party/wamr/
-third_party/detools/
 third_party/zephyr-ws/
 wasm-apps/build/
 .ccache/

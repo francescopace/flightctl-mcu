@@ -4,7 +4,7 @@
  *
  * The patch is a detools "sequential" patch compressed with heatshrink
  * (https://github.com/eerimoq/detools, the format of Espressif's
- * esp_delta_ota): bsdiff's diff and extra blocks in the order they are
+ * esp_delta_ota), decoded by fc_delta.c, not by detools' library: bsdiff's diff and extra blocks in the order they are
  * needed. The old image is read at random; the new one comes out in order,
  * ready for an OTA slot.
  *

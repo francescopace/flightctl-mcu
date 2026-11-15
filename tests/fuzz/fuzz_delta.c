@@ -1,5 +1,5 @@
 /*
- * Fuzzes the firmware delta decoder (fc_delta.c over detools and heatshrink)
+ * Fuzzes the firmware delta decoder (fc_delta.c)
  * with arbitrary patches against a fixed old image. A device decodes a patch
  * before its digest is checked, so the decoder sees whatever the network
  * gives it: it must never read outside the old image, write more than the
