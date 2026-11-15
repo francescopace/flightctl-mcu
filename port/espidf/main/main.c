@@ -15,20 +15,7 @@
 #include "esp_mac.h"
 #include "esp_wifi.h"
 #if CONFIG_FC_FIELD_PROVISIONING
-#include "network_provisioning/manager.h"
-#if CONFIG_FC_FIELD_PROVISIONING_BLE
-#include "network_provisioning/scheme_ble.h"
-/* BLE: advertised as FC-xxxxxx; the Bluetooth memory is given back when
- * provisioning is over, or right away on a device that has its network. */
-#define PROV_SCHEME network_prov_scheme_ble
-#define PROV_SCHEME_HANDLER NETWORK_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
-#define PROV_HOW "over BLE as"
-#else
-#include "network_provisioning/scheme_softap.h"
-#define PROV_SCHEME network_prov_scheme_softap
-#define PROV_SCHEME_HANDLER NETWORK_PROV_EVENT_HANDLER_NONE
-#define PROV_HOW "on access point"
-#endif
+#include "fc_prov.h"
 #endif
 #include "hw.h"
 #include "cJSON.h"
@@ -195,75 +182,182 @@ static void load_creds(creds_t *c)
 }
 static EventGroupHandle_t s_wifi;
 #define WIFI_UP BIT0
-#define PROV_OVER BIT1 /* field provisioning ended, its memory given back */
+
+/* Whether the station reconnects by itself: not while field provisioning
+ * tries a network, which reports how it went instead. */
+static volatile bool s_reconnect = true;
+
+#if CONFIG_FC_FIELD_PROVISIONING
+static volatile fc_prov_join_t s_join = FC_PROV_JOINING;
+
+/* Why a join failed, as Espressif's provisioning manager tells them apart. */
+static fc_prov_join_t join_failure(uint8_t reason)
+{
+    switch (reason) {
+    case WIFI_REASON_AUTH_EXPIRE:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_MIC_FAILURE:
+        return FC_PROV_BAD_PASSWORD;
+    default:
+        return FC_PROV_NOT_FOUND;
+    }
+}
+#endif
 
 static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && (id == WIFI_EVENT_STA_START || id == WIFI_EVENT_STA_DISCONNECTED)) {
         xEventGroupClearBits(s_wifi, WIFI_UP);
-        esp_wifi_connect();
+#if CONFIG_FC_FIELD_PROVISIONING
+        if (id == WIFI_EVENT_STA_DISCONNECTED && !s_reconnect && s_join == FC_PROV_JOINING) {
+            uint8_t reason = ((wifi_event_sta_disconnected_t *)data)->reason;
+            if (reason != WIFI_REASON_ASSOC_LEAVE) { /* not our own disconnect before a try */
+                s_join = join_failure(reason);
+            }
+        }
+#endif
+        if (s_reconnect) {
+            esp_wifi_connect();
+        }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *ev = data;
         ESP_LOGI(TAG, "got IP " IPSTR, IP2STR(&ev->ip_info.ip));
+#if CONFIG_FC_FIELD_PROVISIONING
+        s_join = FC_PROV_JOINED;
+#endif
         xEventGroupSetBits(s_wifi, WIFI_UP);
     }
 }
 
-#if CONFIG_FC_FIELD_PROVISIONING
-/* Provisioning in the field: a device that left the factory without WiFi
- * (provision.py --pop, no --wifi-ssid) opens an access point, FC-xxxxxx (or,
- * in the ble variant, advertises it over BLE), where an installer gives it
- * the site's network with esp_prov or Espressif's provisioning app. Security 1: X25519 key exchange, the
- * session authenticated by the proof of possession, which is also the
- * access point's WPA2 password. The network is kept by the WiFi driver (in
- * the default NVS partition, encrypted in the secure variant); erasing it
- * (or the flash) starts provisioning again. */
-static void on_prov(void *arg, esp_event_base_t base, int32_t id, void *data)
+static void sta_config(wifi_config_t *wc, const char *ssid, const char *pass)
 {
-    if (id == NETWORK_PROV_WIFI_CRED_RECV) {
-        ESP_LOGI(TAG, "field provisioning: network \"%s\" received", (const char *)((wifi_sta_config_t *)data)->ssid);
-    } else if (id == NETWORK_PROV_WIFI_CRED_FAIL) {
-        ESP_LOGW(TAG, "field provisioning: cannot join that network (%s), waiting for another",
-                 *(network_prov_wifi_sta_fail_reason_t *)data == NETWORK_PROV_WIFI_STA_AUTH_ERROR ? "wrong password" : "not found");
-        network_prov_mgr_reset_wifi_sm_state_on_failure();
-    } else if (id == NETWORK_PROV_END) {
-        ESP_LOGI(TAG, "field provisioning: done");
-        network_prov_mgr_deinit();
-        xEventGroupSetBits(s_wifi, PROV_OVER);
+    memset(wc, 0, sizeof(*wc));
+    strlcpy((char *)wc->sta.ssid, ssid, sizeof(wc->sta.ssid));
+    strlcpy((char *)wc->sta.password, pass != NULL ? pass : "", sizeof(wc->sta.password));
+}
+
+#if CONFIG_FC_FIELD_PROVISIONING
+/* Provisioning in the field (core/src/fc_prov.c, the same as on Zephyr): a
+ * device that left the factory without WiFi (provision.py --pop, no
+ * --wifi-ssid) scans for networks, then opens an access point, FC-xxxxxx,
+ * where an installer gives it the site's network with esp_prov or
+ * Espressif's provisioning app. Security 1: X25519 key exchange, the session
+ * authenticated by the proof of possession, which is also the access point's
+ * WPA2 password. The network is tried with the access point still up, so the
+ * installer is told whether it worked. Once joined, it is kept by the WiFi
+ * driver (in the default NVS partition, encrypted in the secure variant);
+ * erasing it (or the flash) starts provisioning again. */
+static int field_join(void *ctx, const char *ssid, const char *pass)
+{
+    wifi_config_t wc;
+    sta_config(&wc, ssid, pass);
+    s_join = FC_PROV_JOINING;
+    esp_wifi_disconnect();
+    if (esp_wifi_set_config(WIFI_IF_STA, &wc) != ESP_OK || esp_wifi_connect() != ESP_OK) {
+        s_join = FC_PROV_NOT_FOUND;
+    }
+    return 0;
+}
+
+static fc_prov_join_t field_join_state(void *ctx)
+{
+    return s_join;
+}
+
+static uint8_t auth_of(wifi_auth_mode_t m)
+{
+    switch (m) {
+    case WIFI_AUTH_OPEN: return FC_PROV_AUTH_OPEN;
+    case WIFI_AUTH_WEP: return FC_PROV_AUTH_WEP;
+    case WIFI_AUTH_WPA_PSK: return FC_PROV_AUTH_WPA_PSK;
+    case WIFI_AUTH_WPA2_PSK: return FC_PROV_AUTH_WPA2_PSK;
+    case WIFI_AUTH_WPA_WPA2_PSK: return FC_PROV_AUTH_WPA_WPA2_PSK;
+    case WIFI_AUTH_WPA2_ENTERPRISE: return FC_PROV_AUTH_WPA2_ENTERPRISE;
+    case WIFI_AUTH_WPA3_PSK: return FC_PROV_AUTH_WPA3_PSK;
+    case WIFI_AUTH_WPA2_WPA3_PSK: return FC_PROV_AUTH_WPA2_WPA3_PSK;
+    default: return FC_PROV_AUTH_WPA2_PSK;
     }
 }
 
-/* 1: the WiFi driver has a network from an earlier field provisioning;
- * 2: provisioning started (the manager runs WiFi); 0: neither. */
-static int field_provisioning(const creds_t *c)
+/* The networks around, for the installer to pick from. */
+static int scan(fc_prov_ap_t *aps)
 {
-    network_prov_mgr_config_t cfg = {
-        .scheme = PROV_SCHEME,
-        .scheme_event_handler = PROV_SCHEME_HANDLER,
-    };
-    ESP_ERROR_CHECK(network_prov_mgr_init(cfg));
-    bool done = false;
-    network_prov_mgr_is_wifi_provisioned(&done);
-    if (done) {
-        network_prov_mgr_deinit();
-        return 1; /* the driver starts with the stored network */
+    uint16_t n = FC_PROV_SCAN_MAX;
+    wifi_ap_record_t *rec = calloc(n, sizeof(*rec));
+    int count = 0;
+    if (rec != NULL && esp_wifi_scan_start(NULL, true) == ESP_OK && esp_wifi_scan_get_ap_records(&n, rec) == ESP_OK) {
+        for (int i = 0; i < n; i++) {
+            fc_prov_ap_t *ap = &aps[count++];
+            strlcpy(ap->ssid, (const char *)rec[i].ssid, sizeof(ap->ssid));
+            memcpy(ap->bssid, rec[i].bssid, sizeof(ap->bssid));
+            ap->rssi = rec[i].rssi;
+            ap->channel = rec[i].primary;
+            ap->auth = auth_of(rec[i].authmode);
+        }
+    } else {
+        ESP_LOGW(TAG, "WiFi: the scan failed; the installer will have to type the network's name");
     }
-    if (c->pop == NULL) {
-        network_prov_mgr_deinit();
-        return 0;
-    }
+    esp_wifi_clear_ap_list();
+    free(rec);
+    return count;
+}
+
+static void field_provisioning(const char *pop)
+{
+    fc_prov_ap_t *aps = calloc(FC_PROV_SCAN_MAX, sizeof(*aps));
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-    char name[16];
-    snprintf(name, sizeof(name), "FC-%02X%02X%02X", mac[3], mac[4], mac[5]);
-    esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID, on_prov, NULL);
-    ESP_LOGW(TAG, "no WiFi network: field provisioning " PROV_HOW " %s", name);
-#if CONFIG_FC_FIELD_PROVISIONING_BLE
-    ESP_ERROR_CHECK(network_prov_mgr_start_provisioning(NETWORK_PROV_SECURITY_1, c->pop, name, NULL));
-#else
-    ESP_ERROR_CHECK(network_prov_mgr_start_provisioning(NETWORK_PROV_SECURITY_1, c->pop, name, c->pop));
-#endif
-    return 2;
+    wifi_config_t ap = {.ap = {.max_connection = 2, .authmode = WIFI_AUTH_WPA2_PSK}};
+    int n = snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "FC-%02X%02X%02X", mac[3], mac[4], mac[5]);
+    ap.ap.ssid_len = (uint8_t)n;
+    strlcpy((char *)ap.ap.password, pop, sizeof(ap.ap.password));
+
+    /* Tried networks stay in RAM: the driver keeps only the one that works. */
+    s_reconnect = false;
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    int ap_count = aps != NULL ? scan(aps) : 0;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
+    ESP_LOGW(TAG, "no WiFi network: field provisioning on access point %s", (const char *)ap.ap.ssid);
+
+    char ssid[33], pass[65];
+    int joined = 0;
+    fc_prov_config_t cfg = {
+        .pop = pop,
+        .port = 80,
+        .aps = aps,
+        .ap_count = ap_count,
+        .join = field_join,
+        .join_state = field_join_state,
+    };
+    while (fc_prov_serve(&cfg, ssid, pass, &joined) != 0 || !joined) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    free(aps);
+
+    /* Joined: close the access point and keep the network. */
+    wifi_config_t wc;
+    sta_config(&wc, ssid, pass);
+    memset(pass, 0, sizeof(pass));
+    s_reconnect = true;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
+    if (esp_wifi_set_config(WIFI_IF_STA, &wc) != ESP_OK) {
+        ESP_LOGW(TAG, "WiFi: cannot keep the network: it will be asked for again after a restart");
+    }
+    memset(&wc, 0, sizeof(wc));
+    ESP_LOGI(TAG, "field provisioning: done");
+}
+
+/* A network from an earlier field provisioning, kept by the WiFi driver. */
+static bool kept_network(void)
+{
+    wifi_config_t wc = {0};
+    return esp_wifi_get_config(WIFI_IF_STA, &wc) == ESP_OK && wc.sta.ssid[0] != '\0';
 }
 #endif
 
@@ -279,29 +373,24 @@ static void wifi_start(const creds_t *c)
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi, NULL);
 #if CONFIG_FC_FIELD_PROVISIONING
     if (c->ssid[0] == '\0') {
-#if !CONFIG_FC_FIELD_PROVISIONING_BLE
-        esp_netif_create_default_wifi_ap();
-#endif
-        int fp = field_provisioning(c);
-        if (fp == 0) {
+        if (kept_network()) {
+            ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+            ESP_ERROR_CHECK(esp_wifi_start()); /* with the network the driver kept */
+        } else if (c->pop != NULL) {
+            esp_netif_create_default_wifi_ap();
+            field_provisioning(c->pop);
+        } else {
             ESP_LOGE(TAG, "WiFi not configured: provision it (--wifi-ssid, or --pop to set it in the field)");
             vTaskDelay(portMAX_DELAY);
         }
-        if (fp == 1) {
-            ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-            ESP_ERROR_CHECK(esp_wifi_start());
-        }
-        /* After provisioning, not during it: its service (the BLE stack
-         * above all) holds memory the agent needs for an update. */
-        xEventGroupWaitBits(s_wifi, fp == 2 ? WIFI_UP | PROV_OVER : WIFI_UP, pdFALSE, pdTRUE, portMAX_DELAY);
+        xEventGroupWaitBits(s_wifi, WIFI_UP, pdFALSE, pdTRUE, portMAX_DELAY);
         return;
     }
 #endif
     /* Provisioned at the factory: this network, not one kept by the driver. */
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    wifi_config_t wc = {0};
-    strlcpy((char *)wc.sta.ssid, c->ssid, sizeof(wc.sta.ssid));
-    strlcpy((char *)wc.sta.password, c->password, sizeof(wc.sta.password));
+    wifi_config_t wc;
+    sta_config(&wc, c->ssid, c->password);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());

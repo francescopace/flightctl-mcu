@@ -48,6 +48,3 @@ CONFIG_WAMR_INTERP_FAST=y
 # CONFIG_WAMR_ENABLE_LIBC_BUILTIN is not set
 # CONFIG_WAMR_ENABLE_LIB_PTHREAD is not set
 
-# Field provisioning (port/espidf/main/main.c) runs protocomm's security 1:
-# X25519 and the proof of possession. ESP-IDF 6 builds it only on request.
-CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=y

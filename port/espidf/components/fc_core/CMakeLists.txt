@@ -10,12 +10,13 @@ idf_component_register(
          ${ROOT}/core/src/fc_board.c
          ${ROOT}/core/src/fc_resources.c
          ${ROOT}/core/src/fc_delta.c
+         ${ROOT}/core/src/fc_prov.c
          ${ROOT}/third_party/cjson/cJSON.c
          ${ROOT}/port/espidf/fc_port_espidf.c
     INCLUDE_DIRS ${ROOT}/core/include ${ROOT}/third_party/cjson
     PRIV_INCLUDE_DIRS ${ROOT}/core/src
     REQUIRES mbedtls pthread wamr
-    PRIV_REQUIRES soc nvs_flash bootloader_support esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update efuse)
+    PRIV_REQUIRES lwip soc nvs_flash bootloader_support esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update efuse)
 # cJSON is the core's copy, as in the host build (ESP-IDF 6 no longer has
 # one), with the agent's nesting limit: cJSON parses recursively, and its
 # default of 1000 levels overflowed the agent's 24 KB thread stacks

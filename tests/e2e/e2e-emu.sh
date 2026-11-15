@@ -15,9 +15,6 @@
 #   PREBUILT=1 tests/e2e/e2e-emu.sh       use port/espidf/build-<chip>{,-release,-broken} and
 #                                  wasm-apps/build/alarm-v2 as they are (CI: the firmware
 #                                  and WASM jobs' builds), instead of building
-#   PROV=ble tests/e2e/e2e-emu.sh         the plain run provisions WiFi over BLE (ble variant of the
-#                                  debug build, Bumble as controller: tests/e2e/ble-prov.sh) instead
-#                                  of SoftAP
 #   SECURE=1 tests/e2e/e2e-emu.sh         the secure variant (port/espidf/sdkconfig.secure): Secure
 #                                  Boot v2, flash encryption (release mode) and NVS
 #                                  encryption, burned into the emulated chip's eFuses on
@@ -71,8 +68,6 @@ if [[ "$SECURE" == 1 ]]; then
 else
   DEBUG_V=""; RELEASE_V=release; BROKEN_V=broken
 fi
-PROV="${PROV:-softap}"
-[[ "$SECURE" == 0 && "$PROV" == ble ]] && DEBUG_V=ble  # the device starts on the ble variant
 CERT="${CERT:-1}"
 CERT_TTL=120
 TAG="emu$(date +%s)"
@@ -314,33 +309,12 @@ NO_SIGN=1 ORAS_ARGS="--annotation io.flightctl-mcu.e2e=unsigned-$TAG" \
 log "boot v1 in the emulator"
 ESP_EMU="$(command -v esp-emu || echo "$HOME/.local/bin/esp-emu")"
 EMU_NET=(--net user)
-if [[ "$SECURE" == 0 && "$PROV" == ble ]]; then
-  # The phone side first: it is the BLE controller the emulator connects to.
-  tests/e2e/ble-prov.sh --pop "$POP" --wrong-pop "wrong-$POP" --ssid myssid --passphrase mypassword --timeout 300 \
-    >"$WORK/prov.log" 2>&1 &
-  BLE_PID=$!
-  for i in $(seq 1 120); do
-    grep -q 'BLE controller for the emulator' "$WORK/prov.log" && break
-    (( i == 120 )) && { cat "$WORK/prov.log"; fail "BLE controller not up"; }
-    sleep 2
-  done
-  EMU_NET+=(--elf "$DEBUG_DIR/flightctl_mcu_fw.elf" --ble-hci tcp:localhost:9544 --save-state)
-elif [[ "$SECURE" == 0 ]]; then
+if [[ "$SECURE" == 0 ]]; then
   EMU_NET=(--net "user,hostfwd=tcp::$PROV_PORT-:80" --wifi-fw-ap-password "$POP")
 fi
 "$ESP_EMU" --chip "$CHIP" --firmware "$WORK/flash.bin" "${EMU_NET[@]}" --timeout 2400s >"$WORK/emu.log" 2>&1 &
 EMU_PID=$!
-if [[ "$SECURE" == 0 && "$PROV" == ble ]]; then
-  log "WiFi provisioning in the field, over BLE"
-  wait "$BLE_PID" || { tail -20 "$WORK/prov.log"; fail "BLE field provisioning"; }
-  grep -q 'session refused' "$WORK/prov.log" || fail "wrong proof of possession not refused over BLE"
-  echo "ok: wrong proof of possession refused"
-  grep -q 'Provisioning was successful' "$WORK/prov.log" || fail "BLE field provisioning not confirmed"
-  grep -q 'field provisioning over BLE' "$WORK/emu.log" || fail "device not in BLE provisioning"
-  echo "ok: network given in the field over BLE, device connected"
-  # The controller stays until the device has shut its BLE down (tests/e2e/ble-prov.py).
-  grep -E 'the device (shut its BLE down|still used BLE)' "$WORK/prov.log" || true
-elif [[ "$SECURE" == 0 ]]; then
+if [[ "$SECURE" == 0 ]]; then
   log "WiFi provisioning in the field"
   for i in $(seq 1 60); do
     grep -q 'join, AID' "$WORK/emu.log" && break
@@ -359,8 +333,6 @@ elif [[ "$SECURE" == 0 ]]; then
   grep -q 'Provisioning was successful' "$WORK/prov.log" || fail "field provisioning not confirmed"
   echo "ok: network given in the field, device connected"
 fi
-# Up to 5 minutes: over BLE the agent starts only when provisioning has ended,
-# about 50 s of the device's time, and the emulator runs slowly meanwhile.
 for i in $(seq 1 150); do
   DEVICE=$(sed -n 's/.*device name: \([a-z0-9]*\).*/\1/p' "$WORK/emu.log" | head -1)
   [[ -n "$DEVICE" ]] && flightctl get "enrollmentrequest/$DEVICE" >/dev/null 2>&1 && break
@@ -371,28 +343,6 @@ echo "device: $DEVICE"
 printf 'devices:\n  - name: %s\n    labels:\n      stage: emu\n' "$DEVICE" > "$WORK/allowlist.yaml"
 tools/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
 wait_for 120 "device Online (debug build)" "st.get('summary', {}).get('status') == 'Online' and not ci.get('firmwareVersion', '').endswith('-release')"
-if [[ "$SECURE" == 0 && "$PROV" == ble ]]; then
-  # With its BLE backend the emulator runs at less than half speed, too slow
-  # for the test's 120 s certificates: the rest runs without it, on the flash
-  # as the device left it. This is also the boot of a device that has its
-  # network: no BLE, and its memory given back.
-  log "restart without BLE, on the flash the device wrote"
-  grep -q 'field provisioning: done' "$WORK/emu.log" || fail "agent started before provisioning ended"
-  seen=$(wc -l <"$WORK/emu.log")
-  kill -INT "$EMU_PID"
-  wait "$EMU_PID" 2>/dev/null || true
-  grep -q 'Flash state saved' "$WORK/emu.log" || fail "the emulator did not save its flash"
-  "$ESP_EMU" --chip "$CHIP" --firmware "$WORK/flash.bin" --net user --timeout 2400s >>"$WORK/emu.log" 2>&1 &
-  EMU_PID=$!
-  for i in $(seq 1 30); do
-    tail -n +"$((seen + 1))" "$WORK/emu.log" | grep -q 'got IP' && break
-    (( i == 30 )) && fail "no network after the restart"
-    sleep 2
-  done
-  tail -n +"$((seen + 1))" "$WORK/emu.log" | grep -q 'field provisioning over BLE' && fail "provisioning started again"
-  tail -n +"$((seen + 1))" "$WORK/emu.log" | grep -q 'BTDM memory released' || fail "BLE memory not given back at boot"
-  echo "ok: network kept, no BLE at boot, its memory given back"
-fi
 if [[ "$SECURE" == 1 ]]; then
   wait_for 30 "chip reports Secure Boot and flash encryption (release)" \
     "ci.get('secureBoot') == 'true' and ci.get('flashEncryption') == 'release'"

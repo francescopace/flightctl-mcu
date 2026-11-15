@@ -1,5 +1,5 @@
 /*
- * WiFi provisioning in the field, as the ESP-IDF firmware does it: the device
+ * WiFi provisioning in the field, on both ports, with Espressif's protocol: the device
  * opens an access point and an installer gives it the site's network with
  * Espressif's provisioning app (ESP SoftAP Prov) or esp_prov. This is the
  * part that does not depend on the radio: the HTTP endpoints, the session

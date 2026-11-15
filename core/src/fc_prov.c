@@ -23,7 +23,11 @@
 
 #include <errno.h>
 #include <netinet/in.h>
+#if defined(ESP_PLATFORM) && !defined(__ZEPHYR__) /* Zephyr's ESP32 HAL defines it too */
+#include <sys/poll.h> /* ESP-IDF has it only there */
+#else
 #include <poll.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
