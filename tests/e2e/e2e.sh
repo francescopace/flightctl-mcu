@@ -461,7 +461,19 @@ config_stored 25 1 "config from Git written" "config from Git not written"
 log "decommission"
 # Started, then Completed, then the device wipes its key and certificate and
 # restarts. It does not enroll again: that takes erasing its storage.
-flightctl decommission "device/$DEVICE" >/dev/null
+# The Zephyr builds get Unenroll, from the CLI as the UI sends it; the host
+# agent FactoryReset, which also removes its apps: the CLI and the UI do not
+# send it (flightctl 1.4 allows Unenroll only), the API takes it.
+if [[ "$DEVICE_KIND" == host ]]; then
+  DECOM_TARGET=FactoryReset
+  removals_before=$(grep -c 'removing app ' "$WORK/agent.log" || true)
+  curl -sSkf -X PUT -H "Authorization: Bearer $(kubectl create token flightctl-admin -n flightctl --duration=10m)" \
+    -H 'Content-Type: application/json' -d '{"target": "FactoryReset"}' \
+    "$API/api/v1/devices/$DEVICE/decommission" >/dev/null || fail "FactoryReset not accepted by the API"
+else
+  DECOM_TARGET=Unenroll
+  flightctl decommission "device/$DEVICE" >/dev/null
+fi
 wait_for 120 "device Decommissioned" "st.get('lifecycle', {}).get('status') == 'Decommissioned'"
 if [[ "$DEVICE_KIND" == host ]]; then
   for i in $(seq 1 30); do
@@ -472,7 +484,7 @@ if [[ "$DEVICE_KIND" == host ]]; then
   run_device   # the host agent exits to restart; the Zephyr build reboots
 fi
 for i in $(seq 1 60); do
-  grep -q "decommissioned (Unenroll): not enrolling" "$WORK/agent.log" && break
+  grep -q "decommissioned ($DECOM_TARGET): not enrolling" "$WORK/agent.log" && break
   (( i == 60 )) && fail "the device did not come back decommissioned"
   sleep 2
 done
@@ -483,6 +495,8 @@ echo "ok: decommissioned, and not enrolling again"
 if [[ "$DEVICE_KIND" == host ]]; then
   [[ ! -f "$WORK/data/mgmt.crt" && ! -f "$WORK/data/device.key" ]] || fail "key or certificate left behind"
   echo "ok: key and certificate wiped"
+  (( $(grep -c 'removing app ' "$WORK/agent.log") > removals_before )) || fail "FactoryReset left the app"
+  echo "ok: FactoryReset removed the app"
 fi
 
 log "PASS"

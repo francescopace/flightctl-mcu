@@ -147,7 +147,10 @@ for one).
   thread keeps the default. The core checks, and says so instead of
   overflowing.
 - **A fatal error restarts the device**, and what it was is kept in RAM and
-  logged at the next boot: Zephyr's default is to stop for ever.
+  logged at the next boot: Zephyr's default is to stop for ever. The status
+  says it too, in `customInfo`: `resetReason` is `panic`, as on ESP-IDF, and
+  `lastFatalError` gives the reason, the thread, the uptime and, on Arm, the
+  `pc` and `lr`.
 - **One DNS query at a time** is Zephyr's default; the agent's two threads
   ask together at start. **Four connections in all** is another: the two to
   Flight Control, DHCP and DNS used them up, and the one to the registry was

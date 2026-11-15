@@ -33,7 +33,8 @@ ARGS=(-cpu cortex-m3 -machine mps2-an385 -nographic -vga none
 # machine it runs on, or this machine's.
 if [[ "$(uname)" == Linux && -z "${ZEPHYR_DOCKER:-}" ]]; then
   cd "$ROOT"
-  QEMU="$(ls third_party/zephyr-sdk/hosttools/sysroots/*/usr/bin/qemu-system-arm 2>/dev/null | head -1)"
+  # || true: with pipefail, no SDK would end the script here, silently.
+  QEMU="$(ls third_party/zephyr-sdk/hosttools/sysroots/*/usr/bin/qemu-system-arm 2>/dev/null | head -1 || true)"
   exec "${QEMU:-qemu-system-arm}" "${ARGS[@]}"
 fi
 exec docker run --rm -i ${DOCKER_ARGS:-} -v "$ROOT:/project" -w /project "$ZEPHYR_IMAGE" \

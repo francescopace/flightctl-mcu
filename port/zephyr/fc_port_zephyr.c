@@ -37,6 +37,7 @@ static struct fs_mount_t s_mnt = {
 };
 
 static void report_last_fatal(void);
+static char s_fatal_text[112]; /* for customInfo: empty unless the last restart was a fatal error */
 
 int fc_port_zephyr_init(void)
 {
@@ -215,6 +216,12 @@ void fc_port_custom_info(void *obj)
 {
     cJSON_AddStringToObject((cJSON *)obj, "deviceClass", "zephyr");
     cJSON_AddStringToObject((cJSON *)obj, "board", CONFIG_BOARD_TARGET);
+    /* The fatal error the last restart came from, as ESP-IDF's resetReason
+     * says "panic": the console may have been gone before it got out. */
+    if (s_fatal_text[0] != '\0') {
+        cJSON_AddStringToObject((cJSON *)obj, "resetReason", "panic");
+        cJSON_AddStringToObject((cJSON *)obj, "lastFatalError", s_fatal_text);
+    }
 #if defined(CONFIG_MCUBOOT_IMG_MANAGER)
     /* The running image's: no update below it is installed. */
     char num[12];
@@ -325,9 +332,10 @@ static void report_last_fatal(void)
     s_fatal.magic = 0;
     s_restart_was_crash = 1;
     s_fatal.thread[sizeof(s_fatal.thread) - 1] = '\0';
-    fc_port_log(FC_LOG_ERROR, "restarted after a %s (%u) in thread \"%s\", %u ms after boot, pc 0x%08x lr 0x%08x",
-                fatal_reason(s_fatal.reason), (unsigned)s_fatal.reason, s_fatal.thread, (unsigned)s_fatal.uptime_ms,
-                (unsigned)s_fatal.pc, (unsigned)s_fatal.lr);
+    snprintf(s_fatal_text, sizeof(s_fatal_text), "%s (%u) in thread \"%s\", %u ms after boot, pc 0x%08x lr 0x%08x",
+             fatal_reason(s_fatal.reason), (unsigned)s_fatal.reason, s_fatal.thread, (unsigned)s_fatal.uptime_ms,
+             (unsigned)s_fatal.pc, (unsigned)s_fatal.lr);
+    fc_port_log(FC_LOG_ERROR, "restarted after a %s", s_fatal_text);
 }
 
 void fc_port_log(fc_log_level_t level, const char *fmt, ...)

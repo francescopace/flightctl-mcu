@@ -103,6 +103,7 @@ jobs:
         env:
           SHA: ${{ needs.source.outputs.sha }}
           SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
+        shell: bash # ${SHA::7}: the container's sh is dash
         run: port/espidf/build-ci.sh ${{ matrix.chip }} "ci-${SHA::7}" "$VARIANT"
       # The app alone, as it comes over the air (secure: unsigned).
       - uses: actions/upload-artifact@v7

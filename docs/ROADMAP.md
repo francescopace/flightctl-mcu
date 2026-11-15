@@ -20,12 +20,10 @@ Chips ([support levels](DEVICES.md#support-levels)):
 Checks not made yet:
 
 - [ ] The rest of HTTP/2 and the TLS receive-buffer pool on the boards. They run on the five ESP-IDF chips (v3.9) and on the ESP32-S3 with Zephyr (z24): the spec's long-poll and the status over one HTTP/2 connection, the receive buffers from the reserved blocks. Left: a download from the registry over HTTP/2 on a board (the downloads of v3.9 and z24 were made by the firmware before them), a certificate renewal, the end-to-end tests, and the RAM and traffic it saves or costs. On ESP-IDF the TLS buffers are no longer dynamic: the two reserved blocks (34 KB) stay taken while the connections are idle, where dynamic buffers used to give that RAM back between records.
-- [ ] On ESP-IDF, the core's own WiFi provisioning (`core/src/fc_prov.c`, as on Zephyr) and delta decoder (`core/src/fc_delta.c`), which replace Espressif's `network_provisioning` and detools' library: built for every chip; the decoder gave the same images as detools on 300 random patches and 8 pairs of firmware images, and passed its fuzzer. Not yet run in the emulator nor on a board.
+- [ ] On ESP-IDF, the core's own WiFi provisioning (`core/src/fc_prov.c`, as on Zephyr) and delta decoder (`core/src/fc_delta.c`), which replace Espressif's `network_provisioning` and detools' library: built for every chip; the decoder gave the same images as detools on 300 random patches and 8 pairs of firmware images, and passed its fuzzer. In the emulator (C5, C6, S3) a network given in the field is joined and a firmware delta is applied, but the network is not kept across a restart: the device asks for it again, and the end-to-end tests of the plain variant fail there. Not yet run on a board.
 - [ ] The way back from a firmware that does not work, on the C6. It is tested in the emulator and on the ESP32-S3 with both ports.
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); there has been no fleet to watch for weeks.
-- [ ] Two parts of decommissioning and the registry never tried: the `FactoryReset` target (the CLI and the UI send `Unenroll` only), and Bearer tokens against a real registry (Harbor, Quay); `registry:3` asks for Basic.
-- [ ] The Zephyr build for the ESP32-S3 in CI. It needs the Xtensa toolchain; CI builds `native_sim` and, with the Arm toolchain, `mps2/an385`.
-- [ ] Zephyr: the report of the last fatal error is only printed on the console at boot. Report it in the device's status too.
+- [ ] Bearer tokens against a real registry (Harbor, Quay), never tried: `registry:3` asks for Basic.
 
 What the Zephyr port does not have, and the ESP-IDF firmware has:
 
@@ -40,6 +38,10 @@ What an app can do and hold:
 
 - [ ] Code that a module runs as it is instantiated: a start section, or an exported `__wasm_call_ctors` (C++ constructors, TinyGo). WAMR runs it before the app's call context exists, with no instruction budget. Seen on the host, with the firmware's app manager: a module whose start function loops can never be removed, because the agent waits for its thread forever, and an `fc` function called from there gets no app (a null pointer). A spec that changes or removes the app waits on that thread too, and the module is saved, to start again at boot. Still so with v3.7, whose spec loop, on the main task, then waits there. The record of apps that crash the device as they start (v3.5) counts only restarts after a panic or a watchdog reset, and ESP-IDF's task watchdog is set to log, not reset; the loop runs at the agent's priority, so it shares the CPU with it. Not yet tried on a board. A module can do this by mistake as well as on purpose.
 - [ ] CoreMark with Zephyr. With ESP-IDF it runs on every chip with v3.8 ([RESULTS.md](RESULTS.md#coremark)); from v3.9 the S3 runs wasm-coremark's 128 KB in its PSRAM, with an image for quad PSRAM and one for octal. With Zephyr (z24) it runs on the ESP32-S3 N8R8 from its PSRAM; that build is for the N8R8 alone, and an S3 without PSRAM is left without room for CoreMark.
+- [ ] Apps against [Toit](https://toit.io), the other way to change code on an ESP32 without reflashing ([COMPARISON.md](COMPARISON.md#tied-to-one-chip-vendor)), and against WAMR's AOT mode, on the same ESP32-C6. Toit publishes no figures against native code or WebAssembly, only against MicroPython; the emulator's timings follow the host, not the chip. Three benchmarks:
+  - Richards, an operating system's task scheduler: method calls and pointers between objects. It exists in Toit, written by its team, and in C, which builds to a `.wasm` unchanged with a small allocator for its few blocks taken at start. Toit against the interpreter, then AOT;
+  - DeltaBlue, a constraint solver that allocates and frees objects at every step: what a language with a garbage collector does best. The `.wasm` needs a real `malloc` and `free` (wasi-libc's, or emmalloc), so the result also helps decide the libc question of the app interface (below);
+  - CoreMark in AOT, against the interpreter's 12.2 iterations per second on the C6 ([RESULTS.md](RESULTS.md#coremark)). Not in Toit: CoreMark is defined by its C source, and a port to a language without 16-bit unsigned integers would measure the port. AOT takes `wamrc` and a module per architecture (Xtensa, RISC-V), executable memory (on the C6, ESP-IDF's memory protection off), and another way to stop an app than the instruction count, which AOT code does not keep. A test image is enough for the measure.
 - [ ] Two more well-known apps as demos, from their published `.wasm` where the firmware can: the blink of [wasm3-arduino](https://github.com/wasm3/wasm3-arduino/tree/main/wasm_apps) (built from C++, Rust, AssemblyScript and TinyGo), and a TinyML model. Tried on the host. What each one needs:
   - the blink imports `arduino` (`getPinLED`, `pinMode`, `digitalWrite`, `delay`), with pin numbers that would map to board-map names granted in `FC_ALLOW`. Its `_start`, an endless loop with `delay(900)`, would run as CoreMark's `run()` does; `delay` would have to wait longer than an `fc` call may (100 ms at a time). Memory: 64 KB for the C++ build, which exports no `__heap_base`, and for the TinyGo one, which does; 2 KB for Rust. The AssemblyScript build calls `getPinLED` from its start function (above);
   - for TinyML, there is no ready `.wasm` for a microcontroller: Edge Impulse's is for a browser or Node, built with Emscripten (it imports `env.abort`). Instead, the C that [emlearn](https://emlearn.readthedocs.io) generates builds unchanged with `fc_app.h`. A random forest on `die_temp` takes 2.5 KB, imports only `fc` and runs on the firmware as it is. An MLP also needs `expf`, `tanhf` and `logf`, so the math functions belong with the libc question of the app interface (below);
@@ -54,10 +56,6 @@ What an app can do and hold:
   - for the payloads received, a pool shared by the apps' event queues, which could otherwise hold 8 KB per app.
 - [ ] A size limit for an app that the chip can hold. The device accepts a `.wasm` up to 64 KB, which no chip can run: in RAM an app costs about 3 times its `.wasm` once loaded, plus its linear memory, about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)). The limit should follow the heap, and the thread stack, the largest part of what a small app costs, can shrink.
 
-Towards a deployment:
-
-- [ ] Known vulnerabilities in the firmware, in the UI's security overview. Each release has its SBOM, in the registry and, with `TRUSTIFY_URL`, in Trustify ([SBOM.md](SBOM.md)); Flight Control finds it by the image digest the devices report. Tried with Trustify 0.4.12: its own feeds reach no C component, so `tools/advisories.py` brings NVD's CVEs for them; Flight Control shows them on the devices. CVEs that do not apply to what a release builds are listed with their reason (`tools/not-affected.json`) and kept out; Flight Control has no field for it. It is also part of what the Cyber Resilience Act asks for ([open questions](#open-questions)).
-
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):
 
 - [ ] Battery-powered devices: deep sleep, status only on wake-up, no long-poll. Needs limitation 3 lifted.
@@ -68,13 +66,22 @@ Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESU
 
 Not planned here: burning eFuses on a real board. Secure Boot, flash encryption and what goes with them are verified on emulated chips, which run the chip's real ROM; whoever ships a batch burns one board per chip first ([SECURITY.md](SECURITY.md)).
 
+## After 1.0
+
+Proposed for 2.0, from what similar products offer ([COMPARISON.md](COMPARISON.md)):
+
+- [ ] Crash reports: the backtrace of a panic in the status at the next boot, on both ports, and the full coredump sent off the device, to be decoded against the release's ELF. Flight Control has no place for a file from a device; the coredump could go to the registry as an artifact, with write credentials of its own.
+- [ ] Cellular (LTE-M, NB-IoT): a modem as the link, through ESP-IDF's PPP or Zephyr's cellular drivers. A long-poll held open over cellular costs data and power, so it comes with the battery-powered devices above.
+- [ ] Devices without IP (BLE, Thread) through a Linux gateway in the same fleet: the gateway's Flight Control agent, or an app on it, holds the device's identity and passes its spec, status and firmware.
+- [ ] More silicon: Nordic nRF (nRF7002 WiFi, nRF91 cellular), RP2350, STM32U5, the last two with TF-M to keep the device key protected.
+
 ## Upstream (Flight Control)
 
 The gaps found in Flight Control for this class of device, each with a proposal, are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals). They were checked against 1.4.0 and against Flight Control's main branch of 12 November 2026: all hold there, except the revocation of enrollment certificates (limitation 8), fixed on main and not yet released.
 
 To propose:
 
-- Firmware and apps built by Flight Control. Its image builder (`ImageBuild`, `flightctl new-version`) builds bootc images for Linux devices: a base image with the agent added, out as a container, qcow2 or ISO. A build of another kind would cover these devices: a toolchain image (ESP-IDF, Zephyr's SDK, clang for WASM), sources from Git and a list of chips, out as the signed multi-chip OCI index `tools/fw-push.py` makes, or a WASM artifact. `new-version` from a previous build is where the delta from that release would be made, and the build is where an SBOM per release would come from (see the vulnerabilities above). It needs an agreed artifact type for firmware first; to be raised as an issue before any code, after reading the image builder's source.
+- Firmware and apps built by Flight Control. Its image builder (`ImageBuild`, `flightctl new-version`) builds bootc images for Linux devices: a base image with the agent added, out as a container, qcow2 or ISO. A build of another kind would cover these devices: a toolchain image (ESP-IDF, Zephyr's SDK, clang for WASM), sources from Git and a list of chips, out as the signed multi-chip OCI index `tools/fw-push.py` makes, or a WASM artifact. `new-version` from a previous build is where the delta from that release would be made, and the build is where an SBOM per release would come from (today `tools/fw-push.py` makes it with `tools/sbom.py`, [SBOM.md](SBOM.md)). It needs an agreed artifact type for firmware first; to be raised as an issue before any code, after reading the image builder's source.
 
 ## Open questions
 
