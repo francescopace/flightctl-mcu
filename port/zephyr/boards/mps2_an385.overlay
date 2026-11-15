@@ -1,0 +1,49 @@
+/*
+ * Arm MPS2 AN385 (Cortex-M3) as QEMU emulates it (-machine mps2-an385): 4 MB
+ * of SRAM and an SMSC LAN9118 Ethernet controller, which Zephyr drives. It
+ * has no flash controller: the credentials and the storage are in Zephyr's
+ * flash simulator, kept in the last MB of SRAM, where port/zephyr/run-qemu.sh
+ * loads the flash image tools/provision.py writes.
+ */
+
+&sram0 {
+	reg = <0x20000000 0x300000>;
+};
+
+/ {
+	fc_flash_ram: memory@20300000 {
+		compatible = "zephyr,memory-region", "mmio-sram";
+		reg = <0x20300000 0x100000>;
+		zephyr,memory-region = "FC_FLASH";
+	};
+};
+
+/delete-node/ &flash_sim0;
+
+&sim_flash_controller {
+	memory-region = <&fc_flash_ram>;
+	erase-value = <0xff>;
+
+	flash_sim0: flash_sim@0 {
+		compatible = "soc-nv-flash";
+		reg = <0x00000000 0x100000>;
+		erase-block-size = <4096>;
+		write-block-size = <4>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			fc_creds_partition: partition@0 {
+				label = "fc_creds";
+				reg = <0x00000000 0x00004000>;
+			};
+
+			fc_storage_partition: partition@4000 {
+				label = "fc_storage";
+				reg = <0x00004000 0x000fc000>;
+			};
+		};
+	};
+};

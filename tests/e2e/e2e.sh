@@ -16,6 +16,8 @@
 #   SKIP_DEPLOY=1 tests/e2e/e2e.sh   test against the cluster and registry already running
 #   DEVICE_KIND=zephyr tests/e2e/e2e.sh   the same test with the Zephyr build on native_sim
 #                             (port/zephyr/build.sh) as the device, instead of the host agent
+#   DEVICE_KIND=qemu tests/e2e/e2e.sh     with the Zephyr build for an Arm Cortex-M3 on
+#                             Ethernet, in QEMU (BOARD=mps2/an385 port/zephyr/build.sh)
 #   CERT_EXPIRY=0 tests/e2e/e2e.sh   without the waits for a certificate to expire (about
 #                             5 minutes): the device working once its first certificate has
 #                             expired, and enrolling again after it expired with the server
@@ -215,15 +217,17 @@ start_agent() {
 
 # run_device: starts the device in the background (AGENT_PID).
 run_device() {
-  if [[ "$DEVICE_KIND" == zephyr ]]; then
+  if [[ "$DEVICE_KIND" != host ]]; then
+    local board=native_sim_native_64 size=2 run=port/zephyr/run.sh
+    [[ "$DEVICE_KIND" == qemu ]] && { board=mps2_an385; size=1; run=port/zephyr/run-qemu.sh; }
     if [[ ! -f "$ZFLASH" ]]; then
       mkdir -p "$(dirname "$ZFLASH")"
-      python3 -c "open('$ZFLASH', 'wb').write(b'\xff' * (2 * 1024 * 1024))"
+      python3 -c "open('$ZFLASH', 'wb').write(b'\xff' * ($size * 1024 * 1024))"
       cp "$WORK/signing/signing.pub" "$WORK/secrets/signing.pub"
-      tools/provision.py --format zephyr --secrets "$WORK/secrets" --server "$AGENT" \
+      tools/provision.py --format zephyr --board "$board" --secrets "$WORK/secrets" --server "$AGENT" \
         --labels app=e2e,site=ci --image "$ZFLASH" >/dev/null
     fi
-    port/zephyr/run.sh "$ZFLASH" >>"$WORK/agent.log" 2>&1 &
+    "$run" "$ZFLASH" >>"$WORK/agent.log" 2>&1 &
   else
     build/host/fc-host-agent --server "$AGENT" --ca "$WORK/secrets/ca.crt" \
       --enroll-cert "$WORK/secrets/enroll.crt" --enroll-key "$WORK/secrets/enroll.key" \
@@ -237,7 +241,7 @@ run_device() {
 # stored the fleet's config file. The host agent's is a file here; the Zephyr
 # device's is inside its flash image, so its log is what says it was written.
 config_stored() {
-  if [[ "$DEVICE_KIND" == zephyr ]]; then
+  if [[ "$DEVICE_KIND" != host ]]; then
     (( $(grep -c 'config: wrote /etc/fc-app/alarm.json' "$WORK/agent.log") >= $2 )) || fail "$4"
   else
     grep -q "\"threshold_c\": $1" "$WORK/data/files/_etc_fc-app_alarm.json" || fail "$4"
@@ -371,7 +375,7 @@ if [[ "$CERT_EXPIRY" == 1 ]]; then
   kubectl -n flightctl scale deployment/flightctl-api --replicas=1 >/dev/null
   kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev/null
   OLD_DEVICE=$DEVICE
-  if [[ "$DEVICE_KIND" == zephyr ]]; then
+  if [[ "$DEVICE_KIND" != host ]]; then
     # The Zephyr device reboots by itself and comes back under its new name,
     # possibly before the server is back.
     await_device "$starts_before" 180
@@ -396,7 +400,7 @@ if [[ "$CERT_EXPIRY" == 1 ]]; then
   printf 'devices:\n  - name: %s\n    labels:\n      stage: ci\n' "$DEVICE" > "$WORK/allowlist.yaml"
   tools/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
   wait_for 120 "new identity Online" "st.get('summary', {}).get('status') == 'Online'"
-  if [[ "$DEVICE_KIND" == zephyr ]]; then
+  if [[ "$DEVICE_KIND" != host ]]; then
     echo "config across re-enrollment: not checked, the file is inside the flash image"
   else
     grep -q '"threshold_c": 30' "$WORK/data/files/_etc_fc-app_alarm.json" || fail "config lost across re-enrollment"
@@ -459,7 +463,7 @@ log "decommission"
 # restarts. It does not enroll again: that takes erasing its storage.
 flightctl decommission "device/$DEVICE" >/dev/null
 wait_for 120 "device Decommissioned" "st.get('lifecycle', {}).get('status') == 'Decommissioned'"
-if [[ "$DEVICE_KIND" != zephyr ]]; then
+if [[ "$DEVICE_KIND" == host ]]; then
   for i in $(seq 1 30); do
     kill -0 "$AGENT_PID" 2>/dev/null || break
     (( i == 30 )) && fail "the device did not restart after decommissioning"
@@ -476,7 +480,7 @@ starts_before=$(starts)
 sleep 15
 (( $(starts) == starts_before )) || fail "the decommissioned device started enrolling again"
 echo "ok: decommissioned, and not enrolling again"
-if [[ "$DEVICE_KIND" != zephyr ]]; then
+if [[ "$DEVICE_KIND" == host ]]; then
   [[ ! -f "$WORK/data/mgmt.crt" && ! -f "$WORK/data/device.key" ]] || fail "key or certificate left behind"
   echo "ok: key and certificate wiped"
 fi

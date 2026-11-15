@@ -29,6 +29,6 @@ fi
 for t in $TOOLCHAINS; do
   [[ -d "$SDK/gnu/$t" ]] || "$SDK/setup.sh" -t "$t"
 done
-west blobs fetch hal_infineon
-[[ -d "$WS/modules/hal/espressif" ]] && west blobs fetch hal_espressif
+# Espressif's WiFi libraries, for a build with its toolchain.
+[[ -d "$WS/modules/hal/espressif" && "$TOOLCHAINS" == *xtensa* ]] && west blobs fetch hal_espressif
 echo "Zephyr SDK $ZEPHYR_SDK_VERSION ($TOOLCHAINS) in $SDK"
