@@ -1,7 +1,6 @@
 # Apply with tools/fleet/apply.sh tools/fleet/idf-lab.yaml, which fills
 # in ${REGISTRY}. The lab's boards pull from the registry's door with TLS:
 #   REGISTRY=$(cat .secrets/registry/host) tools/fleet/apply.sh tools/fleet/idf-lab.yaml
-# Firmware older than v3.1 has no TLS for the registry (docs/REGISTRY.md).
 # Example fleet: the boards with the ESP-IDF firmware, running the "line
 # temperature alarm" app. (The ones with the Zephyr build are in
 # zephyr-lab.yaml: the two are released apart for now.)
@@ -39,7 +38,7 @@ spec:
     spec:
       # Multi-chip OCI index (tools/fw-push.py): each device picks its chip.
       os:
-        image: ${REGISTRY}/flightctl-mcu/fw:v3.8
+        image: ${REGISTRY}/flightctl-mcu/fw:v3.10
       # The alarm as a WASM app (wasm-apps/alarm): replaced without reboot.
       applications:
         - name: alarm

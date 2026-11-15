@@ -24,7 +24,7 @@ What has been verified, where, and with which figures: microcontrollers managed 
 | Decommissioning | Key and certificate wiped, no enrollment until the storage is erased | On the same three boards, 2.4 to 3 s from the request to `Completed`, and in the end-to-end tests |
 | Automatic approval | An allow list of device names or MACs with their labels | Used by the end-to-end tests |
 | Known vulnerabilities | An SBOM per release, in the registry and in Trustify; Flight Control finds it by the image digest the devices report ([SBOM.md](SBOM.md)) | With Flight Control 1.4.0 and Trustify 0.4.12: Trustify's own feeds reach none of these components; the CVEs NVD has for them (`tools/advisories.py`) were shown on the lab's devices within a minute, six for the three releases they run, none of which applies to the code built: listed with the reason and kept out, the devices have none open ([SBOM.md](SBOM.md#from-nvd-toolsadvisoriespy)) |
-| Provisioning in the field | The WiFi network over SoftAP or BLE ([PROVISIONING.md](PROVISIONING.md)) | On the emulated C3, in CI. Zephyr: the same protocol against esp_prov in CI; on the ESP32-S3 from an iPhone with ESP SoftAP Prov; not on the Pico W |
+| Provisioning in the field | The WiFi network over SoftAP ([PROVISIONING.md](PROVISIONING.md)) | On the emulated C3, in CI. Zephyr: the same protocol against esp_prov in CI; on the ESP32-S3 from an iPhone with ESP SoftAP Prov; not on the Pico W |
 | Secure Boot, flash encryption, anti-rollback | The `secure` variant ([SECURITY.md](SECURITY.md)) | On the emulated C3 and C5 only: no real chip has been burned. Zephyr: anti-rollback by MCUboot, on the Pico W ([SECURITY.md](SECURITY.md#zephyr)) |
 
 ## Measurements
@@ -46,7 +46,7 @@ The debug build (`-Og`) that releases up to v3.7 were was about 6% larger (v3.3:
 
 The app interface (GPIO, LEDs, timers, events, config, storage and the board map) added about 20 KB to each image against v3.2.
 
-The release profile (`VARIANT=release`: `-Os`, quieter logs) was about 15% smaller than the debug build, on the C3 and the S3. BLE provisioning built in (`VARIANT=ble`) adds about 270 KB: 1,502 KB on the C3 with release v3.1, 10% of the slot free.
+The release profile (`VARIANT=release`: `-Os`, quieter logs) was about 15% smaller than the debug build, on the C3 and the S3. BLE provisioning built in (the `ble` variant, since removed) added about 270 KB: 1,502 KB on the C3 with release v3.1, 10% of the slot free.
 
 The largest parts, on the C3:
 
@@ -57,9 +57,11 @@ The largest parts, on the C3:
 | WiFi provisioning in the field (network_provisioning, protocomm, HTTP server) | about 93 KB |
 | WAMR (fast interpreter) | 68 KB |
 | **flightctl-mcu agent** (`core/`: enrollment, spec, status, resource alerts, OTA, OCI, signatures, apps, applying deltas) | **35 KB** |
-| its libraries and ESP-IDF port (cJSON, the detools decoder with heatshrink, `fc_port_espidf.c`) | 14 KB |
+| its libraries and ESP-IDF port (cJSON, the delta decoder, `fc_port_espidf.c`) | 14 KB |
 
 The agent itself is small. Almost all the space goes to the network stack and to cryptography, which any securely connected device needs anyway.
+
+Since then the core does WiFi provisioning and firmware deltas with its own code, in place of Espressif's `network_provisioning` and detools' library. On the S3 (debug build) provisioning takes 17.4 KB instead of 117.5 KB, with its access point, and the delta decoder 1.6 KB instead of about 4 KB ([PROVISIONING.md](PROVISIONING.md#in-the-field-the-wifi-network), [DELTA.md](DELTA.md)).
 
 ### RAM
 
@@ -81,6 +83,7 @@ Since v3.7 and z19 the agent's spec loop runs on the main task instead of a thre
 | Board | Internal free, before → after | Largest internal block, before → after |
 |---|---|---|
 | ESP32-S2 (v3.6 → v3.7) | 34.6 → 71.4 KB | 24.6 → 47.1 KB |
+| ESP32-C5 (v3.0 → v3.8, minutes after boot) | 59.1 → 131.0 KB | 36.9 → 114.7 KB |
 | Classic ESP32 (v3.6 → v3.7) | 100.0 → 137.2 KB | 53.2 → 77.8 KB |
 | Pico W, kernel heap (z18 → z21) | 3.7 → 9.8 KB (lowest 2.6 → 8.8 KB) | – |
 
@@ -110,13 +113,17 @@ Flashing the firmware does not touch the key storage: a board keeps its identity
 | ESP32-S2, v3.8 (240 MHz) | 15.42–15.54 (5 runs) | 18.18 | about 473 |
 | ESP32-C3, v3.8 (160 MHz) | 14.16–14.22 (3 runs) | not tried: largest block 114 KB after boot | about 409 |
 | ESP32-C6, v3.8 (160 MHz) | 12.22–12.26 (3 runs) | 14.83 (2 runs) | |
+| ESP32-C5, v3.8 (240 MHz) | 22.04–22.34 (3 runs) | does not fit: no internal block of 128 KB (115 KB with `alarm`) | |
 | ESP32-S3, v3.8 (240 MHz) | 18.88–18.95 (3 runs) | does not fit: v3.8 leaves the PSRAM off, and no internal block of 128 KB is left (155 KB after boot) | about 614 |
+| ESP32-S3 N4R2 (2 MB of quad PSRAM), v3.9 (240 MHz) | 18.89–18.92 (2 runs) | 22.89–22.96 (3 runs), in PSRAM | about 614 |
+| ESP32-S3 N8R8 (8 MB of octal PSRAM), v3.9 `esp32s3-r8` image | 18.93 (2 runs) | 22.89–22.95 (2 runs), in PSRAM | about 614 |
 | Classic ESP32, v3.7 build settings (`-Og`, 160 MHz) | 6.83–6.87 | does not fit | |
 | ESP32-S2, v3.7 build settings | 5.07 | 6.22 | |
 | Pico W, z22 | does not fit: about 19 KB of heap free with `alarm` | – | |
 | ESP32-S3 with Zephyr, z22 | does not fit: the C heap (123 KB, 83 KB free after boot) has no block for the module and 64 KB | – | |
+| ESP32-S3 N8R8 with Zephyr, z23 (octal PSRAM) | 17.92 (2 runs), in PSRAM | 21.67 (1 run), in PSRAM; one install failed first, the C heap out of memory for the 12.5 KB module | about 614 |
 
-v3.8 builds the firmware for speed (`-O2` instead of ESP-IDF's debug default `-Og`) and runs the ESP32, the S2 and the S3 at 240 MHz instead of 160: CoreMark runs 2.2 times faster on the classic ESP32 and 3 times faster on the S2. The interpreter is about 30 times slower than native code; the instruction count, which lets any app be stopped, is part of that. The S2 holds both builds' memory in its PSRAM, the classic ESP32 in internal RAM, where it needs a free block of 64 KB: v3.8 gives the classic ESP32's WiFi fewer buffers, 10 KB more heap (164 KB free after boot, largest block 110 KB). Over five minutes of runs its heap went down to 2.2 KB at the lowest, while the agent kept reporting: a run leaves it close to nothing. The Zephyr builds keep `-Os`, with WAMR alone at `-O2`, as `-O2` everywhere does not fit (the Pico W's image by 23 KB, the ESP32-S3's data by 5.6 KB); the Pico W runs at 133 MHz instead of 125.
+v3.8 builds the firmware for speed (`-O2` instead of ESP-IDF's debug default `-Og`) and runs the ESP32, the S2 and the S3 at 240 MHz instead of 160: CoreMark runs 2.2 times faster on the classic ESP32 and 3 times faster on the S2. The interpreter is about 30 times slower than native code; the instruction count, which lets any app be stopped, is part of that. WAMR's AOT mode, which compiles the module ahead of time to the chip's machine code, should come to about 3 times slower than native, but an app would then be published once per architecture (Xtensa, RISC-V) instead of as one module for every device: doable if needed, but outside this project, which is about the firmware; not measured. The S2 holds both builds' memory in its PSRAM, the classic ESP32 in internal RAM, where it needs a free block of 64 KB: v3.8 gives the classic ESP32's WiFi fewer buffers, 10 KB more heap (164 KB free after boot, largest block 110 KB). Over five minutes of runs its heap went down to 2.2 KB at the lowest, while the agent kept reporting: a run leaves it close to nothing. From v3.9 the S3 uses its PSRAM, for an app's memory only: two images, `esp32s3` for quad PSRAM (and boards with none) and `esp32s3-r8` for octal ([DEVICES.md](DEVICES.md)). The 64 KB build still runs from internal RAM and scores the same; the 128 KB one, which no longer fits there, runs from PSRAM and is the fastest of all the boards, as wasm-coremark's build is faster than wasm3's on every chip it runs on. wasm3's build runs fastest on the C5, a RISC-V core at 240 MHz: 22.2, against 18.9 on the S3. With Zephyr (z23) the N8R8's octal PSRAM is a heap of its own, from which only WASM apps' memories of 16 KB or more come (WAMR's `set_exec_mem_alloc_func`, `port/zephyr/fc_heap_zephyr.c`); its driver takes 4 KB of internal RAM, from the C heap (now 119 KB). The Zephyr builds keep `-Os`, with WAMR alone at `-O2`, as `-O2` everywhere does not fit (the Pico W's image by 23 KB, the ESP32-S3's data by 5.6 KB); the Pico W runs at 133 MHz instead of 125.
 
 ### Timings
 
@@ -132,7 +139,7 @@ On the ESP-IDF boards, with the early firmware (v2.x, ESP-IDF 5.5.6):
 
 ### Idle traffic
 
-Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on the wire, TLS included). The agent keeps its two connections open (HTTP keep-alive), sends a status at once when something changes and otherwise every 2 minutes, and the server's long-poll lasts about 4 minutes:
+Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on the wire, TLS included). The agent of these figures (HTTP/1.1, before HTTP/2 put both on one connection) kept its two connections open (HTTP keep-alive), sends a status at once when something changes and otherwise every 2 minutes, and the server's long-poll lasts about 4 minutes:
 
 | Device | Total |
 |---|---|
@@ -184,7 +191,7 @@ The C3 figures match the board (58–60 KB free). `tests/e2e/e2e-emu.sh` runs th
 
 The delta is half of the image because it goes from the debug build to the release one, compiled differently; between two builds of the same kind it is 1 to 12% ([DELTA.md](DELTA.md)).
 
-Not run on a board: the secure variant (it burns eFuses). The ESP32-C3 ran ESP-IDF 6.0.3 later ([below](#the-registry-with-tls-and-decommissioning-on-boards)); the C5, C6, S2 and classic ESP32 have not.
+Not run on a board: the secure variant (it burns eFuses). The ESP32-C3 ran ESP-IDF 6.0.3 later ([below](#the-registry-with-tls-and-decommissioning-on-boards)), the other chips with release v3.8 ([CoreMark](#coremark)).
 
 ### The way back on the ESP32-S3, both ports
 
@@ -296,6 +303,10 @@ Also found: Flight Control serves inline content given in base64 percent-encoded
     - Each app thread takes its stack from the kernel heap, which has room for one besides the agent's status thread. With two apps saved, both threads started at boot before the status thread, which could then not be created: the agent stopped, the apps ran, and the device was never heard from again, until reflashed over USB.
     - Fix: the saved apps start after the agent's status thread (z22); a second app is then `Error`, "cannot start thread", in the status. Without a second app, z21 and earlier are not affected.
 
+21. **ESP32-S3 with PSRAM built in: no app could start where the PSRAM was not found.**
+    - WAMR's ESP-IDF port, on an S3 built with PSRAM, asks for every linear memory in PSRAM only (meant for AOT code, which this firmware does not build). On a board whose PSRAM the image could not use (the quad image on an octal board) even `alarm` failed: "allocate linear memory failed", with 195 KB of internal RAM free.
+    - Fix: that only with AOT (`third_party/patches/wamr-espidf-psram-interp.patch`, v3.9); an app's memory comes from internal RAM first, from PSRAM when no internal block is large enough.
+
 ## Flight Control 1.4.0
 
 12 November 2026. The service on kind was upgraded in place from 1.3.1 with the Helm chart, with a Raspberry Pi Pico W enrolled and online: it stayed enrolled, came back `Online` and `UpToDate` by itself, and its free heap dipped from 22 to 17 KB at the lowest while the server restarted.
@@ -385,9 +396,9 @@ All of these were read again in the source of 1.4.0 and of Flight Control's main
 - **Security**:
   - The registry can be reached over TLS with a password ([REGISTRY.md](REGISTRY.md)), but only with a CA the fleet gives the device: there is no public CA bundle, and blobs redirected to another host are not followed. Over plain HTTP, signatures make the registry safe against tampering, not against reading.
   - The device key is in flash in clear, except in the `secure` variant (see [SECURITY.md](SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
-- **Provisioning**: credentials are written over USB (`tools/provision.py`), the WiFi network over USB or in the field, over the device's own access point or BLE (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control 1.4.0 cannot revoke it (its main branch can).
+- **Provisioning**: credentials are written over USB (`tools/provision.py`), the WiFi network over USB or in the field, over the device's own access point (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control 1.4.0 cannot revoke it (its main branch can).
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
-- **Hardware coverage**: automatic rollback was not exercised on the C6 ([DEVICES.md](DEVICES.md#boards-tried)). v3.8 and z22 (built for speed, at 240 and 133 MHz) were tried on the S2, the classic ESP32, the C3, the C6, the S3 (ESP-IDF and Zephyr) and the Pico W; the C5 build of v3.8 has not been started on a board.
-- **Memory for apps**: the Pico W runs one app; CoreMark's 64 KB fits on the S2 (PSRAM), the classic ESP32, the C3, the C6 and the S3, not on the Pico W nor the ESP32-S3 with Zephyr, and wasm-coremark's 128 KB on the S2 and the C6 only. With a second app installed and its module loaded, the Pico W once failed to read the registry's CA from the fleet ("invalid base64") until the app was removed: likely a lack of memory, not confirmed.
+- **Hardware coverage**: automatic rollback was not exercised on the C6 ([DEVICES.md](DEVICES.md#boards-tried)). v3.8 and z22 (built for speed, at 240 and 133 MHz) were tried on the S2, the classic ESP32, the C3, the C5, the C6, the S3 (ESP-IDF and Zephyr) and the Pico W.
+- **Memory for apps**: the Pico W runs one app; CoreMark's 64 KB fits on the S2 (PSRAM), the classic ESP32, the C3, the C5, the C6 and the S3, and with Zephyr on the ESP32-S3 N8R8 from z23 (in PSRAM; up to z22, without it, it did not fit), not on the Pico W; wasm-coremark's 128 KB on the S2, the C6 and, from v3.9 and z23, the S3 with PSRAM. With a second app installed and its module loaded, the Pico W once failed to read the registry's CA from the fleet ("invalid base64") until the app was removed: likely a lack of memory, not confirmed.
 
 What comes next is in the [roadmap](ROADMAP.md).

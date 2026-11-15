@@ -16,7 +16,7 @@ Flight Control (upstream of [Red Hat Edge Manager](https://docs.redhat.com/en/do
 
 A sensor node or a small controller on a production line is a microcontroller with a few hundred KB of RAM and an RTOS. It ends up managed by a vendor cloud, a custom MQTT backend, or nothing at all: the gateway that collects its data shows up in Flight Control, and the devices behind it don't.
 
-Here the microcontroller speaks the Flight Control agent API itself. That API is a small HTTP+JSON protocol over mutual TLS: enroll, long-poll the device spec, report status. The agent's own code, with the OCI client, signatures and apps, takes about 35 KB of flash; 49 KB with cJSON, the delta decoder and its port. Flight Control then treats the board as a regular device, with the same fleets, label selectors, rollouts, RBAC and UI.
+Here the microcontroller speaks the Flight Control agent API itself. That API is a small HTTP+JSON protocol over mutual TLS: enroll, long-poll the device spec, report status. The agent's own code, with its HTTP/2 client, the OCI client, signatures and apps, takes about 62 KB of flash on the ESP32-C3 (release v3.9, built for speed), 13 KB of it the HTTP/2 client; 79 KB with cJSON, WiFi provisioning, the delta decoder and its port. Flight Control then treats the board as a regular device, with the same fleets, label selectors, rollouts, RBAC and UI.
 
 ## What maps to what
 
@@ -54,7 +54,7 @@ flowchart LR
   WAMR --> FW
 ```
 
-The agent runs two loops. One holds a long-poll on the rendered device spec and applies whatever comes back: config, firmware, apps; it runs on the firmware's main task, which has nothing else to do. The other, on a thread of its own, sends the status, periodically and at once when something changes. Firmware and `.wasm` apps come from the registry. Apps run in WAMR and reach the hardware only through host functions the firmware exports.
+The agent runs two loops. One holds a long-poll on the rendered device spec and applies whatever comes back: config, firmware, apps; it runs on the firmware's main task, which has nothing else to do. The other, on a thread of its own, sends the status, periodically and at once when something changes. Both go over one HTTP/2 connection to Flight Control, each request on its stream. Firmware and `.wasm` apps come from the registry. Apps run in WAMR and reach the hardware only through host functions the firmware exports.
 
 ```mermaid
 flowchart TB
@@ -93,11 +93,11 @@ The image is streamed into the inactive slot and checked against its sha256. The
 
 | Stack | Runs on | What works |
 |---|---|---|
-| **ESP-IDF** 6.0 | ESP32, S2, S3, C3, C5, C6 | Everything, plus Secure Boot, flash encryption and WiFi provisioning over SoftAP and BLE. Six boards, and emulated chips in CI. |
-| **Zephyr** 4.5 | Raspberry Pi Pico W, ESP32-S3 | Enrollment, monitoring, config, WASM apps, firmware through MCUboot. A new board is two files. |
+| **ESP-IDF** 6.0 | ESP32, S3, C3, C5, C6 | Everything, plus Secure Boot, flash encryption and WiFi provisioning over SoftAP. Five boards, and emulated chips in CI. |
+| **Zephyr** 4.5 | ESP32-S3; an Arm Cortex-M3 on Ethernet in QEMU | Enrollment, monitoring, config, WASM apps, firmware through MCUboot. A new board is two files. |
 | **Linux, macOS** | Any POSIX system | The simulated device of the tests. A firmware update only saves the image to a file. |
 
-"Everything" is enrollment, monitoring, config, firmware OTA with rollback and WASM apps. The same `.wasm` file runs on all of them, whatever the CPU. A device needs about 256 KB of RAM, 2 MB of flash and a TCP/IP network.
+"Everything" is enrollment, monitoring, config, firmware OTA with rollback and WASM apps. The same `.wasm` file runs on all of them, whatever the CPU. A device needs 384 KB of SRAM, 2 MB of flash and a TCP/IP network. Supported: ESP32-S3, ESP32, C6 and C5; the C3 is best effort ([support levels](docs/DEVICES.md#support-levels)).
 
 The requirements in full, the boards tried and how to add a chip, a board or an RTOS are in [docs/DEVICES.md](docs/DEVICES.md).
 
@@ -112,9 +112,9 @@ The requirements in full, the boards tried and how to add a chip, a board or an 
 | [QUICKSTART.md](docs/QUICKSTART.md) | From nothing to an enrolled device with firmware, config and an app |
 | [DEVICES.md](docs/DEVICES.md) | Requirements, boards tried, adding a chip, a board or an RTOS |
 | [APPS.md](docs/APPS.md) | Writing a WASM app |
-| [ZEPHYR.md](docs/ZEPHYR.md) | The Zephyr port: Pico W, ESP32-S3, `native_sim` |
+| [ZEPHYR.md](docs/ZEPHYR.md) | The Zephyr port: ESP32-S3, `mps2/an385` in QEMU, `native_sim` |
 | [SECURITY.md](docs/SECURITY.md) | Secure Boot, flash encryption, keys in hardware, the factory procedure |
-| [PROVISIONING.md](docs/PROVISIONING.md) | Credentials over USB, WiFi over SoftAP or BLE |
+| [PROVISIONING.md](docs/PROVISIONING.md) | Credentials over USB, WiFi over SoftAP |
 | [DELTA.md](docs/DELTA.md) | Firmware updates as deltas |
 | [SBOM.md](docs/SBOM.md) | Each release's SBOM, and its known vulnerabilities in Flight Control through Trustify |
 | [REGISTRY.md](docs/REGISTRY.md) | The registry: TLS, credentials, the local one |
@@ -148,7 +148,7 @@ tools/        Flight Control on kind, registry, example fleets, credentials,
               provisioning, signing, firmware push
 tests/        unit tests, fuzz targets, tests of the tools, end-to-end tests
 docs/         the documents listed above
-third_party/  cJSON, and the scripts that fetch WAMR, detools and Zephyr
+third_party/  cJSON, and the scripts that fetch WAMR and Zephyr
 ```
 
 ## License

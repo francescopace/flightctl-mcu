@@ -132,7 +132,7 @@ Two more ways are part of the interface, for when the firmware has them ([ROADMA
 
 | | |
 |---|---|
-| Apps per device | 2; 1 on the Pico W, whose kernel heap has room for one app thread (a second app is `Error`, "cannot start thread") |
+| Apps per device | 2 |
 | Module | 64 KB |
 | Linear memory | one 64 KB page, shrunk to what the module uses (see below); a module that does not export `__heap_base` and `__data_end` keeps all it declares |
 | Open handles per app (GPIOs, LEDs, timers...) | 12 |

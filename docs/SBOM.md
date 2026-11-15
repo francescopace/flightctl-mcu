@@ -15,7 +15,7 @@ package URL, a CPE where one is known, and its license:
 
 | | From |
 |---|---|
-| the agent (this repository, at its commit), cJSON, WAMR, detools | cJSON's header, `third_party/fetch-wamr.sh`, `third_party/fetch-detools.sh` |
+| the agent (this repository, at its commit), cJSON, WAMR | cJSON's header, `third_party/fetch-wamr.sh` |
 | ESP-IDF, the mbedTLS it ships, its managed components | `port/espidf/dependencies.lock.<chip>`; ESP-IDF's mbedTLS from `MBEDTLS_IN_ESP_IDF` in `tools/sbom.py` |
 | Zephyr, its modules: mbedTLS, TF-PSA-Crypto, MCUboot, littlefs, picolibc, zcbor, and each board's HALs | the Zephyr tree (`third_party/zephyr-ws`): the modules' own version files, else the revision Zephyr's manifest names |
 
@@ -34,7 +34,7 @@ images lists both.
   Control's image builder uploads its own.
 
 Another release's, or one made again: `tools/sbom.py --ref <registry>/flightctl-mcu/fw:<tag>
---digest sha256:<index> --esp-idf esp32c3 --zephyr rpi_pico_w --upload <Trustify URL>`.
+--digest sha256:<index> --esp-idf esp32c3 --zephyr esp32s3_devkitc --upload <Trustify URL>`.
 
 ## In Flight Control
 
@@ -118,7 +118,7 @@ time: NVD keeps adding CVEs. Without `NVD_API_KEY` NVD answers five requests
 in 30 seconds, about a minute for the components here. The CPE names it asks
 for are those of NVD's dictionary, with the other names NVD files a product
 under (`arm:mbed_tls` besides `trustedfirmware:mbed_tls`, for instance; `ALSO`
-in the script). MCUboot, littlefs, picolibc and detools are not in the
+in the script). MCUboot, littlefs and picolibc are not in the
 dictionary, so nothing is found for them this way.
 
 13 November 2026, the three releases the lab's boards run: v3.0 (ESP-IDF 5.5.6,

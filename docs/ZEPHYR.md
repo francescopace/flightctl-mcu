@@ -5,11 +5,11 @@ application in `zephyr/`. The core is unchanged between the two.
 
 **Where it stands.** On `native_sim` (Zephyr built as a Linux process) the
 agent passes the end-to-end test of the simulated device, against an
-unmodified Flight Control. On a real Raspberry Pi Pico W it enrolls over WiFi,
-stays online, runs a signed WASM app and updates its firmware through
-MCUboot, whole or as a delta, going back when the new one does not work
-(below). On a real ESP32-S3 it does the same: the first chip to run both
-ports.
+unmodified Flight Control. On a real ESP32-S3 it enrolls over WiFi, stays
+online, runs a signed WASM app and updates its firmware through MCUboot,
+whole or as a delta, going back when the new one does not work (below): the
+first chip to run both ports. On an Arm Cortex-M3 with Ethernet, emulated in
+QEMU, it passes the same end-to-end test as on `native_sim`.
 
 ## Try it
 
@@ -19,10 +19,6 @@ a Zephyr tree with the modules the port uses (about 900 MB, in
 
 ```bash
 third_party/fetch-wamr.sh
-```
-
-```bash
-third_party/fetch-detools.sh
 ```
 
 ```bash
@@ -64,7 +60,7 @@ flash file across restarts.
 | C heap | `port/zephyr/fc_heap_zephyr.c`, a heap the port owns, so that the device can report how much is free (`memFreeBytes`, `memMinFreeBytes`); Zephyr's malloc does not say. |
 | WASM | WAMR's Zephyr platform, fast interpreter, as in the other builds. |
 | Firmware updates | MCUboot's two slots (boards built with it): the image is streamed into the second, read back, and asked for as a test; MCUboot checks its signature, swaps the slots, and swaps them back unless the agent confirms the image once it has reached Flight Control. `native_sim` has no MCUboot and no updates. |
-| Firmware deltas | detools, in the core as elsewhere; the port reads the running image from the first slot. |
+| Firmware deltas | the core's decoder, as elsewhere; the port reads the running image from the first slot. |
 
 ## Zephyr 4.5
 
@@ -86,9 +82,9 @@ mbedTLS 3.6, when the core was written for that.)
 ## What the tests check
 
 `DEVICE_KIND=zephyr tests/e2e/e2e.sh` is the end-to-end test of the simulated device
-with the Zephyr build as the device, and CI runs it (a job builds the
-application in Zephyr's image, another runs it against Flight Control on
-kind): enrollment and approval, status, a config file and its change, a WASM
+with the Zephyr build as the device: CI builds the application in Zephyr's
+image on every push, and the end-to-end workflow runs that build against
+Flight Control on kind, nightly or on request ([TESTING.md](TESTING.md)): enrollment and approval, status, a config file and its change, a WASM
 app installed, updated in place and removed, an unsigned app refused, an
 update while the registry is down, a second app, the renewal of the
 management certificate, a server restart, and a device whose certificate
@@ -98,161 +94,79 @@ rebooting itself.
 One check is weaker than on the host: that a config file was stored is read
 from the device's log, as the file is inside the flash image.
 
-## On a Raspberry Pi Pico W
+`DEVICE_KIND=qemu tests/e2e/e2e.sh` is the same test with the build for
+`mps2/an385` in QEMU ([below](#on-an-emulated-arm-cortex-m3)), run the same way.
 
-An RP2040 (Cortex-M0+, 264 KB of RAM, 2 MB of flash) with a CYW43439 for
-WiFi: less RAM than any ESP32 the agent runs on.
+## On an emulated Arm Cortex-M3
+
+QEMU's `mps2-an385`: Arm's MPS2 board with a Cortex-M3 and an SMSC LAN9118
+Ethernet controller, which Zephyr drives. It is how CI tries the port on Arm
+and on Ethernet, without a board:
 
 ```bash
 third_party/fetch-zephyr-sdk.sh
 ```
 
 ```bash
-BOARD=rpi_pico/rp2040/w BUILD_DIR=build-pico-usb port/zephyr/build.sh -S cdc-acm-console
+BOARD=mps2/an385 port/zephyr/build.sh
 ```
 
 ```bash
-port/zephyr/flash-pico.sh .secrets
-```
-
-The first fetches the ARM toolchain (1.9 GB) and the WiFi chip's firmware;
-the last writes one UF2 with the application and the credentials (the WiFi
-network is the one in `port/espidf/sdkconfig.wifi`, or `--wifi-ssid`) and prints
-the console. The board must be in its bootloader: plugged in with BOOTSEL
-held down, or, once it runs this build, `PORT=/dev/cu.usbmodemXXXX`.
-
-No provisioning in the field on this board: Infineon's driver in Zephyr 4.5
-does not open an access point on the CYW43439. Two faults, found on the board:
-- WHD's `CH20MHZ_CHSPEC` decides the band by comparing the whole chanspec
-  Zephyr's driver passes (channel, band and bandwidth bits) with 14, the last
-  2.4 GHz channel, so any channel is taken for 5 GHz, which the chip refuses
-  (`whd_wifi_set_chanspec failed`). Comparing the channel alone fixes it
-  (`CHSPEC_CHANNEL(chspec) <= CH_MAX_2G_CHANNEL` in `whd_chip_constants.h`).
-- With that fixed, the access point starts, then the driver's next request to
-  the chip (`event_msgs`, for the access point's events) gets no answer in 5 s,
-  and the driver closes the access point again.
-
-The board keeps the network given at the factory, and builds without a DHCP
-server, which would take 2 KB of its RAM.
-
-### Firmware updates
-
-```bash
-BOARD=rpi_pico/rp2040/w/mcuboot BUILD_DIR=build-pico-mcuboot port/zephyr/build.sh -- -Dzephyr_SNIPPET=cdc-acm-console
+python3 -c "open('build/qemu-flash.bin','wb').write(b'\xff'*(1024*1024))"
 ```
 
 ```bash
-BUILD_DIR=build-pico-mcuboot port/zephyr/flash-pico.sh .secrets
+tools/provision.py --format zephyr --board mps2_an385 --image build/qemu-flash.bin
 ```
 
 ```bash
-tools/fw-push.py <registry>/flightctl-mcu/fw:v2 rpi_pico_w=port/zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin
+port/zephyr/run-qemu.sh build/qemu-flash.bin
 ```
 
-The board `rpi_pico/rp2040/w/mcuboot` is Zephyr's layout for MCUboot on the
-Pico: the bootloader in the first 64 KB, two slots of 832 KB (the application
-is 723 KB), and the last 320 KB for the credentials and the storage, where
-the build without MCUboot has them too. The build makes MCUboot and the
-application together (sysbuild) and signs the application with
-`.secrets/mcuboot-signing.pem`, an ECDSA P-256 key made the first time:
-MCUboot starts only images signed with it. The first flash writes MCUboot,
-the application and the credentials; after that a release is the signed
-image, pushed for the platform the board's configuration names
-(`CONFIG_FC_FW_PLATFORM`), and `spec.os.image` in the fleet, as on ESP32.
+QEMU's user network gives the device an address by DHCP, a DNS server and
+the way out to Flight Control. The board has no flash controller: the
+credentials and the storage are in Zephyr's flash simulator, in the last MB
+of SRAM, where `run-qemu.sh` loads the credentials partition. What the device
+stores survives its restarts (a certificate, the decommissioning), not the
+end of QEMU.
 
-Seen on the board, from one release to the next (with Zephyr 4.3; the last
-two rows with 4.5):
+The build has the memory of a microcontroller with 384 KB of SRAM, the least
+a device needs ([DEVICES.md](DEVICES.md#what-a-device-needs)): 300 KB of
+static data, of which 96 KB of kernel heap (thread stacks) and 128 KB of C
+heap; 400 KB of code. It passes the end-to-end test of the simulated device,
+from enrollment to decommissioning.
 
-| | |
-|---|---|
-| A whole image (734 KB) | downloaded and written in 15 s; the device restarts, MCUboot swaps the slots, and the new firmware is confirmed 38 s after its start, once Flight Control has taken its status |
-| The same after a restart | still the new firmware: the confirmation is kept |
-| A firmware that cannot reach Flight Control | given up after its 30 s (150 by default): the device restarts, MCUboot puts the previous firmware back, and that one reports the failure and does not try the image again |
-| A delta (8.6 KB for the 734 KB image, 1.2%) | downloaded and the image rebuilt from the running one in 10 s; then as a whole image. Reported then as `firmwareDownload: delta 8 of 717 KB`; now as `lastDelta: Applied` |
-| From the Zephyr 4.3 build to the 4.5 one (and mbedTLS 3.6 to 4.1) | over the air, by the MCUboot already on the board: a delta of 232 KB for the 723 KB image (33%: little of the code is where it was). The device kept its identity, certificate and app |
-| A delta between two 4.5 builds (7.5 KB, 1.0%) | downloaded in 9 s; confirmed, and still the new firmware after a restart |
+What it is not: there is no MCUboot and no firmware update, and no random
+generator (Zephyr's test generator, whose numbers are not secret, stands in
+for one).
 
-Not done: MCUboot's own protection against older images (the device takes
-any image signed with the key), and MCUboot's console (it logs on the UART
-pins, not on USB).
+## What the boards taught the port
 
-What was seen on the board: it joins the network in 3 s, takes the time from
-SNTP, makes its key in 2 s, does a TLS 1.3 handshake in about 9 s, enrolls,
-keeps its identity across restarts, and is Online and UpToDate in Flight
-Control with its two connections open. Given a fleet, it stores the config
-file, downloads the signed WASM app from the registry and runs it.
-
-Memory, of 264 KB: 111 KB of static data in this build (the WiFi driver's and
-the network stack's buffers, the USB console), 45 KB of kernel heap (thread
-stacks, and 14 KB the WiFi driver and USB take; 39 KB since z20, whose main
-thread is larger), 108 KB of C heap (103 KB since z14, whose app interface
-takes 5 KB of static data). With both
-TLS connections open and the app running, 34 KB of that heap were free, and
-24 KB at the least; with Zephyr 4.5 and mbedTLS 4, 31 KB and 22.5 KB; with
-mbedTLS's threading layer (release z9, 2 KB less heap), 29.7 KB, and 15 KB at
-the least. (Zephyr
-4.5 gives the WiFi driver's twenty packet buffers 2400 bytes each, 16 KB more
-than there is: the build keeps them at 1600, as they were.) It fits because the stacks are sized from what was
-measured on the board: the agent's spec loop runs on the main thread and
-uses 9.2 KB of it when it downloads firmware over TLS, 9.1 KB when it
-installs an app, 4.6 KB when it only polls; the main thread gets 14 KB. The
-status thread uses 3.8 KB and gets 8 KB, not the 12 KB the core asks for by
-default: a certificate renewal, which runs there, has not been measured on
-the board. Since z19 the spec loop has no thread of its own, so its stack is
-no longer taken from the kernel heap.
-
-Open on this board:
-
-- **The entropy source is not a certified one** (below).
-- **The console on USB loses the end of long lines** with Zephyr 4.5's USB
-  stack: lines were seen cut after 64 bytes. Not looked into.
-- **Never run there**: certificate renewal, days of uptime.
-
-What the board taught the port:
-
-- **Flash writes of less than a page did nothing** on this board with Zephyr
-  4.3.2: they reported success, and the data was not there. LittleFS lost
-  what it wrote, and MCUboot could not mark a slot. The cause was in Zephyr's
-  code for the RP2040's flash: the function that selects the chip was called
-  with a value that always means "not selected". Four lines, which this
-  repository patched while it was on Zephyr 4.3; Zephyr has them right from
-  4.4. LittleFS still writes whole pages here
-  (`CONFIG_FS_LITTLEFS_PROG_SIZE=256`), as it was tried, and the port still
-  reads a firmware slot back before it asks MCUboot to try it.
 - **A stack that cannot be had becomes a 1 KB stack.** Zephyr takes a
   thread's stack from the kernel heap when its size is set; if that fails the
-  thread keeps the default. The core now checks, and says so instead of
+  thread keeps the default. The core checks, and says so instead of
   overflowing.
 - **A fatal error restarts the device**, and what it was is kept in RAM and
-  logged at the next boot: Zephyr's default is to stop for ever, silently
-  when the console is on USB.
-- **Entropy from the ring oscillator.** The RP2040 has no random generator
-  and Zephyr no entropy driver for it (its driver for Raspberry Pi chips is
-  for the RP2350). The port has one (`port/zephyr/fc_entropy_rp2.c`, the node
-  in the board's overlay): the chip's ring oscillator, sixteen samples folded
-  into each bit, which gives nothing if the oscillator returns the same bit
-  every time. PSA (TLS, the device key) and the rest of Zephyr (TCP sequence
-  numbers, DNS query ids) seed their generators from it. It is what the Pico
-  SDK does too, and it is not a certified source.
-- **The chip joins any access point of the network, not the nearest.** On a
-  network carried by three access points, the board joined a far one (-75
-  dBm, against -42 for the near one) on 4 boots of 20, and on each of those
-  name lookups and handshakes timed out. Infineon's driver takes no access
-  point's address, and asking the chip to prefer the strongest changed
-  nothing, so `main.c` gives up a join weaker than -60 dBm and joins again,
-  up to five times. Where every access point is weak, the last join stays.
-- **The chip can stop answering after the board restarts.** After 1 crash in
-  40, made on purpose at random moments while the board was on the network,
-  every command to the chip timed out (5 s) and the board never joined
-  again; a restart brought it back, since the driver powers the chip again
-  only at boot. So `wifi.c`, after a failed join, asks the chip its version:
-  after two failed joins with a chip that does not answer, the board
-  restarts (since z16). A chip that answers means the network is not
-  there: the board keeps trying, and its apps keep running.
+  logged at the next boot: Zephyr's default is to stop for ever.
 - **One DNS query at a time** is Zephyr's default; the agent's two threads
   ask together at start. **Four connections in all** is another: the two to
-  Flight Control, DHCP and DNS use them up, and the one to the registry was
-  refused.
+  Flight Control, DHCP and DNS used them up, and the one to the registry was
+  refused. Since HTTP/2 there is one connection to Flight Control.
+- **POSIX mutexes come from a fixed pool** (`CONFIG_MAX_PTHREAD_MUTEX_COUNT`,
+  5 by default), and so do condition variables. The core takes 7, mbedTLS's
+  threading layer 7, the HTTP/2 client up to 11 (two per connection, one per
+  session, one for the TLS buffers). Short of them, mbedTLS's own mutexes
+  fail and a TLS handshake ends in `PSA_ERROR_GENERIC_ERROR` when the device
+  signs with its key: release z23 did, on the ESP32-S3, and is not to be used. `prj.conf` gives 28 mutexes
+  and 12 condition variables from z24, and the core logs it when it finds
+  none left.
+- **The port reads a firmware slot back** before it asks MCUboot to try it:
+  a flash driver may report a write it did not do.
+
+The Raspberry Pi Pico W (RP2040) ran the port up to release z22. It was
+removed for its RAM, below what a device needs
+([support levels](DEVICES.md#support-levels)); what was measured on it is in
+[RESULTS.md](RESULTS.md).
 
 ## On an ESP32-S3
 
@@ -289,7 +203,7 @@ Tried on the board, against Flight Control 1.4.0:
 | | |
 |---|---|
 | Enrollment | key made by PSA from the chip's random generator, certificate for a year |
-| WASM app | the signed `alarm` app runs (WAMR's fast interpreter on Xtensa); the Pico's copy, signed with another key, was refused |
+| WASM app | the signed `alarm` app runs (WAMR's fast interpreter on Xtensa); a copy signed with another key was refused |
 | Firmware, whole | 885 KB in 7 s, 24 s from the restart to the agent, MCUboot's swap included; confirmed |
 | Firmware, as a delta | 19 KB (2.2%) rebuilt the 885 KB image in 8 s; confirmed |
 | A firmware that cannot reach Flight Control | downloaded whole in 14 s; given up after its 30 s; MCUboot put the previous firmware back (a 15 s swap), which reported the failure 1 min 53 s after the fleet changed, and did not try the image again |
@@ -302,35 +216,40 @@ What it took, beyond the board's two files in `port/zephyr/boards/`:
   heap is the larger of what the application asks and what the drivers add:
   the WiFi driver's 51 KB are not added to a size that is set, and with
   64 KB there were 28 KB left for thread stacks. It is 96 KB now, the C heap
-  123 KB (128 KB before z14 and its app interface), the status thread's
-  stack 16 KB, the main thread's, where the spec loop runs, 16 KB: 98% of
-  the region.
+  123 KB (128 KB before z14 and its app interface; 119 KB from z24), the
+  status thread's stack 16 KB, the main thread's, where the spec loop runs,
+  16 KB: 98% of the region.
+- **PSRAM for apps (z24).** The N8R8's 8 MB of octal PSRAM is a heap of its
+  own (`CONFIG_ESP_SPIRAM`, `CONFIG_SPIRAM_MODE_OCT`, its size in the
+  overlay); WASM apps' memories of 16 KB or more come from it, through WAMR's
+  `set_exec_mem_alloc_func` (`port/zephyr/fc_heap_zephyr.c`), the rest of the
+  firmware keeps internal RAM. Its driver takes 4 KB of that, from the C
+  heap. CoreMark, which did not fit before, runs there ([RESULTS.md](RESULTS.md#coremark)).
 - **The WiFi driver joins after the request returns**, and chooses the access
-  point itself (`CONFIG_ESP32_WIFI_STA_SCAN_ALL`: the strongest). The Pico's
-  way of giving up a weak join is for Infineon's driver only.
+  point itself (`CONFIG_ESP32_WIFI_STA_SCAN_ALL`: the strongest).
 - **A kept connection the server closed** is `ENOTCONN` to Zephyr's TCP, not
   a reset: the port took it for an error and warned at every request, before
   the core opened another connection as it should.
 
-The two boards are in one fleet (`tools/fleet/zephyr-lab.yaml`), served by
-one release with an image for each:
+The board is in a fleet of its own (`tools/fleet/zephyr-lab.yaml`). A release
+is one OCI index with an image for each Zephyr board, named by the board's
+`CONFIG_FC_FW_PLATFORM`:
 
 ```bash
-tools/fw-push.py --delta-from z2 <registry>/flightctl-mcu/fw:z3 rpi_pico_w=port/zephyr/build-pico-mcuboot/zephyr/zephyr/zephyr.signed.bin esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
+tools/fw-push.py --delta-from z2 <registry>/flightctl-mcu/fw:z3 esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
 ```
 
-Each took its own image from it, as a delta: 20 KB on the Pico W (2.9%), 9 KB
-on the ESP32-S3 (1.0%). Both must hold the public half of the key the
-release is signed with: the Pico W had been provisioned with another, and
-refused the fleet's app until its credentials were written again.
+It took its image as a delta: 9 KB (1.0%). A board must hold the public half
+of the key the release is signed with; one provisioned with another refuses
+the fleet's app until its credentials are written again.
 
 Field provisioning ([PROVISIONING.md](PROVISIONING.md#on-zephyr)): with a
 proof of possession and no network in its credentials, the board opened
 `FC-E8EC00` on channel 6 three seconds after boot, with the provisioning
 server listening, and the access point went away once the network was
-written back. Release z10, which has it, came to both boards as a delta
-(72 KB here, 56 KB on the Pico W) and changed nothing for a board with its
-network: both were Online with the app running about 90 s after the fleet
+written back. Release z10, which has it, came to the board as a delta
+(72 KB) and changed nothing for a board with its
+network: it was Online with the app running about 90 s after the fleet
 changed. Provisioned from an iPhone with Espressif's app: Online with its
 app a second after the access point closed. What it took: Zephyr's STA+AP
 usage mode (`CONFIG_WIFI_USAGE_MODE_STA_AP`; with `ESP32_WIFI_AP_STA_MODE`

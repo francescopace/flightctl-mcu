@@ -6,10 +6,10 @@ What the agent asks of a device, where it runs today, and how to add another one
 
 The agent is not tied to a chip or a vendor: it is a C core and a thin port for each system it runs on. What it asks of a device:
 
-- a CPU that [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) has a target for. In use here: Xtensa, RISC-V, Arm Cortex-M0+, and AArch64 and x86-64 on a host;
-- about 256 KB of RAM: the smallest board it runs on has 264 KB, and uses nearly all of it;
+- a CPU that [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) has a target for. In use here: Xtensa, RISC-V, Arm Cortex-M3 (emulated), and AArch64 and x86-64 on a host;
+- 384 KB of SRAM at the least. What counts is the heap left once the agent and an app run, in the tables [below](#boards-tried): the ESP32-C3 has 57 KB free, the C5 131 KB, the ESP32-S3 118 KB. Chips with less SRAM are not supported ([support levels](#support-levels));
 - flash for two firmware slots and some storage, 2 MB at the least (images are 0.7 to 1.5 MB);
-- an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried on hardware: a Zephyr board with Ethernet is two files ([below](#another-zephyr-board)), not tried;
+- an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried on hardware. Ethernet is tried on Zephyr in QEMU (`mps2/an385`, [ZEPHYR.md](ZEPHYR.md#on-an-emulated-arm-cortex-m3)); a real Zephyr board with Ethernet is two files ([below](#another-zephyr-board));
 - a random generator and a way to learn the time (SNTP), for TLS;
 - mbedTLS 4.1 or later.
 
@@ -19,40 +19,52 @@ Three stacks have a port today:
 
 | Stack | Devices | What works there |
 |---|---|---|
-| **ESP-IDF** 6.0<br/>`port/espidf` | Espressif's WiFi chips. Six run it: ESP32, S2, S3, C3, C5, C6. Another one ESP-IDF supports is mostly configuration. | Everything, and the most complete: also Secure Boot, flash encryption, keys in hardware, WiFi provisioning over SoftAP and BLE ([SECURITY.md](SECURITY.md), [PROVISIONING.md](PROVISIONING.md)). On six boards, and on emulated chips in CI. |
-| **Zephyr** 4.5<br/>`port/zephyr` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. Two run it: a Raspberry Pi Pico W (RP2040) and an ESP32-S3-DevKitC. Likely next, not tried: the Raspberry Pi Pico 2 W, boards with Ethernet such as ST's Nucleo-144 (F7, H7) or NXP's i.MX RT kits. | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([ZEPHYR.md](ZEPHYR.md)). On two boards, and as a Linux process (`native_sim`) in CI. A new board is two files. |
+| **ESP-IDF** 6.0<br/>`port/espidf` | Espressif's WiFi chips. Five run it: ESP32, S3, C3, C5, C6. Another one ESP-IDF supports is mostly configuration. | Everything, and the most complete: also Secure Boot, flash encryption, keys in hardware, WiFi provisioning over SoftAP ([SECURITY.md](SECURITY.md), [PROVISIONING.md](PROVISIONING.md)). On five boards, and on emulated chips in CI. |
+| **Zephyr** 4.5<br/>`port/zephyr` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. One board runs it, an ESP32-S3-DevKitC, and an Arm Cortex-M3 on Ethernet emulated in QEMU (`mps2/an385`). Next: a real Arm board with Ethernet, see [support levels](#support-levels). | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([ZEPHYR.md](ZEPHYR.md)). On one board, and in CI as a Linux process (`native_sim`) and in QEMU (`mps2/an385`). A new board is two files. |
 | **Linux, macOS**<br/>`port/host` | Anything with POSIX threads and sockets: a gateway, a single-board computer, a container, your laptop. | Runs as a process. Enrollment, monitoring, config and WASM apps are real; a firmware update only saves the image to a file. It is the simulated device of the tests, and where the protocol work was done. A Linux device that can run bootc and Podman should run Flight Control's own agent instead. |
 
 Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs a port, which is about 20 functions: see [Adding another device](#adding-another-device). None is written.
 
 "Everything" means enrollment, monitoring, config, firmware OTA with rollback and WASM apps. The same `.wasm` file runs on every one of these, whatever the CPU.
 
+## Support levels
+
+| Level | Chips | SRAM | What it means |
+|---|---|---|---|
+| **Supported** | ESP32-S3 (ESP-IDF and Zephyr), ESP32 (classic), ESP32-C6, ESP32-C5 | 512, 520, 512, 384 KB | Each release is tried on a board. New features come here first. |
+| **Best effort** | ESP32-C3 | 400 KB | Built in CI and with each release; tried on a board from time to time. |
+| **Removed** | ESP32-S2, Raspberry Pi Pico W (RP2040) | 320, 264 KB | Below 384 KB of SRAM: the S2 needed its PSRAM for TLS, the Pico W had about 30 KB free with an app. The last releases for them are v3.8 (ESP-IDF) and z22 (Zephyr). |
+| **Emulated** | Arm MPS2 AN385 (Cortex-M3, Ethernet) on Zephyr, in QEMU | 4 MB, of which the build uses 300 KB | The end-to-end test (e2e workflow), with the memory of a 384 KB device. The first link other than WiFi. No firmware updates (no MCUboot there) and no random generator: not a device. |
+| **Planned** | An ST Nucleo board with Ethernet (H563ZI or F767ZI) on Zephyr | 640 / 512 KB | Not tried yet. A real Arm board. |
+
+The host port (Linux, macOS) is supported: it is the simulated device of the tests.
+
+Another chip Espressif or Zephyr supports, with 384 KB of SRAM or more, should work ([Adding another device](#adding-another-device)), but it is not part of these levels until it is tried.
+
 ## Boards tried
 
-With ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and on two of these boards, the S3 ([RESULTS.md](RESULTS.md#esp-idf-603-on-a-board-esp32-s3)) and the C3 (release v3.1, [RESULTS.md](RESULTS.md#the-registry-with-tls-and-decommissioning-on-boards)); the table is from the earlier run:
+With ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and on every one of these boards: first the S3 ([RESULTS.md](RESULTS.md#esp-idf-603-on-a-board-esp32-s3)) and the C3 (release v3.1, [RESULTS.md](RESULTS.md#the-registry-with-tls-and-decommissioning-on-boards)), all of them with release v3.8 ([RESULTS.md](RESULTS.md#coremark)); the table is from the earlier run:
 
 | Chip | Core | Status | Free heap with an app running |
 |---|---|---|---|
 | ESP32-S3 | Xtensa LX7 | everything works | ~118 KB |
-| ESP32-C3 | RISC-V | everything works; also tested in the emulator in CI | ~57 KB |
-| ESP32-C5 | RISC-V | everything works; also tested in the emulator in CI | ~59 KB |
+| ESP32-C3 | RISC-V | everything works | ~57 KB |
+| ESP32-C5 | RISC-V | everything works; also tested in the emulator | ~59 KB |
 | ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~73 KB |
 | ESP32-C6 | RISC-V | everything except rollback, which was not exercised | ~163 KB |
-| ESP32-S2 | Xtensa LX7 | everything works, using the PSRAM in the package (S2FNR2, as on the Lolin S2 Mini): internal RAM alone is not enough for TLS; no serial log on the S2 Mini, because the console is on UART0 | ~28 KB internal + 2 MB PSRAM |
 
-Since v3.7 the agent's spec loop runs on the main task and its status thread has a smaller stack, which frees internal RAM: on the S2, 71 KB instead of 35 KB; on the classic ESP32, 137 KB instead of 100 KB ([RESULTS.md](RESULTS.md#ram)). The other chips have not run v3.7.
+Since v3.7 the agent's spec loop runs on the main task and its status thread has a smaller stack, which frees internal RAM: on the classic ESP32, 137 KB instead of 100 KB ([RESULTS.md](RESULTS.md#ram)). With `alarm`, the C5 has 131 KB free with v3.8, against 59 KB with v3.0. The C3 has not been measured since.
 
-The S2 Mini and the C6 DevKitC flash only over their native USB port, started in download mode (plug them in holding BOOT).
+The C6 DevKitC flashes only over its native USB port, started in download mode (plug them in holding BOOT).
 
-PSRAM is not used, so a single image runs on every board variant of a chip. The exception is the S2, which needs its PSRAM (see the table).
+PSRAM is not used, so a single image runs on every board variant of a chip, except on the ESP32-S3 (v3.9 on), where it holds the memory of apps too large for internal RAM. An S3 comes with no PSRAM, 2 MB of quad PSRAM (N4R2, N8R2) or 8 MB of octal (N8R8, N16R8), and the mode is fixed at build time, so a release has two S3 images: `esp32s3`, for quad PSRAM, which boots without it on the other boards, and `esp32s3-r8` (`VARIANT=r8`), for octal. A board takes updates for the image it runs: an N8R8 is flashed once over USB with `esp32s3-r8`, and then updates from it over the air. Tried on an N4R2 and an N8R8. The Zephyr build for the S3 (z23 on) uses the N8R8's octal PSRAM the same way ([ZEPHYR.md](ZEPHYR.md)).
 
-With ESP-IDF 6.0.3 (release v3.8, built for speed) the firmware images are 1,093 to 1,288 KB, leaving 22–34% of the 1,664 KB OTA slot free, and 1,502 KB with BLE provisioning built in (C3, release v3.1), which leaves 10% ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself is about 35 KB (49 KB with cJSON, detools and its ESP-IDF port; C3, debug build) and WAMR about 68 KB.
+With ESP-IDF 6.0.3 (release v3.8, built for speed) the firmware images are 1,093 to 1,288 KB, leaving 22–34% of the 1,664 KB OTA slot free ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself is about 35 KB (49 KB with cJSON, the delta decoder and its ESP-IDF port; C3, debug build) and WAMR about 68 KB.
 
 With Zephyr 4.5 and firmware updates through MCUboot ([ZEPHYR.md](ZEPHYR.md)):
 
 | Board | Core | Status | Free heap with an app running |
 |---|---|---|---|
-| Raspberry Pi Pico W (RP2040) | Arm Cortex-M0+ | everything works | ~30 KB |
 | ESP32-S3 | Xtensa LX7 | everything works | ~49 KB |
 
 ## Adding another device
@@ -70,13 +82,13 @@ Per-device differences, such as a different LED pin on a clone board, don't need
 
 ### Another Zephyr board
 
-If Zephyr supports the board and it meets [the list above](#what-a-device-needs), it is two files in `port/zephyr/boards/`, as for the two boards that are there:
+If Zephyr supports the board and it meets [the list above](#what-a-device-needs), it is two files in `port/zephyr/boards/`, as for the boards that are there:
 
 1. `<board>.overlay`: the `fc_creds` (16 KB) and `fc_storage` partitions, usually carved out of the board's storage partition, and the nodes Zephyr leaves off (the WiFi chip, the random generator).
 2. `<board>.conf`: the network driver, MCUboot's image manager, and the memory the board can give: the kernel heap (thread stacks come from it), the C heap, the agent's stacks.
 3. Build with `BOARD=<board> port/zephyr/build.sh`, write the credentials with `tools/provision.py --format zephyr --board <board files>`. Firmware updates need MCUboot: the script builds with it for a board named `.../mcuboot` and for Espressif's, and for any other with `MCUBOOT=1`.
 
-A CPU family that is new here needs its WAMR target named in `port/zephyr/CMakeLists.txt`, and a chip without a random generator needs an entropy driver (the Pico W has one in `port/zephyr`). What each of the two boards took is in [ZEPHYR.md](ZEPHYR.md).
+A CPU family that is new here needs its WAMR target named in `port/zephyr/CMakeLists.txt`, and a chip without a random generator needs an entropy driver. What the ESP32-S3 took is in [ZEPHYR.md](ZEPHYR.md).
 
 ### Another RTOS (NuttX, RT-Thread, ThreadX, ...)
 
