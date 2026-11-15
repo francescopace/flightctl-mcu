@@ -89,3 +89,59 @@ void fc_heap_stats(size_t *total, size_t *free_now, size_t *free_min)
     *free_now = st.free_bytes;
     *free_min = *total - st.max_allocated_bytes;
 }
+
+#if defined(CONFIG_SHARED_MULTI_HEAP)
+#include <zephyr/multi_heap/shared_multi_heap.h>
+
+/* WASM apps' linear memories in PSRAM, where the board has some (the
+ * ESP32-S3 N8R8): WAMR asks its Zephyr platform for them through os_mmap,
+ * which calls the allocator given with set_exec_mem_alloc_func. Blocks of
+ * 16 KB or more come from the PSRAM heap, smaller ones and any the PSRAM
+ * cannot give from the C heap, which the agent's TLS buffers need. */
+#define WASM_MEM_PSRAM_MIN (16 * 1024)
+#define WASM_MEM_PSRAM_MAX 8 /* blocks at a time: two apps, a memory each */
+
+extern void set_exec_mem_alloc_func(void *(*alloc_func)(unsigned int size), void (*free_func)(void *addr));
+
+static void *s_psram_blocks[WASM_MEM_PSRAM_MAX];
+static SYS_MUTEX_DEFINE(s_psram_lock);
+
+static void *wasm_mem_alloc(unsigned int size)
+{
+    void *p = NULL;
+    if (size >= WASM_MEM_PSRAM_MIN) {
+        sys_mutex_lock(&s_psram_lock, K_FOREVER);
+        for (int i = 0; i < WASM_MEM_PSRAM_MAX; i++) {
+            if (s_psram_blocks[i] == NULL) {
+                p = shared_multi_heap_aligned_alloc(SMH_REG_ATTR_EXTERNAL, 8, size);
+                s_psram_blocks[i] = p;
+                break;
+            }
+        }
+        sys_mutex_unlock(&s_psram_lock);
+    }
+    return p != NULL ? p : malloc(size);
+}
+
+static void wasm_mem_free(void *addr)
+{
+    sys_mutex_lock(&s_psram_lock, K_FOREVER);
+    for (int i = 0; i < WASM_MEM_PSRAM_MAX; i++) {
+        if (addr != NULL && s_psram_blocks[i] == addr) {
+            s_psram_blocks[i] = NULL;
+            sys_mutex_unlock(&s_psram_lock);
+            shared_multi_heap_free(addr);
+            return;
+        }
+    }
+    sys_mutex_unlock(&s_psram_lock);
+    free(addr);
+}
+
+static int wasm_mem_init(void)
+{
+    set_exec_mem_alloc_func(wasm_mem_alloc, wasm_mem_free);
+    return 0;
+}
+SYS_INIT(wasm_mem_init, APPLICATION, 0);
+#endif

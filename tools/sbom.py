@@ -103,7 +103,7 @@ def core_components():
 def esp_idf_components(chips):
     out, seen = [], set()
     for chip in chips:
-        lock = read(f"port/espidf/dependencies.lock.{chip}")
+        lock = read(f"port/espidf/dependencies.lock.{chip.split('-')[0]}")  # esp32s3-r8: esp32s3
         deps = {}
         for name, version in re.findall(r"^  (\S+):\n(?:    .*\n)*?    version: (\S+)", lock, re.M):
             deps[name] = version

@@ -31,3 +31,8 @@
 &trng0 {
 	status = "okay";
 };
+
+/* The N8R8 module's PSRAM: 8 MB, octal (the .conf). */
+&psram0 {
+	size = <DT_SIZE_M(8)>;
+};

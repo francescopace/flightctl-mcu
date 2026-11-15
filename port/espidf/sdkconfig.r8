@@ -1,0 +1,6 @@
+# ESP32-S3 with 8 MB of octal PSRAM (N8R8, N16R8): VARIANT=r8, build-esp32s3-r8.
+# It reports its firmware platform as esp32s3-r8 (fc_port_fw_platform), and
+# tools/fw-push.py puts it in the same index as the other chips: such a
+# board, flashed once with this image, then takes its updates from it.
+# Boots without PSRAM where there is none.
+CONFIG_SPIRAM_MODE_OCT=y

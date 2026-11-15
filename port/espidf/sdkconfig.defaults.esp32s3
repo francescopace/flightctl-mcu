@@ -1,5 +1,19 @@
-# ESP32-S3-DevKitC-1 v1.0 (v1.1: 38). PSRAM stays off so one image fits N8R8 and N4R2.
+# ESP32-S3-DevKitC-1 v1.0 (v1.1: 38).
 CONFIG_FC_LED_GPIO=48
 
 # The chip's highest clock (ESP-IDF's default is 160 MHz).
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# PSRAM. The S3 comes with none, 2 MB of quad PSRAM (N4R2, N8R2) or 8 MB of
+# octal (N8R8, N16R8), and the mode is set at build time: this image takes
+# quad PSRAM where there is some and boots without it elsewhere, an octal
+# one included; the r8 variant (sdkconfig.r8) takes octal PSRAM. Only
+# allocations that ask for it go there (heap_caps_malloc with
+# MALLOC_CAP_SPIRAM, or MALLOC_CAP_8BIT once internal RAM has no block
+# large enough): an app's linear memory too large for internal RAM, as
+# wasm-coremark's 128 KB. malloc() stays internal, the agent's TLS buffers
+# with it (in PSRAM they got corrupted on the S2).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y

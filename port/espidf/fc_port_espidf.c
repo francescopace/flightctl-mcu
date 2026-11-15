@@ -313,9 +313,16 @@ int fc_port_read_file(const char *path, char **out, size_t *len)
     return fc_port_kv_get(key, out, len);
 }
 
+/* The platform a release's index names this firmware's image by: the chip,
+ * and for an S3 built for octal PSRAM (VARIANT=r8) a platform of its own,
+ * as its image would not find quad PSRAM. */
 const char *fc_port_fw_platform(void)
 {
+#if CONFIG_SPIRAM_MODE_OCT
+    return CONFIG_IDF_TARGET "-r8";
+#else
     return CONFIG_IDF_TARGET;
+#endif
 }
 
 int fc_port_ota_begin(size_t size, void **handle)

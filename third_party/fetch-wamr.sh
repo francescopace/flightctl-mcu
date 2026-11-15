@@ -23,6 +23,11 @@
 #   thread manager does, whether the exec env's limit was set to 0, and then
 #   traps: an app's run-once export (FC_ENTRY), which has no budget, can be
 #   removed while it runs.
+#   wamr-espidf-psram-interp.patch: on an ESP32-S3 built with PSRAM, WAMR
+#   asked for every linear memory in PSRAM only (meant for AOT code, which
+#   this firmware does not build): where the image found no PSRAM, no app
+#   could start. Now only with AOT; the interpreter's memory comes from
+#   internal RAM first, PSRAM when no internal block is large enough.
 # None is in upstream as of WAMR 2.4.5 and main.
 set -euo pipefail
 WAMR_TAG="${WAMR_TAG:-WAMR-2.4.5}"

@@ -13,7 +13,8 @@ stdlib only):
 
 The device picks the manifest whose platform.architecture is its chip, streams
 the layer into the inactive OTA slot and checks its sha256.
-Default chips: every port/espidf/build-<chip>[-<variant>]/ with a built image.
+Default chips: every port/espidf/build-<chip>[-<variant>]/ with a built image,
+and build-esp32s3-r8[-<variant>] (octal PSRAM) as platform esp32s3-r8.
 PLATFORM=FILE instead of a chip pushes FILE for that platform: a Zephyr build
 signed for MCUboot (zephyr.signed.bin), for the board whose
 CONFIG_FC_FW_PLATFORM is PLATFORM. Its manifest says os "zephyr" and its layer
@@ -37,6 +38,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -175,6 +177,22 @@ def push_sbom(base, host, repo, tag, idigest, isize, entries, empty, root):
         print(f"SBOM in Trustify: {status} {body[:120]}")
 
 
+def platform_of(build_dir):
+    """The platform a build's image is for, as the firmware names it
+    (fc_port_fw_platform in port/espidf/fc_port_espidf.c): the chip, and
+    <chip>-r8 for an S3 built for octal PSRAM (VARIANT=r8). Builds of other
+    variants (secure, release, ...) are for their chip's platform and are pushed
+    with --variant."""
+    try:
+        cfg = open(f"{build_dir}/sdkconfig").read()
+    except OSError:
+        return None
+    target = re.search(r'^CONFIG_IDF_TARGET="(\w+)"', cfg, re.M)
+    if target is None:
+        return None
+    return target.group(1) + ("-r8" if re.search(r"^CONFIG_SPIRAM_MODE_OCT=y", cfg, re.M) else "")
+
+
 def main():
     args = sys.argv[1:]
     variant, delta_from = "", []
@@ -193,10 +211,9 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     fw_dir = f"{root}/port/espidf"
     chips = args[1:] or sorted(
-        os.path.basename(d)[len("build-"):len(os.path.basename(d)) - len(variant)]
-        for d in glob.glob(f"{fw_dir}/build-esp32*{variant}")
+        name for d in glob.glob(f"{fw_dir}/build-esp32*{variant}")
         if os.path.exists(f"{d}/flightctl_mcu_fw.bin")
-        and os.path.basename(d).count("-") == 1 + variant.count("-"))
+        and (name := os.path.basename(d)[len("build-"):len(os.path.basename(d)) - len(variant)]) == platform_of(d))
     if not chips:
         sys.exit("no firmware builds found")
 
