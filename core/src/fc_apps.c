@@ -585,15 +585,6 @@ static int check_module(wasm_module_t m, const char *entry, char *err, size_t er
     return 0;
 }
 
-/* 1 for a module run once: FC_ENTRY, or _start without tick() or on_event(). */
-static int runs_once(const app_t *a, wasm_module_t m)
-{
-    char sig[16];
-    return a->entry[0] || (export_sig(m, "tick", sig, sizeof(sig)) == NULL &&
-                           export_sig(m, "on_event", sig, sizeof(sig)) == NULL &&
-                           export_sig(m, "_start", sig, sizeof(sig)) != NULL);
-}
-
 /* Before a module run once starts: waits until the agent has had nothing on
  * hand (fc_agent_busy) for ENTRY_QUIET_MS. Right after an app changes the
  * agent applies the spec and sends two status updates (the second grouped

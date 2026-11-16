@@ -66,6 +66,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 }
 
 void fc_port_log(fc_log_level_t level, const char *fmt, ...) {}
+long fc_port_heap_largest(void)
+{
+    return -1;
+}
 int fc_port_hwkey_pk(struct mbedtls_pk_context *pk, const struct mbedtls_pk_context *pub)
 {
     return -1;

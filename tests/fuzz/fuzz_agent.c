@@ -25,6 +25,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
 }
 
 void fc_oci_set_signing_key(const char *pub_pem) {}
+void fc_oci_set_turn(void (*begin)(void *ctx), void (*end)(void *ctx), void *ctx) {}
 
 static const char *s_delta_outcome = "", *s_delta_reason = "";
 
