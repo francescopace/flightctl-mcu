@@ -500,6 +500,7 @@ typedef struct {
     int status;             /* :status, 0 if none */
     long content_length;    /* -1 if none */
     char *www_authenticate; /* or NULL */
+    int grpc_status;        /* grpc-status, -1 if none */
 } hpack_resp_t;
 
 static void hpack_take(hpack_resp_t *h, const char *name, char *value)
@@ -511,6 +512,8 @@ static void hpack_take(hpack_resp_t *h, const char *name, char *value)
         h->status = atoi(value);
     } else if (strcmp(name, "content-length") == 0) {
         h->content_length = atol(value);
+    } else if (strcmp(name, "grpc-status") == 0) {
+        h->grpc_status = atoi(value);
     } else if (strcmp(name, "www-authenticate") == 0 && h->www_authenticate == NULL) {
         h->www_authenticate = value;
         return;
@@ -525,6 +528,7 @@ static int hpack_decode(const uint8_t *p, size_t n, hpack_resp_t *h)
     h->status = 0;
     h->content_length = -1;
     h->www_authenticate = NULL;
+    h->grpc_status = -1;
     size_t off = 0;
     while (off < n) {
         uint8_t b = p[off];
@@ -601,6 +605,20 @@ static size_t hpack_put_field(uint8_t *p, uint32_t name_idx, const char *value, 
     return n + vl;
 }
 
+/* A literal field without indexing (0000) with a new name, lower case. */
+static size_t hpack_put_named(uint8_t *p, const char *name, const char *value)
+{
+    size_t nl = strlen(name), vl = strlen(value);
+    size_t n = 0;
+    p[n++] = 0x00;
+    n += hpack_put_int(p + n, 0x00, 7, (uint32_t)nl);
+    memcpy(p + n, name, nl);
+    n += nl;
+    n += hpack_put_int(p + n, 0x00, 7, (uint32_t)vl);
+    memcpy(p + n, value, vl);
+    return n + vl;
+}
+
 /* ---- transport ------------------------------------------------------------ */
 
 typedef struct conn conn_t;
@@ -642,6 +660,11 @@ typedef struct stream {
     uint32_t recv_unacked;
     int timeout_s;
     long long deadline;  /* no frame for it by then: timeout */
+    int grpc_status_p1;  /* grpc-status + 1, 0 if none came */
+    /* A bidirectional stream (fc_http_stream_*): what came and was not read
+     * yet. Its window is credited as it arrives, so it is bounded here. */
+    uint8_t *ring;
+    size_t ring_cap, ring_head, ring_len;
 } stream_t;
 
 struct conn {
@@ -1218,7 +1241,18 @@ static int on_data(conn_t *c, uint32_t sid, uint8_t flags, size_t len)
             continue;
         }
         s->got += (long long)k;
-        if (s->on_data != NULL) {
+        if (s->ring != NULL) {
+            pthread_mutex_lock(&c->lock);
+            if (s->ring_len + k > s->ring_cap) {
+                failed = 1; /* more than the reader keeps: the stream ends */
+            } else {
+                for (size_t i = 0; i < k; i++) {
+                    s->ring[(s->ring_head + s->ring_len + i) % s->ring_cap] = chunk[i];
+                }
+                s->ring_len += k;
+            }
+            pthread_mutex_unlock(&c->lock);
+        } else if (s->on_data != NULL) {
             if (s->status == 200 && !s->aborted && s->on_data(chunk, k, s->ctx) != 0) {
                 s->aborted = 1;
                 failed = 1;
@@ -1294,8 +1328,11 @@ static int on_header_block(conn_t *c, stream_t *s, const uint8_t *block, size_t 
             free(h.www_authenticate);
             return -1; /* a response without :status */
         }
+        if (h.grpc_status >= 0) {
+            s->grpc_status_p1 = h.grpc_status + 1;
+        }
         /* 1xx: an interim response, the final one follows. After the final
-         * headers, a block is the trailers: nothing in them is needed. */
+         * headers, a block is the trailers: only grpc-status is kept. */
         if (end_stream) {
             stream_end_locked(c, s, !s->headers_done);
         }
@@ -1558,13 +1595,16 @@ static int read_frame(conn_t *c, long long deadline)
  * thread does. Returns 0, or -1 if the connection is lost or nothing came
  * for s by its deadline (the connection is then given up: a server that
  * went silent is a connection that is gone). */
-static int wait_until(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *))
+static int wait_core(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *), long long deadline, int kill)
 {
     while (!done(c, s)) {
         if (c->dead) {
             return -1;
         }
-        if (now_ms() >= s->deadline) {
+        if (now_ms() >= deadline) {
+            if (!kill) {
+                return 1;
+            }
             conn_kill_locked(c, "timeout");
             s->retryable = 0; /* the others on it may go again; this one waited enough */
             return -1;
@@ -1572,7 +1612,7 @@ static int wait_until(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *))
         if (!c->reading) {
             c->reading = 1;
             pthread_mutex_unlock(&c->lock);
-            int rc = read_frame(c, s->deadline);
+            int rc = read_frame(c, deadline);
             pthread_mutex_lock(&c->lock);
             c->reading = 0;
             pthread_cond_broadcast(&c->cond);
@@ -1581,7 +1621,7 @@ static int wait_until(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *))
             }
             continue;
         }
-        long long left = s->deadline - now_ms();
+        long long left = deadline - now_ms();
         if (left > SLICE_MS) {
             left = SLICE_MS;
         }
@@ -1596,6 +1636,11 @@ static int wait_until(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *))
         pthread_cond_timedwait(&c->cond, &c->lock, &ts);
     }
     return 0;
+}
+
+static int wait_until(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *))
+{
+    return wait_core(c, s, done, s->deadline, 1);
 }
 
 static int is_over(conn_t *c, stream_t *s)
@@ -1836,10 +1881,13 @@ void fc_http_session_free(fc_http_session_t *s)
 /* A connection for t, with a reference for the caller: the session's when it
  * is still good for t, else a new one (kept by the session, if any). *fresh
  * tells whether it was just opened. */
-static conn_t *get_conn(const fc_http_target_t *t, int *fresh)
+static conn_t *get_conn_mode(const fc_http_target_t *t, int *fresh, int existing_only)
 {
     fc_http_session_t *s = t->session;
     *fresh = 0;
+    if (s == NULL && existing_only) {
+        return NULL;
+    }
     if (s == NULL) {
         *fresh = 1;
         return conn_open(t);
@@ -1859,7 +1907,7 @@ static conn_t *get_conn(const fc_http_target_t *t, int *fresh)
             c = NULL;
         }
     }
-    if (c == NULL) {
+    if (c == NULL && !existing_only) {
         /* Opened under the session's lock: a thread that needs it meanwhile
          * waits for this one instead of opening a second. */
         c = conn_open(t);
@@ -1871,6 +1919,11 @@ static conn_t *get_conn(const fc_http_target_t *t, int *fresh)
     }
     pthread_mutex_unlock(&s->lock);
     return c;
+}
+
+static conn_t *get_conn(const fc_http_target_t *t, int *fresh)
+{
+    return get_conn_mode(t, fresh, 0);
 }
 
 /* A request with its retry: one that the server never took (its connection
@@ -1963,4 +2016,163 @@ int fc_http_get_stream(const fc_http_target_t *t, const char *path, fc_http_data
         return -1;
     }
     return 0;
+}
+
+/* ---- bidirectional streams (gRPC) ---------------------------------------------- */
+
+struct fc_http_stream {
+    conn_t *c;
+    stream_t s;
+    int sent_end; /* END_STREAM sent */
+};
+
+#define STREAM_RING 4096
+
+fc_http_stream_t *fc_http_stream_open(const fc_http_target_t *t, const char *path, const char *content_type,
+                                      const char *const *headers)
+{
+    int fresh;
+    conn_t *c = get_conn_mode(t, &fresh, 1);
+    if (c == NULL) {
+        return NULL;
+    }
+    fc_http_stream_t *st = calloc(1, sizeof(*st));
+    uint8_t *ring = malloc(STREAM_RING);
+    char authority[160];
+    snprintf(authority, sizeof(authority), t->port == 443 ? "%s" : "%s:%d", t->host, t->port);
+    size_t cap = 96 + strlen(path) + strlen(authority) + strlen(content_type);
+    for (const char *const *h = headers; h != NULL && h[0] != NULL; h += 2) {
+        cap += strlen(h[0]) + strlen(h[1]) + 12;
+    }
+    uint8_t *hb = st != NULL && ring != NULL ? malloc(cap) : NULL;
+    if (hb == NULL) {
+        free(st);
+        free(ring);
+        conn_put(c);
+        return NULL;
+    }
+    size_t n = 0;
+    hb[n++] = 0x83; /* POST */
+    hb[n++] = 0x87; /* :scheme https */
+    n += hpack_put_field(hb + n, 4, path, 0);
+    n += hpack_put_field(hb + n, 1, authority, 0);
+    n += hpack_put_field(hb + n, 58, "flightctl-mcu", 0);
+    n += hpack_put_field(hb + n, 31, content_type, 0);
+    n += hpack_put_named(hb + n, "te", "trailers");
+    for (const char *const *h = headers; h != NULL && h[0] != NULL; h += 2) {
+        n += hpack_put_named(hb + n, h[0], h[1]);
+    }
+    st->c = c;
+    st->s.ring = ring;
+    st->s.ring_cap = STREAM_RING;
+    st->s.timeout_s = t->timeout_s > 0 ? t->timeout_s : 30;
+    st->s.headers_done = 0;
+    int rc = stream_open(c, &st->s, hb, n, 0);
+    free(hb);
+    if (rc != 0) {
+        fc_http_stream_close(st);
+        return NULL;
+    }
+    return st;
+}
+
+static int has_room(conn_t *c, stream_t *s)
+{
+    return can_send(c, s) || c->retired;
+}
+
+int fc_http_stream_write(fc_http_stream_t *st, const void *data, size_t len, int end, int timeout_ms)
+{
+    conn_t *c = st->c;
+    stream_t *s = &st->s;
+    const uint8_t *p = data;
+    size_t off = 0;
+    long long deadline = now_ms() + timeout_ms;
+    if (st->sent_end) {
+        return -1;
+    }
+    do {
+        pthread_mutex_lock(&c->lock);
+        int rc = wait_core(c, s, has_room, deadline, 0);
+        if (rc != 0 || s->state != S_OPEN || c->retired) {
+            pthread_mutex_unlock(&c->lock);
+            return -1;
+        }
+        int64_t k = (int64_t)(len - off);
+        if (k > c->send_window) {
+            k = c->send_window;
+        }
+        if (k > s->send_window) {
+            k = s->send_window;
+        }
+        if (k > (int64_t)c->peer_max_frame) {
+            k = c->peer_max_frame;
+        }
+        c->send_window -= k;
+        s->send_window -= k;
+        pthread_mutex_unlock(&c->lock);
+        int last = off + (size_t)k == len;
+        if (send_frame(c, F_DATA, last && end ? FL_END_STREAM : 0, s->id, p + off, (size_t)k) != 0) {
+            return -1;
+        }
+        off += (size_t)k;
+    } while (off < len);
+    st->sent_end = end;
+    return 0;
+}
+
+static int readable(conn_t *c, stream_t *s)
+{
+    return s->ring_len > 0 || s->state != S_OPEN || c->retired;
+}
+
+int fc_http_stream_read(fc_http_stream_t *st, void *buf, size_t cap, int timeout_ms)
+{
+    conn_t *c = st->c;
+    stream_t *s = &st->s;
+    pthread_mutex_lock(&c->lock);
+    int rc = wait_core(c, s, readable, now_ms() + timeout_ms, 0);
+    int n = 0;
+    if (s->ring_len > 0) {
+        size_t k = cap < s->ring_len ? cap : s->ring_len;
+        for (size_t i = 0; i < k; i++) {
+            ((uint8_t *)buf)[i] = s->ring[(s->ring_head + i) % s->ring_cap];
+        }
+        s->ring_head = (s->ring_head + k) % s->ring_cap;
+        s->ring_len -= k;
+        n = (int)k;
+    } else if (rc < 0 || s->state != S_OPEN || c->retired) {
+        n = -1; /* over: ended, reset, the connection lost or let go */
+    }
+    pthread_mutex_unlock(&c->lock);
+    return n;
+}
+
+void fc_http_stream_status(fc_http_stream_t *st, int *http_status, int *grpc_status)
+{
+    pthread_mutex_lock(&st->c->lock);
+    *http_status = st->s.headers_done ? st->s.status : -1;
+    *grpc_status = st->s.grpc_status_p1 - 1;
+    pthread_mutex_unlock(&st->c->lock);
+}
+
+void fc_http_stream_close(fc_http_stream_t *st)
+{
+    if (st == NULL) {
+        return;
+    }
+    conn_t *c = st->c;
+    if (st->s.id != 0) {
+        pthread_mutex_lock(&c->lock);
+        int open = st->s.state == S_OPEN && !c->dead;
+        pthread_mutex_unlock(&c->lock);
+        if (open) {
+            send_u32(c, F_RST_STREAM, st->s.id, E_CANCEL);
+        }
+        stream_close(c, &st->s);
+    }
+    conn_put(c);
+    free(st->s.ring);
+    free(st->s.www_authenticate);
+    free(st);
 }

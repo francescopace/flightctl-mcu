@@ -249,6 +249,7 @@ typedef struct {
     int continuations;
     uint32_t window_conn, window_stream; /* WINDOW_UPDATE increments seen meanwhile */
     int settings_acks, ping_acks;
+    char ctype[64], te[16], session_id[64]; /* content-type, and literals with new names */
 } req_t;
 
 /* Decodes the client's header block: indexed fields and literals without
@@ -268,10 +269,28 @@ static void decode_request(const uint8_t *p, size_t n, req_t *r)
         }
         uint32_t idx, len;
         int never = (b & 0xf0) == 0x10;
+        if (b == 0x00) { /* a literal with a new name */
+            uint32_t nl, vl;
+            off++;
+            off += (size_t)hpack_int(p + off, n - off, 7, &nl);
+            char name[32] = {0};
+            memcpy(name, p + off, nl < sizeof(name) - 1 ? nl : sizeof(name) - 1);
+            off += nl;
+            off += (size_t)hpack_int(p + off, n - off, 7, &vl);
+            char *dst = strcmp(name, "te") == 0 ? r->te : strcmp(name, "session-id") == 0 ? r->session_id : NULL;
+            size_t cap = strcmp(name, "te") == 0 ? sizeof(r->te) : sizeof(r->session_id);
+            if (dst != NULL && vl < cap) {
+                memcpy(dst, p + off, vl);
+                dst[vl] = '\0';
+            }
+            off += vl;
+            continue;
+        }
         off += (size_t)hpack_int(p + off, n - off, 4, &idx);
         off += (size_t)hpack_int(p + off, n - off, 7, &len);
-        char *dst = idx == 2 ? r->method : idx == 4 ? r->path : idx == 1 ? r->authority : idx == 23 ? r->auth : NULL;
-        size_t cap = idx == 2 ? sizeof(r->method) : idx == 23 ? sizeof(r->auth) : 128;
+        char *dst = idx == 2 ? r->method : idx == 4 ? r->path : idx == 1 ? r->authority : idx == 23 ? r->auth
+                    : idx == 31 ? r->ctype : NULL;
+        size_t cap = idx == 2 ? sizeof(r->method) : idx == 23 ? sizeof(r->auth) : idx == 31 ? sizeof(r->ctype) : 128;
         if (dst != NULL && len < cap) {
             memcpy(dst, p + off, len);
             dst[len] = '\0';
@@ -363,6 +382,50 @@ static fc_http_target_t target(fc_http_session_t *s)
 {
     fc_http_target_t t = {.host = "srv", .port = 443, .ca_pem = "x", .timeout_s = 5, .session = s};
     return t;
+}
+
+/* Reads frames until a stream's header block is complete (its body, if any,
+ * is not waited for). */
+static int srv_stream_headers(int fd, req_t *r)
+{
+    memset(r, 0, sizeof(*r));
+    uint8_t block[4096];
+    size_t blen = 0;
+    for (;;) {
+        frame_t f;
+        if (srv_frame(fd, &f) != 0) {
+            return -1;
+        }
+        int done = 0;
+        if (f.type == F_HEADERS || f.type == F_CONTINUATION) {
+            r->sid = f.sid;
+            memcpy(block + blen, f.payload, f.len);
+            blen += f.len;
+            if (f.flags & FL_END_HEADERS) {
+                decode_request(block, blen, r);
+                done = 1;
+            }
+        }
+        free(f.payload);
+        if (done) {
+            return 0;
+        }
+    }
+}
+
+/* Trailers: grpc-status, ending the stream. */
+static void srv_trailers(int fd, uint32_t sid, const char *grpc_status)
+{
+    uint8_t b[64];
+    size_t n = 0;
+    b[n++] = 0x00;
+    n += hpack_put_int(b + n, 0, 7, 11);
+    memcpy(b + n, "grpc-status", 11);
+    n += 11;
+    n += hpack_put_int(b + n, 0, 7, (uint32_t)strlen(grpc_status));
+    memcpy(b + n, grpc_status, strlen(grpc_status));
+    n += strlen(grpc_status);
+    srv_send(fd, F_HEADERS, FL_END_HEADERS | FL_END_STREAM, sid, b, n);
 }
 
 /* ---- exchanges --------------------------------------------------------------- */
@@ -780,6 +843,200 @@ static void a_new_certificate_opens_a_new_connection(void)
 
 /* ---- the TLS buffer pool ------------------------------------------------------ */
 
+/* ---- bidirectional streams -------------------------------------------------------- */
+
+static const char *const GRPC_HEADERS[] = {"session-id", "abc", "client-name", "dev", NULL};
+#define GRPC_PATH "/flightctl.v1.RouterService/Stream"
+
+/* A GET opens the connection; a gRPC stream on it says hello, gets ping,
+ * and ends with grpc-status 0. */
+static void script_grpc(int fd)
+{
+    req_t r, g;
+    if (srv_hello(fd) != 0 || srv_request(fd, &r) != 0) {
+        return;
+    }
+    srv_headers(fd, r.sid, 200, NULL, NULL, 1);
+    if (srv_stream_headers(fd, &g) != 0) {
+        return;
+    }
+    srv_headers(fd, g.sid, 200, NULL, NULL, 0);
+    srv_send(fd, F_DATA, 0, g.sid, "hello", 5);
+    for (;;) {
+        frame_t f;
+        if (srv_frame(fd, &f) != 0) {
+            return;
+        }
+        int data = f.type == F_DATA && f.sid == g.sid;
+        if (data) {
+            memcpy(g.body + g.body_len, f.payload, f.len);
+            g.body_len += f.len;
+        }
+        free(f.payload);
+        if (data) {
+            break;
+        }
+    }
+    s_req = g;
+    srv_trailers(fd, g.sid, "0");
+    srv_drain(fd);
+}
+
+static void a_grpc_stream_talks_both_ways(void)
+{
+    serve(script_grpc);
+    fc_http_session_t *s = fc_http_session_new();
+    fc_http_target_t t = target(s);
+    CHECK(fc_http_stream_open(&t, GRPC_PATH, "application/grpc", GRPC_HEADERS) == NULL); /* no connection yet */
+    fc_http_response_t resp;
+    CHECK_INT(fc_http_request(&t, "GET", "/poll", NULL, NULL, 0, &resp), 0);
+    fc_http_free(&resp);
+    fc_http_stream_t *st = fc_http_stream_open(&t, GRPC_PATH, "application/grpc", GRPC_HEADERS);
+    CHECK(st != NULL);
+    char b[16] = {0};
+    CHECK_INT(fc_http_stream_read(st, b, sizeof(b), 2000), 5);
+    CHECK(memcmp(b, "hello", 5) == 0);
+    CHECK_INT(fc_http_stream_write(st, "ping", 4, 0, 1000), 0);
+    CHECK_INT(fc_http_stream_read(st, b, sizeof(b), 2000), -1);
+    int http, grpc;
+    fc_http_stream_status(st, &http, &grpc);
+    CHECK_INT(http, 200);
+    CHECK_INT(grpc, 0);
+    fc_http_stream_close(st);
+    fc_http_session_free(s);
+    join_servers();
+    CHECK_INT(s_opens, 1);
+    CHECK_STR(s_req.path, GRPC_PATH);
+    CHECK_STR(s_req.method, "POST");
+    CHECK_STR(s_req.ctype, "application/grpc");
+    CHECK_STR(s_req.te, "trailers");
+    CHECK_STR(s_req.session_id, "abc");
+    CHECK_INT((int)s_req.body_len, 4);
+}
+
+/* An idle stream outlasts timeout_s without killing the connection, which
+ * carries a request meanwhile; then a trailers-only error ends it. */
+static void script_grpc_idle(int fd)
+{
+    req_t r, g, x;
+    if (srv_hello(fd) != 0 || srv_request(fd, &r) != 0) {
+        return;
+    }
+    srv_headers(fd, r.sid, 200, NULL, NULL, 1);
+    if (srv_stream_headers(fd, &g) != 0 || srv_request(fd, &x) != 0) {
+        return;
+    }
+    srv_headers(fd, x.sid, 200, NULL, NULL, 1);
+    uint8_t b[64];
+    size_t n = 0;
+    b[n++] = 0x88; /* :status 200 */
+    b[n++] = 0x00;
+    n += hpack_put_int(b + n, 0, 7, 11);
+    memcpy(b + n, "grpc-status", 11);
+    n += 11;
+    n += hpack_put_int(b + n, 0, 7, 2);
+    memcpy(b + n, "14", 2);
+    n += 2;
+    srv_send(fd, F_HEADERS, FL_END_HEADERS | FL_END_STREAM, g.sid, b, n);
+    srv_drain(fd);
+}
+
+static void an_idle_grpc_stream_leaves_the_connection_alone(void)
+{
+    serve(script_grpc_idle);
+    fc_http_session_t *s = fc_http_session_new();
+    fc_http_target_t t = target(s);
+    t.timeout_s = 1;
+    fc_http_response_t resp;
+    CHECK_INT(fc_http_request(&t, "GET", "/poll", NULL, NULL, 0, &resp), 0);
+    fc_http_free(&resp);
+    fc_http_stream_t *st = fc_http_stream_open(&t, GRPC_PATH, "application/grpc", GRPC_HEADERS);
+    CHECK(st != NULL);
+    char b[16];
+    CHECK_INT(fc_http_stream_read(st, b, sizeof(b), 1500), 0); /* longer than timeout_s: nothing, still open */
+    CHECK_INT(fc_http_request(&t, "GET", "/x", NULL, NULL, 0, &resp), 0);
+    CHECK_INT(resp.status, 200);
+    fc_http_free(&resp);
+    CHECK_INT(fc_http_stream_read(st, b, sizeof(b), 2000), -1);
+    int http, grpc;
+    fc_http_stream_status(st, &http, &grpc);
+    CHECK_INT(http, 200);
+    CHECK_INT(grpc, 14);
+    fc_http_stream_close(st);
+    fc_http_session_free(s);
+    join_servers();
+    CHECK_INT(s_opens, 1);
+}
+
+/* More than the stream keeps: reset; a second stream ends when the session
+ * lets go of the connection. */
+static _Atomic int s_resets;
+
+static void script_grpc_flood(int fd)
+{
+    req_t r, g, g2;
+    if (srv_hello(fd) != 0 || srv_request(fd, &r) != 0) {
+        return;
+    }
+    srv_headers(fd, r.sid, 200, NULL, NULL, 1);
+    if (srv_stream_headers(fd, &g) != 0) {
+        return;
+    }
+    srv_headers(fd, g.sid, 200, NULL, NULL, 0);
+    static uint8_t big[5000];
+    memset(big, 'x', sizeof(big));
+    srv_send(fd, F_DATA, 0, g.sid, big, sizeof(big));
+    for (;;) {
+        frame_t f;
+        if (srv_frame(fd, &f) != 0) {
+            return;
+        }
+        int done = f.type == F_RST_STREAM && f.sid == g.sid;
+        free(f.payload);
+        if (done) {
+            s_resets++;
+            break;
+        }
+    }
+    if (srv_stream_headers(fd, &g2) != 0) {
+        return;
+    }
+    srv_headers(fd, g2.sid, 200, NULL, NULL, 0);
+    srv_drain(fd);
+}
+
+static void a_flooded_or_let_go_stream_ends(void)
+{
+    serve(script_grpc_flood);
+    s_resets = 0;
+    fc_http_session_t *s = fc_http_session_new();
+    fc_http_target_t t = target(s);
+    fc_http_response_t resp;
+    CHECK_INT(fc_http_request(&t, "GET", "/poll", NULL, NULL, 0, &resp), 0);
+    fc_http_free(&resp);
+    fc_http_stream_t *st = fc_http_stream_open(&t, GRPC_PATH, "application/grpc", GRPC_HEADERS);
+    char b[8192];
+    int got = 0, n;
+    while ((n = fc_http_stream_read(st, b, sizeof(b), 2000)) > 0) {
+        got += n;
+    }
+    CHECK_INT(n, -1);
+    CHECK(got < 5000);
+    fc_http_stream_close(st);
+    for (int i = 0; i < 100 && s_resets == 0; i++) {
+        usleep(10 * 1000);
+    }
+    CHECK_INT(s_resets, 1);
+    st = fc_http_stream_open(&t, GRPC_PATH, "application/grpc", GRPC_HEADERS);
+    CHECK(st != NULL);
+    fc_http_session_close(s); /* a download's turn */
+    CHECK_INT(fc_http_stream_read(st, b, sizeof(b), 2000), -1);
+    CHECK_INT(fc_http_stream_write(st, "x", 1, 0, 100), -1);
+    fc_http_stream_close(st); /* the last reference: the connection closes */
+    fc_http_session_free(s);
+    join_servers();
+}
+
 static void the_pool_serves_receive_buffers_only(void)
 {
     CHECK_INT(fc_tls_pool_init(), 0);
@@ -832,6 +1089,9 @@ int main(void)
     RUN(a_silent_server_times_out);
     RUN(an_oversized_frame_is_refused);
     RUN(a_new_certificate_opens_a_new_connection);
+    RUN(a_grpc_stream_talks_both_ways);
+    RUN(an_idle_grpc_stream_leaves_the_connection_alone);
+    RUN(a_flooded_or_let_go_stream_ends);
     RUN(the_pool_serves_receive_buffers_only);
     return TEST_RESULT();
 }

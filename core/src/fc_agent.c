@@ -6,6 +6,7 @@
 #include "fc_agent.h"
 
 #include "fc_apps.h"
+#include "fc_console.h"
 
 #include <pthread.h>
 #include <stdio.h>
@@ -42,6 +43,9 @@
 #define API "/api/v1"
 #define RENDERED_ANNOTATION "device-controller/renderedVersion"
 #define SPEC_POLL_TIMEOUT_S 300 /* server holds the long-poll up to ~4 min */
+/* While a console session is listed, the server answers the long-poll at
+ * once with the same version: the next poll waits this long. */
+#define CONSOLE_POLL_S 5
 #define RETRY_DELAY_S 10
 /* A new firmware must reach Flight Control (one accepted status update)
  * within this time, or it is rolled back to the previous image
@@ -223,6 +227,34 @@ static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, cons
     int rc = fc_http_request(&t, method, path, content_type, body, body_len, r);
     free(cert);
     return rc;
+}
+
+/* The spec's console sessions (fc_console.c), on the agent's connection.
+ * Returns 1 if the spec is the one applied already: only a console made the
+ * server answer, and nothing is to be applied. */
+static int consoles(agent_t *a, const char *json, const char *known)
+{
+    cJSON *dev = cJSON_Parse(json);
+    const cJSON *list = cJSON_GetObjectItem(cJSON_GetObjectItem(dev, "spec"), "consoles");
+    const char *version = cJSON_GetStringValue(
+        cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(dev, "metadata"), "annotations"), RENDERED_ANNOTATION));
+    int same = 0;
+    if (cJSON_GetArraySize(list) > 0) {
+        fc_http_target_t t = enrollment_target(a, 30);
+        pthread_mutex_lock(&a->lock);
+        char *cert = a->mgmt_cert_pem ? strdup(a->mgmt_cert_pem) : NULL;
+        pthread_mutex_unlock(&a->lock);
+        if (cert != NULL) {
+            t.cert_pem = cert;
+            t.key_pem = a->id.key_pem;
+            t.hw_key = a->id.hw_key;
+            t.session = a->sess;
+            same = fc_console_sync(list, &t) && version != NULL && known[0] && strcmp(version, known) == 0;
+            free(cert);
+        }
+    }
+    cJSON_Delete(dev);
+    return same;
 }
 
 /* ---- status ------------------------------------------------------------ */
@@ -603,6 +635,7 @@ static void turn_begin(void *ctx)
     }
     a->downloading = 1;
     pthread_mutex_unlock(&a->lock);
+    fc_console_stop(); /* its stream would keep the connection open */
     fc_http_session_close(a->sess);
 }
 
@@ -1222,6 +1255,11 @@ static void *spec_thread(void *arg)
             sleep(RETRY_DELAY_S);
             continue;
         }
+        if (r.status == 200 && consoles(a, r.body, known)) {
+            fc_http_free(&r);
+            sleep(CONSOLE_POLL_S);
+            continue;
+        }
         if (r.status == 200) {
             pthread_mutex_lock(&a->lock);
             a->applying = 1;
@@ -1407,6 +1445,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
         return -1;
     }
     fc_apps_set_device(a.id.name);
+    fc_console_set_device(a.id.name);
     make_boot_id(a.boot_id);
     fc_oci_set_signing_key(cfg->signing_pub_pem);
     if (cfg->signing_pub_pem == NULL) {

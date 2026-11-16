@@ -72,6 +72,19 @@ long fc_apps_stack_unused(void)
 
 void fc_apps_set_hw(const fc_hw_t *hw) {}
 void fc_apps_set_device(const char *name) {}
+
+/* The console (fc_console.c): what the agent asks of it. */
+static int s_console_syncs, s_console_stops;
+void fc_console_set_device(const char *name) {}
+int fc_console_sync(const cJSON *consoles, const fc_http_target_t *t)
+{
+    s_console_syncs++;
+    return cJSON_GetArraySize(consoles) > 0 && t->session != NULL && t->cert_pem != NULL;
+}
+void fc_console_stop(void)
+{
+    s_console_stops++;
+}
 static int s_files_changed;
 
 void fc_apps_file_changed(const char *path)
@@ -412,8 +425,10 @@ static void *status_goes_out(void *arg)
 static void a_download_takes_the_connections_turn(void)
 {
     new_agent();
+    s_console_stops = 0;
     turn_begin(&s_a);
     CHECK_INT(s_a.downloading, 1);
+    CHECK_INT(s_console_stops, 1); /* a console's stream ends with the connection */
     turn_end(&s_a);
     CHECK_INT(s_a.downloading, 0);
     CHECK_INT(s_a.status_urgent, 1);
@@ -446,6 +461,27 @@ static void a_download_takes_the_connections_turn(void)
     turn_hold(&s_a);
     turn_end(&s_a);
     CHECK_INT(s_a.turn_depth, 0);
+}
+
+/* The server answers at once while a console session is listed, with the
+ * version already applied: only the console is started, nothing applied. */
+static void a_console_alone_is_not_applied_again(void)
+{
+    new_agent();
+    s_a.sess = fc_http_session_new();
+    s_a.mgmt_cert_pem = strdup("cert");
+    const char *with = "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"5\"}},"
+                       " \"spec\": {\"consoles\": [{\"sessionID\": \"s1\", \"sessionMetadata\": \"{}\"}]}}";
+    s_console_syncs = 0;
+    CHECK_INT(consoles(&s_a, with, "5"), 1);
+    CHECK_INT(s_console_syncs, 1);
+    CHECK_INT(consoles(&s_a, with, "4"), 0); /* a new version too: applied */
+    CHECK_INT(consoles(&s_a, "{\"metadata\": {}, \"spec\": {}}", "5"), 0);
+    CHECK_INT(s_console_syncs, 2);
+    free(s_a.mgmt_cert_pem);
+    s_a.mgmt_cert_pem = NULL;
+    fc_http_session_free(s_a.sess);
+    s_a.sess = NULL;
 }
 
 /* ---- status content ---------------------------------------------------------- */
@@ -725,6 +761,7 @@ int main(void)
     RUN(an_expired_certificate_starts_over_as_a_new_device);
     RUN(status_requests_are_urgent_or_grouped);
     RUN(a_download_takes_the_connections_turn);
+    RUN(a_console_alone_is_not_applied_again);
     RUN(counters_are_read_again_only_when_due);
     RUN(stack_headroom_is_reported_per_thread);
     RUN(a_status_with_nothing_new_is_the_same);

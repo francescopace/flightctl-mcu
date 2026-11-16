@@ -62,6 +62,29 @@ typedef int (*fc_http_data_cb)(const void *data, size_t len, void *ctx);
 int fc_http_get_stream(const fc_http_target_t *t, const char *path, fc_http_data_cb on_data,
                        void *ctx, int *status, long *total);
 
+/* A bidirectional stream (gRPC) on the session's connection, never on a
+ * new one: NULL if t->session has no connection open, or it cannot be
+ * opened. POST path with content_type and the extra headers, {name, value,
+ * ..., NULL} (names lower case); the response headers are not waited for.
+ * The stream ends when the session lets go of its connection
+ * (fc_http_session_close: a download's turn, a new certificate). */
+typedef struct fc_http_stream fc_http_stream_t;
+fc_http_stream_t *fc_http_stream_open(const fc_http_target_t *t, const char *path, const char *content_type,
+                                      const char *const *headers);
+/* Sends data, END_STREAM with it if `end`. Waits up to timeout_ms for the
+ * peer's window; 0, or -1 (the stream is over, or no room in time). */
+int fc_http_stream_write(fc_http_stream_t *st, const void *data, size_t len, int end, int timeout_ms);
+/* What came: >0 bytes, 0 nothing within timeout_ms, -1 the stream is over
+ * (ended, reset, the connection lost or let go) and nothing is left. While
+ * it waits, the thread reads the connection's frames for every stream on
+ * it, as a request does. More than 4 KB not read ends the stream. A wait
+ * that runs out leaves the connection alone. */
+int fc_http_stream_read(fc_http_stream_t *st, void *buf, size_t cap, int timeout_ms);
+/* The response's HTTP status (-1 none yet) and grpc-status (-1 none yet). */
+void fc_http_stream_status(fc_http_stream_t *st, int *http_status, int *grpc_status);
+/* Resets it if still open, and frees it. */
+void fc_http_stream_close(fc_http_stream_t *st);
+
 /* Bytes sent/received on the wire since boot (TLS and HTTP overhead included). */
 void fc_http_traffic(unsigned long long *tx, unsigned long long *rx);
 

@@ -311,6 +311,23 @@ wait_for 120 "trend app reporting" "apps and apps[0]['status'] == 'Running' and 
 apply_fleet 35 ""
 wait_for 120 "trend app removed" "not apps"
 
+log "remote console"
+# One command per session, as `flightctl console device/<name> -- <command>`
+# asks it; the device's answer and its exit status come back. The device has
+# no shell: an unknown command fails.
+console() { # <command>: its output; fails the test if it does not end
+  local out rc=0
+  out=$(python3 -c 'import subprocess, sys; r = subprocess.run(sys.argv[1:], capture_output=True, text=True, timeout=60); print(r.stdout + r.stderr, end=""); sys.exit(r.returncode)' \
+    flightctl console "device/$DEVICE" -- "$@") || rc=$?
+  echo "$out"
+  return $rc
+}
+out=$(console status) || fail "console: status failed: $out"
+grep -q "device     $DEVICE" <<<"$out" || fail "console: no status in: $out"
+if out=$(console nosuch); then fail "console: an unknown command succeeded"; fi
+grep -q "not a command of this device" <<<"$out" || fail "console: unknown command: $out"
+wait_for 60 "device Online after the console sessions" "st['summary']['status'] == 'Online'"
+
 log "resource alerts"
 # Any memory in use is above 0%: Warning after 10 s, sampled every 5 s.
 RESOURCES='      resources:

@@ -52,6 +52,7 @@ target_sources(app PRIVATE
     ${ROOT}/port/zephyr/fc_net_zephyr.c
     ${ROOT}/port/zephyr/fc_hw_zephyr.c
     ${ROOT}/core/src/fc_agent.c
+    ${ROOT}/core/src/fc_console.c
     ${ROOT}/core/src/fc_http.c
     ${ROOT}/core/src/fc_identity.c
     ${ROOT}/core/src/fc_oci.c

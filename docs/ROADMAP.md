@@ -35,7 +35,7 @@ What the Zephyr port does not have, and the ESP-IDF firmware has:
 
 What Flight Control offers and the agent does not answer yet:
 
-- [ ] The remote terminal: `flightctl console device/<name>` and the Terminal tab of the UI. Flight Control puts the session in the rendered spec (`consoles`), and the agent is to open a gRPC stream for it on the endpoint it already uses. That takes gRPC over the core's HTTP/2 client, the stream sharing the agent's connection instead of a second TLS connection, which the boards shortest of RAM may not have room for; and a closed set of commands in place of a shell, which a microcontroller does not have (status, heap, apps, log, reboot).
+- [ ] The remote console on a board ([CONSOLE.md](CONSOLE.md)): it answers on the host and in the end-to-end test, not yet on an ESP-IDF or Zephyr board, where its session costs about 12 KB of heap while it lasts.
 - [ ] The device's log from the UI. Flight Control has no API for logs: the Log tab runs `journalctl` through the terminal's channel. So it comes after the terminal: a log kept in RAM (today it goes to the serial port only), shown by a command, and then an answer to the commands the UI sends, which holds only as long as the UI sends those.
 
 What an app can do and hold:
