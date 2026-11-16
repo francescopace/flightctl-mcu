@@ -35,6 +35,7 @@
 #include "fc_crypto.h"
 #include "fc_port.h"
 #include "fc_tls_pool.h"
+#include "fc_heap_hold.h"
 #include "mbedtls/error.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/platform.h"
@@ -151,7 +152,7 @@ static int count_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_
 #endif
 
 static pthread_mutex_t s_pool_lock = PTHREAD_MUTEX_INITIALIZER;
-static unsigned char *s_slot[FC_TLS_POOL_SLOTS]; /* each its own block: no 34 KB in one piece */
+static unsigned char *s_slot[FC_TLS_POOL_SLOTS]; /* each its own block */
 static int s_pool_used[FC_TLS_POOL_SLOTS];
 static int s_pool_now, s_pool_peak, s_pool_hooked, s_pool_logged, s_pool_short;
 
@@ -216,10 +217,10 @@ void *fc_tls_pool_take(size_t n, size_t size)
     pthread_mutex_unlock(&s_pool_lock);
     /* Once each: that the pool serves, and that it ran short. */
     if (first) {
-        fc_port_log(FC_LOG_INFO, "TLS receive buffers: from the %d reserved blocks", FC_TLS_POOL_SLOTS);
+        fc_port_log(FC_LOG_INFO, "TLS receive buffers: from the %d reserved block(s)", FC_TLS_POOL_SLOTS);
     }
     if (short_first) {
-        fc_port_log(FC_LOG_WARN, "TLS receive buffers: all %d reserved blocks in use, one from the heap",
+        fc_port_log(FC_LOG_WARN, "TLS receive buffers: all %d reserved block(s) in use, one from the heap",
                     FC_TLS_POOL_SLOTS);
     }
     if (p != NULL) {
@@ -1026,7 +1027,7 @@ static int conn_tls_open(conn_t *c, const fc_http_target_t *t)
 /* Opens a connection for t; the tests put their own transport here. */
 static conn_t *(*s_open_hook)(const fc_http_target_t *t);
 
-static conn_t *conn_open(const fc_http_target_t *t)
+static conn_t *conn_open_once(const fc_http_target_t *t)
 {
     conn_t *c = s_open_hook ? s_open_hook(t) : conn_new(&TLS, NULL);
     if (c == NULL) {
@@ -1045,6 +1046,24 @@ static conn_t *conn_open(const fc_http_target_t *t)
         conn_free(c);
         return NULL;
     }
+    return c;
+}
+
+/* What a connection keeps for as long as it lives (its TLS context, the
+ * HTTP/2 state) goes around the heap's largest block (fc_heap_hold.h). */
+static conn_t *conn_open(const fc_http_target_t *t)
+{
+    /* A TLS handshake needs more than the smaller holes may have: 24 KB of
+     * the block are left to it (all of it held, an ESP32-C5 failed its first
+     * connection after boot, with 15 KB outside). */
+    void *hold = fc_heap_hold(24 * 1024);
+    conn_t *c = conn_open_once(t);
+    if (c == NULL && hold != NULL) {
+        free(hold);
+        hold = NULL;
+        c = conn_open_once(t);
+    }
+    free(hold);
     return c;
 }
 

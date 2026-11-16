@@ -64,6 +64,10 @@ void fc_port_metrics(void *obj);
  * each of its threads and the apps' (customInfo stackMinFreeBytes). */
 long fc_port_stack_unused(void);
 
+/* The largest block the heap could give now, in bytes, or -1 when the port
+ * cannot tell. An app whose memory does not fit says it in its error. */
+long fc_port_heap_largest(void);
+
 /* Writes a config file delivered through spec.config. `path` is the absolute
  * path from the device spec; the port maps it onto its own storage. */
 int fc_port_write_file(const char *path, const void *data, size_t len);

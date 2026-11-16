@@ -5,6 +5,7 @@
 /* State of the in-memory port (port_stub.c). */
 extern int stub_reboots;
 extern long stub_stack_unused; /* what fc_port_stack_unused returns; -1 after stub_reset */
+extern long stub_heap_largest; /* fc_port_heap_largest; -1: cannot tell */
 extern int stub_metrics_reads; /* fc_port_metrics calls; it reports the count as "reads" */
 extern int stub_verbose; /* 1: print the agent's log lines */
 /* OTA and the running image (off unless stub_ota_enabled). */

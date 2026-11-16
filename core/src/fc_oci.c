@@ -59,6 +59,16 @@ void fc_oci_set_signing_key(const char *pub_pem)
     s_signing_key = pub_pem && pub_pem[0] ? pub_pem : NULL;
 }
 
+static void (*s_turn_begin)(void *), (*s_turn_end)(void *);
+static void *s_turn_ctx;
+
+void fc_oci_set_turn(void (*begin)(void *ctx), void (*end)(void *ctx), void *ctx)
+{
+    s_turn_begin = begin;
+    s_turn_end = end;
+    s_turn_ctx = ctx;
+}
+
 typedef struct {
     char host[128];
     int port;
@@ -72,6 +82,7 @@ typedef struct {
     char *authorization; /* the header sent, once the registry has asked */
     char *challenge;     /* the registry's last WWW-Authenticate */
     fc_http_session_t *sess;
+    int turn; /* the pull has the connection's turn (fc_oci_set_turn) */
 } oci_ref_t;
 
 static int parse_ref(const char *s, oci_ref_t *r)
@@ -252,6 +263,10 @@ static void reg_close(oci_ref_t *r)
     fc_http_session_free(r->sess);
     r->ca_pem = r->basic = r->authorization = r->challenge = NULL;
     r->sess = NULL;
+    if (r->turn && s_turn_end != NULL) {
+        s_turn_end(s_turn_ctx);
+    }
+    r->turn = 0;
 }
 
 /* Parses `image` and gets what reaching its registry takes. */
@@ -280,6 +295,10 @@ static int reg_open(const char *image, oci_ref_t *r, char *err, size_t err_len)
         }
     }
     r->sess = fc_http_session_new();
+    if (s_turn_begin != NULL) {
+        s_turn_begin(s_turn_ctx);
+        r->turn = 1;
+    }
     return 0;
 }
 

@@ -72,6 +72,8 @@ typedef struct app {
     pthread_t thread;
     pthread_attr_t thread_attr; /* until the thread is joined: on Zephyr it owns the stack */
     int thread_running;
+    int made;                /* atomic: the runner has tried to make the instance (app_start waits for it) */
+    int go;                  /* atomic: app_start let go of the heap's largest block, the runner may make the instance */
     int stop; /* set by the agent's thread, read by the runner: __atomic */
     long stack_unused;   /* lowest seen since app_start, -1 none: __atomic */
     int64_t stack_at_ms; /* runner: when it last read it */

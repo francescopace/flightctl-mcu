@@ -59,7 +59,7 @@ The C6 DevKitC flashes only over its native USB port, started in download mode (
 
 PSRAM is not used, so a single image runs on every board variant of a chip, except on the ESP32-S3, where it holds the memory of apps too large for internal RAM. An S3 comes with no PSRAM, 2 MB of quad PSRAM (N4R2, N8R2) or 8 MB of octal (N8R8, N16R8), and the mode is fixed at build time, so a release has two S3 images: `esp32s3`, for quad PSRAM, which boots without it on the other boards, and `esp32s3-r8` (`VARIANT=r8`), for octal. A board takes updates for the image it runs: an N8R8 is flashed once over USB with `esp32s3-r8`, and then updates from it over the air. Tried on an N4R2 and an N8R8. The Zephyr build for the S3 uses the N8R8's octal PSRAM the same way ([ZEPHYR.md](ZEPHYR.md)).
 
-With ESP-IDF 6.0.3 (built for speed) the firmware images are 1,118 to 1,288 KB, leaving 22–32% of the 1,664 KB OTA slot free ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself, with its HTTP/2 client, is about 62 KB (79 KB with cJSON, WiFi provisioning, the delta decoder and its ESP-IDF port; on the C3), and WAMR about 68 KB.
+With ESP-IDF 6.0.3 (built for size, WAMR for speed) the firmware images are 977 to 1,110 KB, leaving 33–41% of the 1,664 KB OTA slot free ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself, with its HTTP/2 client, is about 62 KB (79 KB with cJSON, WiFi provisioning, the delta decoder and its ESP-IDF port; on the C3), and WAMR about 68 KB, both measured built for speed.
 
 With Zephyr 4.5 and firmware updates through MCUboot ([ZEPHYR.md](ZEPHYR.md)):
 

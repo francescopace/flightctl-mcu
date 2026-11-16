@@ -185,6 +185,12 @@ void fc_port_custom_info(void *obj)
 
 void fc_port_metrics(void *obj) {}
 
+long fc_port_heap_largest(void)
+{
+    return -1;
+}
+
+
 long fc_port_stack_unused(void)
 {
     return -1;

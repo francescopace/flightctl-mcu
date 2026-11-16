@@ -32,3 +32,9 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
 /* Public key (PEM, ECDSA P-256) that firmware and apps must be signed with,
  * in cosign's format. NULL or empty: signatures are not checked. */
 void fc_oci_set_signing_key(const char *pub_pem);
+
+/* One TLS connection at a time (fc_tls_pool.h): `begin` runs before a pull
+ * opens its connection to the registry, `end` once it is closed, on the
+ * pulling thread. The agent closes its own connection in between. NULL: no
+ * turns. */
+void fc_oci_set_turn(void (*begin)(void *ctx), void (*end)(void *ctx), void *ctx);

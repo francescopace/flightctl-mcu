@@ -499,7 +499,7 @@ static void test_entry_waits(void)
     usleep(1500 * 1000); /* run() takes 300 ms: it has not started */
     CHECK_STR(state_of("e"), "Preparing ");
     pthread_mutex_lock(&s_lock);
-    CHECK_INT(find("e")->live, 0); /* no instance while it waits */
+    CHECK_INT(find("e")->live, 1); /* its instance, and memory, made before the wait */
     pthread_mutex_unlock(&s_lock);
     int64_t t0 = fc_apps_now_ms();
     __atomic_store_n(&f_busy, 0, __ATOMIC_RELEASE);
@@ -877,6 +877,19 @@ static void test_guard_new_firmware(void)
     s_fake.firmware = "test";
 }
 
+/* A module loads with the heap's largest block held, and installs as
+ * before (fetch_module). */
+static void test_load_with_the_largest_block_held(void)
+{
+    char err[160];
+    int retry;
+    remove_all();
+    stub_heap_largest = 256 * 1024;
+    CHECK_INT(apply("reg/app:v1", err, sizeof(err), &retry), 0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    stub_heap_largest = -1;
+}
+
 static void test_remove(void)
 {
     char err[160];
@@ -906,6 +919,7 @@ int main(void)
     RUN(test_guard_other_restarts);
     RUN(test_guard_blames_the_module_loading);
     RUN(test_guard_new_firmware);
+    RUN(test_load_with_the_largest_block_held);
     RUN(test_remove);
     RUN(test_endless_loop);
     RUN(test_fc_imports);

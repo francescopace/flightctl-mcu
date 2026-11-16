@@ -57,6 +57,9 @@
  * 5 KB on the wire, the server's answer included). */
 #define STATUS_MIN_GAP_S 3
 #define NOTIFY_MIN_GAP_S 15
+/* How long a download waits for a status already on its way (or asked for,
+ * such as "Downloading") before it takes the connection's turn anyway. */
+#define TURN_WAIT_S 30
 /* Management certificate renewal, as the Linux agent does it: once a quarter
  * of the lifetime has passed (75% left), ask for a new certificate for the
  * same key. The server approves renewal requests on its own when they come
@@ -103,6 +106,9 @@ typedef struct {
 
     pthread_mutex_t lock;
     pthread_cond_t status_wake;
+    pthread_cond_t status_sent; /* a status update ended (turn_begin waits on it) */
+    int downloading; /* under lock: the connection is closed for a pull, the status waits */
+    int turn_depth;  /* under lock: pulls and holds in progress (turn_begin, turn_hold) */
     int apps_ready; /* under lock: the saved apps are loaded, the status may list them */
     int putting;    /* under lock: a status update is being built or sent */
     int applying;   /* under lock: a new spec is being applied */
@@ -576,6 +582,56 @@ static void request_status(agent_t *a)
     wake_status(a, 1);
 }
 
+/* One TLS connection at a time (fc_tls_pool.h): a pull from a registry
+ * (fc_oci_set_turn, on the spec thread, where no long-poll is running then)
+ * takes the turn of the agent's connection. A status on its way, or already
+ * asked for ("Downloading"), goes out first; then the connection is closed,
+ * and the status thread waits until the pull is over. Pulls nest in a hold
+ * (turn_hold): the connection opens again when the last of them ends. */
+static void turn_begin(void *ctx)
+{
+    agent_t *a = ctx;
+    pthread_mutex_lock(&a->lock);
+    a->turn_depth++;
+    if (a->downloading) {
+        pthread_mutex_unlock(&a->lock);
+        return; /* closed already, for this hold */
+    }
+    struct timespec until = {.tv_sec = time(NULL) + TURN_WAIT_S};
+    while ((a->putting || a->status_urgent) && time(NULL) < until.tv_sec) {
+        pthread_cond_timedwait(&a->status_sent, &a->lock, &until);
+    }
+    a->downloading = 1;
+    pthread_mutex_unlock(&a->lock);
+    fc_http_session_close(a->sess);
+}
+
+/* The pull's connection is closed: once no pull or hold is left, the
+ * agent's opens again with the next request, a status reporting what was
+ * done. */
+static void turn_end(void *ctx)
+{
+    agent_t *a = ctx;
+    pthread_mutex_lock(&a->lock);
+    if (a->turn_depth > 0 && --a->turn_depth == 0 && a->downloading) {
+        a->downloading = 0;
+        a->status_urgent = 1;
+        pthread_cond_signal(&a->status_wake);
+    }
+    pthread_mutex_unlock(&a->lock);
+}
+
+/* While the apps are applied: a pull among them keeps the connection closed
+ * until the new apps have made their instances (fc_apps waits for them),
+ * whose memory then comes before what the reopened connection holds. Ended
+ * with turn_end; closes nothing when there is no pull. */
+static void turn_hold(agent_t *a)
+{
+    pthread_mutex_lock(&a->lock);
+    a->turn_depth++;
+    pthread_mutex_unlock(&a->lock);
+}
+
 static agent_t *s_running;
 
 int fc_agent_busy(void)
@@ -857,6 +913,14 @@ static void *status_thread(void *arg)
             struct timespec until = {.tv_sec = sample >= 0 && now + (sample - mono) < due ? now + (sample - mono) : due};
             pthread_cond_timedwait(&a->status_wake, &a->lock, &until);
         }
+        /* A download has the connection's turn: the status goes out once
+         * it is over (turn_end). The time spent waiting does not count as
+         * a stall. */
+        time_t held = time(NULL);
+        while (a->downloading) {
+            pthread_cond_wait(&a->status_wake, &a->lock);
+        }
+        last_ok += time(NULL) - held;
         a->status_urgent = 0;
         a->status_dirty = 0;
         a->putting = 1;
@@ -881,6 +945,7 @@ static void *status_thread(void *arg)
         int ok = put_status(a) == 0;
         pthread_mutex_lock(&a->lock);
         a->putting = 0;
+        pthread_cond_broadcast(&a->status_sent);
         pthread_mutex_unlock(&a->lock);
         last_put = time(NULL);
         if (ok) {
@@ -1041,15 +1106,17 @@ static void apply_rendered(agent_t *a, const char *json)
         }
     }
 
-    /* Downloads below open a TLS connection to the registry, the second the
-     * device holds beside the agent's (fc_tls_pool.h). */
+    /* Downloads below take the connection's turn: the agent's is closed
+     * while the registry's is open (turn_begin, fc_tls_pool.h). */
 
     /* WASM apps: replaced without reboot; a failed download keeps the old one. */
     char aerr[160] = "";
     int aretry = 0;
+    turn_hold(a);
     if (fc_apps_apply(cJSON_GetObjectItem(spec, "applications"), aerr, sizeof(aerr), &aretry) != 0 && !err[0]) {
         snprintf(err, sizeof(err), "%s", aerr);
     }
+    turn_end(a);
 
     const char *image = cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(spec, "os"), "image"));
     char prev_rendered[32], new_digest[80] = "";
@@ -1327,6 +1394,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     a.cfg = cfg;
     pthread_mutex_init(&a.lock, NULL);
     pthread_cond_init(&a.status_wake, NULL);
+    pthread_cond_init(&a.status_sent, NULL);
 
     if (decommissioned_at_boot()) {
         /* Unmanaged: the apps go on (Unenroll), nothing talks to the server. */
@@ -1345,6 +1413,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
         fc_port_log(FC_LOG_WARN, "no signing key: firmware and app signatures are not checked");
     }
     a.sess = fc_http_session_new();
+    fc_oci_set_turn(turn_begin, turn_end, &a);
     kv_load_str(KV_RENDERED, a.rendered_version, sizeof(a.rendered_version));
     kv_load_str(KV_OS_IMAGE, a.os_image, sizeof(a.os_image));
     kv_load_str(KV_OS_DIGEST, a.os_digest, sizeof(a.os_digest));

@@ -13,6 +13,7 @@ idf_component_register(
          ${ROOT}/core/src/fc_prov.c
          ${ROOT}/third_party/cjson/cJSON.c
          ${ROOT}/port/espidf/fc_port_espidf.c
+         ${ROOT}/port/espidf/fc_wasm_mem.c
     INCLUDE_DIRS ${ROOT}/core/include ${ROOT}/third_party/cjson
     PRIV_INCLUDE_DIRS ${ROOT}/core/src
     REQUIRES mbedtls pthread wamr
@@ -25,3 +26,5 @@ target_compile_definitions(${COMPONENT_LIB} PUBLIC CJSON_NESTING_LIMIT=32)
 # The firmware's security variant, read from an update before it is installed
 # (fc_port_espidf.c): unreferenced, so kept explicitly.
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u fc_fw_desc")
+# WASM apps' linear memories sized for the heap's size classes (fc_wasm_mem.c).
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=os_mmap" "-u __wrap_os_mmap")

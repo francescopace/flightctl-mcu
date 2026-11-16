@@ -267,6 +267,11 @@ void fc_port_custom_info(void *obj)
     (void)buf;
 }
 
+long fc_port_heap_largest(void)
+{
+    return (long)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+}
+
 void fc_port_metrics(void *obj)
 {
     cJSON *o = obj;

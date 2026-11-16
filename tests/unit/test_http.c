@@ -785,29 +785,28 @@ static void the_pool_serves_receive_buffers_only(void)
     CHECK_INT(fc_tls_pool_init(), 0);
     int now, peak;
     void *a = fc_tls_calloc(1, 16384 + 333);
-    void *b = fc_tls_calloc(16384 + 333, 1);
-    void *c = fc_tls_calloc(1, 16384 + 333); /* a third: from the heap */
+    void *b = fc_tls_calloc(16384 + 333, 1); /* a second: from the heap */
     void *small = fc_tls_calloc(1, 4096);
     CHECK_INT(fc_tls_pool_give(a), 1);
-    CHECK_INT(fc_tls_pool_give(b), 1);
-    CHECK_INT(fc_tls_pool_give(c), 0); /* the heap's */
+    CHECK_INT(fc_tls_pool_give(b), 0); /* the heap's */
+    free(b);
     fc_tls_pool_usage(&now, &peak);
     CHECK_INT(now, 0);
-    /* Take them again, and see where they come from. */
+    /* Take it again, and see where buffers come from. */
     a = fc_tls_pool_take(1, 16384 + 333);
-    b = fc_tls_pool_take(1, 16384 + 333);
-    CHECK(a != NULL && b != NULL && a != b);
-    CHECK(fc_tls_pool_take(1, 16384 + 333) == NULL); /* both slots taken */
+    CHECK(a != NULL);
+    CHECK(fc_tls_pool_take(1, 16384 + 333) == NULL); /* the slot is taken */
+    b = fc_tls_calloc(1, 16384 + 333);                /* so the heap's */
+    CHECK(b != NULL && b != a);
     CHECK(fc_tls_pool_take(1, 4096) == NULL);         /* too small for a slot */
     CHECK(fc_tls_pool_take(1, FC_TLS_POOL_SLOT_SIZE + 1) == NULL);
     CHECK(fc_tls_pool_take(SIZE_MAX, 2) == NULL);
     fc_tls_pool_usage(&now, &peak);
-    CHECK_INT(now, 2);
-    CHECK_INT(peak, 2);
+    CHECK_INT(now, 1);
+    CHECK_INT(peak, 1);
     CHECK_INT(((unsigned char *)a)[100], 0);
     fc_tls_free(a);
     fc_tls_free(b);
-    fc_tls_free(c);
     fc_tls_free(small);
     fc_tls_free(NULL);
     CHECK_INT(fc_tls_pool_give(&now), 0);

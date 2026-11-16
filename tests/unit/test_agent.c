@@ -31,6 +31,8 @@ int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, ch
 
 void fc_oci_set_signing_key(const char *pub_pem) {}
 
+void fc_oci_set_turn(void (*begin)(void *ctx), void (*end)(void *ctx), void *ctx) {}
+
 static const char *s_delta_outcome = "", *s_delta_reason = "";
 
 const char *fc_oci_delta_outcome(const char **reason)
@@ -102,6 +104,7 @@ static void new_agent(void)
     s_a.cfg = &s_cfg;
     pthread_mutex_init(&s_a.lock, NULL);
     pthread_cond_init(&s_a.status_wake, NULL);
+    pthread_cond_init(&s_a.status_sent, NULL);
     fc_identity_load(&s_a.id);
     s_fw_fetches = 0;
     s_apps_applied = s_apps_removed_all = 0;
@@ -390,6 +393,61 @@ static void status_requests_are_urgent_or_grouped(void)
     s_running = NULL;
 }
 
+/* The status thread's part, played by hand: the status on its way is sent. */
+static void *status_goes_out(void *arg)
+{
+    agent_t *a = arg;
+    usleep(50 * 1000);
+    pthread_mutex_lock(&a->lock);
+    CHECK_INT(a->downloading, 0); /* the download waits for it */
+    a->status_urgent = 0;
+    a->putting = 0;
+    pthread_cond_broadcast(&a->status_sent);
+    pthread_mutex_unlock(&a->lock);
+    return NULL;
+}
+
+/* One TLS connection at a time: a download takes the agent's turn once the
+ * status asked for ("Downloading") is out, and a status reports after it. */
+static void a_download_takes_the_connections_turn(void)
+{
+    new_agent();
+    turn_begin(&s_a);
+    CHECK_INT(s_a.downloading, 1);
+    turn_end(&s_a);
+    CHECK_INT(s_a.downloading, 0);
+    CHECK_INT(s_a.status_urgent, 1);
+
+    s_a.putting = 1;
+    pthread_t t;
+    pthread_create(&t, NULL, status_goes_out, &s_a);
+    turn_begin(&s_a);
+    CHECK_INT(s_a.downloading, 1);
+    CHECK_INT(s_a.putting, 0);
+    CHECK_INT(s_a.status_urgent, 0);
+    pthread_join(t, NULL);
+    turn_end(&s_a);
+    CHECK_INT(s_a.downloading, 0);
+
+    /* Pulls held together (the apps of one spec): closed at the first,
+     * opened again at the end of the hold. */
+    s_a.status_urgent = 0;
+    turn_hold(&s_a);
+    CHECK_INT(s_a.downloading, 0); /* a hold alone closes nothing */
+    turn_begin(&s_a);
+    turn_end(&s_a);
+    turn_begin(&s_a);
+    turn_end(&s_a);
+    CHECK_INT(s_a.downloading, 1);
+    CHECK_INT(s_a.status_urgent, 0);
+    turn_end(&s_a);
+    CHECK_INT(s_a.downloading, 0);
+    CHECK_INT(s_a.status_urgent, 1);
+    turn_hold(&s_a);
+    turn_end(&s_a);
+    CHECK_INT(s_a.turn_depth, 0);
+}
+
 /* ---- status content ---------------------------------------------------------- */
 
 static const char *custom_info(cJSON *st, const char *key)
@@ -666,6 +724,7 @@ int main(void)
     RUN(a_denied_request_is_a_failure);
     RUN(an_expired_certificate_starts_over_as_a_new_device);
     RUN(status_requests_are_urgent_or_grouped);
+    RUN(a_download_takes_the_connections_turn);
     RUN(counters_are_read_again_only_when_due);
     RUN(stack_headroom_is_reported_per_thread);
     RUN(a_status_with_nothing_new_is_the_same);

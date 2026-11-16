@@ -142,6 +142,14 @@ void fc_port_custom_info(void *obj) {}
 int stub_metrics_reads;
 long stub_stack_unused = -1;
 
+long stub_heap_largest = -1;
+
+long fc_port_heap_largest(void)
+{
+    return stub_heap_largest;
+}
+
+
 void fc_port_metrics(void *obj)
 {
     char n[16];

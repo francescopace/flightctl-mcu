@@ -64,8 +64,27 @@ static fc_http_target_t s_last;       /* the last request's target */
 static char s_last_host[128], s_last_auth[256];
 static int s_last_ca, s_with_auth_no_ca;
 
+/* The connection's turn (fc_oci_set_turn): how often it was taken and given
+ * back, and requests made without it. */
+static int s_turns, s_turns_back, s_in_turn, s_outside_turn;
+
+static void turn_begin(void *ctx)
+{
+    (void)ctx;
+    s_turns++;
+    s_in_turn = 1;
+}
+
+static void turn_end(void *ctx)
+{
+    (void)ctx;
+    s_turns_back++;
+    s_in_turn = 0;
+}
+
 static void note(const fc_http_target_t *t)
 {
+    s_outside_turn += !s_in_turn;
     s_last = *t;
     snprintf(s_last_host, sizeof(s_last_host), "%s", t->host);
     snprintf(s_last_auth, sizeof(s_last_auth), "%s", t->authorization ? t->authorization : "");
@@ -709,8 +728,38 @@ static void challenges_are_parsed(void)
     CHECK_STR(e, "repository%3Aa%2Fb%3Apull");
 }
 
+/* One TLS connection at a time: every request of a pull is made while it has
+ * the turn, which it gives back however the pull ends. */
+static void a_pull_takes_the_connections_turn(void)
+{
+    reg_auth_reset();
+    fc_oci_set_turn(turn_begin, turn_end, NULL);
+    s_turns = s_turns_back = s_in_turn = s_outside_turn = 0;
+    char md[72], err[200] = "";
+    push_image("app", "v1", "WASM", "application/vnd.wasm.content.layer.v1+wasm", md);
+    unsigned char *out = NULL;
+    size_t len = 0;
+    CHECK_INT(fetch("reg:5001/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    CHECK_INT(s_turns, 1);
+    CHECK_INT(s_turns_back, 1);
+    CHECK_INT(s_outside_turn, 0);
+    /* A pull that fails gives it back too. */
+    CHECK(fetch("reg:5001/app:missing", err, sizeof(err), &out, &len) != 0);
+    CHECK_INT(s_turns, 2);
+    CHECK_INT(s_turns_back, 2);
+    CHECK_INT(s_outside_turn, 0);
+    /* Refused before any connection (no CA): the turn is not taken. */
+    CHECK(fetch("nocacert:5001/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_INT(s_turns, 2);
+    CHECK_INT(s_turns_back, 2);
+    fc_oci_set_turn(NULL, NULL, NULL);
+    s_in_turn = 1; /* the other tests make requests without turns */
+}
+
 int main(void)
 {
+    s_in_turn = 1; /* turns are checked in a_pull_takes_the_connections_turn */
     stub_ec_key(&s_key);
     stub_ec_key(&s_other);
     mbedtls_pk_write_pubkey_pem(&s_key, (unsigned char *)s_pub, sizeof(s_pub));
@@ -732,6 +781,7 @@ int main(void)
     RUN(refused_credentials_are_not_shown);
     RUN(a_bearer_token_is_asked_for);
     RUN(challenges_are_parsed);
+    RUN(a_pull_takes_the_connections_turn);
     reg_reset();
     mbedtls_pk_free(&s_key);
     mbedtls_pk_free(&s_other);

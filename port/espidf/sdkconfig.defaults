@@ -17,11 +17,16 @@ CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64=y
 CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
 CONFIG_MBEDTLS_SSL_TLS1_3_KEXM_EPHEMERAL=y
 CONFIG_MBEDTLS_HAVE_TIME_DATE=y
-# Fixed TLS buffers: the receive buffer of each connection is one of the two
-# blocks the agent reserves at its start (core/include/fc_tls_pool.h),
-# through mbedtls_platform_set_calloc_free. Dynamic buffers, sized to each
-# record, would need a block of that size from the heap for every record.
-# CONFIG_MBEDTLS_DYNAMIC_BUFFER is not set
+# Dynamic TLS buffers, sized to each record and freed once it is read: a
+# connection that waits holds little. A full-size record (16 KB) takes the
+# block the agent reserves at its start (core/include/fc_tls_pool.h, through
+# mbedtls_platform_set_calloc_free), so it never depends on finding 16.7 KB
+# in one piece. With fixed buffers each new connection kept its buffers for
+# as long as it lived, in the middle of the heap: on an ESP32-C5 and a
+# classic ESP32, CoreMark's 64 KB no longer fitted after an app restart
+# (52 KB in one piece out of about 100 KB free); with dynamic ones all
+# but about one try in seven passed (RESULTS.md).
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 # The device writes its certificate request (ESP-IDF 6 leaves X.509 writing
 # out unless asked); it writes no certificates.
 CONFIG_MBEDTLS_X509_CREATE_C=y

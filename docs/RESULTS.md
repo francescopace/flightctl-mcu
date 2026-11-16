@@ -35,19 +35,19 @@ Flashing a firmware does not touch the key storage: a board keeps its identity u
 
 ### Firmware size
 
-ESP-IDF 6.0.3, built for speed (`-O2`):
+ESP-IDF 6.0.3, v3.12, built for size (`-Os`) with WAMR, which runs the apps, at `-O2`:
 
-| Chip | Image | Free in the 1,664 KB OTA slot |
-|---|---|---|
-| ESP32 | 1,121 KB | 32% |
-| ESP32-S3 | 1,118 KB | 32% |
-| ESP32-C3 | 1,192 KB | 28% |
-| ESP32-C5 | 1,282 KB | 22% |
-| ESP32-C6 | 1,288 KB | 22% |
+| Chip | Image | Free in the 1,664 KB OTA slot | Built for speed (`-O2`), v3.10 |
+|---|---|---|---|
+| ESP32 | 978 KB | 41% | 1,121 KB |
+| ESP32-S3 | 977 KB | 41% | 1,118 KB |
+| ESP32-C3 | 1,024 KB | 38% | 1,192 KB |
+| ESP32-C5 | 1,107 KB | 33% | 1,282 KB |
+| ESP32-C6 | 1,110 KB | 33% | 1,288 KB |
 
-The firmware is now built for size (`-Os`), with WAMR alone at `-O2`, as on Zephyr; not measured yet.
+`-Os` saves 141 to 178 KB per image (about 13%); what it costs in speed is under [CoreMark](#coremark). A delta from v3.11 to v3.12 is 49 to 61 KB (4.7–6.2% of the image).
 
-The largest parts, on the C3 (the agent as it is now, the rest measured on an earlier build):
+The largest parts, on the C3, built for speed (the agent as of v3.11, the rest measured on an earlier build):
 
 | Component | Flash (code and constants) |
 |---|---|
@@ -60,18 +60,18 @@ Almost all the space goes to the network stack and to cryptography, which any se
 
 ### RAM
 
-Internal heap with the `alarm` app running and both agent connections open:
+Internal heap with the `alarm` app running. v3.12 holds one TLS connection at a time; these figures were read after 40 minutes of CoreMark installs and swaps, the lowest during CoreMark's runs:
 
-| Board | Measured | Free | Lowest | Largest internal block |
+| Board | Firmware | Free | Lowest | Largest internal block |
 |---|---|---|---|---|
-| ESP32-S3 | release build, ESP-IDF 6.0.3 | 145 KB | 124 KB | – |
-| ESP32-C5 | minutes after boot | 131.0 KB | – | 114.7 KB |
-| Classic ESP32 | two hours after boot | 137.2 KB | – | 77.8 KB |
+| Classic ESP32 | v3.12 | 154.0 KB | 2.3 KB | 76.0 KB |
+| ESP32-C5 | v3.12 | 109.2 KB | 5.3 KB | 60.0 KB |
+| ESP32-C6 | v3.12 | 205.2 KB | 1.8 KB | 164.0 KB |
+| ESP32-S3 N4R2 | v3.12 | 161.2 KB | – (PSRAM counted) | 84.0 KB |
 | ESP32-C3 | three hours after boot, earlier build | 70 KB | 48 KB | – |
-| ESP32-C6 | earlier build | 162.9 KB | 142.2 KB | 135.2 KB |
 | ESP32-S3, Zephyr | before the app interface | about 50 KB | – | – |
 
-The C3 and C6 figures are from a build whose agent still gave the spec loop a thread of its own; it now runs on the main task, which left 37 KB more free on the classic ESP32: they are low. The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot), the app interface about 5 KB of static RAM.
+The C3 figures are from a build whose agent still gave the spec loop a thread of its own; it now runs on the main task, which left 37 KB more free on the classic ESP32: they are low. The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot), the app interface about 5 KB of static RAM.
 
 Stack used at most, of the stack each has (customInfo `stackMinFreeBytes`; here a KB is 1,024 bytes):
 
@@ -86,23 +86,25 @@ What a WASM app costs, on the C3 (debug build): 17.7 KB of heap for the `trend` 
 
 ### CoreMark
 
-[CoreMark](https://github.com/eembc/coremark) 1.0 from its two published WebAssembly builds, unmodified ([APPS.md](APPS.md#modules-built-for-no-device)), run by WAMR's fast interpreter with its instruction count on. ESP-IDF built for speed (`-O2`). Iterations per second; every run valid (CRCs right, a timed part of 10 s or more), with the agent connected:
+[CoreMark](https://github.com/eembc/coremark) 1.0 from its two published WebAssembly builds, unmodified ([APPS.md](APPS.md#modules-built-for-no-device)), run by WAMR's fast interpreter with its instruction count on. ESP-IDF v3.12: the firmware built for size (`-Os`), WAMR at `-O2`. Iterations per second; every run valid (CRCs right, a timed part of 10 s or more), with the agent connected. In brackets, the same with the firmware built for speed (`-O2`, v3.10):
 
 | Board | wasm3's build (64 KB of memory) | wasm-coremark's build (128 KB) | Native, one core (Espressif) |
 |---|---|---|---|
-| Classic ESP32 (240 MHz) | 15.16–15.29 | does not fit: no free block of 128 KB | about 505 |
-| ESP32-C3 (160 MHz) | 14.16–14.22 | not tried: largest block 114 KB after boot | about 409 |
-| ESP32-C6 (160 MHz) | 12.22–12.26 | 14.83 | |
-| ESP32-C5 (240 MHz) | 22.04–22.34 | does not fit: no internal block of 128 KB | |
-| ESP32-S3, PSRAM off (240 MHz) | 18.88–18.95 | does not fit: no internal block of 128 KB left once running (155 KB after boot) | about 614 |
-| ESP32-S3 N4R2 (2 MB quad PSRAM) | 18.89–18.92 | 22.89–22.96, in PSRAM | about 614 |
-| ESP32-S3 N8R8 (8 MB octal PSRAM), `esp32s3-r8` image | 18.93 | 22.89–22.95, in PSRAM | about 614 |
+| Classic ESP32 (240 MHz) | 14.12–14.27 (15.16–15.30) | does not fit: largest free block 64–76 KB | about 505 |
+| ESP32-C3 (160 MHz) | not tried with v3.12 (14.16–14.22) | not tried: largest block 114 KB after boot | about 409 |
+| ESP32-C6 (160 MHz) | 11.45–11.98 (12.22–12.26) | 14.06–14.10 (14.83) | |
+| ESP32-C5 (240 MHz) | 18.86–22.34, once 14.81 (22.04–22.39) | does not fit: largest free block 72 KB | |
+| ESP32-S3, PSRAM off (240 MHz) | not tried with v3.12 (18.88–18.95) | does not fit: no internal block of 128 KB left once running (155 KB after boot) | about 614 |
+| ESP32-S3 N4R2 (2 MB quad PSRAM) | 18.00–18.09 (18.89–19.02) | 21.62–21.72, in PSRAM (22.89–22.96) | about 614 |
+| ESP32-S3 N8R8 (8 MB octal PSRAM), `esp32s3-r8` image | not tried with v3.12 (18.93) | not tried with v3.12 (22.89–22.95, in PSRAM) | about 614 |
 | ESP32-S3 with Zephyr, no PSRAM | does not fit: the C heap (123 KB) has no block for the module and 64 KB | – | |
-| ESP32-S3 N8R8 with Zephyr | 17.92, in PSRAM | 21.67, in PSRAM; one install failed first, the C heap out of memory for the 12.5 KB module | about 614 |
+| ESP32-S3 N8R8 with Zephyr | 17.92, in PSRAM (z25) | 21.67, in PSRAM, with z23; with z24 and z25 the 12.5 KB module does not load: the C heap out of memory | about 614 |
 
-The interpreter is about 30 times slower than native code; the instruction count, which lets any app be stopped, is part of that. WAMR's AOT mode should come to about 3 times slower than native, but an app would then be published once per architecture (Xtensa, RISC-V) instead of as one module for every device; not measured. Built for speed and at 240 MHz, CoreMark runs 2.2 times faster on the classic ESP32 than with ESP-IDF's debug default at 160 MHz.
+The interpreter is about 30 times slower than native code; the instruction count, which lets any app be stopped, is part of that. WAMR's AOT mode should come to about 3 times slower than native, but an app would then be published once per architecture (Xtensa, RISC-V) instead of as one module for every device; not measured. At 240 MHz, CoreMark runs 2.2 times faster on the classic ESP32 than with ESP-IDF's debug default at 160 MHz.
 
-The linear memory needs one free block of its size. On the classic ESP32 the 64 KB build runs from internal RAM, and over five minutes of runs the heap went down to 2.2 KB at the lowest while the agent kept reporting. The S3 puts an app's memory in PSRAM when no internal block is large enough, with two images: `esp32s3` for quad PSRAM (and boards with none) and `esp32s3-r8` for octal ([DEVICES.md](DEVICES.md)). With Zephyr the N8R8's octal PSRAM is a heap of its own, from which WASM apps' memories of 16 KB or more come (`port/zephyr/fc_heap_zephyr.c`); its driver takes 4 KB of internal RAM.
+Building the firmware for size, with WAMR still at `-O2`, costs CoreMark about 5% on the S3 and 7% on the classic ESP32; on the same release (v3.10) the C5 and C6 lost nothing (22.3 and 12.2 either way). v3.12 also runs lower and less evenly on the C6 (11.45–11.98) and on the C5, which gives about 19.7 or about 22.3 from one run to the next of the same image, once 14.8: not explained yet.
+
+The linear memory needs one free block of its size, rounded up by the heap: 64 KB takes a block of 68 KB, 128 KB one of 136 KB. Over 3 installs (from the `alarm` app) and 4 swaps (CoreMark replaced by itself, without a restart) per board, one try failed on the classic ESP32 (a swap, largest free block 48 KB) and one on the C5 (an install, 64 KB); the C6 and the S3 passed every one. On the classic ESP32 the 64 KB build runs from internal RAM, and over the runs the heap went down to 2.3 KB at the lowest while the agent kept reporting. The S3 puts an app's memory in PSRAM when no internal block is large enough, with two images: `esp32s3` for quad PSRAM (and boards with none) and `esp32s3-r8` for octal ([DEVICES.md](DEVICES.md)). With Zephyr the N8R8's octal PSRAM is a heap of its own, from which WASM apps' memories of 16 KB or more come (`port/zephyr/fc_heap_zephyr.c`); its driver takes 4 KB of internal RAM.
 
 ### Timings
 
@@ -265,6 +267,6 @@ All of these were read again in the source of 1.4.0 and of Flight Control's main
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 - **JSON depth**: the device refuses JSON nested more than 32 levels (spec, manifests, config files), and reports the error; real documents use fewer than 10.
 - **Hardware coverage**: automatic rollback was not exercised on the C6 ([DEVICES.md](DEVICES.md#boards-tried)). The latest builds were tried on the classic ESP32, the C3, the C5, the C6 and the S3 (ESP-IDF and Zephyr).
-- **Memory for apps**: CoreMark's 64 KB fits on the classic ESP32, the C3, the C5, the C6 and the S3, and with Zephyr on the ESP32-S3 N8R8, in PSRAM; wasm-coremark's 128 KB on the C6 and the S3 with PSRAM.
+- **Memory for apps**: CoreMark's 64 KB fits on the classic ESP32, the C3, the C5, the C6 and the S3, and with Zephyr on the ESP32-S3 N8R8, in PSRAM; wasm-coremark's 128 KB on the C6 and the S3 with PSRAM. On the classic ESP32 and the C5 an install or a swap can still fail for want of one free block of 68 KB (one try in seven on each, [CoreMark](#coremark)).
 
 What comes next is in the [roadmap](ROADMAP.md).

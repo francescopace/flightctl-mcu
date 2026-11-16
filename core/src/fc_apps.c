@@ -37,6 +37,7 @@
 
 #include "fc_agent.h"
 #include "fc_apps_int.h"
+#include "fc_heap_hold.h"
 #include "fc_oci.h"
 #include "fc_port.h"
 #include "wasm_export.h"
@@ -44,6 +45,7 @@
 #define FC_APP_ABI_VERSION 1 /* wasm-apps/sdk/fc_app.h */
 #define MAX_WASM_SIZE   (64 * 1024)
 #define WASM_STACK      2048 /* WASM operand/frame stack per app */
+#define APP_MADE_WAIT_MS 5000 /* app_start waits this long at most for the instance */
 #if defined(__ZEPHYR__) && defined(CONFIG_ARCH_POSIX)
 #define THREAD_STACK    (64 * 1024) /* a 64-bit host's frames, and Zephyr gives a thread what it asks */
 #elif defined(ESP_PLATFORM) || defined(__ZEPHYR__)
@@ -598,9 +600,9 @@ static int runs_once(const app_t *a, wasm_module_t m)
  * 15 s later), each a TLS exchange: on a chip with one core they took CPU
  * from the first second of the run, which a benchmark such as CoreMark
  * calibrates itself on (its timed run then lasted less than the 10 s it
- * requires, and its score was 0). The instance is made after the wait, so
- * that its memory is not held while the agent needs some. Gives up after
- * ENTRY_WAIT_MS, and returns early when the app is stopped. */
+ * requires, and its score was 0). The instance is made before the wait, so
+ * that its memory is in one block (runner). Gives up after ENTRY_WAIT_MS,
+ * and returns early when the app is stopped. */
 static void wait_quiet(app_t *a)
 {
     int64_t now = fc_apps_now_ms(), until = now + s_entry_wait_ms, quiet_since = now;
@@ -910,21 +912,43 @@ static void *runner(void *arg)
     wasm_runtime_init_thread_env();
     wasm_module_t module = a->module;
     int completed = 0;
+    /* app_start still holds the heap's largest block. A wait of a tick or
+     * more: shorter, ESP-IDF's usleep spins, and on a chip with one core this
+     * thread then kept app_start from ever letting go. */
+    while (!__atomic_load_n(&a->go, __ATOMIC_ACQUIRE)) {
+        usleep(20 * 1000);
+    }
     while (!stopping(a)) {
-        if (runs_once(a, module)) {
+        a->started_ms = fc_apps_now_ms();
+        /* The instance first, its memory in one block while the agent
+         * waits (app_start): made later, after the agent's connection had
+         * opened again, a 64 KB memory no longer fitted on an ESP32-C5. */
+        wasm_module_inst_t inst = wasm_runtime_instantiate(module, WASM_STACK, 0, ebuf, sizeof(ebuf));
+        __atomic_store_n(&a->made, 1, __ATOMIC_RELEASE);
+        if (inst == NULL && strstr(ebuf, "allocate") != NULL) {
+            /* Made while the spec is applied, whose memory (the parsed
+             * spec, the status after it) may be in the way: once more when
+             * the agent is done. On an ESP32-C5 a restart for new env vars
+             * found 58 KB in one piece, and 76 KB five seconds later. */
             wait_quiet(a);
-            if (stopping(a)) {
-                break;
+            if (!stopping(a)) {
+                inst = wasm_runtime_instantiate(module, WASM_STACK, 0, ebuf, sizeof(ebuf));
             }
         }
-        a->started_ms = fc_apps_now_ms();
-        wasm_module_inst_t inst = wasm_runtime_instantiate(module, WASM_STACK, 0, ebuf, sizeof(ebuf));
         wasm_exec_env_t env = inst ? wasm_runtime_create_exec_env(inst, WASM_STACK) : NULL;
         pthread_mutex_lock(&s_lock);
         a->live = inst != NULL;
         pthread_mutex_unlock(&s_lock);
         if (inst == NULL || env == NULL) {
             const char *why = inst == NULL ? ebuf : "exec env: out of memory";
+            /* Out of memory: how much would fit, to compare with what the
+             * module asks for (its memory comes in one block). */
+            long largest = fc_port_heap_largest();
+            char wbuf[sizeof(ebuf) + 48];
+            if (largest >= 0 && (strstr(why, "allocate") != NULL || strstr(why, "out of memory") != NULL)) {
+                snprintf(wbuf, sizeof(wbuf), "%s (largest free block %ld KB)", why, largest / 1024);
+                why = wbuf;
+            }
             fc_port_log(FC_LOG_WARN, "app %s: %s", a->name, why);
             set_status(a, "Error", why);
         } else {
@@ -945,7 +969,14 @@ static void *runner(void *arg)
                 goto done;
             }
             const char *entry = entry_of(a, inst);
-            if (entry == NULL) {
+            if (entry != NULL) {
+                /* Run once: when the agent is quiet (wait_quiet). */
+                wait_quiet(a);
+                a->started_ms = fc_apps_now_ms();
+            }
+            if (stopping(a)) {
+                /* removed or replaced while it waited */
+            } else if (entry == NULL) {
                 run_fc(a, inst, env);
             } else if (run_entry(a, inst, env, entry)) {
                 completed = 1;
@@ -997,8 +1028,28 @@ static void app_start(app_t *a)
     a->settled = 0;
     set_status(a, "Preparing", NULL);
     pthread_attr_init(&a->thread_attr);
-    a->thread_running = pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK) == 0 &&
-                        pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
+    __atomic_store_n(&a->made, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&a->go, 0, __ATOMIC_RELAXED);
+    /* The thread's stack goes around the heap's largest block, kept whole
+     * for the instance's memory (fc_heap_hold.h): taken from it, it left an
+     * ESP32-C5 62 KB in one piece for a 64 KB memory. */
+    void *hold = fc_heap_hold(0);
+    int sized = pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK) == 0;
+    a->thread_running = sized && pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
+    if (sized && !a->thread_running && hold != NULL) {
+        free(hold);
+        hold = NULL;
+        a->thread_running = pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
+    }
+    free(hold);
+    __atomic_store_n(&a->go, 1, __ATOMIC_RELEASE);
+    /* Until the instance is made (or could not be): the caller, the spec
+     * being applied, holds the agent's connection closed meanwhile
+     * (fc_agent.c, turn_hold), so the instance's memory is taken first. */
+    for (int i = 0; a->thread_running && i < APP_MADE_WAIT_MS / 20 && !__atomic_load_n(&a->made, __ATOMIC_ACQUIRE);
+         i++) {
+        usleep(20 * 1000); /* a tick or more: shorter, ESP-IDF's usleep spins */
+    }
     if (!a->thread_running) {
         pthread_attr_destroy(&a->thread_attr);
         set_status(a, "Error", "cannot start thread");
@@ -1247,7 +1298,16 @@ static int fetch_module(const char *image, const char *entry, unsigned char **ou
         return -1;
     }
     char ebuf[96];
+    /* What WAMR keeps of the module (functions, the interpreter's code,
+     * many pieces) goes around the largest block (fc_heap_hold.h). */
+    void *hold = fc_heap_hold(0);
     *module = load_app(*out, *len, entry, ebuf, sizeof(ebuf));
+    if (*module == NULL && hold != NULL) {
+        free(hold);
+        hold = NULL;
+        *module = load_app(*out, *len, entry, ebuf, sizeof(ebuf));
+    }
+    free(hold);
     if (*module == NULL) {
         snprintf(err, err_len, "%s: not a loadable WASM module: %s", image, ebuf);
         free(*out);
