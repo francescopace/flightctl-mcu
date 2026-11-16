@@ -1,7 +1,7 @@
 /*
  * The functions apps call, module "fc": the app interface of
  * wasm-apps/sdk/fc_app.h. Each runs on the calling app's thread. What the
- * firmware does not have yet (buses, ADC, PWM, MQTT, metrics) is there too,
+ * firmware does not have yet (SPI, UART, MQTT, metrics) is there too,
  * returning FC_ENOTSUP, so that an app written against the whole header
  * loads and can tell.
  */
@@ -456,6 +456,15 @@ static void close_handle(app_t *a, int i)
             hw->led_close(&h->res->led);
         }
         fc_board_release(h->res);
+    } else if (h->kind == H_I2C || h->kind == H_ADC || h->kind == H_PWM) {
+        if (h->kind == H_I2C && hw && hw->i2c_close) {
+            hw->i2c_close(h->port);
+        } else if (h->kind == H_ADC && hw && hw->adc_close) {
+            hw->adc_close(h->port);
+        } else if (h->kind == H_PWM && hw && hw->pwm_close) {
+            hw->pwm_close(h->port); /* low, as an app's PWM is when it stops */
+        }
+        fc_board_release(h->res);
     }
     /* Events of this handle still queued are dropped with it. */
     pthread_mutex_lock(a->ev_lock);
@@ -681,6 +690,117 @@ static int32_t fc_sensor_read(wasm_exec_env_t env, const char *name, int32_t nle
     return 0;
 }
 
+/* ---- I2C, ADC and PWM ---------------------------------------------------------------------------- */
+
+/* The longest I2C transfer: 1 KB takes about 90 ms at 100 kHz, within one
+ * wait (APP_WAIT_MS). */
+#define I2C_MAX_LEN 1024
+
+/* Opens a board entry of `kind` through the port's opener (which returns
+ * the port's handle), as a handle of the app's of kind hkind. */
+static int32_t open_entry(app_t *a, const char *name, int32_t nlen, int kind, int hkind, int supported,
+                          int (*opener)(fc_board_entry_t *e, int arg), int arg)
+{
+    fc_board_entry_t *e;
+    int rc = lookup(a, name, nlen, kind, &e);
+    if (rc != 0) {
+        return rc;
+    }
+    if (!supported) {
+        return FC_HW_ENOTSUP;
+    }
+    if ((rc = fc_board_claim(e, a->slot)) != 0) {
+        return rc;
+    }
+    int h = new_handle(a, hkind);
+    if (h < 0) {
+        fc_board_release(e);
+        return h;
+    }
+    int port = opener(e, arg);
+    if (port < 0) {
+        a->h[h].kind = H_FREE;
+        fc_board_release(e);
+        return port;
+    }
+    a->h[h].res = e;
+    a->h[h].port = port;
+    return h;
+}
+
+static int i2c_opener(fc_board_entry_t *e, int arg) { return g_fc_hw->i2c_open(&e->bus); }
+static int adc_opener(fc_board_entry_t *e, int arg) { return e->pin < 0 ? FC_HW_ENOTSUP : g_fc_hw->adc_open(e->pin); }
+static int pwm_opener(fc_board_entry_t *e, int hz)
+{
+    return e->pin < 0 ? FC_HW_ENOTSUP : g_fc_hw->pwm_open(e->pin, hz > 0 ? hz : e->hz > 0 ? e->hz : 1000);
+}
+
+static int32_t fc_i2c_open(wasm_exec_env_t env, const char *n, int32_t l)
+{
+    const fc_hw_t *hw = g_fc_hw;
+    return open_entry(app_of(env), n, l, FC_RES_I2C, H_I2C, hw && hw->i2c_open && hw->i2c_transfer, i2c_opener, 0);
+}
+
+static int32_t i2c_do(wasm_exec_env_t env, int32_t h, int32_t addr, const void *w, int32_t wl, void *r, int32_t rl)
+{
+    app_t *a = app_of(env);
+    app_handle_t *b = handle(a, h, H_I2C);
+    if (b == NULL || addr < 0 || addr > 127 || wl < 0 || rl < 0 || wl > I2C_MAX_LEN || rl > I2C_MAX_LEN ||
+        wl + rl == 0) {
+        return FC_HW_EINVAL;
+    }
+    int rc = g_fc_hw->i2c_transfer(b->port, addr, w, (size_t)wl, r, (size_t)rl, APP_WAIT_MS);
+    over_time(env, a);
+    return rc;
+}
+
+static int32_t fc_i2c_write(wasm_exec_env_t env, int32_t h, int32_t addr, const void *d, int32_t len)
+{
+    return i2c_do(env, h, addr, d, len, NULL, 0);
+}
+static int32_t fc_i2c_read(wasm_exec_env_t env, int32_t h, int32_t addr, void *b, int32_t len)
+{
+    return i2c_do(env, h, addr, NULL, 0, b, len);
+}
+static int32_t fc_i2c_write_read(wasm_exec_env_t env, int32_t h, int32_t addr, const void *w, int32_t wl, void *r,
+                                 int32_t rl)
+{
+    if (wl <= 0 || rl <= 0) {
+        return FC_HW_EINVAL;
+    }
+    return i2c_do(env, h, addr, w, wl, r, rl);
+}
+
+static int32_t fc_adc_open(wasm_exec_env_t env, const char *n, int32_t l)
+{
+    const fc_hw_t *hw = g_fc_hw;
+    return open_entry(app_of(env), n, l, FC_RES_ADC, H_ADC, hw && hw->adc_open && hw->adc_read_mv, adc_opener, 0);
+}
+
+static int32_t fc_adc_read_mv(wasm_exec_env_t env, int32_t h)
+{
+    app_handle_t *c = handle(app_of(env), h, H_ADC);
+    return c == NULL ? FC_HW_EINVAL : g_fc_hw->adc_read_mv(c->port);
+}
+
+static int32_t fc_pwm_open(wasm_exec_env_t env, const char *n, int32_t l, int32_t hz)
+{
+    const fc_hw_t *hw = g_fc_hw;
+    if (hz < 0) {
+        return FC_HW_EINVAL;
+    }
+    return open_entry(app_of(env), n, l, FC_RES_PWM, H_PWM, hw && hw->pwm_open && hw->pwm_duty, pwm_opener, hz);
+}
+
+static int32_t fc_pwm_duty(wasm_exec_env_t env, int32_t h, int32_t duty)
+{
+    app_handle_t *c = handle(app_of(env), h, H_PWM);
+    if (c == NULL || duty < 0 || duty > 65535) {
+        return FC_HW_EINVAL;
+    }
+    return g_fc_hw->pwm_duty(c->port, (uint32_t)duty);
+}
+
 /* ---- not in this firmware yet ---------------------------------------------------------------------
  * A name the map lacks is FC_ENOENT and one not granted FC_EPERM, as they
  * will be; what the app may open is FC_ENOTSUP. */
@@ -692,24 +812,10 @@ static int32_t not_yet_open(wasm_exec_env_t env, const char *name, int32_t nlen,
     return rc != 0 ? rc : FC_HW_ENOTSUP;
 }
 
-static int32_t fc_i2c_open(wasm_exec_env_t env, const char *n, int32_t l) { return not_yet_open(env, n, l, FC_RES_I2C); }
 static int32_t fc_spi_open(wasm_exec_env_t env, const char *n, int32_t l) { return not_yet_open(env, n, l, FC_RES_SPI); }
-static int32_t fc_adc_open(wasm_exec_env_t env, const char *n, int32_t l) { return not_yet_open(env, n, l, FC_RES_ADC); }
 static int32_t fc_uart_open(wasm_exec_env_t env, const char *n, int32_t l, int32_t baud, int32_t fmt)
 {
     return not_yet_open(env, n, l, FC_RES_UART);
-}
-static int32_t fc_pwm_open(wasm_exec_env_t env, const char *n, int32_t l, int32_t hz)
-{
-    return not_yet_open(env, n, l, FC_RES_PWM);
-}
-static int32_t bad_handle_ii(wasm_exec_env_t env, int32_t h, int32_t x) { return FC_HW_EINVAL; }
-static int32_t bad_handle_i(wasm_exec_env_t env, int32_t h) { return FC_HW_EINVAL; }
-static int32_t fc_i2c_rw(wasm_exec_env_t env, int32_t h, int32_t addr, void *p, int32_t len) { return FC_HW_EINVAL; }
-static int32_t fc_i2c_write_read(wasm_exec_env_t env, int32_t h, int32_t addr, const void *w, int32_t wl, void *r,
-                                 int32_t rl)
-{
-    return FC_HW_EINVAL;
 }
 static int32_t fc_spi_transfer(wasm_exec_env_t env, int32_t h, int32_t tx, int32_t rx, int32_t len, int32_t flags)
 {
@@ -764,8 +870,8 @@ static NativeSymbol s_natives[] = {
     {"led_open", (void *)fc_led_open, "(*~)i", NULL},
     {"led_rgb", (void *)fc_led_rgb, "(iiii)i", NULL},
     {"i2c_open", (void *)fc_i2c_open, "(*~)i", NULL},
-    {"i2c_write", (void *)fc_i2c_rw, "(ii*~)i", NULL},
-    {"i2c_read", (void *)fc_i2c_rw, "(ii*~)i", NULL},
+    {"i2c_write", (void *)fc_i2c_write, "(ii*~)i", NULL},
+    {"i2c_read", (void *)fc_i2c_read, "(ii*~)i", NULL},
     {"i2c_write_read", (void *)fc_i2c_write_read, "(ii*~*~)i", NULL},
     {"spi_open", (void *)fc_spi_open, "(*~)i", NULL},
     {"spi_transfer", (void *)fc_spi_transfer, "(iiiii)i", NULL},
@@ -773,9 +879,9 @@ static NativeSymbol s_natives[] = {
     {"uart_write", (void *)fc_uart_write, "(i*~)i", NULL},
     {"uart_read", (void *)fc_uart_read, "(i*~i)i", NULL},
     {"adc_open", (void *)fc_adc_open, "(*~)i", NULL},
-    {"adc_read_mv", (void *)bad_handle_i, "(i)i", NULL},
+    {"adc_read_mv", (void *)fc_adc_read_mv, "(i)i", NULL},
     {"pwm_open", (void *)fc_pwm_open, "(*~i)i", NULL},
-    {"pwm_duty", (void *)bad_handle_ii, "(ii)i", NULL},
+    {"pwm_duty", (void *)fc_pwm_duty, "(ii)i", NULL},
     {"sensor_read", (void *)fc_sensor_read, "(*~i)i", NULL},
     {"metric", (void *)fc_metric, "(*~iF)i", NULL},
     {"mqtt_publish", (void *)fc_mqtt_publish, "(*~*~ii)i", NULL},

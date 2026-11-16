@@ -1,6 +1,7 @@
 /*
  * The hardware WASM apps reach on ESP-IDF (fc_hw.h): GPIOs with interrupts,
- * the board's LED (led.c) and the chip's temperature sensor.
+ * the board's LED (led.c) and the chip's temperature sensor; I2C, ADC and
+ * PWM are in hw_bus.c.
  *
  * The firmware's board map has led0, the board's LED (CONFIG_FC_LED_GPIO and
  * CONFIG_FC_LED_WS2812); the fleet moves it or adds the rest with
@@ -237,5 +238,6 @@ const fc_hw_t *hw_espidf(void)
         .sensor_read = sensor_read,
         .restart_was_crash = restart_was_crash,
     };
+    hw_bus_fill(&hw);
     return &hw;
 }

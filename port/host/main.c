@@ -18,7 +18,11 @@ void fc_port_host_init(const char *data_dir, int debug);
 /* Simulated hardware for WASM apps: a board with an LED (led0) printed when
  * it changes, a button that is never pressed (button0), free GPIOs 2..15 for
  * the fleet's board.json, outputs printed when they change, and a chip
- * temperature that swings 30..46 C over two minutes. */
+ * temperature that swings 30..46 C over two minutes. An I2C bus (i2c0) has
+ * one device, at 0x48, whose register 0 holds that temperature in
+ * hundredths of a degree (big-endian) and registers 2 and 3 whatever is
+ * written there; any pin's ADC reads 1650 mV; a PWM's duty is printed when
+ * it changes. */
 static int32_t host_temp_mc(void)
 {
     long t = time(NULL) % 120;
@@ -41,7 +45,7 @@ static int s_level[HOST_PINS];
 static char *host_board(void)
 {
     return strdup("{\"gpio\": {\"button0\": {\"pin\": 0, \"active_low\": true}},"
-                  " \"led\": {\"led0\": {\"pin\": 1}}}");
+                  " \"led\": {\"led0\": {\"pin\": 1}}, \"i2c\": {\"i2c0\": {\"sda\": 14, \"scl\": 15}}}");
 }
 
 static int host_pin_reserved(int pin)
@@ -103,6 +107,76 @@ static int host_sensor(const char *name, int32_t *value)
     return 0;
 }
 
+static uint8_t s_reg[4];
+static int s_reg_at;
+
+static int host_i2c_open(const fc_hw_bus_t *bus)
+{
+    return 0;
+}
+
+static int host_i2c_transfer(int bus, int addr, const uint8_t *w, size_t wlen, uint8_t *r, size_t rlen, int timeout_ms)
+{
+    if (addr != 0x48) {
+        return FC_HW_EIO; /* no device answers */
+    }
+    int32_t t = host_temp_mc() / 10;
+    s_reg[0] = (uint8_t)(t >> 8);
+    s_reg[1] = (uint8_t)t;
+    for (size_t i = 0; i < wlen; i++) {
+        if (i == 0) {
+            s_reg_at = w[0] & 3;
+        } else {
+            if (s_reg_at >= 2) {
+                s_reg[s_reg_at] = w[i];
+            }
+            s_reg_at = (s_reg_at + 1) & 3;
+        }
+    }
+    for (size_t i = 0; i < rlen; i++) {
+        r[i] = s_reg[s_reg_at];
+        s_reg_at = (s_reg_at + 1) & 3;
+    }
+    return 0;
+}
+
+static void host_i2c_close(int bus) {}
+
+static int host_adc_open(int pin)
+{
+    return pin;
+}
+
+static int host_adc_read_mv(int ch)
+{
+    return 1650;
+}
+
+static void host_adc_close(int ch) {}
+
+static uint32_t s_duty[HOST_PINS];
+
+static int host_pwm_open(int pin, int hz)
+{
+    fprintf(stderr, "PWM %d at %d Hz\n", pin, hz);
+    s_duty[pin] = 0;
+    return pin;
+}
+
+static int host_pwm_duty(int pin, uint32_t duty)
+{
+    if (s_duty[pin] != duty) {
+        fprintf(stderr, "PWM %d duty %u/65535\n", pin, (unsigned)duty);
+    }
+    s_duty[pin] = duty;
+    return 0;
+}
+
+static void host_pwm_close(int pin)
+{
+    host_pwm_duty(pin, 0);
+}
+
 static const fc_hw_t s_hw = {
     .board = "host",
     .firmware = "flightctl-mcu/0.1.0",
@@ -117,6 +191,15 @@ static const fc_hw_t s_hw = {
     .led_rgb = host_led_rgb,
     .led_close = host_led_close,
     .sensor_read = host_sensor,
+    .i2c_open = host_i2c_open,
+    .i2c_transfer = host_i2c_transfer,
+    .i2c_close = host_i2c_close,
+    .adc_open = host_adc_open,
+    .adc_read_mv = host_adc_read_mv,
+    .adc_close = host_adc_close,
+    .pwm_open = host_pwm_open,
+    .pwm_duty = host_pwm_duty,
+    .pwm_close = host_pwm_close,
 };
 
 static char *read_file(const char *path)

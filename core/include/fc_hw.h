@@ -1,7 +1,7 @@
 /*
  * The hardware a port gives to WASM apps (the app interface of
- * wasm-apps/sdk/fc_app.h): GPIO, LEDs and the chip's sensors, under the names
- * of the board map.
+ * wasm-apps/sdk/fc_app.h): GPIO, LEDs, the chip's sensors, I2C, ADC and PWM,
+ * under the names of the board map.
  *
  * A port fills an fc_hw_t and puts it in fc_agent_config_t.hw. Every member
  * may be NULL: what is missing is FC_HW_ENOTSUP to the app. The core keeps
@@ -43,6 +43,12 @@ typedef struct {
     char order[4];  /* WS2812 byte order, e.g. "grb" */
 } fc_hw_led_t;
 
+/* A bus of the board map: the pins it uses (-1 for none) and its clock. */
+typedef struct {
+    int sda, scl; /* I2C */
+    int hz;       /* I2C clock; 0: the port's default (100 kHz) */
+} fc_hw_bus_t;
+
 typedef struct {
     /* What fc_info gives the app as "board" and "firmware". */
     const char *board;
@@ -74,6 +80,33 @@ typedef struct {
 
     /* A sensor of the chip by name ("die_temp", milli-degrees C). */
     int (*sensor_read)(const char *name, int32_t *value);
+
+    /* The functions below return a port handle (>= 0) from open, or an
+     * FC_HW_E* code; the core keeps it in the app's handle and gives it back.
+     * Each call returns within timeout_ms where it takes one, and at most
+     * 100 ms (FC_WAIT_MAX_MS) where it does not, so an app can always be
+     * stopped. */
+
+    /* I2C: a bus in master mode. A transfer writes w[0..wlen) to the 7-bit
+     * address addr, then, if rlen > 0, reads r[0..rlen) after a repeated
+     * start (wlen 0: a read alone). 0, FC_HW_EIO (no acknowledge, a bus
+     * error) or FC_HW_ETIMEDOUT. */
+    int (*i2c_open)(const fc_hw_bus_t *bus);
+    int (*i2c_transfer)(int bus, int addr, const uint8_t *w, size_t wlen, uint8_t *r, size_t rlen, int timeout_ms);
+    void (*i2c_close)(int bus);
+
+    /* ADC: a pin's voltage in millivolts, calibrated where the chip allows;
+     * FC_HW_ENOTSUP from open for a pin without a usable ADC channel. */
+    int (*adc_open)(int pin);
+    int (*adc_read_mv)(int ch);
+    void (*adc_close)(int ch);
+
+    /* PWM at freq_hz, starting at duty 0. duty is 0 (always low) to 65535
+     * (always high), scaled to what the port's timer resolves. close leaves
+     * the pin low and released. */
+    int (*pwm_open)(int pin, int freq_hz);
+    int (*pwm_duty)(int ch, uint32_t duty);
+    void (*pwm_close)(int ch);
 
     /* 1 if the device last restarted because the firmware crashed (a fault,
      * an abort, a watchdog), 0 if it was powered on or restarted on purpose.

@@ -24,7 +24,7 @@
 /* Events, as FC_EV_* in fc_app.h. */
 enum { EV_GPIO = 1, EV_TIMER = 2, EV_UART = 3, EV_MQTT = 4, EV_CONFIG = 5, EV_NET = 6, EV_OVERFLOW = 7 };
 
-enum { H_FREE = 0, H_TIMER, H_GPIO, H_LED };
+enum { H_FREE = 0, H_TIMER, H_GPIO, H_LED, H_I2C, H_ADC, H_PWM };
 
 struct app;
 
@@ -39,7 +39,8 @@ typedef struct {
 typedef struct {
     int kind;
     uint32_t serial;          /* changes at each open: late interrupts see it */
-    fc_board_entry_t *res;    /* GPIO, LED */
+    fc_board_entry_t *res;    /* GPIO, LED, I2C, ADC, PWM */
+    int port;                 /* I2C, ADC, PWM: the port's handle */
     int mode;                 /* GPIO */
     int irq;                  /* GPIO: interrupt set */
     int debounce_ms;

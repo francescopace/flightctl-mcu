@@ -58,7 +58,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(t_env),
-        V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother),
+        V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus),
 #undef V
     };
     f_fetches++;
@@ -110,7 +110,8 @@ static pthread_mutex_t f_lock = PTHREAD_MUTEX_INITIALIZER;
 static char *f_defaults(void)
 {
     return strdup("{\"gpio\": {\"button0\": {\"pin\": 9, \"active_low\": true}, \"relay1\": {\"pin\": 5, \"safe\": 0}},"
-                  " \"led\": {\"led0\": {\"pin\": 8}}, \"i2c\": {\"i2c0\": {\"sda\": 1, \"scl\": 2}}}");
+                  " \"led\": {\"led0\": {\"pin\": 8}}, \"i2c\": {\"i2c0\": {\"sda\": 1, \"scl\": 2}},"
+                  " \"adc\": {\"level\": {\"pin\": 3}}, \"pwm\": {\"fan\": {\"pin\": 4, \"hz\": 25000}}}");
 }
 static int f_reserved(int pin) { return pin == 11 || pin >= 40; }
 static int f_setup(int pin, int mode)
@@ -179,6 +180,66 @@ static int f_sensor(const char *name, int32_t *v)
     return 0;
 }
 
+/* An I2C bus with one device at 0x48: four registers, the first byte
+ * written is the register, then data from there; a read goes on from it. */
+static uint8_t f_reg[4], f_reg_at;
+static int f_i2c_open, f_i2c_hz = -1;
+static int f_i2c_open_fn(const fc_hw_bus_t *b)
+{
+    f_i2c_open++;
+    f_i2c_hz = b->hz;
+    return 7; /* the port's handle, given back */
+}
+static int f_i2c_transfer(int bus, int addr, const uint8_t *w, size_t wl, uint8_t *r, size_t rl, int timeout_ms)
+{
+    if (bus != 7 || timeout_ms <= 0 || timeout_ms > 100) {
+        return FC_HW_EINVAL;
+    }
+    if (addr != 0x48) {
+        return FC_HW_EIO;
+    }
+    for (size_t i = 0; i < wl; i++) {
+        if (i == 0) {
+            f_reg_at = w[0] & 3;
+        } else {
+            f_reg[f_reg_at] = w[i];
+            f_reg_at = (f_reg_at + 1) & 3;
+        }
+    }
+    for (size_t i = 0; i < rl; i++) {
+        r[i] = f_reg[f_reg_at];
+        f_reg_at = (f_reg_at + 1) & 3;
+    }
+    return 0;
+}
+static void f_i2c_close(int bus) { f_i2c_open--; }
+static int f_adc_pin = -1;
+static int f_adc_open(int pin)
+{
+    f_adc_pin = pin;
+    return 0;
+}
+static int f_adc_read(int ch) { return 1234; }
+static void f_adc_close(int ch) { f_adc_pin = -1; }
+static int f_pwm_pin = -1, f_pwm_hz, f_pwm_duty = -1;
+static int f_pwm_open(int pin, int hz)
+{
+    f_pwm_pin = pin;
+    f_pwm_hz = hz;
+    f_pwm_duty = 0;
+    return 3;
+}
+static int f_pwm_set(int ch, uint32_t duty)
+{
+    f_pwm_duty = ch == 3 ? (int)duty : -2;
+    return 0;
+}
+static void f_pwm_close(int ch)
+{
+    f_pwm_pin = -1;
+    f_pwm_duty = -1;
+}
+
 /* How the fake device last restarted: 1 a crash, 0 not. */
 static int f_crash;
 static int f_restart_was_crash(void)
@@ -201,6 +262,15 @@ static fc_hw_t s_fake = {
     .led_close = f_led_close,
     .sensor_read = f_sensor,
     .restart_was_crash = f_restart_was_crash,
+    .i2c_open = f_i2c_open_fn,
+    .i2c_transfer = f_i2c_transfer,
+    .i2c_close = f_i2c_close,
+    .adc_open = f_adc_open,
+    .adc_read_mv = f_adc_read,
+    .adc_close = f_adc_close,
+    .pwm_open = f_pwm_open,
+    .pwm_duty = f_pwm_set,
+    .pwm_close = f_pwm_close,
 };
 
 /* An edge on a pin, as the port's task reports it. */
@@ -631,7 +701,7 @@ static void test_fc_gpio(void)
     const char *two[] = {"g", "reg/t_gpio", "{\"FC_ALLOW\": \"relay1 button0 led0\"}",
                          "p", "reg/t_perm", "{\"FC_ALLOW\": \"relay1 i2c0\"}", NULL};
     CHECK_INT(apply_apps(two, err, sizeof(err)), 0);
-    CHECK_STR(wait_state_of("p", "Running -4 -2 -8 -3 -4", 3000), "Running -4 -2 -8 -3 -4");
+    CHECK_STR(wait_state_of("p", "Running -4 -2 0 -3 -4", 3000), "Running -4 -2 0 -3 -4");
     /* Stopped: the relay to its safe level, the button released, the LED off. */
     remove_all();
     CHECK_INT(f_read(5), 0);
@@ -640,20 +710,39 @@ static void test_fc_gpio(void)
     CHECK(!f_led_open);
 }
 
+/* I2C, ADC and PWM through the port; closed with the app, the PWM low. */
+static void test_fc_bus(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("b", "reg/t_bus", "{\"FC_ALLOW\": \"i2c0 level fan\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("b", "Running i2c 42 nack -5 long -1 adc 1234 pwm -1", 3000),
+              "Running i2c 42 nack -5 long -1 adc 1234 pwm -1");
+    CHECK_INT(f_i2c_open, 1);
+    CHECK_INT(f_i2c_hz, 0); /* the map gives none: the port's default */
+    CHECK_INT(f_adc_pin, 3);
+    CHECK_INT(f_pwm_pin, 4);
+    CHECK_INT(f_pwm_hz, 25000); /* the board map's: the app gave 0 */
+    CHECK_INT(f_pwm_duty, 32768);
+    remove_all();
+    CHECK_INT(f_i2c_open, 0);
+    CHECK_INT(f_adc_pin, -1);
+    CHECK_INT(f_pwm_duty, -1);
+}
+
 static void test_fc_grants(void)
 {
     char err[160];
     /* Nothing granted: EPERM, but a name the map lacks is ENOENT. */
     CHECK_INT(apply_one("p", "reg/t_perm", NULL, err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("p", "Running -3 -2 -3 -3 -3", 3000), "Running -3 -2 -3 -3 -3");
-    /* New env vars restart it with the new grants: relay1 opens, once; the
-     * I2C bus is granted but not in this firmware yet. */
+    /* New env vars restart it with the new grants: relay1 opens, once, and
+     * the I2C bus. */
     CHECK_INT(apply_one("p", "reg/t_perm", "{\"FC_ALLOW\": \"relay1 i2c0\"}", err, sizeof(err)), 0);
-    CHECK_STR(wait_state_of("p", "Running 0 -2 -8 -3 -4", 3000), "Running 0 -2 -8 -3 -4");
+    CHECK_STR(wait_state_of("p", "Running 0 -2 1 -3 -4", 3000), "Running 0 -2 1 -3 -4");
     CHECK(strstr(stub_kv("apps"), "relay1 i2c0") != NULL);
     /* After a reboot, before the spec comes, it has the same grants. */
     power_cycle();
-    CHECK_STR(wait_state_of("p", "Running 0 -2 -8 -3 -4", 3000), "Running 0 -2 -8 -3 -4");
+    CHECK_STR(wait_state_of("p", "Running 0 -2 1 -3 -4", 3000), "Running 0 -2 1 -3 -4");
     remove_all();
 }
 
@@ -710,6 +799,18 @@ static void test_board_map(void)
     CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"led\": {\"l\": {\"pin\": 3, \"order\": \"rgx\"}}}", err,
                                  sizeof(err)),
               -1);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"i2c\": {\"b\": {\"sda\": 6}}}", err, sizeof(err)), -1);
+    CHECK(strstr(err, "b: an I2C bus needs sda and scl") != NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"i2c\": {\"b\": {\"sda\": 6, \"scl\": 5}}}", err,
+                                 sizeof(err)),
+              -1);
+    CHECK(strstr(err, "relay1 and b are both on pin 5") != NULL || strstr(err, "b and relay1") != NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"i2c\": {\"b\": {\"sda\": 6, \"scl\": 6}}}", err,
+                                 sizeof(err)),
+              -1);
+    CHECK(strstr(err, "b uses pin 6 twice") != NULL);
+    /* The firmware's bus at a new speed keeps its pins. */
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"i2c\": {\"i2c0\": {\"hz\": 400000}}}", err, sizeof(err)), 0);
     CHECK_INT(fc_apps_check_file("/etc/other.json", "not json", err, sizeof(err)), 0);
 
     /* relay1 moves to pin 6: the app restarts and drives it there. */
@@ -934,6 +1035,7 @@ int main(void)
     RUN(test_fc_config);
     RUN(test_fc_kv);
     RUN(test_fc_gpio);
+    RUN(test_fc_bus);
     RUN(test_fc_grants);
     RUN(test_fc_limits);
     RUN(test_fc_events);

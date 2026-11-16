@@ -15,7 +15,7 @@ An app is a WebAssembly module that Flight Control deploys as a container applic
 | Metrics | `fc_metric` | `metrics` |
 | MQTT | `fc_mqtt_publish/subscribe/topic`, `fc_event_data` | `mqtt` |
 
-Buses, analog, metrics and MQTT are not in the firmware yet: they return `FC_ENOTSUP` once the name exists and is granted, so an app written for them loads and can tell. What each port has is under [Ports](#ports).
+SPI, UART, metrics and MQTT are not in the firmware yet: they return `FC_ENOTSUP` once the name exists and is granted, so an app written for them loads and can tell. What each port has is under [Ports](#ports).
 
 ## How an app runs
 
@@ -70,9 +70,9 @@ The app opens `"relay1"` or `"button0"`, never a pin number. The names come from
 }
 ```
 
-The fleet's template can vary it per device, from labels, as with any config file. A name is unique in the whole map, whatever its kind: `FC_ALLOW` lists names without saying what they are. `active_low` makes levels logical (1 is "on"); `safe` is the level an output takes when its app stops; a plain LED has `active_low` too, a WS2812 its byte `order`. For a name the firmware already has, `"pin": -1` keeps the firmware's pin: a template can set `led0`'s colour order on every board without knowing where its LED is.
+The fleet's template can vary it per device, from labels, as with any config file. A name is unique in the whole map, whatever its kind: `FC_ALLOW` lists names without saying what they are. `active_low` makes levels logical (1 is "on"); `safe` is the level an output takes when its app stops; a plain LED has `active_low` too, a WS2812 its byte `order`. An I2C bus has `sda`, `scl` and its clock in `hz` (100 kHz without it); a PWM may have its frequency in `hz`, used when the app asks for 0 (1 kHz without it). For a name the firmware already has, `"pin": -1` (or no pins, for a bus) keeps the firmware's pins: a template can set `led0`'s colour order on every board without knowing where its LED is.
 
-The device checks a new `board.json` before it keeps it, and refuses it, as an update error in the device's status, when it names a pin the firmware uses (flash, PSRAM, the console's UART and USB pins) or one the chip does not have, puts two names on one pin, or has an unknown section or field type. A new map restarts the apps that use the interface.
+The device checks a new `board.json` before it keeps it, and refuses it, as an update error in the device's status, when it names a pin the firmware uses (flash, PSRAM, the console's UART and USB pins) or one the chip does not have, puts two names on one pin (a bus's pins included), or has an unknown section or field type. A new map restarts the apps that use the interface.
 
 The same app then runs on every board whose map has the names it uses. A name it asks for and the map lacks gives `FC_ENOENT`.
 
@@ -127,6 +127,9 @@ Two more ways are part of the interface, for when the firmware has them ([ROADMA
 | GPIO with interrupts | yes | not yet | simulated; nothing presses `button0` |
 | `led0` | the board's LED (`CONFIG_FC_LED_GPIO`, WS2812 or plain) unless `board.json` moves it | simulated, printed on the console | simulated, printed |
 | `die_temp` | the chip's sensor; `FC_ENOTSUP` on the ESP32, which has none | simulated: 30 to 46 °C over two minutes | simulated, the same |
+| I2C | master, any two pins; up to two buses on the ESP32 and S3, one on the C chips | not yet | `i2c0`, with one device at 0x48: register 0 the simulated temperature in hundredths of a degree, 2 and 3 writable |
+| ADC | ADC1's pins, 0 to about 3.1 V, calibrated from the chip's eFuse; up to 8 channels | not yet | 1650 mV on any pin |
+| PWM | LEDC, up to 4, each at its own frequency, duty to 14 bits | not yet | printed when it changes |
 
 ## Size and limits
 
@@ -141,7 +144,8 @@ Two more ways are part of the interface, for when the firmware has them ([ROADMA
 | Queued events | 16 per app; past that the oldest go, and the app hears how many with `FC_EV_OVERFLOW` |
 | One call of `init`, `tick` or `on_event` | 20 million instructions, and 1 s of waiting |
 | The export in `FC_ENTRY`, or `_start` | no limit, stopped when the app is removed or updated |
-| One wait (`fc_sleep_ms`, `fc_uart_read`) | 100 ms |
+| One wait (`fc_sleep_ms`, `fc_uart_read`), or one I2C transfer | 100 ms |
+| One I2C transfer | 1 KB each way (`FC_I2C_MAX`) |
 
 The instruction budget is a first figure, to be measured on a C3, the slowest chip, so that it comes to about a second there.
 

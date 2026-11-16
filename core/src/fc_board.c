@@ -98,6 +98,12 @@ static int parse_entry(const fc_hw_t *hw, int kind, const cJSON *o, fc_board_ent
             return -1;
         }
     }
+    if (int_field(o, "sda", -1, &e->bus.sda) != 0 || int_field(o, "scl", -1, &e->bus.scl) != 0 ||
+        int_field(o, "hz", 0, &e->hz) != 0 || e->hz < 0) {
+        snprintf(err, err_len, "%s: hz is a frequency in Hz", e->name);
+        return -1;
+    }
+    e->bus.hz = e->hz;
     int safe;
     if (int_field(o, "pin", -1, &e->pin) != 0 || int_field(o, "safe", -1, &safe) != 0 ||
         bool_field(o, "active_low", &e->active_low) != 0 || bool_field(o, "ws2812", &e->led.ws2812) != 0) {
@@ -176,8 +182,19 @@ static int merge(const fc_hw_t *hw, const char *json, fc_board_entry_t *map, int
                 e.pin = map[at].pin;
                 e.has_dt = map[at].has_dt;
             }
+            /* The same for an I2C bus's pins. */
+            if (at < *count && map[at].kind == e.kind && kind == FC_RES_I2C && e.bus.sda < 0 && e.bus.scl < 0 &&
+                !e.has_dt) {
+                e.bus = map[at].bus;
+                e.hz = e.bus.hz = e.hz ? e.hz : map[at].hz;
+            }
             if (needs_pin(kind) && e.pin < 0 && !e.has_dt) {
                 snprintf(err, err_len, "%s: no pin", e.name);
+                rc = -1;
+                break;
+            }
+            if (kind == FC_RES_I2C && (e.bus.sda < 0 || e.bus.scl < 0) && !e.has_dt) {
+                snprintf(err, err_len, "%s: an I2C bus needs sda and scl", e.name);
                 rc = -1;
                 break;
             }
@@ -198,16 +215,40 @@ static int merge(const fc_hw_t *hw, const char *json, fc_board_entry_t *map, int
     return rc;
 }
 
-/* Two names on the same pin, for what drives a pin of its own. */
+/* The pins an entry uses. */
+static int pins_of(const fc_board_entry_t *e, int *pins)
+{
+    int n = 0;
+    const int all[] = {e->pin, e->bus.sda, e->bus.scl};
+    for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+        if (all[i] >= 0) {
+            pins[n++] = all[i];
+        }
+    }
+    return n;
+}
+
+/* Two names on the same pin, or one name twice on a pin (an I2C bus whose
+ * sda is its scl). */
 static int check_pins(const fc_board_entry_t *map, int count, char *err, size_t err_len)
 {
     for (int i = 0; i < count; i++) {
-        for (int j = i + 1; j < count; j++) {
-            if (map[i].pin >= 0 && map[i].pin == map[j].pin && map[i].kind != FC_RES_I2C &&
-                map[i].kind != FC_RES_SPI && map[i].kind != FC_RES_UART && map[j].kind != FC_RES_I2C &&
-                map[j].kind != FC_RES_SPI && map[j].kind != FC_RES_UART) {
-                snprintf(err, err_len, "%s and %s are both on pin %d", map[i].name, map[j].name, map[i].pin);
-                return -1;
+        int pi[3], ni = pins_of(&map[i], pi);
+        for (int a = 0; a < ni; a++) {
+            for (int b = a + 1; b < ni; b++) {
+                if (pi[a] == pi[b]) {
+                    snprintf(err, err_len, "%s uses pin %d twice", map[i].name, pi[a]);
+                    return -1;
+                }
+            }
+            for (int j = i + 1; j < count; j++) {
+                int pj[3], nj = pins_of(&map[j], pj);
+                for (int b = 0; b < nj; b++) {
+                    if (pi[a] == pj[b]) {
+                        snprintf(err, err_len, "%s and %s are both on pin %d", map[i].name, map[j].name, pi[a]);
+                        return -1;
+                    }
+                }
             }
         }
     }

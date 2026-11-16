@@ -3,9 +3,9 @@
  *
  * docs/APPS.md says how to write an app and what each port has. Until the
  * v1.0.0 tag this interface can still change; from then on, functions are
- * only added within version 1. Buses, ADC, PWM, metrics and MQTT are not in
- * the firmware yet: they return FC_ENOTSUP once the name exists and is
- * granted.
+ * only added within version 1. SPI, UART, metrics and MQTT are not in the
+ * firmware yet: they return FC_ENOTSUP once the name exists and is granted.
+ * I2C, ADC and PWM are on ESP-IDF and simulated on the host.
  *
  * An app is a WebAssembly module (wasm32, MVP, no libc, no WASI) deployed by
  * Flight Control as a container application whose image is a WASM OCI
@@ -215,7 +215,11 @@ FC_IMPORT("led_open") int32_t fc_led_open(const char *name, int32_t nlen);
 FC_IMPORT("led_rgb") int32_t fc_led_rgb(int32_t h, int32_t r, int32_t g, int32_t b);
 
 /* ---- I2C ---------------------------------------------------------------------------
- * A bus by name; pins and speed are in the board map. addr is 7-bit. */
+ * A bus by name; pins and speed are in the board map. addr is 7-bit. Each
+ * call returns 0, FC_EIO (no acknowledge: no device at addr, or it refused)
+ * or FC_ETIMEDOUT (the bus held low), and moves at most FC_I2C_MAX bytes
+ * each way. */
+#define FC_I2C_MAX 1024
 FC_IMPORT("i2c_open") int32_t fc_i2c_open(const char *bus, int32_t blen);
 FC_IMPORT("i2c_write") int32_t fc_i2c_write(int32_t h, int32_t addr, const void *data, int32_t len);
 FC_IMPORT("i2c_read") int32_t fc_i2c_read(int32_t h, int32_t addr, void *buf, int32_t len);
@@ -247,11 +251,15 @@ FC_IMPORT("uart_read") int32_t fc_uart_read(int32_t h, void *buf, int32_t cap, i
 
 /* ---- ADC and PWM ------------------------------------------------------------------------ */
 
-/* Millivolts at the pin, calibrated where the chip allows it. */
+/* Millivolts at the pin (0 to about 3100 on the ESP32 chips), calibrated
+ * where the chip allows it. On ESP-IDF only ADC1's pins: the second ADC is
+ * shared with WiFi, and opening one of its pins gives FC_ENOTSUP. */
 FC_IMPORT("adc_open") int32_t fc_adc_open(const char *name, int32_t nlen);
 FC_IMPORT("adc_read_mv") int32_t fc_adc_read_mv(int32_t h);
 
-/* duty from 0 (off) to 65535 (always on). */
+/* duty from 0 (off) to 65535 (always on), scaled to the timer's resolution.
+ * freq_hz 0 takes the board map's "hz", 1000 without it. The output starts
+ * off, and goes off when the app stops. */
 FC_IMPORT("pwm_open") int32_t fc_pwm_open(const char *name, int32_t nlen, int32_t freq_hz);
 FC_IMPORT("pwm_duty") int32_t fc_pwm_duty(int32_t h, int32_t duty);
 
