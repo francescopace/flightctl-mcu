@@ -965,6 +965,71 @@ static void test_board_map(void)
     fc_apps_file_changed(FC_BOARD_PATH);
 }
 
+/* A port that names its hardware in a devicetree (Zephyr): the ids happen
+ * to be the fake board's pins, so the GPIO app drives the same ones. */
+static int f_dt_find(int kind, const char *name)
+{
+    static const struct {
+        int kind;
+        const char *name;
+        int id;
+    } nodes[] = {{FC_HW_KIND_GPIO, "relay_node", 5}, {FC_HW_KIND_GPIO, "button_node", 9},
+                 {FC_HW_KIND_GPIO, "spare_node", 6}, {FC_HW_KIND_LED, "led_node", 8}};
+    for (size_t i = 0; i < sizeof(nodes) / sizeof(nodes[0]); i++) {
+        if (nodes[i].kind == kind && strcmp(nodes[i].name, name) == 0) {
+            return nodes[i].id;
+        }
+    }
+    return -1;
+}
+static char *f_dt_defaults(void)
+{
+    return strdup("{\"gpio\": {\"relay1\": {\"dt\": \"relay_node\", \"safe\": 0},"
+                  " \"button0\": {\"dt\": \"button_node\", \"active_low\": true}},"
+                  " \"led\": {\"led0\": {\"dt\": \"led_node\"}}}");
+}
+
+static void test_board_dt(void)
+{
+    char err[160];
+    s_fake.dt_find = f_dt_find;
+    s_fake.board_defaults = f_dt_defaults;
+    fc_port_write_file(FC_BOARD_PATH, "{}", 2);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    /* Pins mean nothing here, and nodes must exist, once each. */
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"gpio\": {\"x\": {\"pin\": 6}}}", err, sizeof(err)), -1);
+    CHECK(strstr(err, "x: this board names its hardware in its devicetree") != NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"gpio\": {\"x\": {\"dt\": \"nope\"}}}", err, sizeof(err)), -1);
+    CHECK(strstr(err, "x: the devicetree has no gpio node \"nope\"") != NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"adc\": {\"x\": {\"dt\": \"spare_node\"}}}", err, sizeof(err)),
+              -1); /* a GPIO node is not an ADC channel */
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"gpio\": {\"x\": {\"dt\": \"relay_node\"}}}", err, sizeof(err)),
+              -1);
+    CHECK(strstr(err, "both the devicetree's relay_node") != NULL);
+    /* The GPIO app on the nodes: relay1 is node 5, button0 node 9. */
+    f_level[9] = 1;
+    CHECK_INT(apply_one("g", "reg/t_gpio", "{\"FC_ALLOW\": \"relay1 button0 led0\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("g", "Running t 41000 0", 3000), "Running t 41000 0");
+    CHECK_INT(f_read(5), 1);
+    CHECK_INT(f_mode[9], FC_HW_GPIO_IN_PULLUP);
+    /* An alias: the fleet moves relay1 to another node. */
+    const char *map = "{\"gpio\": {\"relay1\": {\"dt\": \"spare_node\", \"safe\": 0}}}";
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, map, err, sizeof(err)), 0);
+    fc_port_write_file(FC_BOARD_PATH, map, strlen(map));
+    fc_apps_file_changed(FC_BOARD_PATH);
+    for (int i = 0; i < 300 && f_read(6) != 1; i++) {
+        usleep(10 * 1000);
+    }
+    CHECK_INT(f_read(6), 1);
+    fc_board_entry_t *e = fc_board_find("relay1", 6);
+    CHECK(e != NULL && e->pin == -1 && e->dt_id == 6 && fc_board_pin(e) == 6);
+    remove_all();
+    s_fake.dt_find = NULL;
+    s_fake.board_defaults = f_defaults;
+    fc_port_write_file(FC_BOARD_PATH, "{}", 2);
+    fc_apps_file_changed(FC_BOARD_PATH);
+}
+
 static void test_example_apps(void)
 {
     char err[160];
@@ -1163,6 +1228,7 @@ int main(void)
     RUN(test_fc_limits);
     RUN(test_fc_events);
     RUN(test_board_map);
+    RUN(test_board_dt);
     RUN(test_example_apps);
     power_cycle(); /* stops the threads; leaves nothing for the leak checker */
     wasm_runtime_destroy();

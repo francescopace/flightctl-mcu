@@ -140,6 +140,9 @@ jobs:
       - run: third_party/fetch-zephyr.sh
       - name: build
         run: port/zephyr/build.sh
+      # The port's hardware for apps on native_sim's emulated drivers.
+      - name: app hardware (GPIO, ADC, PWM, I2C, SPI, UART)
+        run: tests/zephyr-hw.sh
       - uses: actions/upload-artifact@v7
         with:
           name: zephyr-native-sim

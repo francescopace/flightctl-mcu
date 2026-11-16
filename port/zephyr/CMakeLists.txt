@@ -1,6 +1,8 @@
 # flightctl-mcu on Zephyr: the agent core, the Zephyr port and a small
 # application. Built with port/zephyr/build.sh.
 cmake_minimum_required(VERSION 3.20)
+# The flightctl,app-hw binding (dts/bindings): the board map's names.
+list(APPEND DTS_ROOT ${CMAKE_CURRENT_LIST_DIR})
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(flightctl_mcu)
 # For mbedTLS too: it includes fc-mbedtls-user.h (prj.conf).
@@ -48,6 +50,7 @@ target_sources(app PRIVATE
     src/main.c
     ${ROOT}/port/zephyr/fc_port_zephyr.c
     ${ROOT}/port/zephyr/fc_net_zephyr.c
+    ${ROOT}/port/zephyr/fc_hw_zephyr.c
     ${ROOT}/core/src/fc_agent.c
     ${ROOT}/core/src/fc_http.c
     ${ROOT}/core/src/fc_identity.c

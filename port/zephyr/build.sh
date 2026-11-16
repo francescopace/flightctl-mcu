@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Builds the Zephyr application in the Zephyr build image (no local Zephyr
 # tools needed), or with this machine's west when it has one.
-# Usage: [BOARD=native_sim/native/64] port/zephyr/build.sh [west build args...] [-- CMake args...]
+# Usage: [BOARD=native_sim/native/64] [APP=port/zephyr] port/zephyr/build.sh [west build args...] [-- CMake args...]
+# APP is the application to build, relative to the repository (another one:
+# tests/zephyr-hw); its build goes to <APP>/build-<board>.
 # The Zephyr tree comes from third_party/fetch-zephyr.sh; the build goes to
 # port/zephyr/build-<board>. The default board is native_sim: the agent as a Linux
 # process on Zephyr's kernel, network stack and file system.
@@ -16,16 +18,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.30.0}"
 BOARD="${BOARD:-native_sim/native/64}"
+APP="${APP:-port/zephyr}"
 BUILD_DIR="${BUILD_DIR:-build-${BOARD//\//_}}"
 WS="$ROOT/third_party/zephyr-ws"
 # A build directory keeps the place of the application it was made for: one
 # from before it moved here does not configure. Started again from nothing;
 # west does the same by itself when only the board changed (-p auto).
-MARK="port/zephyr $BOARD"
-if [[ -d "$ROOT/port/zephyr/$BUILD_DIR" && "$(cat "$ROOT/port/zephyr/$BUILD_DIR/.fc_source" 2>/dev/null)" != "$MARK" ]]; then
-  rm -rf "$ROOT/port/zephyr/${BUILD_DIR:?}"
+MARK="$APP $BOARD"
+if [[ -d "$ROOT/$APP/$BUILD_DIR" && "$(cat "$ROOT/$APP/$BUILD_DIR/.fc_source" 2>/dev/null)" != "$MARK" ]]; then
+  rm -rf "$ROOT/$APP/${BUILD_DIR:?}"
 fi
-mkdir -p "$ROOT/port/zephyr/$BUILD_DIR" && echo "$MARK" > "$ROOT/port/zephyr/$BUILD_DIR/.fc_source"
+mkdir -p "$ROOT/$APP/$BUILD_DIR" && echo "$MARK" > "$ROOT/$APP/$BUILD_DIR/.fc_source"
 [[ -d "$WS/zephyr" ]] || { echo "no Zephyr tree: run third_party/fetch-zephyr.sh" >&2; exit 1; }
 # The arguments of west build, then, after "--", those of CMake.
 WEST_ARGS=(); CMAKE_ARGS=()
@@ -60,7 +63,7 @@ if [[ -n "$NATIVE" ]]; then
     export ZEPHYR_SDK_INSTALL_DIR="${ZEPHYR_SDK_INSTALL_DIR:-$ROOT/third_party/zephyr-sdk}"
   fi
   bash -c "$MAKE_KEY" make-key "$ROOT/$KEY" "$WS"
-  exec west build -p auto -b "$BOARD" -d "$ROOT/port/zephyr/$BUILD_DIR" ${WEST_ARGS[@]+"${WEST_ARGS[@]}"} "$ROOT/port/zephyr" \
+  exec west build -p auto -b "$BOARD" -d "$ROOT/$APP/$BUILD_DIR" ${WEST_ARGS[@]+"${WEST_ARGS[@]}"} "$ROOT/$APP" \
     ${CMAKE_ARGS[@]+-- "${CMAKE_ARGS[@]}"}
 fi
 # Real boards build with the Zephyr SDK (third_party/fetch-zephyr-sdk.sh).
@@ -76,5 +79,5 @@ docker run --rm ${TOOLCHAIN[@]+"${TOOLCHAIN[@]}"} -v "$ROOT:/project" -w /projec
     bash -c "$1" make-key "/project/$2" /project/third_party/zephyr-ws
     shift 2
     exec west build "$@"' \
-  build "$MAKE_KEY" "$KEY" -p auto -b "$BOARD" -d "/project/port/zephyr/$BUILD_DIR" ${WEST_ARGS[@]+"${WEST_ARGS[@]}"} /project/port/zephyr \
+  build "$MAKE_KEY" "$KEY" -p auto -b "$BOARD" -d "/project/$APP/$BUILD_DIR" ${WEST_ARGS[@]+"${WEST_ARGS[@]}"} "/project/$APP" \
   ${CMAKE_ARGS[@]+-- "${CMAKE_ARGS[@]}"}

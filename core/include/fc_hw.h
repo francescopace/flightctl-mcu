@@ -52,7 +52,19 @@ typedef struct {
     int tx, rx, de;          /* UART; de drives an RS-485 transceiver while sending */
     int baud;                /* UART: the speed when the app gives 0; 0: 115200 */
     int hz;                  /* I2C or SPI clock; 0: the port's default (100 kHz, 1 MHz) */
+    int dt;                  /* where the port names its hardware (dt_find): the node's id, else -1 */
 } fc_hw_bus_t;
+
+/* The kinds of a board map's entries. */
+enum {
+    FC_HW_KIND_GPIO = 1,
+    FC_HW_KIND_LED,
+    FC_HW_KIND_I2C,
+    FC_HW_KIND_SPI,
+    FC_HW_KIND_UART,
+    FC_HW_KIND_ADC,
+    FC_HW_KIND_PWM,
+};
 
 /* UART framings, as FC_UART_* in fc_app.h. */
 #define FC_HW_UART_8N1 0
@@ -71,6 +83,12 @@ typedef struct {
     /* 1 if the firmware uses the pin (flash, PSRAM, console) or the chip has
      * no such GPIO: a board map that names it is refused. */
     int (*pin_reserved)(int pin);
+    /* A port that names its hardware in its own description (Zephyr's
+     * devicetree) rather than by pin: the id of the node `name` of that
+     * kind, or -1. The board map's entries then say "dt": name, never a
+     * pin, and the functions below get that id where they take a pin, or in
+     * fc_hw_bus_t.dt. NULL: pins. */
+    int (*dt_find)(int kind, const char *name);
 
     /* Levels are electrical: the core handles active_low. */
     int (*gpio_setup)(int pin, int mode);
@@ -93,9 +111,10 @@ typedef struct {
 
     /* The functions below return a port handle (>= 0) from open, or an
      * FC_HW_E* code; the core keeps it in the app's handle and gives it back.
-     * Each call returns within timeout_ms where it takes one, and at most
-     * 100 ms (FC_WAIT_MAX_MS) where it does not, so an app can always be
-     * stopped. */
+     * Each call returns within timeout_ms where it takes one, and should
+     * within 100 ms (FC_WAIT_MAX_MS) where it does not, so an app can be
+     * stopped; where the system's driver takes no timeout (Zephyr's I2C and
+     * SPI), a transfer lasts as long as the driver makes it. */
 
     /* I2C: a bus in master mode. A transfer writes w[0..wlen) to the 7-bit
      * address addr, then, if rlen > 0, reads r[0..rlen) after a repeated

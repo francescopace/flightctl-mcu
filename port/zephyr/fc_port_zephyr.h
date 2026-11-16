@@ -20,3 +20,9 @@ void fc_kernel_heap_stats(size_t *total, size_t *free_now);
 /* The security counter of the image in a slot (a flash area id), 0 when it
  * has none: MCUboot installs no update below the running image's. */
 uint32_t fc_zephyr_security_counter(uint8_t slot);
+
+#include "fc_hw.h"
+
+/* The board map's hardware from the devicetree (fc_hw_zephyr.c): fills in
+ * hw's board map, GPIO, buses, ADC and PWM. */
+void fc_hw_zephyr_fill(fc_hw_t *hw);

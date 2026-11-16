@@ -1,0 +1,59 @@
+description: |
+  The hardware flightctl-mcu's WASM apps may open, by name. Each child is a
+  name of the board map (the node's name), and what it has says what it is:
+  gpios a GPIO, io-channels an ADC channel, pwms a PWM, i2c-bus an I2C bus,
+  spi-bus and cs-gpios an SPI device, uart a UART. The fleet's
+  /etc/fc/board.json may give these nodes other names ("dt": node), never
+  pins. See docs/APPS.md and docs/ZEPHYR.md.
+
+    fc-hw {
+        compatible = "flightctl,app-hw";
+        relay1 { gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>; safe = <0>; };
+        level { io-channels = <&adc0 0>; };
+        sensors { i2c-bus = <&i2c0>; clock-frequency = <400000>; };
+        flash { spi-bus = <&spi2>; cs-gpios = <&gpio0 10 GPIO_ACTIVE_LOW>; spi-mode = <0>; };
+        modbus { uart = <&uart1>; current-speed = <9600>; };
+    };
+
+compatible: "flightctl,app-hw"
+
+child-binding:
+  description: One name of the board map.
+  properties:
+    gpios:
+      type: phandle-array
+      description: A GPIO; its active level makes the app's levels logical.
+    safe:
+      type: int
+      description: The level, 0 or 1, an output takes when its app stops (else back to an input).
+    io-channels:
+      type: phandle-array
+      description: An ADC channel, configured by a channel node of its ADC.
+    pwms:
+      type: phandle-array
+      description: A PWM channel.
+    i2c-bus:
+      type: phandle
+      description: An I2C controller; the whole bus is one name.
+    spi-bus:
+      type: phandle
+      description: An SPI controller this device is on.
+    cs-gpios:
+      type: phandle-array
+      description: The SPI device's chip select, driven by the firmware.
+    spi-mode:
+      type: int
+      default: 0
+      description: SPI mode, 0 to 3.
+    clock-frequency:
+      type: int
+      description: The I2C bus's or the SPI device's clock, in Hz.
+    uart:
+      type: phandle
+      description: A UART; never the console's.
+    current-speed:
+      type: int
+      description: The UART's speed when the app gives 0, in bits per second.
+    de-gpios:
+      type: phandle-array
+      description: An RS-485 transceiver's driver enable (not supported yet on Zephyr).

@@ -82,7 +82,7 @@ static void wait_for_time(void)
 
 /* Simulated hardware for WASM apps, as on the host: a chip temperature that
  * swings 30..46 C over two minutes, and an LED (led0) printed when it
- * changes. No GPIO yet. */
+ * changes. */
 static int sim_sensor(const char *name, int32_t *value)
 {
     if (strcmp(name, "die_temp") != 0) {
@@ -114,15 +114,10 @@ static void sim_led_close(const fc_hw_led_t *led)
     sim_led_rgb(led, 0, 0, 0);
 }
 
-static char *sim_board(void)
-{
-    return strdup("{\"led\": {\"led0\": {\"dt\": \"simulated\"}}}");
-}
-
-static const fc_hw_t s_hw = {
+/* The rest (GPIO, buses, ADC, PWM) from the devicetree: fc_hw_zephyr.c. */
+static fc_hw_t s_hw = {
     .board = CONFIG_BOARD_TARGET,
     .firmware = CONFIG_FC_FW_VERSION,
-    .board_defaults = sim_board,
     .led_open = sim_led_open,
     .led_rgb = sim_led_rgb,
     .led_close = sim_led_close,
@@ -143,6 +138,7 @@ static void stop(const char *why)
 int main(void)
 {
     fc_port_log(FC_LOG_INFO, "flightctl-mcu %s on Zephyr, board %s", CONFIG_FC_FW_VERSION, CONFIG_BOARD_TARGET);
+    fc_hw_zephyr_fill(&s_hw);
     if (fc_port_zephyr_init() != 0) {
         stop("cannot mount the storage (the fc_storage partition)");
     }

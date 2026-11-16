@@ -50,6 +50,29 @@ It asks to be approved like any device (`flightctl approve enrollmentrequest/<na
 | Firmware updates | MCUboot's two slots (boards built with it): the image is streamed into the second, read back, and asked for as a test; MCUboot checks its signature, swaps the slots, and swaps them back unless the agent confirms the image once it has reached Flight Control. `native_sim` has no MCUboot and no updates. |
 | Firmware deltas | the core's decoder, as elsewhere; the port reads the running image from the first slot. |
 
+## Hardware for apps
+
+The names apps open are the devicetree's: the children of a node with compatible `flightctl,app-hw` ([its binding](../port/zephyr/dts/bindings/flightctl,app-hw.yaml)), each a GPIO, an ADC channel, a PWM, an I2C bus, an SPI device or a UART by what it has. A board's overlay adds them and its `.conf` enables the drivers they need:
+
+```dts
+/ {
+	fc-hw {
+		compatible = "flightctl,app-hw";
+		relay1 { gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>; safe = <0>; };
+		button0 { gpios = <&gpio0 6 GPIO_ACTIVE_LOW>; };
+		level { io-channels = <&adc0 0>; };
+		fan { pwms = <&pwm0 0 1000000>; };
+		sensors { i2c-bus = <&i2c0>; clock-frequency = <100000>; };
+		flash { spi-bus = <&spi2>; cs-gpios = <&gpio0 10 GPIO_ACTIVE_LOW>; spi-mode = <3>; };
+		modbus { uart = <&uart1>; current-speed = <9600>; };
+	};
+};
+```
+
+A GPIO's active level becomes the board map's `active_low`. The fleet's `/etc/fc/board.json` may give a node another name (`{"gpio": {"pump": {"dt": "relay1"}}}`); it may not name pins, and a node the devicetree lacks is refused. The console's UART is never offered, and RS-485 (`de-gpios`) is not there yet. Zephyr's I2C and SPI calls take no timeout, so a transfer lasts as long as the driver makes it; an SPI device waiting for another app's to let go of the bus gives up after 100 ms, as on ESP-IDF.
+
+None of the boards here names any yet: the ESP32-S3 build, at 99.6% of its data region, has no room for the drivers until something else gives way. [`tests/zephyr-hw`](../tests/zephyr-hw) runs it all on `native_sim`'s emulated drivers (GPIO, ADC, a fake PWM, I2C with an AT24 EEPROM, SPI with a loopback device, UART wired back to itself), in CI: `tests/zephyr-hw.sh`. Not yet on a board.
+
 ## Zephyr 4.5
 
 `third_party/fetch-zephyr.sh` pins v4.5.0, which has mbedTLS 4.1.1, the same as ESP-IDF 6.0.3: the core is written for mbedTLS 4, whose cryptography is PSA only. (The port was first made on Zephyr 4.3, the last release with mbedTLS 3.6, when the core was written for that.)

@@ -1,0 +1,3 @@
+description: A test SPI device that sends back what it is sent (tests/zephyr-hw).
+compatible: "flightctl,test-spi-loopback"
+include: spi-device.yaml

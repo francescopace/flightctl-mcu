@@ -11,7 +11,10 @@
 #include "cJSON.h"
 #include "fc_port.h"
 
-static fc_board_entry_t s_map[FC_BOARD_MAX];
+/* Allocated at the first load, never freed: entries are found by pointer.
+ * On the heap, not in static RAM, where the Zephyr build for the ESP32-S3
+ * has no room left for its 2.9 KB. */
+static fc_board_entry_t *s_map;
 static int s_count;
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -77,7 +80,8 @@ static int valid_order(const char *o)
 }
 
 /* One entry from its JSON object. */
-static int parse_entry(const fc_hw_t *hw, int kind, const cJSON *o, fc_board_entry_t *e, char *err, size_t err_len)
+static int parse_entry(const fc_hw_t *hw, int check, int kind, const cJSON *o, fc_board_entry_t *e, char *err,
+                       size_t err_len)
 {
     memset(e, 0, sizeof(*e));
     snprintf(e->name, sizeof(e->name), "%s", o->string);
@@ -93,7 +97,12 @@ static int parse_entry(const fc_hw_t *hw, int kind, const cJSON *o, fc_board_ent
             snprintf(err, err_len, "%s: %s is not a pin number", e->name, s_pin_fields[i]);
             return -1;
         }
-        if (pin >= 0 && hw != NULL && hw->pin_reserved != NULL && hw->pin_reserved(pin)) {
+        if (pin >= 0 && hw != NULL && hw->dt_find != NULL) {
+            snprintf(err, err_len, "%s: this board names its hardware in its devicetree: \"dt\", not %s", e->name,
+                     s_pin_fields[i]);
+            return -1;
+        }
+        if (pin >= 0 && check && hw != NULL && hw->pin_reserved != NULL && hw->pin_reserved(pin)) {
             snprintf(err, err_len, "%s: pin %d is used by the firmware or does not exist", e->name, pin);
             return -1;
         }
@@ -133,7 +142,17 @@ static int parse_entry(const fc_hw_t *hw, int kind, const cJSON *o, fc_board_ent
         return -1;
     }
     e->safe = safe;
-    e->has_dt = cJSON_IsString(cJSON_GetObjectItemCaseSensitive(o, "dt"));
+    const cJSON *dt = cJSON_GetObjectItemCaseSensitive(o, "dt");
+    e->has_dt = cJSON_IsString(dt);
+    e->dt_id = -1;
+    if (e->has_dt) {
+        snprintf(e->dt, sizeof(e->dt), "%s", dt->valuestring);
+        if (hw != NULL && hw->dt_find != NULL && (e->dt_id = hw->dt_find(kind, e->dt)) < 0) {
+            snprintf(err, err_len, "%s: the devicetree has no %s node \"%s\"", e->name, s_sections[kind - 1].section,
+                     e->dt);
+            return -1;
+        }
+    }
     if (kind == FC_RES_LED) {
         const cJSON *ord = cJSON_GetObjectItemCaseSensitive(o, "order");
         snprintf(e->led.order, sizeof(e->led.order), "%s", cJSON_IsString(ord) ? ord->valuestring : "grb");
@@ -164,7 +183,8 @@ static int needs_pin(int kind)
 
 /* Adds the entries of a board map in JSON to map[0..*count), replacing those
  * with the same name. */
-static int merge(const fc_hw_t *hw, const char *json, fc_board_entry_t *map, int *count, char *err, size_t err_len)
+static int merge(const fc_hw_t *hw, int check, const char *json, fc_board_entry_t *map, int *count, char *err,
+                 size_t err_len)
 {
     cJSON *doc = cJSON_Parse(json);
     if (!cJSON_IsObject(doc)) {
@@ -194,7 +214,7 @@ static int merge(const fc_hw_t *hw, const char *json, fc_board_entry_t *map, int
                 break;
             }
             fc_board_entry_t e;
-            if (parse_entry(hw, kind, o, &e, err, err_len) != 0) {
+            if (parse_entry(hw, check, kind, o, &e, err, err_len) != 0) {
                 rc = -1;
                 break;
             }
@@ -210,6 +230,8 @@ static int merge(const fc_hw_t *hw, const char *json, fc_board_entry_t *map, int
             if (at < *count && map[at].kind == e.kind && e.pin < 0 && !e.has_dt) {
                 e.pin = map[at].pin;
                 e.has_dt = map[at].has_dt;
+                e.dt_id = map[at].dt_id;
+                memcpy(e.dt, map[at].dt, sizeof(e.dt));
             }
             /* The same for a bus given without pins: the firmware's, with
              * the settings the entry gives. */
@@ -244,7 +266,8 @@ static int merge(const fc_hw_t *hw, const char *json, fc_board_entry_t *map, int
             if (e.bus.mode < 0) {
                 e.bus.mode = 0;
             }
-            e.led.pin = e.pin;
+            e.led.pin = fc_board_pin(&e);
+            e.bus.dt = e.has_dt ? e.dt_id : -1;
             if (at == *count && *count == FC_BOARD_MAX) {
                 snprintf(err, err_len, "more than %d names", FC_BOARD_MAX);
                 rc = -1;
@@ -293,6 +316,13 @@ static int same_spi_bus(const fc_board_entry_t *x, const fc_board_entry_t *y)
 static int check_pins(const fc_board_entry_t *map, int count, char *err, size_t err_len)
 {
     for (int i = 0; i < count; i++) {
+        for (int j = i + 1; j < count && map[i].has_dt; j++) {
+            if (map[j].has_dt && map[j].kind == map[i].kind && strcmp(map[i].dt, map[j].dt) == 0 &&
+                map[i].dt_id >= 0) {
+                snprintf(err, err_len, "%s and %s are both the devicetree's %s", map[i].name, map[j].name, map[i].dt);
+                return -1;
+            }
+        }
         pin_use_t pi[10];
         int ni = pins_of(&map[i], pi);
         for (int a = 0; a < ni; a++) {
@@ -326,14 +356,14 @@ static int build(const fc_hw_t *hw, const char *fleet, fc_board_entry_t *map, in
     *count = 0;
     char *defaults = hw != NULL && hw->board_defaults != NULL ? hw->board_defaults() : NULL;
     int rc = 0;
-    if (defaults != NULL && merge(NULL, defaults, map, count, err, err_len) != 0) {
+    if (defaults != NULL && merge(hw, 0, defaults, map, count, err, err_len) != 0) {
         fc_port_log(FC_LOG_WARN, "the firmware's board map is not valid: %s", err);
         *count = 0;
     }
     free(defaults);
     if (fleet != NULL) {
         char why[100];
-        if (merge(hw, fleet, map, count, why, sizeof(why)) != 0) {
+        if (merge(hw, 1, fleet, map, count, why, sizeof(why)) != 0) {
             snprintf(err, err_len, "%s: %s", FC_BOARD_PATH, why);
             rc = -1;
         } else if (check_pins(map, *count, why, sizeof(why)) != 0) {
@@ -378,7 +408,12 @@ void fc_board_load(const fc_hw_t *hw)
     }
     free(fleet);
     pthread_mutex_lock(&s_lock);
-    memcpy(s_map, map, FC_BOARD_MAX * sizeof(*map));
+    if (s_map == NULL) {
+        s_map = map; /* the first map: kept as it is */
+        map = NULL;
+    } else {
+        memcpy(s_map, map, FC_BOARD_MAX * sizeof(*map));
+    }
     s_count = count;
     pthread_mutex_unlock(&s_lock);
     free(map);

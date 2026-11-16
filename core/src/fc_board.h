@@ -15,13 +15,13 @@
 #define FC_BOARD_NAME_MAX 23
 
 typedef enum {
-    FC_RES_GPIO = 1,
-    FC_RES_LED,
-    FC_RES_I2C,
-    FC_RES_SPI,
-    FC_RES_UART,
-    FC_RES_ADC,
-    FC_RES_PWM,
+    FC_RES_GPIO = FC_HW_KIND_GPIO,
+    FC_RES_LED = FC_HW_KIND_LED,
+    FC_RES_I2C = FC_HW_KIND_I2C,
+    FC_RES_SPI = FC_HW_KIND_SPI,
+    FC_RES_UART = FC_HW_KIND_UART,
+    FC_RES_ADC = FC_HW_KIND_ADC,
+    FC_RES_PWM = FC_HW_KIND_PWM,
 } fc_res_kind_t;
 
 typedef struct {
@@ -29,6 +29,8 @@ typedef struct {
     int kind;
     int pin;        /* -1 when the entry has none (a bus, a devicetree node) */
     int has_dt;     /* names a devicetree node ("dt") */
+    char dt[FC_BOARD_NAME_MAX + 1];
+    int dt_id;      /* the port's id for it (fc_hw_t.dt_find), -1 if none */
     int active_low; /* GPIO */
     int safe;       /* GPIO output level when its app stops; -1: back to input */
     fc_hw_led_t led;
@@ -49,6 +51,13 @@ int fc_board_check(const fc_hw_t *hw, const char *json, char *err, size_t err_le
 /* The entry named name[0..nlen), or NULL. The map changes only while no app
  * runs, so the pointer stays valid while an app runs. */
 fc_board_entry_t *fc_board_find(const char *name, size_t nlen);
+
+/* What the port's functions take for the entry's pin: its pin, or the id of
+ * its devicetree node. */
+static inline int fc_board_pin(const fc_board_entry_t *e)
+{
+    return e->has_dt ? e->dt_id : e->pin;
+}
 
 /* Takes the entry for app `slot`: 0, or FC_HW_EBUSY if it is held already. */
 int fc_board_claim(fc_board_entry_t *e, int slot);

@@ -122,16 +122,18 @@ Two more ways are part of the interface, for when the firmware has them ([ROADMA
 
 ## Ports
 
+On Zephyr the board map's names come from the devicetree, not from pins: the children of a node with compatible `flightctl,app-hw` ([ZEPHYR.md](ZEPHYR.md#hardware-for-apps)). The fleet's `board.json` may give those nodes other names (`"dt": "<node>"`), never pins. A board without that node has only the simulated `led0` and `die_temp`.
+
 | | ESP-IDF | Zephyr | Host simulator |
 |---|---|---|---|
-| GPIO with interrupts | yes | not yet | simulated; nothing presses `button0` |
+| GPIO with interrupts | yes | yes, the devicetree's names | simulated; nothing presses `button0` |
 | `led0` | the board's LED (`CONFIG_FC_LED_GPIO`, WS2812 or plain) unless `board.json` moves it | simulated, printed on the console | simulated, printed |
 | `die_temp` | the chip's sensor; `FC_ENOTSUP` on the ESP32, which has none | simulated: 30 to 46 °C over two minutes | simulated, the same |
-| I2C | master, any two pins; up to two buses on the ESP32 and S3, one on the C chips | not yet | `i2c0`, with one device at 0x48: register 0 the simulated temperature in hundredths of a degree, 2 and 3 writable |
-| ADC | ADC1's pins, 0 to about 3.1 V, calibrated from the chip's eFuse; up to 8 channels | not yet | 1650 mV on any pin |
-| PWM | LEDC, up to 4, each at its own frequency, duty to 14 bits | not yet | printed when it changes |
-| SPI | master, up to 4 devices on one bus (two buses on the ESP32 and S3), chip select driven by the firmware; transfers in pieces of 64 bytes, without DMA | not yet | MISO wired to MOSI: what is sent comes back |
-| UART | UART1, and UART2 on the ESP32 and S3 (UART0 is the console's); RS-485 half duplex with `de`; 512 bytes received ahead | not yet | RX wired to TX: what is written comes back, with `FC_EV_UART` |
+| I2C | master, any two pins; up to two buses on the ESP32 and S3, one on the C chips | the devicetree's controllers; a transfer lasts as long as the driver makes it | `i2c0`, with one device at 0x48: register 0 the simulated temperature in hundredths of a degree, 2 and 3 writable |
+| ADC | ADC1's pins, 0 to about 3.1 V, calibrated from the chip's eFuse; up to 8 channels | the devicetree's channels, in millivolts by their reference | 1650 mV on any pin |
+| PWM | LEDC, up to 4, each at its own frequency, duty to 14 bits | the devicetree's channels | printed when it changes |
+| SPI | master, up to 4 devices on one bus (two buses on the ESP32 and S3), chip select driven by the firmware; transfers in pieces of 64 bytes, without DMA | the devicetree's devices, chip select driven by the firmware; a transfer lasts as long as the driver makes it | MISO wired to MOSI: what is sent comes back |
+| UART | UART1, and UART2 on the ESP32 and S3 (UART0 is the console's); RS-485 half duplex with `de`; 512 bytes received ahead | interrupt-driven, 512 bytes received ahead; never the console's; no RS-485 yet (`FC_ENOTSUP` for a node with `de-gpios`) | RX wired to TX: what is written comes back, with `FC_EV_UART` |
 
 ## Size and limits
 

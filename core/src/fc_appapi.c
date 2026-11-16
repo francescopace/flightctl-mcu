@@ -440,7 +440,7 @@ static void close_handle(app_t *a, int i)
     app_handle_t *h = &a->h[i];
     const fc_hw_t *hw = g_fc_hw;
     if (h->kind == H_GPIO) {
-        int pin = h->res->pin;
+        int pin = fc_board_pin(h->res);
         if (h->irq && hw && hw->gpio_irq) {
             hw->gpio_irq(pin, 0, NULL, NULL);
         }
@@ -523,7 +523,7 @@ static int32_t fc_gpio_open(wasm_exec_env_t env, const char *name, int32_t nlen,
         return FC_HW_EINVAL;
     }
     const fc_hw_t *hw = g_fc_hw;
-    if (hw == NULL || hw->gpio_setup == NULL || e->pin < 0) {
+    if (hw == NULL || hw->gpio_setup == NULL || fc_board_pin(e) < 0) {
         return FC_HW_ENOTSUP;
     }
     if ((rc = fc_board_claim(e, a->slot)) != 0) {
@@ -536,15 +536,15 @@ static int32_t fc_gpio_open(wasm_exec_env_t env, const char *name, int32_t nlen,
     }
     int out = mode == FC_HW_GPIO_OUT || mode == FC_HW_GPIO_OUT_OD;
     if (out && hw->gpio_write) {
-        hw->gpio_write(e->pin, logical(e, 0)); /* starts inactive */
+        hw->gpio_write(fc_board_pin(e), logical(e, 0)); /* starts inactive */
     }
-    if ((rc = hw->gpio_setup(e->pin, mode)) != 0) {
+    if ((rc = hw->gpio_setup(fc_board_pin(e), mode)) != 0) {
         a->h[h].kind = H_FREE;
         fc_board_release(e);
         return rc < 0 ? rc : FC_HW_EIO;
     }
     if (out && hw->gpio_write) {
-        hw->gpio_write(e->pin, logical(e, 0));
+        hw->gpio_write(fc_board_pin(e), logical(e, 0));
     }
     a->h[h].res = e;
     a->h[h].mode = mode;
@@ -560,7 +560,7 @@ static int32_t fc_gpio_read(wasm_exec_env_t env, int32_t h)
     if (g_fc_hw->gpio_read == NULL) {
         return FC_HW_ENOTSUP;
     }
-    int v = g_fc_hw->gpio_read(g->res->pin);
+    int v = g_fc_hw->gpio_read(fc_board_pin(g->res));
     return v < 0 ? v : logical(g->res, v);
 }
 
@@ -573,7 +573,7 @@ static int32_t fc_gpio_write(wasm_exec_env_t env, int32_t h, int32_t level)
     if (g_fc_hw->gpio_write == NULL) {
         return FC_HW_ENOTSUP;
     }
-    return g_fc_hw->gpio_write(g->res->pin, logical(g->res, level));
+    return g_fc_hw->gpio_write(fc_board_pin(g->res), logical(g->res, level));
 }
 
 /* From the port's task: an edge on a GPIO with an interrupt. */
@@ -591,7 +591,7 @@ static void gpio_edge(void *arg)
     }
     pthread_mutex_unlock(a->ev_lock);
     if (ok) {
-        int v = g_fc_hw->gpio_read ? g_fc_hw->gpio_read(res->pin) : 0;
+        int v = g_fc_hw->gpio_read ? g_fc_hw->gpio_read(fc_board_pin(res)) : 0;
         fc_apps_post(a, EV_GPIO, c->handle, v < 0 ? 0 : logical(res, v));
     }
 }
@@ -616,7 +616,7 @@ static int32_t fc_gpio_irq(wasm_exec_env_t env, int32_t h, int32_t edge, int32_t
     pthread_mutex_unlock(a->ev_lock);
     a->irq_ctx[h].app = a;
     a->irq_ctx[h].handle = h;
-    int rc = g_fc_hw->gpio_irq(g->res->pin, hw_edge, edge ? gpio_edge : NULL, edge ? &a->irq_ctx[h] : NULL);
+    int rc = g_fc_hw->gpio_irq(fc_board_pin(g->res), hw_edge, edge ? gpio_edge : NULL, edge ? &a->irq_ctx[h] : NULL);
     if (rc != 0) {
         pthread_mutex_lock(a->ev_lock);
         g->irq = 0;
@@ -734,10 +734,10 @@ static int32_t open_entry(app_t *a, const char *name, int32_t nlen, int kind, in
 }
 
 static int i2c_opener(fc_board_entry_t *e, int arg) { return g_fc_hw->i2c_open(&e->bus); }
-static int adc_opener(fc_board_entry_t *e, int arg) { return e->pin < 0 ? FC_HW_ENOTSUP : g_fc_hw->adc_open(e->pin); }
+static int adc_opener(fc_board_entry_t *e, int arg) { return fc_board_pin(e) < 0 ? FC_HW_ENOTSUP : g_fc_hw->adc_open(fc_board_pin(e)); }
 static int pwm_opener(fc_board_entry_t *e, int hz)
 {
-    return e->pin < 0 ? FC_HW_ENOTSUP : g_fc_hw->pwm_open(e->pin, hz > 0 ? hz : e->hz > 0 ? e->hz : 1000);
+    return fc_board_pin(e) < 0 ? FC_HW_ENOTSUP : g_fc_hw->pwm_open(fc_board_pin(e), hz > 0 ? hz : e->hz > 0 ? e->hz : 1000);
 }
 
 static int32_t fc_i2c_open(wasm_exec_env_t env, const char *n, int32_t l)

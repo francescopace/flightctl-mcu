@@ -5,7 +5,8 @@
  * v1.0.0 tag this interface can still change; from then on, functions are
  * only added within version 1. Metrics and MQTT are not in the firmware yet:
  * they return FC_ENOTSUP once the name exists and is granted. The buses, ADC
- * and PWM are on ESP-IDF and simulated on the host, not yet on Zephyr.
+ * and PWM are on ESP-IDF, on Zephyr from the devicetree, and simulated on the
+ * host.
  *
  * An app is a WebAssembly module (wasm32, MVP, no libc, no WASI) deployed by
  * Flight Control as a container application whose image is a WASM OCI

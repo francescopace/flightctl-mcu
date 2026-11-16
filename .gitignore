@@ -34,4 +34,5 @@ venv/
 .vscode/
 .idea/
 port/zephyr/build-*/
+tests/zephyr-hw/build-*/
 third_party/zephyr-sdk/
