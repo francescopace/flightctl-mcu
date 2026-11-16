@@ -3,9 +3,9 @@
  *
  * docs/APPS.md says how to write an app and what each port has. Until the
  * v1.0.0 tag this interface can still change; from then on, functions are
- * only added within version 1. SPI, UART, metrics and MQTT are not in the
- * firmware yet: they return FC_ENOTSUP once the name exists and is granted.
- * I2C, ADC and PWM are on ESP-IDF and simulated on the host.
+ * only added within version 1. Metrics and MQTT are not in the firmware yet:
+ * they return FC_ENOTSUP once the name exists and is granted. The buses, ADC
+ * and PWM are on ESP-IDF and simulated on the host, not yet on Zephyr.
  *
  * An app is a WebAssembly module (wasm32, MVP, no libc, no WASI) deployed by
  * Flight Control as a container application whose image is a WASM OCI
@@ -229,10 +229,14 @@ int32_t fc_i2c_write_read(int32_t h, int32_t addr, const void *w, int32_t wlen, 
 
 /* ---- SPI ----------------------------------------------------------------------------
  * A device on a bus by name: the board map gives the bus, chip select, mode and
- * clock. tx or rx may be 0 for a one-way transfer. With FC_SPI_KEEP_CS the chip
- * select stays asserted for the next transfer (a command, then its reply); the
- * bus stays the app's until a transfer without it, or the end of the call. */
+ * clock. tx or rx may be 0 for a one-way transfer: with no tx the device is
+ * sent 0xFF. With FC_SPI_KEEP_CS the chip select stays asserted for the next
+ * transfer (a command, then its reply); the bus stays the app's until a
+ * transfer without it, or the end of the call. Returns 0, FC_EBUSY (another
+ * app's device holds the bus for more than FC_WAIT_MAX_MS) or FC_EIO; at most
+ * FC_SPI_MAX bytes. */
 #define FC_SPI_KEEP_CS 1
+#define FC_SPI_MAX     4096
 FC_IMPORT("spi_open") int32_t fc_spi_open(const char *name, int32_t nlen);
 FC_IMPORT("spi_transfer")
 int32_t fc_spi_transfer(int32_t h, const void *tx, void *rx, int32_t len, int32_t flags);
@@ -240,8 +244,11 @@ int32_t fc_spi_transfer(int32_t h, const void *tx, void *rx, int32_t len, int32_
 /* ---- UART -----------------------------------------------------------------------------
  * baud 0 takes the board map's. format: FC_UART_8N1 and the like. For RS-485
  * the board map names the pin that enables the driver; the device drives it.
- * Reads wait at most timeout_ms, itself at most FC_WAIT_MAX_MS; FC_EV_UART
- * says data is waiting. 8E1 and 8N2 are Modbus RTU's two framings. */
+ * Reads wait at most timeout_ms, itself at most FC_WAIT_MAX_MS, for the first
+ * byte, and return how many bytes came (0: none). A write takes what fits
+ * within FC_WAIT_MAX_MS and returns how many bytes. FC_EV_UART says data is
+ * waiting; it comes once, and again for data that comes after the next read.
+ * 8E1 and 8N2 are Modbus RTU's two framings. */
 #define FC_UART_8N1 0
 #define FC_UART_8E1 1
 #define FC_UART_8N2 2

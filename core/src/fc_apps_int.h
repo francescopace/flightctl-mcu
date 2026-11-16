@@ -24,7 +24,7 @@
 /* Events, as FC_EV_* in fc_app.h. */
 enum { EV_GPIO = 1, EV_TIMER = 2, EV_UART = 3, EV_MQTT = 4, EV_CONFIG = 5, EV_NET = 6, EV_OVERFLOW = 7 };
 
-enum { H_FREE = 0, H_TIMER, H_GPIO, H_LED, H_I2C, H_ADC, H_PWM };
+enum { H_FREE = 0, H_TIMER, H_GPIO, H_LED, H_I2C, H_ADC, H_PWM, H_SPI, H_UART };
 
 struct app;
 
@@ -39,8 +39,10 @@ typedef struct {
 typedef struct {
     int kind;
     uint32_t serial;          /* changes at each open: late interrupts see it */
-    fc_board_entry_t *res;    /* GPIO, LED, I2C, ADC, PWM */
-    int port;                 /* I2C, ADC, PWM: the port's handle */
+    fc_board_entry_t *res;    /* GPIO, LED and the buses */
+    int port;                 /* I2C, SPI, UART, ADC, PWM: the port's handle */
+    int kept;                 /* SPI: chip select held past the transfer */
+    int ev_pending;           /* UART: an FC_EV_UART queued and not read since (under ev_lock) */
     int mode;                 /* GPIO */
     int irq;                  /* GPIO: interrupt set */
     int debounce_ms;
@@ -125,5 +127,8 @@ void fc_appapi_load_config(app_t *a);
 /* Closes all the app's handles, leaving the hardware safe (runner, at the
  * end of an instance). */
 void fc_appapi_close_all(app_t *a);
+/* After each call into the app: ends what may not outlast it (an SPI chip
+ * select held with FC_SPI_KEEP_CS). */
+void fc_appapi_end_call(app_t *a);
 /* The app's key/value record, removed with the app. */
 void fc_appapi_kv_key(const char *app_name, char *out, size_t len);

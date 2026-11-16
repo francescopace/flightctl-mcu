@@ -15,7 +15,7 @@ An app is a WebAssembly module that Flight Control deploys as a container applic
 | Metrics | `fc_metric` | `metrics` |
 | MQTT | `fc_mqtt_publish/subscribe/topic`, `fc_event_data` | `mqtt` |
 
-SPI, UART, metrics and MQTT are not in the firmware yet: they return `FC_ENOTSUP` once the name exists and is granted, so an app written for them loads and can tell. What each port has is under [Ports](#ports).
+Metrics and MQTT are not in the firmware yet: they return `FC_ENOTSUP` once the name exists and is granted, so an app written for them loads and can tell. What each port has is under [Ports](#ports).
 
 ## How an app runs
 
@@ -70,7 +70,7 @@ The app opens `"relay1"` or `"button0"`, never a pin number. The names come from
 }
 ```
 
-The fleet's template can vary it per device, from labels, as with any config file. A name is unique in the whole map, whatever its kind: `FC_ALLOW` lists names without saying what they are. `active_low` makes levels logical (1 is "on"); `safe` is the level an output takes when its app stops; a plain LED has `active_low` too, a WS2812 its byte `order`. An I2C bus has `sda`, `scl` and its clock in `hz` (100 kHz without it); a PWM may have its frequency in `hz`, used when the app asks for 0 (1 kHz without it). For a name the firmware already has, `"pin": -1` (or no pins, for a bus) keeps the firmware's pins: a template can set `led0`'s colour order on every board without knowing where its LED is.
+The fleet's template can vary it per device, from labels, as with any config file. A name is unique in the whole map, whatever its kind: `FC_ALLOW` lists names without saying what they are. `active_low` makes levels logical (1 is "on"); `safe` is the level an output takes when its app stops; a plain LED has `active_low` too, a WS2812 its byte `order`. An I2C bus has `sda`, `scl` and its clock in `hz` (100 kHz without it). An SPI device has its bus's `sck`, `mosi` and `miso` (one of the last two may be left out), its chip select `cs`, its `mode` (0 to 3) and its clock in `hz` (1 MHz without it); devices with the same three bus pins share the bus. A UART has `tx`, `rx` (one may be left out), `de`, the pin that enables an RS-485 transceiver while it sends, and the `baud` used when the app asks for 0 (115200 without it). A PWM may have its frequency in `hz`, used when the app asks for 0 (1 kHz without it). For a name the firmware already has, `"pin": -1` (or no pins, for a bus) keeps the firmware's pins: a template can set `led0`'s colour order on every board without knowing where its LED is.
 
 The device checks a new `board.json` before it keeps it, and refuses it, as an update error in the device's status, when it names a pin the firmware uses (flash, PSRAM, the console's UART and USB pins) or one the chip does not have, puts two names on one pin (a bus's pins included), or has an unknown section or field type. A new map restarts the apps that use the interface.
 
@@ -78,7 +78,7 @@ The same app then runs on every board whose map has the names it uses. A name it
 
 ## What an app may use
 
-The fleet grants each app what it may open, in its env var `FC_ALLOW`: names from the board map, and `mqtt` and `metrics` for the network. Without `FC_ALLOW` an app has state, log, info, time, config, storage and the chip's sensors, and no GPIO, bus or network. Two apps may be granted the same name, but only one holds it at a time: the other gets `FC_EBUSY`. So two apps cannot drive the same relay, and an app given to a fleet by mistake reaches nothing it was not given. A whole I2C bus is one name, so the sensors on it belong to one app.
+The fleet grants each app what it may open, in its env var `FC_ALLOW`: names from the board map, and `mqtt` and `metrics` for the network. Without `FC_ALLOW` an app has state, log, info, time, config, storage and the chip's sensors, and no GPIO, bus or network. Two apps may be granted the same name, but only one holds it at a time: the other gets `FC_EBUSY`. So two apps cannot drive the same relay, and an app given to a fleet by mistake reaches nothing it was not given. A whole I2C bus is one name, so the sensors on it belong to one app; an SPI bus is shared, each device a name, so two apps may each hold a device on it, taking turns (a device that keeps its chip select between transfers holds the bus until the end of the app's call).
 
 The device keeps an app's env vars with it, so an app started at boot, before the device reaches the server, has its grants. A change to them restarts the app.
 
@@ -130,6 +130,8 @@ Two more ways are part of the interface, for when the firmware has them ([ROADMA
 | I2C | master, any two pins; up to two buses on the ESP32 and S3, one on the C chips | not yet | `i2c0`, with one device at 0x48: register 0 the simulated temperature in hundredths of a degree, 2 and 3 writable |
 | ADC | ADC1's pins, 0 to about 3.1 V, calibrated from the chip's eFuse; up to 8 channels | not yet | 1650 mV on any pin |
 | PWM | LEDC, up to 4, each at its own frequency, duty to 14 bits | not yet | printed when it changes |
+| SPI | master, up to 4 devices on one bus (two buses on the ESP32 and S3), chip select driven by the firmware; transfers in pieces of 64 bytes, without DMA | not yet | MISO wired to MOSI: what is sent comes back |
+| UART | UART1, and UART2 on the ESP32 and S3 (UART0 is the console's); RS-485 half duplex with `de`; 512 bytes received ahead | not yet | RX wired to TX: what is written comes back, with `FC_EV_UART` |
 
 ## Size and limits
 
@@ -144,8 +146,9 @@ Two more ways are part of the interface, for when the firmware has them ([ROADMA
 | Queued events | 16 per app; past that the oldest go, and the app hears how many with `FC_EV_OVERFLOW` |
 | One call of `init`, `tick` or `on_event` | 20 million instructions, and 1 s of waiting |
 | The export in `FC_ENTRY`, or `_start` | no limit, stopped when the app is removed or updated |
-| One wait (`fc_sleep_ms`, `fc_uart_read`), or one I2C transfer | 100 ms |
+| One wait (`fc_sleep_ms`, `fc_uart_read`), one I2C transfer, one UART write, or waiting for another app's SPI device | 100 ms |
 | One I2C transfer | 1 KB each way (`FC_I2C_MAX`) |
+| One SPI transfer | 4 KB (`FC_SPI_MAX`) |
 
 The instruction budget is a first figure, to be measured on a C3, the slowest chip, so that it comes to about a second there.
 

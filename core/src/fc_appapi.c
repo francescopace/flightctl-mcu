@@ -1,7 +1,7 @@
 /*
  * The functions apps call, module "fc": the app interface of
  * wasm-apps/sdk/fc_app.h. Each runs on the calling app's thread. What the
- * firmware does not have yet (SPI, UART, MQTT, metrics) is there too,
+ * firmware does not have yet (MQTT, metrics) is there too,
  * returning FC_ENOTSUP, so that an app written against the whole header
  * loads and can tell.
  */
@@ -456,8 +456,13 @@ static void close_handle(app_t *a, int i)
             hw->led_close(&h->res->led);
         }
         fc_board_release(h->res);
-    } else if (h->kind == H_I2C || h->kind == H_ADC || h->kind == H_PWM) {
-        if (h->kind == H_I2C && hw && hw->i2c_close) {
+    } else if (h->kind == H_I2C || h->kind == H_ADC || h->kind == H_PWM || h->kind == H_SPI ||
+               h->kind == H_UART) {
+        if (h->kind == H_SPI && hw && hw->spi_close) {
+            hw->spi_close(h->port); /* ends a kept chip select too */
+        } else if (h->kind == H_UART && hw && hw->uart_close) {
+            hw->uart_close(h->port); /* no more data callbacks once it returns */
+        } else if (h->kind == H_I2C && hw && hw->i2c_close) {
             hw->i2c_close(h->port);
         } else if (h->kind == H_ADC && hw && hw->adc_close) {
             hw->adc_close(h->port);
@@ -474,7 +479,7 @@ static void close_handle(app_t *a, int i)
     int kept = 0;
     for (int k = 0; k < a->ev_count; k++) {
         app_event_t e = a->ev[(a->ev_head + k) % APP_EVENTS];
-        if (!((e.type == EV_GPIO || e.type == EV_TIMER) && e.handle == i)) {
+        if (!((e.type == EV_GPIO || e.type == EV_TIMER || e.type == EV_UART) && e.handle == i)) {
             a->ev[(a->ev_head + kept) % APP_EVENTS] = e;
             kept++;
         }
@@ -801,30 +806,153 @@ static int32_t fc_pwm_duty(wasm_exec_env_t env, int32_t h, int32_t duty)
     return g_fc_hw->pwm_duty(c->port, (uint32_t)duty);
 }
 
-/* ---- not in this firmware yet ---------------------------------------------------------------------
- * A name the map lacks is FC_ENOENT and one not granted FC_EPERM, as they
- * will be; what the app may open is FC_ENOTSUP. */
+/* ---- SPI ---------------------------------------------------------------------------------- */
 
-static int32_t not_yet_open(wasm_exec_env_t env, const char *name, int32_t nlen, int kind)
+#define SPI_MAX_LEN 4096 /* FC_SPI_MAX */
+
+static int spi_opener(fc_board_entry_t *e, int arg) { return g_fc_hw->spi_open(&e->bus); }
+
+static int32_t fc_spi_open(wasm_exec_env_t env, const char *n, int32_t l)
 {
-    fc_board_entry_t *e;
-    int rc = lookup(app_of(env), name, nlen, kind, &e);
-    return rc != 0 ? rc : FC_HW_ENOTSUP;
+    const fc_hw_t *hw = g_fc_hw;
+    return open_entry(app_of(env), n, l, FC_RES_SPI, H_SPI, hw && hw->spi_open && hw->spi_transfer, spi_opener, 0);
 }
 
-static int32_t fc_spi_open(wasm_exec_env_t env, const char *n, int32_t l) { return not_yet_open(env, n, l, FC_RES_SPI); }
-static int32_t fc_uart_open(wasm_exec_env_t env, const char *n, int32_t l, int32_t baud, int32_t fmt)
+/* The app's buffer at offset at (0: none) for len bytes, or NULL: the
+ * signature passes plain offsets, since either may be 0. */
+static void *app_buf(wasm_exec_env_t env, int32_t at, int32_t len, int *bad)
 {
-    return not_yet_open(env, n, l, FC_RES_UART);
+    if (at == 0) {
+        return NULL;
+    }
+    wasm_module_inst_t inst = wasm_runtime_get_module_inst(env);
+    if (!wasm_runtime_validate_app_addr(inst, (uint64_t)(uint32_t)at, (uint64_t)(uint32_t)len)) {
+        *bad = 1; /* the exception is set: the app traps */
+        return NULL;
+    }
+    return wasm_runtime_addr_app_to_native(inst, (uint64_t)(uint32_t)at);
 }
+
 static int32_t fc_spi_transfer(wasm_exec_env_t env, int32_t h, int32_t tx, int32_t rx, int32_t len, int32_t flags)
 {
-    return FC_HW_EINVAL;
+    app_t *a = app_of(env);
+    app_handle_t *d = handle(a, h, H_SPI);
+    if (d == NULL || len <= 0 || len > SPI_MAX_LEN || (flags & ~1) != 0) {
+        return FC_HW_EINVAL;
+    }
+    int bad = 0;
+    const uint8_t *t = app_buf(env, tx, len, &bad);
+    uint8_t *r = app_buf(env, rx, len, &bad);
+    if (bad) {
+        return 0;
+    }
+    int keep = flags & 1;
+    int rc = g_fc_hw->spi_transfer(d->port, t, r, (size_t)len, keep, APP_WAIT_MS);
+    d->kept = rc == 0 && keep;
+    over_time(env, a);
+    return rc;
 }
-static int32_t fc_uart_write(wasm_exec_env_t env, int32_t h, const void *d, int32_t len) { return FC_HW_EINVAL; }
+
+void fc_appapi_end_call(app_t *a)
+{
+    for (int i = 0; i < APP_HANDLES; i++) {
+        if (a->h[i].kind == H_SPI && a->h[i].kept) {
+            if (g_fc_hw->spi_release) {
+                g_fc_hw->spi_release(a->h[i].port);
+            }
+            a->h[i].kept = 0;
+        }
+    }
+}
+
+/* ---- UART -------------------------------------------------------------------------------- */
+
+/* From the port's task: data has come. One FC_EV_UART until the app reads. */
+static void uart_data(void *arg, int n)
+{
+    app_irq_ctx_t *c = arg;
+    app_t *a = c->app;
+    pthread_mutex_lock(a->ev_lock);
+    app_handle_t *h = &a->h[c->handle];
+    int post = a->accepting && h->kind == H_UART && !h->ev_pending;
+    if (post) {
+        h->ev_pending = 1;
+    }
+    pthread_mutex_unlock(a->ev_lock);
+    if (post) {
+        fc_apps_post(a, EV_UART, c->handle, n);
+    }
+}
+
+static int32_t fc_uart_open(wasm_exec_env_t env, const char *name, int32_t nlen, int32_t baud, int32_t format)
+{
+    app_t *a = app_of(env);
+    const fc_hw_t *hw = g_fc_hw;
+    fc_board_entry_t *e;
+    int rc = lookup(a, name, nlen, FC_RES_UART, &e);
+    if (rc != 0) {
+        return rc;
+    }
+    if (baud < 0 || format < FC_HW_UART_8N1 || format > FC_HW_UART_8N2) {
+        return FC_HW_EINVAL;
+    }
+    if (hw == NULL || hw->uart_open == NULL || hw->uart_read == NULL || hw->uart_write == NULL) {
+        return FC_HW_ENOTSUP;
+    }
+    if ((rc = fc_board_claim(e, a->slot)) != 0) {
+        return rc;
+    }
+    int h = new_handle(a, H_UART);
+    if (h < 0) {
+        fc_board_release(e);
+        return h;
+    }
+    a->irq_ctx[h].app = a;
+    a->irq_ctx[h].handle = h;
+    a->h[h].res = e;
+    int port = hw->uart_open(&e->bus, baud > 0 ? baud : e->bus.baud > 0 ? e->bus.baud : 115200, format, uart_data,
+                             &a->irq_ctx[h]);
+    if (port < 0) {
+        a->h[h].kind = H_FREE;
+        fc_board_release(e);
+        return port;
+    }
+    a->h[h].port = port;
+    return h;
+}
+
+static int32_t fc_uart_write(wasm_exec_env_t env, int32_t h, const void *d, int32_t len)
+{
+    app_t *a = app_of(env);
+    app_handle_t *u = handle(a, h, H_UART);
+    if (u == NULL || len < 0) {
+        return FC_HW_EINVAL;
+    }
+    if (len == 0) {
+        return 0;
+    }
+    int rc = g_fc_hw->uart_write(u->port, d, (size_t)len, APP_WAIT_MS);
+    over_time(env, a);
+    return rc;
+}
+
 static int32_t fc_uart_read(wasm_exec_env_t env, int32_t h, void *b, int32_t cap, int32_t timeout)
 {
-    return FC_HW_EINVAL;
+    app_t *a = app_of(env);
+    app_handle_t *u = handle(a, h, H_UART);
+    if (u == NULL || cap < 0 || timeout < 0) {
+        return FC_HW_EINVAL;
+    }
+    /* What comes after this read raises FC_EV_UART again. */
+    pthread_mutex_lock(a->ev_lock);
+    u->ev_pending = 0;
+    pthread_mutex_unlock(a->ev_lock);
+    if (cap == 0) {
+        return 0;
+    }
+    int rc = g_fc_hw->uart_read(u->port, b, (size_t)cap, timeout > APP_WAIT_MS ? APP_WAIT_MS : timeout);
+    over_time(env, a);
+    return rc;
 }
 
 static int32_t grant_then_notsup(wasm_exec_env_t env, const char *grant)

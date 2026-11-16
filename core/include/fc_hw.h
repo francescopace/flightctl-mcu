@@ -1,6 +1,7 @@
 /*
  * The hardware a port gives to WASM apps (the app interface of
- * wasm-apps/sdk/fc_app.h): GPIO, LEDs, the chip's sensors, I2C, ADC and PWM,
+ * wasm-apps/sdk/fc_app.h): GPIO, LEDs, the chip's sensors, I2C, SPI, UART,
+ * ADC and PWM,
  * under the names of the board map.
  *
  * A port fills an fc_hw_t and puts it in fc_agent_config_t.hw. Every member
@@ -43,11 +44,20 @@ typedef struct {
     char order[4];  /* WS2812 byte order, e.g. "grb" */
 } fc_hw_led_t;
 
-/* A bus of the board map: the pins it uses (-1 for none) and its clock. */
+/* A bus of the board map: the pins it uses (-1 for none) and its settings. */
 typedef struct {
-    int sda, scl; /* I2C */
-    int hz;       /* I2C clock; 0: the port's default (100 kHz) */
+    int sda, scl;            /* I2C */
+    int sck, mosi, miso, cs; /* an SPI device: its bus's pins and its chip select (active low) */
+    int mode;                /* SPI mode, 0 to 3 */
+    int tx, rx, de;          /* UART; de drives an RS-485 transceiver while sending */
+    int baud;                /* UART: the speed when the app gives 0; 0: 115200 */
+    int hz;                  /* I2C or SPI clock; 0: the port's default (100 kHz, 1 MHz) */
 } fc_hw_bus_t;
+
+/* UART framings, as FC_UART_* in fc_app.h. */
+#define FC_HW_UART_8N1 0
+#define FC_HW_UART_8E1 1
+#define FC_HW_UART_8N2 2
 
 typedef struct {
     /* What fc_info gives the app as "board" and "firmware". */
@@ -107,6 +117,28 @@ typedef struct {
     int (*pwm_open)(int pin, int freq_hz);
     int (*pwm_duty)(int ch, uint32_t duty);
     void (*pwm_close)(int ch);
+
+    /* SPI: a device on a bus; devices with the same sck, mosi and miso share
+     * the bus. A transfer of len bytes sends tx (NULL: 0xFF) and receives
+     * into rx (NULL: dropped), with the chip select held from start to end;
+     * keep_cs leaves it held, and the bus the device's, for the next
+     * transfer. 0, FC_HW_EBUSY (another device holds the bus past
+     * timeout_ms) or FC_HW_EIO. release ends a kept chip select. */
+    int (*spi_open)(const fc_hw_bus_t *dev);
+    int (*spi_transfer)(int dev, const uint8_t *tx, uint8_t *rx, size_t len, int keep_cs, int timeout_ms);
+    void (*spi_release)(int dev);
+    void (*spi_close)(int dev);
+
+    /* UART at baud with an FC_HW_UART_* framing; with u->de, RS-485 half
+     * duplex. cb(ctx, n) is called from a task, never an interrupt, when
+     * data has come (n bytes waiting), and not once close returns. write
+     * takes what fits within timeout_ms and returns how many bytes; read
+     * returns what has come, waiting up to timeout_ms for the first byte
+     * (0: nothing). */
+    int (*uart_open)(const fc_hw_bus_t *u, int baud, int format, void (*cb)(void *ctx, int n), void *ctx);
+    int (*uart_write)(int h, const uint8_t *data, size_t len, int timeout_ms);
+    int (*uart_read)(int h, uint8_t *buf, size_t cap, int timeout_ms);
+    void (*uart_close)(int h);
 
     /* 1 if the device last restarted because the firmware crashed (a fault,
      * an abort, a watchdog), 0 if it was powered on or restarted on purpose.

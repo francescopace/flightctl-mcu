@@ -22,7 +22,8 @@ void fc_port_host_init(const char *data_dir, int debug);
  * one device, at 0x48, whose register 0 holds that temperature in
  * hundredths of a degree (big-endian) and registers 2 and 3 whatever is
  * written there; any pin's ADC reads 1650 mV; a PWM's duty is printed when
- * it changes. */
+ * it changes. An SPI device's MISO is wired to its MOSI, and a UART's RX to
+ * its TX: what is sent comes back. */
 static int32_t host_temp_mc(void)
 {
     long t = time(NULL) % 120;
@@ -177,6 +178,63 @@ static void host_pwm_close(int pin)
     host_pwm_duty(pin, 0);
 }
 
+static int host_spi_open(const fc_hw_bus_t *dev)
+{
+    return 0;
+}
+
+static int host_spi_transfer(int dev, const uint8_t *tx, uint8_t *rx, size_t len, int keep_cs, int timeout_ms)
+{
+    for (size_t i = 0; rx != NULL && i < len; i++) {
+        rx[i] = tx != NULL ? tx[i] : 0xFF;
+    }
+    return 0;
+}
+
+static void host_spi_release(int dev) {}
+static void host_spi_close(int dev) {}
+
+static uint8_t s_uart_buf[256];
+static size_t s_uart_len;
+static void (*s_uart_cb)(void *, int);
+static void *s_uart_ctx;
+
+static int host_uart_open(const fc_hw_bus_t *u, int baud, int format, void (*cb)(void *, int), void *ctx)
+{
+    if (s_uart_cb != NULL) {
+        return FC_HW_EBUSY; /* one UART */
+    }
+    s_uart_len = 0;
+    s_uart_cb = cb;
+    s_uart_ctx = ctx;
+    return 0;
+}
+
+static int host_uart_write(int h, const uint8_t *d, size_t len, int timeout_ms)
+{
+    size_t n = len < sizeof(s_uart_buf) - s_uart_len ? len : sizeof(s_uart_buf) - s_uart_len;
+    memcpy(s_uart_buf + s_uart_len, d, n);
+    s_uart_len += n;
+    if (n > 0 && s_uart_cb != NULL) {
+        s_uart_cb(s_uart_ctx, (int)s_uart_len);
+    }
+    return (int)n;
+}
+
+static int host_uart_read(int h, uint8_t *b, size_t cap, int timeout_ms)
+{
+    size_t n = cap < s_uart_len ? cap : s_uart_len;
+    memcpy(b, s_uart_buf, n);
+    memmove(s_uart_buf, s_uart_buf + n, s_uart_len - n);
+    s_uart_len -= n;
+    return (int)n;
+}
+
+static void host_uart_close(int h)
+{
+    s_uart_cb = NULL;
+}
+
 static const fc_hw_t s_hw = {
     .board = "host",
     .firmware = "flightctl-mcu/0.1.0",
@@ -200,6 +258,14 @@ static const fc_hw_t s_hw = {
     .pwm_open = host_pwm_open,
     .pwm_duty = host_pwm_duty,
     .pwm_close = host_pwm_close,
+    .spi_open = host_spi_open,
+    .spi_transfer = host_spi_transfer,
+    .spi_release = host_spi_release,
+    .spi_close = host_spi_close,
+    .uart_open = host_uart_open,
+    .uart_write = host_uart_write,
+    .uart_read = host_uart_read,
+    .uart_close = host_uart_close,
 };
 
 static char *read_file(const char *path)

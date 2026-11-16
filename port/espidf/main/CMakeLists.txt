@@ -2,4 +2,4 @@
 # partition (tools/provision.sh), so one image serves every installation.
 idf_component_register(
     SRCS main.c led.c hw.c hw_bus.c
-    PRIV_REQUIRES fc_core wamr nvs_flash nvs_sec_provider esp_wifi esp_netif esp_event app_update esp_driver_rmt esp_driver_gpio esp_driver_i2c esp_driver_ledc esp_adc esp_timer esp_app_format)
+    PRIV_REQUIRES fc_core wamr nvs_flash nvs_sec_provider esp_wifi esp_netif esp_event app_update esp_driver_rmt esp_driver_gpio esp_driver_i2c esp_driver_ledc esp_driver_spi esp_driver_uart esp_adc esp_timer esp_app_format)

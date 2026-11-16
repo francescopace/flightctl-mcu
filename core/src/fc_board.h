@@ -32,7 +32,7 @@ typedef struct {
     int active_low; /* GPIO */
     int safe;       /* GPIO output level when its app stops; -1: back to input */
     fc_hw_led_t led;
-    fc_hw_bus_t bus; /* I2C */
+    fc_hw_bus_t bus; /* I2C, SPI, UART */
     int hz;          /* PWM: the frequency when the app gives 0; 0: 1 kHz */
     int holder;     /* the app slot holding it, -1 if none */
 } fc_board_entry_t;

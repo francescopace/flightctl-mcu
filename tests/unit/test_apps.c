@@ -58,7 +58,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(t_env),
-        V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus),
+        V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
 #undef V
     };
     f_fetches++;
@@ -111,7 +111,10 @@ static char *f_defaults(void)
 {
     return strdup("{\"gpio\": {\"button0\": {\"pin\": 9, \"active_low\": true}, \"relay1\": {\"pin\": 5, \"safe\": 0}},"
                   " \"led\": {\"led0\": {\"pin\": 8}}, \"i2c\": {\"i2c0\": {\"sda\": 1, \"scl\": 2}},"
-                  " \"adc\": {\"level\": {\"pin\": 3}}, \"pwm\": {\"fan\": {\"pin\": 4, \"hz\": 25000}}}");
+                  " \"adc\": {\"level\": {\"pin\": 3}}, \"pwm\": {\"fan\": {\"pin\": 4, \"hz\": 25000}},"
+                  " \"spi\": {\"flash\": {\"sck\": 20, \"mosi\": 21, \"miso\": 22, \"cs\": 23, \"mode\": 3, \"hz\": 8000000},"
+                  " \"disp\": {\"sck\": 20, \"mosi\": 21, \"miso\": 22, \"cs\": 24}},"
+                  " \"uart\": {\"rs485\": {\"tx\": 25, \"rx\": 26, \"de\": 27, \"baud\": 9600}}}");
 }
 static int f_reserved(int pin) { return pin == 11 || pin >= 40; }
 static int f_setup(int pin, int mode)
@@ -240,6 +243,74 @@ static void f_pwm_close(int ch)
     f_pwm_duty = -1;
 }
 
+/* An SPI device whose MISO is its MOSI: what it is sent comes back. */
+static int f_spi_mode = -1, f_spi_hz, f_spi_cs, f_spi_kept, f_spi_releases, f_spi_open_n;
+static int f_spi_open(const fc_hw_bus_t *d)
+{
+    f_spi_mode = d->mode;
+    f_spi_hz = d->hz;
+    f_spi_cs = d->cs;
+    f_spi_open_n++;
+    return 5;
+}
+static int f_spi_transfer(int dev, const uint8_t *tx, uint8_t *rx, size_t len, int keep, int timeout_ms)
+{
+    for (size_t i = 0; rx != NULL && i < len; i++) {
+        rx[i] = tx != NULL ? tx[i] : 0xFF;
+    }
+    f_spi_kept = keep;
+    return dev == 5 ? 0 : FC_HW_EINVAL;
+}
+static void f_spi_release(int dev)
+{
+    f_spi_kept = 0;
+    f_spi_releases++;
+}
+static void f_spi_close(int dev)
+{
+    f_spi_kept = 0;
+    f_spi_open_n--;
+}
+/* A UART wired back to itself: what is written is read, and announced. */
+static int f_uart_baud, f_uart_format = -1, f_uart_de = -2;
+static uint8_t f_uart_buf[64];
+static size_t f_uart_len;
+static void (*f_uart_cb)(void *, int);
+static void *f_uart_ctx;
+static int f_uart_open(const fc_hw_bus_t *u, int baud, int format, void (*cb)(void *, int), void *ctx)
+{
+    f_uart_baud = baud;
+    f_uart_format = format;
+    f_uart_de = u->de;
+    f_uart_cb = cb;
+    f_uart_ctx = ctx;
+    f_uart_len = 0;
+    return 2;
+}
+static int f_uart_write(int h, const uint8_t *d, size_t len, int timeout_ms)
+{
+    size_t n = len < sizeof(f_uart_buf) - f_uart_len ? len : sizeof(f_uart_buf) - f_uart_len;
+    memcpy(f_uart_buf + f_uart_len, d, n);
+    f_uart_len += n;
+    if (f_uart_cb && n > 0) {
+        f_uart_cb(f_uart_ctx, (int)f_uart_len);
+    }
+    return (int)n;
+}
+static int f_uart_read(int h, uint8_t *b, size_t cap, int timeout_ms)
+{
+    size_t n = cap < f_uart_len ? cap : f_uart_len;
+    memcpy(b, f_uart_buf, n);
+    memmove(f_uart_buf, f_uart_buf + n, f_uart_len - n);
+    f_uart_len -= n;
+    return (int)n;
+}
+static void f_uart_close(int h)
+{
+    f_uart_cb = NULL;
+    f_uart_baud = 0;
+}
+
 /* How the fake device last restarted: 1 a crash, 0 not. */
 static int f_crash;
 static int f_restart_was_crash(void)
@@ -271,6 +342,14 @@ static fc_hw_t s_fake = {
     .pwm_open = f_pwm_open,
     .pwm_duty = f_pwm_set,
     .pwm_close = f_pwm_close,
+    .spi_open = f_spi_open,
+    .spi_transfer = f_spi_transfer,
+    .spi_release = f_spi_release,
+    .spi_close = f_spi_close,
+    .uart_open = f_uart_open,
+    .uart_write = f_uart_write,
+    .uart_read = f_uart_read,
+    .uart_close = f_uart_close,
 };
 
 /* An edge on a pin, as the port's task reports it. */
@@ -729,6 +808,26 @@ static void test_fc_bus(void)
     CHECK_INT(f_pwm_duty, -1);
 }
 
+/* SPI and UART: a kept chip select ends with the call; UART data raises an
+ * event, read in it. */
+static void test_fc_serial(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("s", "reg/t_serial", "{\"FC_ALLOW\": \"flash rs485\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("s", "Running uart 2 hi", 3000), "Running uart 2 hi");
+    CHECK_INT(f_spi_mode, 3);
+    CHECK_INT(f_spi_hz, 8000000);
+    CHECK_INT(f_spi_cs, 23);
+    CHECK_INT(f_spi_kept, 0);      /* released at the end of init */
+    CHECK_INT(f_spi_releases, 1);  /* once: the second transfer ended the first hold */
+    CHECK_INT(f_uart_baud, 9600);  /* the board map's: the app gave 0 */
+    CHECK_INT(f_uart_format, FC_HW_UART_8E1);
+    CHECK_INT(f_uart_de, 27);
+    remove_all();
+    CHECK_INT(f_spi_open_n, 0);
+    CHECK(f_uart_cb == NULL);
+}
+
 static void test_fc_grants(void)
 {
     char err[160];
@@ -809,6 +908,29 @@ static void test_board_map(void)
                                  sizeof(err)),
               -1);
     CHECK(strstr(err, "b uses pin 6 twice") != NULL);
+    /* SPI devices share a bus's lines, not a chip select; a bus is all three
+     * lines or none. */
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH,
+                                 "{\"spi\": {\"x\": {\"sck\": 20, \"mosi\": 21, \"miso\": 22, \"cs\": 24}}}", err,
+                                 sizeof(err)),
+              -1);
+    CHECK(strstr(err, "on pin 24") != NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH,
+                                 "{\"spi\": {\"x\": {\"sck\": 20, \"mosi\": 30, \"cs\": 31}}}", err, sizeof(err)),
+              -1);
+    CHECK(strstr(err, "on pin 20") != NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH,
+                                 "{\"spi\": {\"x\": {\"sck\": 20, \"mosi\": 21, \"miso\": 22, \"cs\": 31}}}", err,
+                                 sizeof(err)),
+              0);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"spi\": {\"x\": {\"sck\": 30, \"mosi\": 31}}}", err, sizeof(err)),
+              -1);
+    CHECK(strstr(err, "x: an SPI device needs sck, cs, and mosi or miso") != NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"uart\": {\"x\": {\"de\": 30}}}", err, sizeof(err)), -1);
+    CHECK(strstr(err, "x: a UART needs tx or rx") != NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"spi\": {\"x\": {\"sck\": 30, \"mosi\": 31, \"cs\": 32, \"mode\": 4}}}",
+                                 err, sizeof(err)),
+              -1);
     /* The firmware's bus at a new speed keeps its pins. */
     CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"i2c\": {\"i2c0\": {\"hz\": 400000}}}", err, sizeof(err)), 0);
     CHECK_INT(fc_apps_check_file("/etc/other.json", "not json", err, sizeof(err)), 0);
@@ -1036,6 +1158,7 @@ int main(void)
     RUN(test_fc_kv);
     RUN(test_fc_gpio);
     RUN(test_fc_bus);
+    RUN(test_fc_serial);
     RUN(test_fc_grants);
     RUN(test_fc_limits);
     RUN(test_fc_events);

@@ -663,7 +663,9 @@ static int call_fc(app_t *a, wasm_exec_env_t env, wasm_function_inst_t f, uint32
                    const char *what)
 {
     a->call_start_ms = fc_apps_now_ms();
-    if (call_app(a, env, f, argc, argv)) {
+    int ok = call_app(a, env, f, argc, argv);
+    fc_appapi_end_call(a);
+    if (ok) {
         return 0;
     }
     if (!stopping(a)) {
