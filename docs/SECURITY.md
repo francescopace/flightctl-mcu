@@ -1,13 +1,8 @@
 # Device security: Secure Boot, flash encryption, keys in hardware
 
-This page is mostly about the ESP-IDF firmware, on Espressif's chips. The
-Zephyr builds have less: signed images and anti-rollback, checked by MCUboot in
-software ([below](#zephyr)).
+This page is mostly about the ESP-IDF firmware, on Espressif's chips. The Zephyr builds have less: signed images and anti-rollback, checked by MCUboot in software ([below](#zephyr)).
 
-A device in the field has to resist someone who holds it: who can read its
-flash, or write a firmware of their own. The `secure` firmware variant
-([port/espidf/sdkconfig.secure](../port/espidf/sdkconfig.secure)) turns on what the
-chip offers against that:
+A device in the field has to resist someone who holds it: who can read its flash, or write a firmware of their own. The `secure` firmware variant ([port/espidf/sdkconfig.secure](../port/espidf/sdkconfig.secure)) turns on what the chip offers against that:
 
 | | What it does | Against |
 |---|---|---|
@@ -19,40 +14,18 @@ chip offers against that:
 | **Anti-rollback** | Each image carries a security version. Once a release is confirmed, the chip keeps its version in eFuse and refuses older ones, at update and at boot. | Putting back a signed firmware with a known vulnerability. |
 | **Secure Boot key rotation** | The bootloader can trust up to three keys. A release signed with the next key retires the previous one on each device that confirms it. | A Secure Boot key that is lost or exposed. |
 
-All this is fixed in the chip's eFuses on the device's first boot, and cannot
-be undone: from then on the chip runs only images signed with your Secure Boot
-key. **Lose that key and the devices can never be updated again.**
+All this is fixed in the chip's eFuses on the device's first boot, and cannot be undone: from then on the chip runs only images signed with your Secure Boot key. **Lose that key and the devices can never be updated again.**
 
-**It is a separate build, off by default.** `port/espidf/build.sh` without
-`VARIANT=secure` builds the plain firmware, which never touches the eFuses: the
-development boards and most of CI run it. The secure variant is built only on
-purpose, with your Secure Boot key, in its own directory
-(`port/espidf/build-<chip>-secure`), and pushed with its own `--variant`. A device
-stays on the variant it was flashed with: each image carries the security
-features it was built for, and the agent refuses an update built for others
-before it is installed (`firmware built for another security variant`). A
-secure build pushed to plain devices by mistake therefore changes nothing on
-them; a plain device can become a secure one only by flashing it over USB.
-An image a device refuses (this, an older security version, the bootloader's
-checks) is reported in its status and not downloaded again until the fleet's
-spec changes: the device stays out of date with the reason, and its flash is
-not written every minute.
-Devices on firmware older than this check (v3.0) do not have it.
+**It is a separate build, off by default.** `port/espidf/build.sh` without `VARIANT=secure` builds the plain firmware, which never touches the eFuses: the development boards and most of CI run it. The secure variant is built only on purpose, with your Secure Boot key, in its own directory (`port/espidf/build-<chip>-secure`), and pushed with its own `--variant`. A device stays on the variant it was flashed with: each image carries the security features it was built for, and the agent refuses an update built for others before it is installed (`firmware built for another security variant`). A secure build pushed to plain devices by mistake therefore changes nothing on them; a plain device can become a secure one only by flashing it over USB. An image a device refuses (this, an older security version, the bootloader's checks) is reported in its status and not downloaded again until the fleet's spec changes: the device stays out of date with the reason, and its flash is not written every minute.
 
-The variant is tested on emulated chips (esp-emu, which runs the chip's real
-ROM) by the end-to-end workflow. It has not been burned on a real board, and this project does not
-plan to: a burn cannot be undone.
+The variant is tested on emulated chips (esp-emu, which runs the chip's real ROM) by the end-to-end workflow. It has not been burned on a real board, and this project does not plan to: a burn cannot be undone.
 
 ## Two signing keys
 
 They protect different things, and both belong offline (an HSM in production):
 
-- the **image signing key** (`tools/signing/keygen.sh`, ECDSA P-256) signs
-  the OCI artifacts in the registry, firmware and apps, in cosign's format.
-  The agent checks it before it downloads anything;
-- the **Secure Boot key** (RSA-3072) signs the firmware binaries themselves.
-  The ROM, the bootloader and the OTA code check it. A firmware is built
-  signed with it:
+- the **image signing key** (`tools/signing/keygen.sh`, ECDSA P-256) signs the OCI artifacts in the registry, firmware and apps, in cosign's format. The agent checks it before it downloads anything;
+- the **Secure Boot key** (RSA-3072) signs the firmware binaries themselves. The ROM, the bootloader and the OTA code check it. A firmware is built signed with it:
 
 ```bash
 espsecure generate-signing-key --version 2 --scheme rsa3072 secure_boot_key.pem
@@ -62,20 +35,11 @@ espsecure generate-signing-key --version 2 --scheme rsa3072 secure_boot_key.pem
 TARGET=esp32c3 FW_VERSION=v4 VARIANT=secure SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
 ```
 
-`VARIANT=secure-release` gives the release profile of the same, and
-`fw-push.py --variant secure-release` pushes it. An OTA update thus passes two
-checks: the cosign signature of the artifact, then the Secure Boot signature of
-the image.
+`VARIANT=secure-release` gives the release profile of the same, and `fw-push.py --variant secure-release` pushes it. An OTA update thus passes two checks: the cosign signature of the artifact, then the Secure Boot signature of the image.
 
 ### Signing a CI build
 
-CI builds the secure variant without a key: the `firmware-<chip>-secure`
-artifact of a CI run has, in `build-<chip>-secure` (debug) and
-`build-<chip>-secure-release`, the app and the bootloader padded for a
-signature, the partition table and what merging them takes. Signed with your
-key, they are the same as a build made with it. The chip trusts the key that
-signs the bootloader of the first image it boots, so do not flash one signed
-with a key you do not hold.
+CI builds the secure variant without a key: the `firmware-<chip>-secure` artifact of a CI run has, in `build-<chip>-secure` (default profile) and `build-<chip>-secure-release`, the app and the bootloader padded for a signature, the partition table and what merging them takes. Signed with your key, they are the same as a build made with it. The chip trusts the key that signs the bootloader of the first image it boots, so do not flash one signed with a key you do not hold.
 
 ```bash
 B=build-esp32c5-secure-release
@@ -84,107 +48,63 @@ espsecure sign-data --version 2 --keyfile secure_boot_key.pem --output $B/bl-sig
 mv $B/fw-signed.bin $B/flightctl_mcu_fw.bin && mv $B/bl-signed.bin $B/bootloader/bootloader.bin
 ```
 
-Then `port/espidf/merge-secure.py port/espidf/$B` gives the factory image
-(`merged-binary.bin`, provisioned with `tools/provision.py`), and
-`fw-push.py --variant secure-release` the update. An HSM signs the same
-files with `port/espidf/sign-external.py`.
+Then `port/espidf/merge-secure.py port/espidf/$B` gives the factory image (`merged-binary.bin`, provisioned with `tools/provision.py`), and `fw-push.py --variant secure-release` the update. An HSM signs the same files with `port/espidf/sign-external.py`.
 
 ## Device key in hardware
 
-Either peripheral signs through ESP-IDF's PSA drivers: the key TLS is given
-is a PSA key that only names the eFuse block (ECDSA) or points to the
-encrypted parameters (DS), and holds no key material.
+Either peripheral signs through ESP-IDF's PSA drivers: the key TLS is given is a PSA key that only names the eFuse block (ECDSA) or points to the encrypted parameters (DS), and holds no key material.
 
 ### ESP32-C5: the ECDSA peripheral
 
-The secure variant sets `CONFIG_FC_DEVICE_KEY_ECDSA`, which takes effect on
-chips with an ECDSA peripheral: the C5 among those built here. On the first
-boot, with no key yet, the agent:
+The secure variant sets `CONFIG_FC_DEVICE_KEY_ECDSA`, which takes effect on chips with an ECDSA peripheral: the C5 among those built here. On the first boot, with no key yet, the agent:
 
 1. generates a P-256 key and the CSR with it;
-2. burns the key into a free eFuse key block, with the ECDSA purpose:
-   software cannot read that block, the peripheral signs with it;
+2. burns the key into a free eFuse key block, with the ECDSA purpose: software cannot read that block, the peripheral signs with it;
 3. has the peripheral sign, and checks the signature with the public key;
 4. wipes its copy of the key and stores only the CSR.
 
-From then on TLS signs through the peripheral. The key is of the same kind
-as one kept in storage, and so is the device's name: Flight Control sees no
-difference. The device reports `deviceKey: "ecdsa"`.
+From then on TLS signs through the peripheral. The key is of the same kind as one kept in storage, and so is the device's name: Flight Control sees no difference. The device reports `deviceKey: "ecdsa"`.
 
 ### Other chips: the DS peripheral, off for now
 
-The S2, S3, C3 and C6 have a Digital Signature peripheral instead, which
-signs only with RSA, and Flight Control cannot enroll a device with an
-RSA key: its internal CA copies the request's signature algorithm into the
-certificate (`internal_ca.go`), and with its ECDSA key Go refuses to sign
-("requested SignatureAlgorithm does not match private key type"). Found by
-the end-to-end test. Until Flight Control fixes it (limitation 9 in
-RESULTS.md) these chips keep the device key in the encrypted store, and
-`CONFIG_FC_DEVICE_KEY_DS` stays off. With a CA that signs RSA keys it can be
-turned on. Then, on the first boot, the agent:
+The S3, C3 and C6 have a Digital Signature peripheral instead, which signs only with RSA, and Flight Control cannot enroll a device with an RSA key: its internal CA copies the request's signature algorithm into the certificate (`internal_ca.go`), and with its ECDSA key Go refuses to sign ("requested SignatureAlgorithm does not match private key type"). Found by the end-to-end test. Until Flight Control fixes it (limitation 9 in RESULTS.md) these chips keep the device key in the encrypted store, and `CONFIG_FC_DEVICE_KEY_DS` stays off. With a CA that signs RSA keys it can be turned on. Then, on the first boot, the agent:
 
 1. generates an RSA-3072 key (about 3 s on the C3) and the CSR with it;
-2. burns a random HMAC key into a free eFuse key block, with the DS purpose:
-   software cannot read that block, the DS peripheral can use it;
-3. encrypts the key's parameters with it (`esp_ds_encrypt_params`) and stores
-   them with the CSR; the key itself is wiped;
+2. burns a random HMAC key into a free eFuse key block, with the DS purpose: software cannot read that block, the DS peripheral can use it;
+3. encrypts the key's parameters with it (`esp_ds_encrypt_params`) and stores them with the CSR; the key itself is wiped;
 4. has the peripheral sign, and checks the signature with the public key.
 
-TLS then signs through the peripheral (RSA-PSS, as TLS 1.3 asks). Flight
-Control names a device after its RSA key as it does after an ECDSA one
-(`sha256` of the modulus). The device reports `deviceKey: "ds"`.
+TLS then signs through the peripheral (RSA-PSS, as TLS 1.3 asks). Flight Control names a device after its RSA key as it does after an ECDSA one (`sha256` of the modulus). The device reports `deviceKey: "ds"`.
 
 ### Limits, with either peripheral
 
-- **One key in hardware per device.** Secure Boot normally stops any further
-  read protection of eFuse blocks on its first boot, because a read-protected
-  key digest would brick the device. A build with the device key in hardware
-  leaves it open (`CONFIG_SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS`) until the key
-  is burned, then closes it. A later key (a device that enrolls again after
-  its certificate expired) is therefore made in software and kept in the
-  encrypted store (`deviceKey: "storage"`), as when no block is free or
-  anything above fails. The end-to-end test does not go through this case.
-- **The key is in RAM once**, on the first boot, between its generation and
-  the burn.
+- **One key in hardware per device.** Secure Boot normally stops any further read protection of eFuse blocks on its first boot, because a read-protected key digest would brick the device. A build with the device key in hardware leaves it open (`CONFIG_SECURE_BOOT_V2_ALLOW_EFUSE_RD_DIS`) until the key is burned, then closes it. A later key (a device that enrolls again after its certificate expired) is therefore made in software and kept in the encrypted store (`deviceKey: "storage"`), as when no block is free or anything above fails. The end-to-end test does not go through this case.
+- **The key is in RAM once**, on the first boot, between its generation and the burn.
 - **A key already in storage stays there**: devices keep their name.
 - **The ESP32** has neither peripheral: its key stays in the encrypted store.
 - **Emulator only**, like the rest: no real chip has been burned.
 
 ## Anti-rollback
 
-`SECURE_VERSION=<n>` when building gives the image a security version (0 by
-default):
+`SECURE_VERSION=<n>` when building gives the image a security version (0 by default):
 
 ```bash
 TARGET=esp32c3 FW_VERSION=v5 VARIANT=secure-release SECURE_VERSION=1 SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
 ```
 
-When a device confirms a release, it burns that version into eFuse; from then
-on it refuses an update below it (`firmware older than this device accepts`)
-and the bootloader will not boot one. Raise it only for releases that fix a
-vulnerability: the C3 has 16 versions, one eFuse bit each. The device reports
-`secureVersion: "<this image>/<lowest accepted>"`.
+When a device confirms a release, it burns that version into eFuse; from then on it refuses an update below it (`firmware older than this device accepts`) and the bootloader will not boot one. Raise it only for releases that fix a vulnerability: the C3 has 16 versions, one eFuse bit each. The device reports `secureVersion: "<this image>/<lowest accepted>"`.
 
 ## Key rotation
 
-Secure Boot v2 trusts up to three keys, those that sign the bootloader when
-the device first boots; the empty slots are revoked then. To keep a way to
-replace the key, sign the factory bootloader with the next ones too:
+Secure Boot v2 trusts up to three keys, those that sign the bootloader when the device first boots; the empty slots are revoked then. To keep a way to replace the key, sign the factory bootloader with the next ones too:
 
 ```bash
 port/espidf/merge-secure.py --extra-key secure_boot_key_1.pem --extra-key secure_boot_key_2.pem port/espidf/build-esp32c3-secure
 ```
 
-Keep keys 1 and 2 offline, unused. Releases are signed with key 0. To retire
-it, build the next release with `SECURE_BOOT_KEY=secure_boot_key_1.pem`: once a
-device has confirmed that release, it revokes key 0 for good (after checking
-that the bootloader and the running app verify without it), and from then on
-accepts only images signed with key 1. The device reports
-`secureBootKeys: "0*,1"` (usable slots, `*` for those that sign the running
-image).
+Keep keys 1 and 2 offline, unused. Releases are signed with key 0. To retire it, build the next release with `SECURE_BOOT_KEY=secure_boot_key_1.pem`: once a device has confirmed that release, it revokes key 0 for good (after checking that the bootloader and the running app verify without it), and from then on accepts only images signed with key 1. The device reports `secureBootKeys: "0*,1"` (usable slots, `*` for those that sign the running image).
 
-A spare key that was exposed is revoked through the fleet's config, with a
-file the device reads as a command:
+A spare key that was exposed is revoked through the fleet's config, with a file the device reads as a command:
 
 ```yaml
 config:
@@ -194,16 +114,11 @@ config:
         content: '{"revokeKeys": [2]}'
 ```
 
-Each device revokes those slots for good once its running firmware is
-confirmed. It refuses the file (the update is reported as failed) when a key
-cannot go: the one that signs the running firmware or the bootloader, or any
-key on a device without Secure Boot. Keeping the file in the fleet is
-harmless: revoking a key already revoked succeeds.
+Each device revokes those slots for good once its running firmware is confirmed. It refuses the file (the update is reported as failed) when a key cannot go: the one that signs the running firmware or the bootloader, or any key on a device without Secure Boot. Keeping the file in the fleet is harmless: revoking a key already revoked succeeds.
 
 ## Keys in an HSM
 
-The build signs with a key file (`SECURE_BOOT_KEY`). To keep the Secure Boot
-keys in an HSM instead, build without a key and sign afterwards:
+The build signs with a key file (`SECURE_BOOT_KEY`). To keep the Secure Boot keys in an HSM instead, build without a key and sign afterwards:
 
 ```bash
 TARGET=esp32c3 VARIANT=secure-release SECURE_BOOT_SIGNER=external port/espidf/build.sh
@@ -213,178 +128,99 @@ TARGET=esp32c3 VARIANT=secure-release SECURE_BOOT_SIGNER=external port/espidf/bu
 port/espidf/sign-external.py port/espidf/build-esp32c3-secure-release --pub-key key0.pub.pem --sign-cmd '<command> {digest} {signature}'
 ```
 
-The command gets a file with the image's SHA-256 digest and must write an
-RSA-PSS signature of it (SHA-256, salt length 32): the HSM's PKCS#11 tool, or
-OpenSSL through its PKCS#11 engine or provider. `sign-external.py` checks the
-signature against the public key and appends the signature block, to the
-bootloader and to the app. For the factory bootloader, run it again with
-`--bootloader-only` for each spare key. Tried in the emulator with OpenSSL
-and key files standing in for the HSM: bootloader signed with two keys, app
-with one; it booted and trusted both keys.
+The command gets a file with the image's SHA-256 digest and must write an RSA-PSS signature of it (SHA-256, salt length 32): the HSM's PKCS#11 tool, or OpenSSL through its PKCS#11 engine or provider. `sign-external.py` checks the signature against the public key and appends the signature block, to the bootloader and to the app. For the factory bootloader, run it again with `--bootloader-only` for each spare key. Tried in the emulator with OpenSSL and key files standing in for the HSM: bootloader signed with two keys, app with one; it booted and trusted both keys.
 
 ## ESP32 download mode
 
-The ESP32 (classic) has no secure download mode, so the secure variant leaves
-its ROM serial loader fully open (`CONFIG_SECURE_INSECURE_ALLOW_DL_MODE`): with
-the device in hand, it can load code into RAM. For the field, the `nodl`
-variant turns the ROM download mode off for good on first boot:
+The ESP32 (classic) has no secure download mode, so the secure variant leaves its ROM serial loader fully open (`CONFIG_SECURE_INSECURE_ALLOW_DL_MODE`): with the device in hand, it can load code into RAM. For the field, the `nodl` variant turns the ROM download mode off for good on first boot:
 
 ```bash
 TARGET=esp32 VARIANT=secure-nodl-release SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
 ```
 
-After that the serial port can no longer write the flash either: `fc_creds`
-cannot be written again over USB (provision before the first boot, or in the
-field for the WiFi), and a device that does not boot cannot be recovered over
-it. On the other chips `nodl` replaces secure download mode the same way. It
-builds; the emulator does not run the ESP32.
+After that the serial port can no longer write the flash either: `fc_creds` cannot be written again over USB (provision before the first boot, or in the field for the WiFi), and a device that does not boot cannot be recovered over it. On the other chips `nodl` replaces secure download mode the same way. It builds; the emulator does not run the ESP32.
 
 ## Flash layout
 
-Signed, a bootloader with Secure Boot and flash encryption takes up to 48 KB
-(ESP32-C5), more than fits below the default partition table at 0x8000. The
-table is at 0x10000 in every build, secure or not
-([port/espidf/partitions.csv](../port/espidf/partitions.csv)); the OTA slots did not
-move. A board flashed with the earlier layout has to be flashed over USB and
-provisioned again: an OTA update cannot change the partition table.
+Signed, a bootloader with Secure Boot and flash encryption takes up to 48 KB (ESP32-C5), more than fits below the default partition table at 0x8000. The table is at 0x10000 in every build, secure or not ([port/espidf/partitions.csv](../port/espidf/partitions.csv)); the OTA slots did not move. A board flashed with the earlier layout has to be flashed over USB and provisioned again: an OTA update cannot change the partition table.
 
 ## Factory procedure
 
-1. **Merged image.** With Secure Boot, ESP-IDF leaves the bootloader out of
-   its flash arguments, so it is never flashed by accident.
-   `port/espidf/merge-secure.py` writes `merged-binary.bin` with it, signed with
-   the spare keys too (see "Key rotation"):
+1. **Merged image.** With Secure Boot, ESP-IDF leaves the bootloader out of its flash arguments, so it is never flashed by accident. `port/espidf/merge-secure.py` writes `merged-binary.bin` with it, signed with the spare keys too (see "Key rotation"):
 
    ```bash
    port/espidf/merge-secure.py --extra-key secure_boot_key_1.pem port/espidf/build-esp32c3-secure
    ```
 
-2. **Provision into the image**, so the board is flashed once and its first
-   boot has everything:
+2. **Provision into the image**, so the board is flashed once and its first boot has everything:
 
    ```bash
    tools/provision.py --image port/espidf/build-esp32c3-secure/merged-binary.bin --wifi-ssid <ssid> --wifi-password <password>
    ```
 
-   One image serves a whole batch: `fc_creds` is the same for every device of
-   an installation, and each device generates its own key on the chip.
+   One image serves a whole batch: `fc_creds` is the same for every device of an installation, and each device generates its own key on the chip.
 
-3. **Flash.** `flash.sh` refuses a secure build unless `BURN_EFUSES` names the
-   port, so that no board is locked by accident:
+3. **Flash.** `flash.sh` refuses a secure build unless `BURN_EFUSES` names the port, so that no board is locked by accident:
 
    ```bash
    BURN_EFUSES=/dev/cu.usbmodem1101 BUILD=build-esp32c3-secure port/espidf/flash.sh /dev/cu.usbmodem1101
    ```
 
 4. **First boot**, about two seconds longer than usual. The bootloader:
-   - burns the hashes of the Secure Boot keys, revokes the empty slots and
-     turns Secure Boot on;
+   - burns the hashes of the Secure Boot keys, revokes the empty slots and turns Secure Boot on;
    - burns the image's security version;
    - generates the flash encryption key in the chip;
-   - encrypts the bootloader, the partition table, `otadata`, `nvs_keys` and
-     the app in place, then restarts.
+   - encrypts the bootloader, the partition table, `otadata`, `nvs_keys` and the app in place, then restarts.
 
-   The app then generates the NVS keys and moves what `fc_creds` holds into
-   the encrypted `nvs_store` (namespace `fc_creds`). Then it erases `fc_creds`
-   and enrolls. Until that first boot, `fc_creds` is in clear on the flash:
-   provision in a trusted place.
+   The app then generates the NVS keys and moves what `fc_creds` holds into the encrypted `nvs_store` (namespace `fc_creds`). Then it erases `fc_creds` and enrolls. Until that first boot, `fc_creds` is in clear on the flash: provision in a trusted place.
 
-5. **Check it in Flight Control.** The device reports what its chip enforces in
-   `customInfo`: `secureBoot: "true"`, `flashEncryption: "release"`,
-   `deviceKey` (`"ecdsa"` on the C5, `"storage"` elsewhere), `secureBootKeys`
-   and `secureVersion`.
+5. **Check it in Flight Control.** The device reports what its chip enforces in `customInfo`: `secureBoot: "true"`, `flashEncryption: "release"`, `deviceKey` (`"ecdsa"` on the C5, `"storage"` elsewhere), `secureBootKeys` and `secureVersion`.
 
-To provision a device again later (new endpoint, new enrollment certificate),
-write `fc_creds` again (`provision.py --port`): the next boot moves it into the
-encrypted store, replacing what was there. Secure download mode allows the
-write; esptool then needs `--no-stub`. Not yet tried on a real board.
+To provision a device again later (new endpoint, new enrollment certificate), write `fc_creds` again (`provision.py --port`): the next boot moves it into the encrypted store, replacing what was there. Secure download mode allows the write; esptool then needs `--no-stub`. Not yet tried on a real board.
 
 ## What the CI checks
 
-The emulator runs the real ROM and models the eFuses, the XTS-AES flash
-encryption and its decrypting cache. `SECURE=1 tests/e2e/e2e-emu.sh` (C5, S3 and C6 in
-the e2e workflow, signed with throwaway Secure Boot keys):
+The emulator runs the real ROM and models the eFuses, the XTS-AES flash encryption and its decrypting cache. `SECURE=1 tests/e2e/e2e-emu.sh` (C5, S3 and C6 in the e2e workflow, signed with throwaway Secure Boot keys):
 
-- the first boot burns the eFuses, encrypts the flash and moves `fc_creds` into
-  the encrypted store;
+- the first boot burns the eFuses, encrypts the flash and moves `fc_creds` into the encrypted store;
 - the device enrolls and reports `secureBoot` and `flashEncryption: release`;
 - an OTA update to the release build, signed with the same key, is installed;
-- the same release build, signed with another Secure Boot key and properly
-  cosign-signed, is refused, and the device stays on its firmware;
-- the plain release build signed with the device's own Secure Boot key is
-  refused as another variant. On the plain run, the plain device refuses
-  the secure release build;
-- the debug build (security version 0) is refused once the release (1) is
-  confirmed (anti-rollback);
+- the same release build, signed with another Secure Boot key and properly cosign-signed, is refused, and the device stays on its firmware;
+- the plain release build signed with the device's own Secure Boot key is refused as another variant. On the plain run, the plain device refuses the secure release build;
+- the default build (security version 0) is refused once the release (1) is confirmed (anti-rollback);
 - the broken build is rolled back, as without Secure Boot;
-- the bootloader trusts three keys; the third, a spare, is revoked through
-  the fleet's config, revoking the key in use is refused, and a release
-  signed with the second key alone retires the first (key rotation).
+- the bootloader trusts three keys; the third, a spare, is revoked through the fleet's config, revoking the key in use is refused, and a release signed with the second key alone retires the first (key rotation).
 
-On the C5 the test also checks the device key: burned into eFuse, read
-protected, the peripheral's signature verified (`deviceKey: "ecdsa"`); every
-request after that, enrollment and certificate renewals included, is signed
-by the peripheral. On the S3 and the C6 the key stays in the encrypted store
-(`deviceKey: "storage"`).
+On the C5 the test also checks the device key: burned into eFuse, read protected, the peripheral's signature verified (`deviceKey: "ecdsa"`); every request after that, enrollment and certificate renewals included, is signed by the peripheral. On the S3 and the C6 the key stays in the encrypted store (`deviceKey: "storage"`).
 
 Tried by hand in the emulator:
 
-- the ROM refuses a bootloader whose signature block was altered, and one
-  signed with another key;
-- with a bootloader signed with keys 0 and 1, an app signed with key 0 boots
-  (`secureBootKeys: 0*,1`); one signed with key 1 boots and revokes key 0
-  (`1*`); one signed with an unknown key does not boot;
-- the DS key: generated, sealed (eFuse `BLOCK_KEY3` after the two Secure Boot
-  digests and the flash encryption key) and checked with an RSA-PSS
-  signature; an image with security version 2 burns it on first boot.
+- the ROM refuses a bootloader whose signature block was altered, and one signed with another key;
+- with a bootloader signed with keys 0 and 1, an app signed with key 0 boots (`secureBootKeys: 0*,1`); one signed with key 1 boots and revokes key 0 (`1*`); one signed with an unknown key does not boot;
+- the DS key: generated, sealed (eFuse `BLOCK_KEY3` after the two Secure Boot digests and the flash encryption key) and checked with an RSA-PSS signature; an image with security version 2 burns it on first boot.
 
 ## Zephyr
 
 What the Zephyr builds have, on any board started by MCUboot:
 
-- **Signed images.** MCUboot checks each image's ECDSA P-256 signature
-  (`.secrets/mcuboot-signing.pem`) before it boots it, as the device checks the
-  release's cosign signature before it downloads it.
-- **Anti-rollback.** Each image carries a security counter, `SECURE_VERSION`
-  when building (0 by default), as the ESP-IDF variant's security version:
+- **Signed images.** MCUboot checks each image's ECDSA P-256 signature (`.secrets/mcuboot-signing.pem`) before it boots it, as the device checks the release's cosign signature before it downloads it.
+- **Anti-rollback.** Each image carries a security counter, `SECURE_VERSION` when building (0 by default), as the ESP-IDF variant's security version:
 
   ```bash
   SECURE_VERSION=1 BOARD=esp32s3_devkitc/esp32s3/procpu port/zephyr/build.sh
   ```
 
-  MCUboot installs no update below the running image's counter
-  (`port/zephyr/sysbuild/mcuboot.conf`), and the agent refuses it before it
-  restarts, with the same reason as on ESP-IDF (`firmware older than this
-  device accepts`); the device reports its counter as `secureVersion`. Unlike
-  ESP-IDF's eFuse, the counter is the running image's, in flash: it stops a
-  signed vulnerable release from being put back over the air, not someone who
-  writes the flash over USB or SWD. Verified on a Raspberry Pi Pico W, a board since removed: running counter 1,
-  a release with counter 0 was refused in 20 s, without a restart.
+  MCUboot installs no update below the running image's counter (`port/zephyr/sysbuild/mcuboot.conf`), and the agent refuses it before it restarts, with the same reason as on ESP-IDF (`firmware older than this device accepts`); the device reports its counter as `secureVersion`. Unlike ESP-IDF's eFuse, the counter is the running image's, in flash: it stops a signed vulnerable release from being put back over the air, not someone who writes the flash over USB or SWD. Verified on a Raspberry Pi Pico W, a board since removed: running counter 1, a release with counter 0 was refused in 20 s, without a restart.
 
 What they do not have:
 
-- **The device key, the credentials and a network given in the field are in
-  the storage partitions in clear**, and the flash is not encrypted.
-  - On Espressif's chips, Secure Boot v2 and flash encryption come with
-    Espressif's port of MCUboot, built on its own and not with Zephyr's
-    sysbuild: `CONFIG_ESP_FLASH_ENCRYPTION` excludes the MCUboot this build
-    uses. Moving to it changes the bootloader and the flash layout, and it could
-    be tried in the emulator only (no real chip is burned here). On the
-    ESP32-S3 the ESP-IDF firmware's `secure` variant has all of it today.
-- The path Zephyr offers is a chip with TrustZone-M and TF-M (the RP2350 of
-  the Pico 2 W, Nordic's nRF54L, ST's STM32U5): the device key as a PSA key in
-  TF-M's protected storage, which the core already uses through PSA, and a
-  secure boot of the chip's own. Not tried: there is no such board here.
+- **The device key, the credentials and a network given in the field are in the storage partitions in clear**, and the flash is not encrypted.
+  - On Espressif's chips, Secure Boot v2 and flash encryption come with Espressif's port of MCUboot, built on its own and not with Zephyr's sysbuild: `CONFIG_ESP_FLASH_ENCRYPTION` excludes the MCUboot this build uses. Moving to it changes the bootloader and the flash layout, and it could be tried in the emulator only (no real chip is burned here). On the ESP32-S3 the ESP-IDF firmware's `secure` variant has all of it today.
+- The path Zephyr offers is a chip with TrustZone-M and TF-M (the RP2350 of the Pico 2 W, Nordic's nRF54L, ST's STM32U5): the device key as a PSA key in TF-M's protected storage, which the core already uses through PSA, and a secure boot of the chip's own. Not tried: there is no such board here.
 
 ## Not yet done
 
-- **Device key in hardware on chips without an ECDSA peripheral.** Blocked by
-  Flight Control (above).
-- **Real boards.** Nothing has been burned, here or in CI: everything above
-  was verified on emulated chips. Before a batch, burn one board per chip,
-  then run a full OTA cycle on it.
-- **ESP32 (classic).** Secure Boot v2 needs silicon revision 3
-  (`CONFIG_ESP32_REV_MIN_3`, set by the variant). Not run anywhere yet: the
-  emulator does not run the ESP32.
-- **The image signing key in an HSM.** `tools/signing` signs OCI artifacts
-  with a key file; cosign itself can sign with a KMS or PKCS#11 key.
+- **Device key in hardware on chips without an ECDSA peripheral.** Blocked by Flight Control (above).
+- **Real boards.** Nothing has been burned, here or in CI: everything above was verified on emulated chips. Before a batch, burn one board per chip, then run a full OTA cycle on it.
+- **ESP32 (classic).** Secure Boot v2 needs silicon revision 3 (`CONFIG_ESP32_REV_MIN_3`, set by the variant). Not run anywhere yet: the emulator does not run the ESP32.
+- **The image signing key in an HSM.** `tools/signing` signs OCI artifacts with a key file; cosign itself can sign with a KMS or PKCS#11 key.

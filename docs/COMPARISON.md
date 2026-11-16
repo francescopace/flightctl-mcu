@@ -2,13 +2,13 @@
 
 flightctl-mcu next to the services and open-source projects that manage microcontrollers from more than one chip vendor. What is said of the others comes from their public documentation, read in November 2026.
 
-✅ yes · 🟡 partly, or with limits · ❌ no · ➖ not documented: we did not find it there, which does not mean it cannot be built on top. For flightctl-mcu, 🔜 is on the [roadmap](ROADMAP.md#next) for 1.0, ⏳ waits on a change in Flight Control ([limitations](RESULTS.md#flight-control-limitations-found-upstream-proposals)) and 💡 is proposed for 2.0 ([after 1.0](ROADMAP.md#after-10)). What works today is verified in [RESULTS.md](RESULTS.md).
+✅ yes · 🟡 partly, or with limits · ❌ no · ➖ not documented: we did not find it there, which does not mean it cannot be built on top.
 
 ## At a glance
 
 | | Self-hosted | Open source | ESP-IDF | Zephyr | Linux in the same fleets | Delta updates | Remote config | Crash reports | Apps without reflashing |
 |---|---|---|---|---|---|---|---|---|---|
-| **flightctl-mcu** | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 🔜 💡 | ✅ |
+| **flightctl-mcu** | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 | ✅ |
 | **Golioth** | ❌ | 🟡 | ✅ | ✅ | 🟡 | ➖ | ✅ | ➖ | 🟡 |
 | **Memfault** | ❌ | 🟡 | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ | ❌ |
 | **Mender MCU** | ❌ | 🟡 | ❌ | ✅ | ✅ | ❌ | ➖ | ➖ | ❌ |
@@ -41,7 +41,9 @@ It is behind on crash reports, remote log and commands, and data from the apps (
 
 ## Golioth, Memfault and Mender in detail
 
-These three manage ESP-IDF or Zephyr devices as a product, and are the nearest to flightctl-mcu.
+These three manage ESP-IDF or Zephyr devices as a product, and are the nearest to flightctl-mcu. What works today is verified in [RESULTS.md](RESULTS.md).
+
+For flightctl-mcu, 🔜 is on the [roadmap](ROADMAP.md#next) for 1.0, ⏳ waits on a change in Flight Control ([limitations](RESULTS.md#flight-control-limitations-found-upstream-proposals)) and 💡 is proposed for 2.0 ([after 1.0](ROADMAP.md#after-10)). 
 
 | | flightctl-mcu | Golioth | Memfault | Mender MCU |
 |---|---|---|---|---|

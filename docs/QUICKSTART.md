@@ -10,7 +10,7 @@ The walk below is for an Espressif board with the ESP-IDF firmware, the most com
 
 ## 1. Control plane
 
-Flight Control on kind, reachable from your LAN at `<your-ip>.nip.io`, and an OCI registry with two doors to the same images: TLS with a password at `registry.<your-ip>.nip.io:5443`, which devices pull through, and plain HTTP on port 5001, which the tools on your machine push through ([REGISTRY.md](REGISTRY.md)). If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and set its agent endpoint in `port/espidf/sdkconfig.local` (step 2).
+Flight Control on [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker: a Kubernetes cluster whose nodes are containers on one machine), reachable from your LAN at `<your-ip>.nip.io`, and an OCI registry with two doors to the same images: TLS with a password at `registry.<your-ip>.nip.io:5443`, which devices pull through, and plain HTTP on port 5001, which the tools on your machine push through ([REGISTRY.md](REGISTRY.md)). If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and set its agent endpoint in `port/espidf/sdkconfig.local` (step 2).
 
 ```bash
 tools/kind/up.sh
@@ -26,7 +26,7 @@ flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t 
 
 The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
 
-Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, once an hour, so narrow that to what does not change ([why](RESULTS.md#flight-control-140)):
+Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, once an hour, so narrow that to what does not change ([why](RESULTS.md#label-sync)):
 
 ```bash
 tools/fleet/apply.sh tools/fleet/labelsync-custom-info.yaml
@@ -62,7 +62,7 @@ TARGET=esp32c3 FW_VERSION=v1 port/espidf/build.sh
 port/espidf/flash.sh /dev/cu.usbmodem1101
 ```
 
-That build is optimized for speed (`-O2`), with the CPU at the chip's highest clock. `VARIANT=release` builds with `-Os` and quieter logs, for a smaller image, in `port/espidf/build-<chip>-release`; push those with `fw-push.py --variant release`.
+That build is optimized for size (`-Os`), with WAMR, which runs the apps, at `-O2` and the CPU at the chip's highest clock. `VARIANT=release` builds the same with quieter logs, in `port/espidf/build-<chip>-release`; push those with `fw-push.py --variant release`.
 
 Nothing above touches the chip's eFuses. The `secure` variant does: Secure Boot v2, flash encryption and NVS encryption, for devices in the field. It is never built by default, only with `VARIANT=secure` and a Secure Boot key of your own, in its own directory (`port/espidf/build-<chip>-secure`). Its first boot burns the chip's eFuses for good; read [SECURITY.md](SECURITY.md) first, which also has the factory procedure. `flash.sh` will not flash it without being told, and a device takes over the air only firmware of its own variant: a plain device refuses a secure build, and the reverse.
 
@@ -98,21 +98,21 @@ tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
 
 ## 6. Give it firmware, config and an app
 
-Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to the local registry's door with TLS (`.secrets/registry/host`), and adds its CA and password to the fleet as config files; set `REGISTRY=host:port` to use another one. Use the same tags as in `tools/fleet/idf-lab.yaml`, or edit them there. (The fleet of the boards with the Zephyr build is `tools/fleet/zephyr-lab.yaml`: the two ports are released apart for now.)
+Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to the local registry's door with TLS (`.secrets/registry/host`), and adds its CA and password to the fleet as config files; set `REGISTRY=host:port` to use another one. Use the tags `tools/fleet/idf-lab.yaml` names, or edit them there. (The fleet of the boards with the Zephyr build is `tools/fleet/zephyr-lab.yaml`: the two ports are released apart for now.)
 
 ```bash
-tools/fw-push.py <your-ip>:5001/flightctl-mcu/fw:v3.4
+tools/fw-push.py <your-ip>:5001/flightctl-mcu/fw:<firmware tag>
 ```
 
 ```bash
-wasm-apps/build.sh alarm v2.3
+wasm-apps/build.sh alarm <app tag>
 ```
 
 ```bash
 tools/fleet/apply.sh
 ```
 
-The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest. Apps from `alarm:v2.3` on use the app interface of [APPS.md](APPS.md), which firmware before v3.3 does not have: give a fleet the firmware first, then the app.
+The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest.
 
 The pushes go through the plain door, the devices pull the same images through the one with TLS: they speak nothing else. A fleet that still names the plain door has to move first; see [REGISTRY.md](REGISTRY.md#moving-a-fleet-to-the-tls-door). To keep the fleet in Git instead, see [REGISTRY.md](REGISTRY.md#fleets-kept-in-git).
 

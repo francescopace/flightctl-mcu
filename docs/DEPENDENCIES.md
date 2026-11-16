@@ -1,9 +1,6 @@
 # Dependencies
 
-What the project is built with and tested against, at which version, and where
-each version is set. Everything is pinned in the repository: a build does not
-pick up a newer release by itself. Checked against the latest releases on
-12 November 2026.
+What the project is built with and tested against, at which version, and where each version is set. Everything is pinned in the repository: a build does not pick up a newer release by itself. Checked against the latest releases on 12 November 2026.
 
 ## In the core, on every port
 
@@ -16,8 +13,7 @@ pick up a newer release by itself. Checked against the latest releases on
 
 ## Host port (Linux, macOS)
 
-The simulated device, `port/host`: the core above on POSIX, with nothing else
-linked in.
+The simulated device, `port/host`: the core above on POSIX, with nothing else linked in.
 
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|
@@ -47,16 +43,13 @@ linked in.
 
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|
-| [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.0 | `tools/kind/up.sh`, `FLIGHTCTL_VERSION` in the workflow | What changed for the devices since 1.3.1 is in [RESULTS.md](RESULTS.md#flight-control-140). |
+| [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.0 | `tools/kind/up.sh`, `FLIGHTCTL_VERSION` in the workflow | Its label sync is narrowed for these devices ([RESULTS.md](RESULTS.md#label-sync)). |
 | Envoy Gateway | 1.2.5 | `tools/kind/up.sh` | The version Flight Control 1.4.0's installation guide names, not the latest. |
 | [esp-emulator](https://github.com/espressif/esp-emulator) | 0.51.0 | `ESP_EMU_VERSION` in the workflow | Checked against the release's sha256. |
 | OCI registry | `registry:3` | `tools/registry/up.sh` | |
 | kubectl image for Flight Control's Helm jobs | `alpine/k8s` 1.37.2 | `tools/kind/cluster-cli/Containerfile` | On arm64 machines only, where `origin-cli` has no image. |
 
-Not pinned: kind, helm and kubectl (the runner's), oras and cosign (the
-latest; cosign 2 and 3 both accept the signatures `tools/signing/sign.py`
-makes), and the Python packages `esp_prov` needs (protobuf and
-cryptography).
+Not pinned: kind, helm and kubectl (the runner's), oras and cosign (the latest; cosign 2 and 3 both accept the signatures `tools/signing/sign.py` makes), and the Python packages `esp_prov` needs (protobuf and cryptography).
 
 ## Licenses
 
@@ -68,19 +61,10 @@ cryptography).
 
 Change the version where the table says, then run what covers it:
 
-- core libraries (mbedTLS, cJSON, WAMR): `tests/unit.sh`, `tests/fuzz.sh`,
-  `tests/e2e/e2e.sh`, and a firmware build;
-- any of them: the SBOM takes the new version by itself ([SBOM.md](SBOM.md)), except the
-  mbedTLS of a new ESP-IDF release, which `MBEDTLS_IN_ESP_IDF` in `tools/sbom.py` names;
-- ESP-IDF and its components: the firmware builds for every chip and
-  `tests/e2e/e2e-emu.sh` (plain and `SECURE=1`, or the end-to-end workflow
-  run by hand on the CI run). A new component version
-  changes the lock files: commit them;
-- Zephyr: `port/zephyr/build.sh` and `DEVICE_KIND=zephyr tests/e2e/e2e.sh`; the build for the
-  ESP32-S3 is not in CI ([ZEPHYR.md](ZEPHYR.md));
-- Flight Control: all the end-to-end tests. A new minor release can add
-  defaults that meet what the devices report (see
-  [RESULTS.md](RESULTS.md#flight-control-140)).
+- core libraries (mbedTLS, cJSON, WAMR): `tests/unit.sh`, `tests/fuzz.sh`, `tests/e2e/e2e.sh`, and a firmware build;
+- any of them: the SBOM takes the new version by itself ([SBOM.md](SBOM.md)), except the mbedTLS of a new ESP-IDF release, which `MBEDTLS_IN_ESP_IDF` in `tools/sbom.py` names;
+- ESP-IDF and its components: the firmware builds for every chip and `tests/e2e/e2e-emu.sh` (plain and `SECURE=1`, or the end-to-end workflow run by hand on the CI run). A new component version changes the lock files: commit them;
+- Zephyr: `port/zephyr/build.sh` and `DEVICE_KIND=zephyr tests/e2e/e2e.sh`; CI also builds for the ESP32-S3 and runs `DEVICE_KIND=qemu` ([ZEPHYR.md](ZEPHYR.md));
+- Flight Control: all the end-to-end tests. A new minor release can add defaults that meet what the devices report (see [RESULTS.md](RESULTS.md#label-sync)).
 
-mbedTLS, ESP-IDF and Zephyr move together: the core is written for the mbedTLS
-that both ports' releases carry.
+mbedTLS, ESP-IDF and Zephyr move together: the core is written for the mbedTLS that both ports' releases carry.

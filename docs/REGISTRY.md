@@ -47,14 +47,14 @@ The first run makes `.secrets/registry/` with:
 
 An image pushed through one door can be pulled through the other.
 
-The push tools follow the devices' rule:
+The push tools (`tools/fw-push.py`, `tools/signing/sign.py`, `wasm-apps/push.sh`, with the shared logic in `tools/registry/registry_client.py`) use TLS for a registry they have a CA for, and plain HTTP otherwise:
 
-- `tools/fw-push.py`, `tools/signing/sign.py` and `wasm-apps/push.sh` use TLS and the password for the registry named in `.secrets/registry/host`.
-- `$REGISTRY_CA` and `$REGISTRY_AUTH_FILE` point them at another registry.
-- `tools/registry/registry_client.py` holds the shared logic.
+- the TLS door, named in `.secrets/registry/host`: its CA and password from `.secrets/registry/`;
+- another registry: `$REGISTRY_CA` and `$REGISTRY_AUTH_FILE`;
+- the plain door (`<your-ip>:5001`, as in the [quick start](QUICKSTART.md)): neither.
 
 ```bash
-tools/fw-push.py $(cat .secrets/registry/host)/flightctl-mcu/fw:v3.2
+tools/fw-push.py $(cat .secrets/registry/host)/flightctl-mcu/fw:<tag>
 ```
 
 ```bash
@@ -100,7 +100,7 @@ A fleet that a `ResourceSync` owns is changed through Git only: delete one appli
 
 ## Moving a fleet to the TLS door
 
-Firmware that speaks HTTP/2 pulls over TLS only, so a fleet that names the plain door moves to the TLS door before it gets that firmware: apply it again with the TLS door while its devices still run firmware that speaks both (from v3.1, and the Zephyr builds, to the last release before HTTP/2), then release. Changing the registry address in `os.image` makes every device download its firmware again and restart, because Flight Control compares `os.image` as a string. Push a new release with a delta from the running one (`--delta-from`) to keep that download small.
+Firmware that speaks HTTP/2 pulls over TLS only, so a fleet that names the plain door moves to the TLS door before it gets that firmware: apply it again with the TLS door while its devices still run firmware that speaks both (the builds before HTTP/2), then release. Changing the registry address in `os.image` makes every device download its firmware again and restart, because Flight Control compares `os.image` as a string. Push a new release with a delta from the running one (`--delta-from`) to keep that download small.
 
 ## Memory
 

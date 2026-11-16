@@ -33,7 +33,7 @@ Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs 
 |---|---|---|---|
 | **Supported** | ESP32-S3 (ESP-IDF and Zephyr), ESP32 (classic), ESP32-C6, ESP32-C5 | 512, 520, 512, 384 KB | Each release is tried on a board. New features come here first. |
 | **Best effort** | ESP32-C3 | 400 KB | Built in CI and with each release; tried on a board from time to time. |
-| **Removed** | ESP32-S2, Raspberry Pi Pico W (RP2040) | 320, 264 KB | Below 384 KB of SRAM: the S2 needed its PSRAM for TLS, the Pico W had about 30 KB free with an app. The last releases for them are v3.8 (ESP-IDF) and z22 (Zephyr). |
+| **Removed** | ESP32-S2, Raspberry Pi Pico W (RP2040) | 320, 264 KB | Below 384 KB of SRAM: the S2 needed its PSRAM for TLS, the Pico W had about 30 KB free with an app. |
 | **Emulated** | Arm MPS2 AN385 (Cortex-M3, Ethernet) on Zephyr, in QEMU | 4 MB, of which the build uses 300 KB | The end-to-end test (e2e workflow), with the memory of a 384 KB device. The first link other than WiFi. No firmware updates (no MCUboot there) and no random generator: not a device. |
 | **Planned** | An ST Nucleo board with Ethernet (H563ZI or F767ZI) on Zephyr | 640 / 512 KB | Not tried yet. A real Arm board. |
 
@@ -43,23 +43,23 @@ Another chip Espressif or Zephyr supports, with 384 KB of SRAM or more, should w
 
 ## Boards tried
 
-With ESP-IDF 5.5.6, firmware v3.0 (both agent connections kept open). The firmware now builds with ESP-IDF 6.0.3 and mbedTLS 4, which were tried on the emulated chips and on every one of these boards: first the S3 ([RESULTS.md](RESULTS.md#esp-idf-603-on-a-board-esp32-s3)) and the C3 (release v3.1, [RESULTS.md](RESULTS.md#the-registry-with-tls-and-decommissioning-on-boards)), all of them with release v3.8 ([RESULTS.md](RESULTS.md#coremark)); the table is from the earlier run:
+With ESP-IDF 6.0.3 and mbedTLS 4, every board. The free heap is the last one measured, with the `alarm` app running and the agent connected ([RESULTS.md](RESULTS.md#ram)):
 
 | Chip | Core | Status | Free heap with an app running |
 |---|---|---|---|
-| ESP32-S3 | Xtensa LX7 | everything works | ~118 KB |
-| ESP32-C3 | RISC-V | everything works | ~57 KB |
-| ESP32-C5 | RISC-V | everything works; also tested in the emulator | ~59 KB |
-| ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~73 KB |
+| ESP32-S3 | Xtensa LX7 | everything works | ~145 KB (release build, ESP-IDF 6.0.3) |
+| ESP32-C3 | RISC-V | everything works | ~66 KB |
+| ESP32-C5 | RISC-V | everything works; also tested in the emulator | ~131 KB |
+| ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~137 KB |
 | ESP32-C6 | RISC-V | everything except rollback, which was not exercised | ~163 KB |
 
-Since v3.7 the agent's spec loop runs on the main task and its status thread has a smaller stack, which frees internal RAM: on the classic ESP32, 137 KB instead of 100 KB ([RESULTS.md](RESULTS.md#ram)). With `alarm`, the C5 has 131 KB free with v3.8, against 59 KB with v3.0. The C3 has not been measured since.
+The C3 and C6 figures are from an earlier build, before the spec loop moved to the main task (37 KB more free on the classic ESP32): they are low.
 
 The C6 DevKitC flashes only over its native USB port, started in download mode (plug them in holding BOOT).
 
-PSRAM is not used, so a single image runs on every board variant of a chip, except on the ESP32-S3 (v3.9 on), where it holds the memory of apps too large for internal RAM. An S3 comes with no PSRAM, 2 MB of quad PSRAM (N4R2, N8R2) or 8 MB of octal (N8R8, N16R8), and the mode is fixed at build time, so a release has two S3 images: `esp32s3`, for quad PSRAM, which boots without it on the other boards, and `esp32s3-r8` (`VARIANT=r8`), for octal. A board takes updates for the image it runs: an N8R8 is flashed once over USB with `esp32s3-r8`, and then updates from it over the air. Tried on an N4R2 and an N8R8. The Zephyr build for the S3 (z23 on) uses the N8R8's octal PSRAM the same way ([ZEPHYR.md](ZEPHYR.md)).
+PSRAM is not used, so a single image runs on every board variant of a chip, except on the ESP32-S3, where it holds the memory of apps too large for internal RAM. An S3 comes with no PSRAM, 2 MB of quad PSRAM (N4R2, N8R2) or 8 MB of octal (N8R8, N16R8), and the mode is fixed at build time, so a release has two S3 images: `esp32s3`, for quad PSRAM, which boots without it on the other boards, and `esp32s3-r8` (`VARIANT=r8`), for octal. A board takes updates for the image it runs: an N8R8 is flashed once over USB with `esp32s3-r8`, and then updates from it over the air. Tried on an N4R2 and an N8R8. The Zephyr build for the S3 uses the N8R8's octal PSRAM the same way ([ZEPHYR.md](ZEPHYR.md)).
 
-With ESP-IDF 6.0.3 (release v3.8, built for speed) the firmware images are 1,093 to 1,288 KB, leaving 22–34% of the 1,664 KB OTA slot free ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself is about 35 KB (49 KB with cJSON, the delta decoder and its ESP-IDF port; C3, debug build) and WAMR about 68 KB.
+With ESP-IDF 6.0.3 (built for speed) the firmware images are 1,118 to 1,288 KB, leaving 22–32% of the 1,664 KB OTA slot free ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself, with its HTTP/2 client, is about 62 KB (79 KB with cJSON, WiFi provisioning, the delta decoder and its ESP-IDF port; on the C3), and WAMR about 68 KB.
 
 With Zephyr 4.5 and firmware updates through MCUboot ([ZEPHYR.md](ZEPHYR.md)):
 
