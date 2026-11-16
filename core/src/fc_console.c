@@ -191,7 +191,7 @@ static void finish(session_t *s, int code)
                  code, code);
     }
     if (send_payload(s, CH_ERROR, st, strlen(st)) == 0) {
-        fc_http_stream_write(s->st, NULL, 0, 1, 2000);
+        fc_http_stream_write(s->st, "", 0, 1, 2000);
     }
 }
 

@@ -41,7 +41,7 @@ fc_http_stream_t *fc_http_stream_open(const fc_http_target_t *t, const char *pat
 int fc_http_stream_write(fc_http_stream_t *st, const void *data, size_t len, int end, int timeout_ms)
 {
     pthread_mutex_lock(&f_lock);
-    if (f_out_len + len <= sizeof(f_out)) {
+    if (len > 0 && f_out_len + len <= sizeof(f_out)) {
         memcpy(f_out + f_out_len, data, len);
         f_out_len += len;
     }
