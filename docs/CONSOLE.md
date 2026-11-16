@@ -33,4 +33,4 @@ While a session is listed, the server answers the spec's long-poll at once with 
 - **No log yet.** The UI's log tab runs `journalctl` through the console; the device does not keep its log ([ROADMAP.md](ROADMAP.md)).
 - **Access** is Flight Control's: whoever may open a console on the device may also restart it.
 
-The end-to-end test asks `status` and an unknown command of the simulated device, against Flight Control 1.4.0 in CI; not yet tried on a board.
+Tried against Flight Control 1.4.0 on the classic ESP32, C5, C6 and S3 (ESP-IDF), and in the end-to-end test on the simulated device and the Zephyr builds for native_sim and the emulated Cortex-M3. Not yet on a board with Zephyr.

@@ -50,11 +50,26 @@ static char *board_defaults(void)
     return s;
 }
 
+/* The pins ESP-IDF reserved before any app ran (flash, PSRAM): read once at
+ * start, since the drivers apps open (I2C, SPI, UART, LEDC) reserve theirs
+ * too, and a board map checked while an app held a bus was refused for the
+ * app's own pins. */
+static uint64_t s_boot_reserved;
+
+static void note_boot_reserved(void)
+{
+    for (int pin = 0; pin < GPIO_NUM_MAX && pin < 64; pin++) {
+        if (GPIO_IS_VALID_GPIO(pin) && esp_gpio_is_reserved(BIT64(pin))) {
+            s_boot_reserved |= BIT64(pin);
+        }
+    }
+}
+
 /* What the board map may not name: no such GPIO, flash and PSRAM (reserved
  * by ESP-IDF), the console's UART and the USB pins the console may use. */
 static int pin_reserved(int pin)
 {
-    if (pin < 0 || !GPIO_IS_VALID_GPIO(pin) || esp_gpio_is_reserved(BIT64(pin))) {
+    if (pin < 0 || pin >= 64 || !GPIO_IS_VALID_GPIO(pin) || (s_boot_reserved & BIT64(pin))) {
         return 1;
     }
     if (pin == U0TXD_GPIO_NUM || pin == U0RXD_GPIO_NUM) {
@@ -221,6 +236,7 @@ const fc_hw_t *hw_espidf(void)
     static fc_hw_t hw;
     static char board[32];
     s_led_lock = xSemaphoreCreateMutex();
+    note_boot_reserved();
     snprintf(board, sizeof(board), "%s", CONFIG_IDF_TARGET);
     hw = (fc_hw_t){
         .board = board,

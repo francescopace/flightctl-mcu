@@ -152,7 +152,7 @@ On Zephyr the board map's names come from the devicetree, not from pins: the chi
 | One I2C transfer | 1 KB each way (`FC_I2C_MAX`) |
 | One SPI transfer | 4 KB (`FC_SPI_MAX`) |
 
-The instruction budget is a first figure, to be measured on a C3, the slowest chip, so that it comes to about a second there.
+The instruction budget counts WAMR's fast-interpreter operations. 20 million last 2.2 s on the C5, 3.4 s on the C6, 3.8 s on the ESP32 and 4.0 s on the S3 (a counting loop until the budget stopped it): a call that loops is stopped within about 4 s. It is to come down to about a second on the slowest chip ([ROADMAP.md](ROADMAP.md)).
 
 What limits an app on a small chip is the heap, not the 64 KB the device accepts for a `.wasm`. Each app takes the module as WAMR's fast interpreter loads it (about 2.5 to 3.5 times the `.wasm`), its linear memory (static data and the 1 KB stack), about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)).
 
@@ -166,5 +166,7 @@ Neither has a `tick`: timers wake them, and they sleep in between.
 - [trend](../wasm-apps/trend/trend.c): no grants needed. It reports whether the temperature is rising or falling, and how fast. With `metrics` granted it will also send the temperature and the rate as metrics. About 2 KB.
 
 On a chip without a temperature sensor both set their state to say so and stay idle, with no timer running.
+
+- [hwcheck](../wasm-apps/hwcheck/hwcheck.c): a board's buses and channels, checked. Granted `i2c0 spi0 uart0 adc0 pwm0` (names the fleet's `board.json` gives), it says every 2 s what each answers: the I2C devices that acknowledge, an SPI transfer, the UART's bytes written and read back, the ADC's millivolts, the PWM set to half.
 
 - [CoreMark](../wasm-apps/coremark/fetch.sh), as published, not rebuilt: `wasm-apps/coremark/fetch.sh` downloads both builds and checks them against their SHA-256, then `wasm-apps/push.sh coremark wasm3` pushes one. See [Modules built for no device](#modules-built-for-no-device).

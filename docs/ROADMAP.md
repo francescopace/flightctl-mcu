@@ -20,8 +20,7 @@ Chips ([support levels](DEVICES.md#support-levels)):
 Checks not made yet:
 
 - [ ] The rest of HTTP/2 on the boards. On the five ESP-IDF chips and on the ESP32-S3 with Zephyr the spec's long-poll and the status share one HTTP/2 connection, with the receive buffer from the block reserved at start; on the ESP32, C5, C6 and S3 (ESP-IDF) firmware and apps are downloaded from the registry over HTTP/2 with the agent's connection closed meanwhile, and the TLS buffers are dynamic again (only full-size records take the reserved block). Left: a certificate renewal, the end-to-end tests, Zephyr's downloads over HTTP/2 on a board, and the traffic it saves or costs.
-- [ ] On ESP-IDF, the core's own WiFi provisioning (`core/src/fc_prov.c`, as on Zephyr) and delta decoder (`core/src/fc_delta.c`), which replace Espressif's `network_provisioning` and detools' library: built for every chip; the decoder gave the same images as detools on 300 random patches and 8 pairs of firmware images, and passed its fuzzer. Both pass the end-to-end tests in the emulator (C5, C6, S3): a network given in the field is joined and kept across restarts, and a firmware delta is applied. Not yet run on a board.
-- [ ] The way back from a firmware that does not work, on the C6. It is tested in the emulator and on the ESP32-S3 with both ports.
+- [ ] On ESP-IDF, the core's own WiFi provisioning (`core/src/fc_prov.c`, as on Zephyr): built for every chip, and it passes the end-to-end tests in the emulator (C5, S3, C6), where a network given in the field is joined and kept across restarts. Not yet run on a board. (The core's delta decoder, which replaced detools' library, runs on the boards: the ESP32, C5, C6 and S3 took v3.13-rc1 and rc2 as deltas, `Applied`.)
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); not yet run.
 - [ ] Bearer tokens against a real registry (Harbor, Quay), never tried: `registry:3` asks for Basic.
 
@@ -35,7 +34,7 @@ What the Zephyr port does not have, and the ESP-IDF firmware has:
 
 What Flight Control offers and the agent does not answer yet:
 
-- [ ] The remote console on a board ([CONSOLE.md](CONSOLE.md)): it answers on the host and in the end-to-end test, not yet on an ESP-IDF or Zephyr board, where its session costs about 12 KB of heap while it lasts.
+- [ ] The remote console on a board with Zephyr ([CONSOLE.md](CONSOLE.md)). With ESP-IDF it answers on the ESP32, C5, C6 and S3, one command or at a prompt; with Zephyr in the end-to-end test only (native_sim, the emulated Cortex-M3).
 - [ ] The device's log from the UI. Flight Control has no API for logs: the Log tab runs `journalctl` through the terminal's channel. So it comes after the terminal: a log kept in RAM (today it goes to the serial port only), shown by a command, and then an answer to the commands the UI sends, which holds only as long as the UI sends those.
 
 What an app can do and hold:
@@ -55,9 +54,9 @@ What an app can do and hold:
   - for TinyML, there is no ready `.wasm` for a microcontroller: Edge Impulse's is for a browser or Node, built with Emscripten (it imports `env.abort`). Instead, the C that [emlearn](https://emlearn.readthedocs.io) generates builds unchanged with `fc_app.h`. A random forest on `die_temp` takes 2.5 KB, imports only `fc` and runs on the firmware as it is. An MLP also needs `expf`, `tanhf` and `logf`, so the math functions belong with the libc question of the app interface (below);
   - CoreMark's WASI build would need, beyond the above, reference types and 8 functions of `wasi_snapshot_preview1`: the two for arguments, the clock, `fd_write` (to the log), `proc_exit` and 3 file calls.
 - [ ] The app interface for 1.0 ([APPS.md](APPS.md)). An app has its state, log, config, a key/value store, timers and events, and GPIO with interrupts and LEDs under the names of a board map that the fleet extends; a call that does not return is stopped. To come:
-  - I2C, SPI, UART (with RS-485), ADC and PWM tried on a board with ESP-IDF: they are built for every chip, tested on the host, and in the emulator on the C3, C5, C6 and S3 (whose emulator has no ADC or SPI to run); on Zephyr, where they come from the devicetree, they pass on `native_sim`'s emulated drivers: a board that names its hardware, and RS-485;
+  - I2C, SPI, UART (with RS-485), ADC and PWM with devices wired to them. With ESP-IDF they open and answer on the ESP32, C5, C6 and S3 with nothing wired (an I2C bus scanned, a transfer, a UART write, a floating ADC pin, a PWM), and in the emulator on the C3 too; on Zephyr, where they come from the devicetree, they pass on `native_sim`'s emulated drivers: a board that names its hardware, and RS-485;
   - metrics for Flight Control's Telemetry Gateway, which takes OTLP over gRPC only: gRPC over the core's HTTP/2 client, as for the remote terminal, and a protobuf encoder;
-  - the instruction budget of a call, measured on a C3 so that it comes to about a second there;
+  - the instruction budget of a call. Today's, 20 million of WAMR's operations, lasts 2.2 s on the C5, 3.4 s on the C6, 3.8 s on the ESP32 and 4.0 s on the S3 (a counting loop until the budget stops it): about 5 million would give a second on the slowest;
   - whether apps get WAMR's small libc (`memcpy`, `snprintf`...), a few KB of firmware, since building a payload by hand is the biggest burden on a real app.
 - [ ] MQTT for the apps. The calls are in the SDK (`fc_mqtt_publish`, `fc_mqtt_subscribe`, granted by `"mqtt"`); the firmware answers them with `FC_ENOTSUP`. To come:
   - one connection to the broker for all the apps, with the broker and its CA from `/etc/fc/mqtt.json`. Its TLS connection takes the RAM that one TLS connection at a time frees, and a second block in the TLS receive-buffer pool: unlike the agent's connection, it stays open during downloads. Even then, a C3 at its lowest has room for one more TLS handshake at a time;

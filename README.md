@@ -31,6 +31,7 @@ Here the microcontroller speaks the Flight Control agent API itself. That API is
 | Decommission | Key and certificate wiped; the device does not enroll again until its storage is erased |
 | `spec.resources` | CPU, heap and storage sampled against the fleet's alert rules, as the Linux agent does. Without rules, CPU and storage take the Linux defaults; the heap warns under 10% free, since the network stack holds most of it. |
 | `status` | `resources` from those rules, heap, CPU use, firmware version, RSSI, temperature, app state |
+| `flightctl console` and the UI's terminal | A closed set of commands (`status`, `apps`, `reboot`...) over a gRPC stream on the agent's connection ([CONSOLE.md](docs/CONSOLE.md)) |
 | Fleet rollout | Works unchanged |
 
 ## How it works
