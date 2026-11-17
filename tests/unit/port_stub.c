@@ -144,6 +144,12 @@ int stub_metrics_reads;
 long stub_stack_unused = -1;
 
 long stub_heap_largest = -1;
+long stub_heap_free = -1;
+
+long fc_port_heap_free(void)
+{
+    return stub_heap_free;
+}
 long stub_heap_largest_next[4];
 int stub_heap_largest_queued;
 

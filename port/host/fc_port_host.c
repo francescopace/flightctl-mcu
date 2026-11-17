@@ -196,6 +196,11 @@ long fc_port_heap_largest(void)
     return -1;
 }
 
+long fc_port_heap_free(void)
+{
+    return -1;
+}
+
 
 long fc_port_stack_unused(void)
 {

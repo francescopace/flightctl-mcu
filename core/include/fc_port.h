@@ -68,6 +68,11 @@ long fc_port_stack_unused(void);
  * cannot tell. An app whose memory does not fit says it in its error. */
 long fc_port_heap_largest(void);
 
+/* Bytes free now in the heap the agent allocates from (internal RAM where
+ * there is PSRAM too), or -1 when the port cannot tell. An app whose memory
+ * would leave less than the agent needs is refused (fc_apps.c). */
+long fc_port_heap_free(void);
+
 /* The heap's low-water mark over a stretch of work: fc_port_heap_watch(1)
  * starts watching (0), fc_port_heap_watch(0) stops and returns the fewest
  * bytes of internal RAM free in between; -1 when the port cannot tell. One

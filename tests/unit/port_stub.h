@@ -6,6 +6,7 @@
 extern int stub_reboots;
 extern long stub_stack_unused; /* what fc_port_stack_unused returns; -1 after stub_reset */
 extern long stub_heap_largest; /* fc_port_heap_largest; -1: cannot tell */
+extern long stub_heap_free;    /* fc_port_heap_free; -1: cannot tell */
 /* What the next stub_heap_largest_queued calls return, in order, before
  * stub_heap_largest again. */
 extern long stub_heap_largest_next[4];

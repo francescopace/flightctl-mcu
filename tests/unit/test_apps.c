@@ -1356,6 +1356,35 @@ static void test_hold_leaves_room_for_the_stack(void)
     CHECK(hold_but_stack() == NULL); /* stub_heap_largest: -1 */
 }
 
+/* An app whose memory would leave the agent less heap than it needs for a
+ * connection and a spec is refused, tried once more, and not started again
+ * until its image or env vars change. */
+static void test_heap_floor(void)
+{
+    char err[160];
+    stub_heap_free = 64 * 1024;
+    CHECK_INT(apply_one("h", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("h", "Running v1", 3000), "Running v1");
+    CHECK(stub_log_has("app h: instance made, 64 KB of heap left for the agent"));
+    remove_all();
+
+    stub_heap_free = 8 * 1024;
+    CHECK_INT(apply_one("h", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    const char *want = "Error its memory would leave the agent 8 KB of heap, less than the 32 KB it needs";
+    CHECK_STR(wait_state_of("h", want, 3000), want);
+    /* Not started again, though it would now fit. */
+    stub_heap_free = -1;
+    usleep((RESTART_DELAY_S * 1000 + 500) * 1000);
+    CHECK_STR(state_of("h"), want);
+    pthread_mutex_lock(&s_lock);
+    CHECK_INT(find("h")->restarts, 0);
+    pthread_mutex_unlock(&s_lock);
+    /* New env vars start it again. */
+    CHECK_INT(apply_one("h", "reg/app:v1", "{\"TICK_MS\": \"200\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("h", "Running v1", 3000), "Running v1");
+    remove_all();
+}
+
 static void test_remove(void)
 {
     char err[160];
@@ -1401,6 +1430,7 @@ int main(void)
     RUN(test_libc_loop);
     RUN(test_libc_mixed);
     RUN(test_hold_leaves_room_for_the_stack);
+    RUN(test_heap_floor);
     RUN(test_fc_info);
     RUN(test_fc_timer);
     RUN(test_fc_config);

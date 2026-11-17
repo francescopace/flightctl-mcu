@@ -55,6 +55,15 @@
 #else
 #define THREAD_STACK    (256 * 1024) /* a host: its threads cannot have less than 16 KB or so */
 #endif
+/* The heap an app's memory must leave the agent (fc_port_heap_free, once
+ * the instance is made, the agent's connection closed): what it takes to
+ * open its TLS connection again and to parse and apply a spec. Measured on
+ * the boards (docs/APPS.md). With less, on a C3 running CoreMark, a TLS
+ * handshake failed for want of memory and the heap went down to 108 bytes. */
+#ifndef FC_APP_HEAP_FLOOR
+#define FC_APP_HEAP_FLOOR (32 * 1024)
+#endif
+static long s_heap_floor = FC_APP_HEAP_FLOOR;
 /* What pthread_create takes beside the stack (ESP-IDF: the task's control
  * block, ~350 bytes), and the heap's headers. */
 #define THREAD_SLACK    1024
@@ -1283,12 +1292,32 @@ static int run_entry(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env, con
     return 1;
 }
 
+/* The app's instance, or NULL with the reason in ebuf. One whose memory
+ * would leave the agent less than s_heap_floor is not kept (*short_of_heap
+ * set). */
+static wasm_module_inst_t instantiate(app_t *a, char *ebuf, size_t elen, int *short_of_heap)
+{
+    *short_of_heap = 0;
+    wasm_module_inst_t inst = wasm_runtime_instantiate(a->module, WASM_STACK, 0, ebuf, (uint32_t)elen);
+    long left = inst != NULL ? fc_port_heap_free() : -1;
+    if (left >= 0 && left < s_heap_floor) {
+        wasm_runtime_deinstantiate(inst);
+        snprintf(ebuf, elen, "its memory would leave the agent %ld KB of heap, less than the %ld KB it needs", left / 1024,
+                 s_heap_floor / 1024);
+        *short_of_heap = 1;
+        return NULL;
+    }
+    if (inst != NULL && left >= 0) {
+        fc_port_log(FC_LOG_INFO, "app %s: instance made, %ld KB of heap left for the agent", a->name, left / 1024);
+    }
+    return inst;
+}
+
 static void *runner(void *arg)
 {
     app_t *a = arg;
     char ebuf[128];
     wasm_runtime_init_thread_env();
-    wasm_module_t module = a->module;
     int completed = 0;
     /* app_start still holds the heap's largest block. A wait of a tick or
      * more: shorter, ESP-IDF's usleep spins, and on a chip with one core this
@@ -1302,16 +1331,17 @@ static void *runner(void *arg)
         /* The instance first, its memory in one block while the agent
          * waits (app_start): made later, after the agent's connection had
          * opened again, a 64 KB memory no longer fitted on an ESP32-C5. */
-        wasm_module_inst_t inst = wasm_runtime_instantiate(module, WASM_STACK, 0, ebuf, sizeof(ebuf));
+        int short_of_heap;
+        wasm_module_inst_t inst = instantiate(a, ebuf, sizeof(ebuf), &short_of_heap);
         __atomic_store_n(&a->made, 1, __ATOMIC_RELEASE);
-        if (inst == NULL && strstr(ebuf, "allocate") != NULL) {
+        if (inst == NULL && (short_of_heap || strstr(ebuf, "allocate") != NULL)) {
             /* Made while the spec is applied, whose memory (the parsed
              * spec, the status after it) may be in the way: once more when
              * the agent is done. On an ESP32-C5 a restart for new env vars
              * found 58 KB in one piece, and 76 KB five seconds later. */
             wait_quiet(a);
             if (!stopping(a)) {
-                inst = wasm_runtime_instantiate(module, WASM_STACK, 0, ebuf, sizeof(ebuf));
+                inst = instantiate(a, ebuf, sizeof(ebuf), &short_of_heap);
             }
         }
         wasm_exec_env_t env = inst ? wasm_runtime_create_exec_env(inst, WASM_STACK) : NULL;
@@ -1330,6 +1360,13 @@ static void *runner(void *arg)
             }
             fc_port_log(FC_LOG_WARN, "app %s: %s", a->name, why);
             set_status(a, "Error", why);
+            if (short_of_heap && !stopping(a)) {
+                /* Twice, the second time with the agent idle: not started
+                 * again, which would take the agent's heap every few
+                 * seconds, until its image, its env vars or the firmware
+                 * change, or the device restarts. */
+                completed = 1;
+            }
         } else {
             wasm_runtime_set_user_data(env, a);
             wasm_function_inst_t abi = wasm_runtime_lookup_function(inst, "fc_abi_version");

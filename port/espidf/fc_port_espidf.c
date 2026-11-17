@@ -382,6 +382,11 @@ long fc_port_heap_largest(void)
     return (long)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
 }
 
+long fc_port_heap_free(void)
+{
+    return (long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+}
+
 void fc_port_metrics(void *obj)
 {
     cJSON *o = obj;
