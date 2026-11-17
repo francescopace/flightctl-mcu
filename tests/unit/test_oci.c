@@ -60,6 +60,13 @@ static route_t *route(const char *path)
  * points at /token on the same host, which gives s_token for s_token_basic
  * (any Authorization when that is NULL). */
 static const char *s_require, *s_challenge, *s_token, *s_token_basic;
+/* The token service's answer ("%s" is the token; default {"token":"%s"}),
+ * the last path asked of it and how many times; and a token that runs out
+ * at the first blob: the registry then wants s_rotate_to, which the token
+ * service gives from then on. */
+static const char *s_token_json, *s_rotate_to;
+static char s_token_path[512];
+static int s_tokens;
 static fc_http_target_t s_last;       /* the last request's target */
 static char s_last_host[128], s_last_auth[256];
 static int s_last_ca, s_with_auth_no_ca;
@@ -108,7 +115,9 @@ int fc_http_request(const fc_http_target_t *t, const char *method, const char *p
         int ok = s_token != NULL && (s_token_basic == NULL || (t->authorization != NULL &&
                                                                strcmp(t->authorization, s_token_basic) == 0));
         char json[256];
-        snprintf(json, sizeof(json), "{\"token\":\"%s\"}", ok ? s_token : "");
+        snprintf(json, sizeof(json), s_token_json ? s_token_json : "{\"token\":\"%s\"}", ok ? s_token : "");
+        snprintf(s_token_path, sizeof(s_token_path), "%s", path);
+        s_tokens += ok;
         resp->status = ok ? 200 : 401;
         resp->body = strdup(ok ? json : "");
         resp->body_len = strlen(resp->body);
@@ -132,6 +141,13 @@ int fc_http_get_stream(const fc_http_target_t *t, const char *path, fc_http_data
                        long *total)
 {
     note(t);
+    if (s_rotate_to != NULL) {
+        static char require[64];
+        snprintf(require, sizeof(require), "Bearer %s", s_rotate_to);
+        s_require = require;
+        s_token = s_rotate_to;
+        s_rotate_to = NULL;
+    }
     if (denied(t)) {
         *status = 401;
         *total = -1;
@@ -586,7 +602,9 @@ static void reg_auth_reset(void)
     stub_reset();
     reg_reset();
     fc_oci_set_signing_key(NULL);
-    s_require = s_challenge = s_token = s_token_basic = NULL;
+    s_require = s_challenge = s_token = s_token_basic = s_token_json = s_rotate_to = NULL;
+    s_token_path[0] = '\0';
+    s_tokens = 0;
     s_with_auth_no_ca = 0;
 }
 
@@ -711,6 +729,72 @@ static void a_bearer_token_is_asked_for(void)
     CHECK_INT(s_with_auth_no_ca, 0);
 }
 
+/* What real token services do (tests/registry-bearer.sh: docker_auth and
+ * registry:3, alone and behind nginx as in Harbor). */
+static void a_bearer_token_as_registries_give_it(void)
+{
+    reg_auth_reset();
+    char md[72], err[200] = "";
+    unsigned char *out = NULL;
+    size_t len = 0;
+    push_image("team/app", "v1", "WASM", "application/vnd.wasm.content.layer.v1+wasm", md);
+    fc_port_write_file("/etc/containers/certs.d/reg/ca.crt", CA, strlen(CA));
+    const char *auth = "{\"auths\":{\"reg:5443\":{\"auth\":\"dTpw\"}}}";
+    fc_port_write_file("/etc/containers/auth.json", auth, strlen(auth));
+    s_require = "Bearer T0K3N";
+    s_token = "T0K3N";
+    s_token_basic = "Basic dTpw";
+    /* The scope the registry names, or this repository's; no empty service. */
+    s_challenge = "Bearer realm=\"https://reg:5443/token\"";
+    CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    CHECK_STR(s_token_path, "/token?scope=repository%3Ateam%2Fapp%3Apull");
+    s_challenge = "Bearer realm=\"https://reg:5443/token?account=x\",service=\"reg\",scope=\"repository:team/app:pull\"";
+    CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    CHECK_STR(s_token_path, "/token?account=x&service=reg&scope=repository%3Ateam%2Fapp%3Apull");
+    /* One token for the pull: manifests and blob. */
+    s_tokens = 0;
+    CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    CHECK_INT(s_tokens, 1);
+    /* access_token (OAuth 2), alone or next to an empty token. */
+    s_token_json = "{\"access_token\":\"%s\",\"expires_in\":300}";
+    CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    s_token_json = "{\"token\":\"\",\"access_token\":\"%s\"}";
+    CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    s_token_json = "{\"expires_in\":300}";
+    CHECK(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "gave no token");
+    s_token_json = NULL;
+    /* The token runs out between the manifests and the blob: another one. */
+    s_tokens = 0;
+    s_rotate_to = "T0K3N-2";
+    CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
+    free(out);
+    CHECK_INT(s_tokens, 2);
+    CHECK_STR(s_last_auth, "Bearer T0K3N-2");
+    /* A token that does not open this repository (an account without
+     * access to it, insufficient_scope): said so, and nothing secret. */
+    s_require = "Bearer OTHER";
+    CHECK(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "HTTP 401 (no pull access with these credentials)");
+    CHECK(strstr(err, "T0K3N") == NULL && strstr(err, "dTpw") == NULL);
+    fc_port_write_file("/etc/containers/auth.json", "{}", 2);
+    s_token_basic = NULL;
+    CHECK(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "HTTP 401 (no pull access without credentials)");
+    /* Basic refused at the registry. */
+    s_require = "Basic other";
+    s_challenge = "Basic realm=\"registry\"";
+    fc_port_write_file("/etc/containers/auth.json", auth, strlen(auth));
+    CHECK(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "HTTP 401 (credentials refused)");
+    CHECK_INT(s_with_auth_no_ca, 0);
+}
+
 static void challenges_are_parsed(void)
 {
     char v[64];
@@ -780,6 +864,7 @@ int main(void)
     RUN(basic_credentials_are_sent_when_asked);
     RUN(refused_credentials_are_not_shown);
     RUN(a_bearer_token_is_asked_for);
+    RUN(a_bearer_token_as_registries_give_it);
     RUN(challenges_are_parsed);
     RUN(a_pull_takes_the_connections_turn);
     reg_reset();

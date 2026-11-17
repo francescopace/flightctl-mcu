@@ -3,7 +3,7 @@
 GitHub Actions runs two workflows. On every push that touches code, [ci.yml](../.github/workflows/ci.yml) builds everything and runs the unit tests and a quick fuzzing pass, in about 5 minutes. The end-to-end tests are [e2e.yml](../.github/workflows/e2e.yml), on what a CI run built: the host agent, the firmware images and the WASM apps, kept as the run's artifacts for 90 days. It runs every night on the last successful CI run of main, unless that commit has passed already; by hand from the Actions tab (with a CI run's id, or the last one); and from a CI run, by re-running its `e2e` job, which the first attempt skips. Only the broken firmware of the rollback test is built there.
 
 - **Builds**: the simulated device on Linux, the firmware for every chip in the default and release profiles (with `ccache`), and the `secure` variant for the chips the end-to-end tests emulate, the example WASM apps, and the Zephyr builds. The firmware has no credentials in it. The secure images are not signed: whoever flashes them signs them with their own Secure Boot key ([SECURITY.md](SECURITY.md#signing-a-ci-build)), and the end-to-end test signs them with throwaway keys.
-- **Unit tests** ([tests/unit.sh](../tests/unit.sh), under a second): the C core on an in-memory port, with AddressSanitizer and UBSan (HTTP framing, OCI references, index and signatures, device identity against an independently computed name, rendered specs, certificate renewal answers, re-enrollment, WASM apps run by WAMR: install, update, a module that cannot be stored or loaded or was built for the earlier interface, after a reboot, an app in an endless loop; the app interface against a fake board (GPIO, I2C, SPI, UART, ADC, PWM), the board map with pins or devicetree names, and the example apps; the remote console against a fake stream; gRPC streams on the HTTP/2 client; resource monitors and their alert rules), and the tools' logic in Python (cosign payloads and signatures, the provisioning partition, the allow list, the fleet export for Git).
+- **Unit tests** ([tests/unit.sh](../tests/unit.sh), under a second): the C core on an in-memory port, with AddressSanitizer and UBSan (HTTP framing, OCI references, index and signatures, registry credentials and token services' answers, device identity against an independently computed name, rendered specs, certificate renewal answers, re-enrollment, WASM apps run by WAMR: install, update, a module that cannot be stored or loaded or was built for the earlier interface, after a reboot, an app in an endless loop; the app interface against a fake board (GPIO, I2C, SPI, UART, ADC, PWM), the board map with pins or devicetree names, and the example apps; the remote console against a fake stream; gRPC streams on the HTTP/2 client; resource monitors and their alert rules), and the tools' logic in Python (cosign payloads and signatures, the provisioning partition, the allow list, the fleet export for Git).
 - **Fuzzing** ([tests/fuzz.sh](../tests/fuzz.sh)): the HTTP response reader, the OCI manifest and signature handling, the agent's handling of rendered specs and certificates, and the remote console's handling of the server's bytes. 30 seconds per target on every push, 20 minutes per target every night ([fuzz-nightly.yml](../.github/workflows/fuzz-nightly.yml)), with the corpus kept from one night to the next. Crashes found so far are kept as seed inputs in `tests/fuzz/corpus`.
 - **Hardware for apps on the boards**: [hwcheck](../wasm-apps/hwcheck/hwcheck.c), granted `i2c0 spi0 uart0 adc0 pwm0` with a board map per board, opens each and says what it answers. With nothing wired it scans the I2C bus, transfers on SPI, writes on the UART and reads a floating ADC pin; with a sensor or a jumper it shows what is there. Run by hand on the lab boards, not in CI.
 - **End-to-end test** ([tests/e2e/e2e.sh](../tests/e2e/e2e.sh), in e2e.yml): the job deploys Flight Control 1.4.0 on kind and a registry on the runner, and the device pulls through its door with TLS and a password ([REGISTRY.md](REGISTRY.md)). The simulated device then goes through:
@@ -50,3 +50,23 @@ esp-emu --chip esp32c3 --firmware port/espidf/build-esp32c3/merged-binary.bin --
 ```
 
 What is checked for a single feature is described with it: [firmware deltas](DELTA.md#what-the-tests-check), [provisioning](PROVISIONING.md#what-the-ci-checks), [the secure variant](SECURITY.md#what-the-ci-checks), [the Zephyr port](ZEPHYR.md#what-the-tests-check).
+
+## Registry tokens
+
+[tests/registry-bearer.sh](../tests/registry-bearer.sh), by hand, not in CI: the device's registry client (`fc_oci.c` and `fc_http.c`, built for the host as `fc-oci-pull`, without the agent) against registries that ask for Bearer tokens, in Docker. [docker_auth](https://github.com/cesanta/docker_auth) is the token service, with an account that pushes, a pull-only account for the device and anonymous pulls of `public/*`; two `registry:3` take its tokens: one with the realm on the token service's host, one behind nginx with the realm on its own host and port, as Harbor has it. Everything on a CA made for the run, on ports 9443–9445 (`REG_PORT`, `AUTH_PORT`, `PROXY_PORT`); the containers are removed at the end.
+
+The release is pushed as the tools push it (`tools/fw-push.py`, `oras`, `tools/signing/sign.py`, through the same tokens), then pulled as a device, with the CA and `auth.json` where the fleet puts them, against each registry:
+
+- a firmware from a two-chip index, its signature checked, the image byte for byte, with one token for the whole pull;
+- a WASM layer, signed;
+- a public repository with no credentials (an anonymous token), a private one with none, and one the account may not read: refused with `HTTP 401` and the reason;
+- a wrong password, a token service whose CA the device lacks;
+- a token that runs out between the manifests and the blob: a second token, and the image intact. The tokens live 5 s and `registry:3` allows 60 s of clock skew, so this step waits 70 s (`QUICK=1` leaves it out).
+
+No output may hold the password. Needs docker, oras, openssl, htpasswd (bcrypt), python3, cmake, ninja and mbedTLS 4.
+
+```bash
+tests/registry-bearer.sh
+```
+
+`registry:3` finds the key that signed a token by the token's `kid`, and docker_auth writes it in the form of libtrust, which `registry:3` no longer derives from a certificate: the script gives it the key as a JWKS with that `kid`.

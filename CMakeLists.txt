@@ -81,6 +81,14 @@ target_link_libraries(fc-host-agent PRIVATE fc_core)
 add_executable(fc-prov-host port/host/prov_main.c port/host/fc_port_host.c)
 target_link_libraries(fc-prov-host PRIVATE fc_core)
 
+# The device's registry client alone, against a real registry
+# (tests/registry-bearer.sh). Built from the sources it needs only.
+add_executable(fc-oci-pull EXCLUDE_FROM_ALL tests/registry/oci_pull.c port/host/fc_port_host.c core/src/fc_http.c
+               core/src/fc_log.c third_party/cjson/cJSON.c ${DELTA_SRCS})
+target_include_directories(fc-oci-pull PRIVATE core/include core/src third_party/cjson)
+target_compile_definitions(fc-oci-pull PRIVATE CJSON_NESTING_LIMIT=32)
+target_link_libraries(fc-oci-pull PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::tfpsacrypto Threads::Threads)
+
 # Fuzzers (clang with libFuzzer): cmake -DFC_FUZZ=ON -DCMAKE_C_COMPILER=clang ...
 # then tests/fuzz.sh runs them. Each one compiles the sources it tests, with
 # the sanitizers on.

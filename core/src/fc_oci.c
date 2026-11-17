@@ -429,7 +429,8 @@ static int bearer_token(oci_ref_t *r, char *err, size_t err_len)
     url_encode(service, es, sizeof(es));
     url_encode(scope, esc, sizeof(esc));
     const char *rpath = slash ? slash : "/";
-    snprintf(path, sizeof(path), "%s%sservice=%s&scope=%s", rpath, strchr(rpath, '?') ? "&" : "?", es, esc);
+    snprintf(path, sizeof(path), "%s%s%s%s%sscope=%s", rpath, strchr(rpath, '?') ? "&" : "?", es[0] ? "service=" : "",
+             es, es[0] ? "&" : "", esc);
     char *basic = r->basic != NULL ? header_value("Basic", r->basic) : NULL;
     fc_http_target_t t = {.host = thost,
                           .port = tport,
@@ -455,8 +456,9 @@ static int bearer_token(oci_ref_t *r, char *err, size_t err_len)
     }
     cJSON *j = cJSON_Parse(resp.body);
     fc_http_free(&resp);
+    /* "token", or "access_token" (OAuth 2) where that is the one filled. */
     const char *tok = cJSON_GetStringValue(cJSON_GetObjectItem(j, "token"));
-    if (tok == NULL) {
+    if (tok == NULL || tok[0] == '\0') {
         tok = cJSON_GetStringValue(cJSON_GetObjectItem(j, "access_token"));
     }
     if (tok == NULL || tok[0] == '\0' || strlen(tok) > MAX_TOKEN) {
@@ -524,7 +526,16 @@ static cJSON *get_manifest(oci_ref_t *r, const char *ref, char digest[72], char 
     int rc = reg_get(r, path, ACCEPT_MANIFESTS, &resp, err, err_len);
     if (rc != 0 || resp.status != 200) {
         if (rc != 1) {
-            snprintf(err, err_len, "registry %s: GET manifest %s: HTTP %d", r->hostport, ref, resp.status);
+            /* A 401 after authenticating: the token does not let these
+             * credentials (or no credentials) pull this repository, or
+             * the registry refused the password. */
+            const char *why = "";
+            if (rc == 0 && resp.status == 401 && r->authorization != NULL) {
+                why = strncmp(r->authorization, "Bearer", 6) != 0 ? " (credentials refused)"
+                      : r->basic != NULL                          ? " (no pull access with these credentials)"
+                                                                  : " (no pull access without credentials)";
+            }
+            snprintf(err, err_len, "registry %s: GET manifest %s: HTTP %d%s", r->hostport, ref, resp.status, why);
         }
         fc_http_free(&resp);
         return NULL;
