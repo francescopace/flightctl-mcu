@@ -24,7 +24,8 @@ static fc_fatal_t rec(int kind)
 
 static void test_zephyr_format(void)
 {
-    /* Zephyr's text (port/zephyr/fc_port_zephyr.c, report_last_fatal), unchanged. */
+    /* Zephyr's port (port/zephyr/fc_port_zephyr.c) formats with fc_fatal.h
+     * too. On Arm: the pc and lr, as before the format was shared. */
     fc_fatal_t f = rec(FC_FATAL_LR);
     fc_fatal_copy(f.reason, sizeof(f.reason), "CPU exception");
     f.code = 0;
@@ -33,11 +34,19 @@ static void test_zephyr_format(void)
     f.addrs[f.naddrs++] = 0x00001e01;
     fc_fatal_copy(f.thread, sizeof(f.thread), "fc_agent");
     fc_fatal_seal(&f);
-    char buf[272], want[160];
+    char buf[272];
     fc_fatal_format(&f, "v3.14", buf, sizeof(buf));
-    snprintf(want, sizeof(want), "%s (%u) in thread \"%s\", %u ms after boot, pc 0x%08x lr 0x%08x", "CPU exception", 0u,
-             "fc_agent", 1234u, 0x1f2au, 0x1e01u);
-    CHECK_STR(buf, want);
+    CHECK_STR(buf, "CPU exception (0) in thread \"fc_agent\", 1234 ms after boot, pc 0x00001f2a lr 0x00001e01");
+    /* Where the port reads no registers (native_sim), or the frame did not
+     * check out: the pc 0 and no addresses. */
+    f.naddrs = 0;
+    f.pc = 0;
+    fc_fatal_seal(&f);
+    fc_fatal_format(&f, "v3.14", buf, sizeof(buf));
+    CHECK_STR(buf, "CPU exception (0) in thread \"fc_agent\", 1234 ms after boot, pc 0x00000000");
+    /* A thread name longer than the record keeps: cut. */
+    fc_fatal_copy(f.thread, sizeof(f.thread), "a_thread_name_of_31_characters_");
+    CHECK_STR(f.thread, "a_thread_name_of_");
 }
 
 static void test_backtrace(void)

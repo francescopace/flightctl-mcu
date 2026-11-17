@@ -112,6 +112,47 @@ jobs:
           path: port/espidf/build-${{ matrix.chip }}-${{ env.VARIANT }}/flightctl_mcu_fw.bin
           retention-days: 1
 
+  # The test builds that crash on purpose 30 s after power-on, for what the
+  # status says of a crash (tests/e2e/fatal-emu.sh): a fault, an abort() and
+  # the interrupt watchdog, with the ELF to decode them against. On the S3
+  # (Xtensa) and the C5 (RISC-V), whose panic handlers differ.
+  faulttest:
+    name: crash test firmware (${{ matrix.chip }})
+    needs: source
+    if: needs.source.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.3
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [esp32s3, esp32c5]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - run: git config --global --add safe.directory '*'
+      - run: third_party/fetch-wamr.sh
+      - uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.chip }}-plain-${{ needs.source.outputs.sha }}
+          restore-keys: ccache-${{ matrix.chip }}-plain-
+      - name: build
+        env:
+          SHA: ${{ needs.source.outputs.sha }}
+        shell: bash
+        run: |
+          for v in faulttest faulttest-aborttest faulttest-iwdttest; do
+            port/espidf/build-ci.sh ${{ matrix.chip }} "ci-${SHA::7}" "$v"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: faulttest-${{ matrix.chip }}
+          path: |
+            port/espidf/build-${{ matrix.chip }}-faulttest*/merged-binary.bin
+            port/espidf/build-${{ matrix.chip }}-faulttest*/flightctl_mcu_fw.elf
+          retention-days: 1
+
   host:
     name: end-to-end (simulated device vs Flight Control on kind)
     needs: source
@@ -206,10 +247,10 @@ jobs:
 
   emulator:
     name: end-to-end on an emulated ${{ matrix.chip }}${{ matrix.secure == 1 && ', secure' || '' }} (esp-emu)
-    needs: [source, broken]
+    needs: [source, broken, faulttest]
     if: needs.source.outputs.skip != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 80
     strategy:
       fail-fast: false
       matrix:
@@ -286,6 +327,23 @@ jobs:
           # whole run. The plain C5: the fastest of the emulated chips.
           CERT: ${{ matrix.chip == 'esp32c5' && matrix.secure == 0 && 1 || 0 }}
         run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} tests/e2e/e2e-emu.sh
+      # Then, against the same cluster, what the status says of a crash: the
+      # plain S3 and C5 only (the handlers are per architecture, the secure
+      # variant changes nothing in them).
+      - name: crash builds (this workflow's)
+        if: matrix.secure == 0 && (matrix.chip == 'esp32s3' || matrix.chip == 'esp32c5')
+        uses: actions/download-artifact@v8
+        with:
+          name: faulttest-${{ matrix.chip }}
+          path: port/espidf
+      - name: a crash, a fault, an abort() and the interrupt watchdog (fatal-emu.sh)
+        if: matrix.secure == 0 && (matrix.chip == 'esp32s3' || matrix.chip == 'esp32c5')
+        run: |
+          # addr2line comes from the ESP-IDF image
+          docker pull -q espressif/idf:v6.0.3
+          for mode in fault abort iwdt; do
+            PREBUILT=1 CHIP=${{ matrix.chip }} MODE=$mode tests/e2e/fatal-emu.sh
+          done
       - name: logs on failure
         if: failure()
         run: |
@@ -301,7 +359,7 @@ jobs:
 
   passed:
     name: mark the commit as passed
-    needs: [source, broken, host, zephyr, emulator]
+    needs: [source, broken, faulttest, host, zephyr, emulator]
     runs-on: ubuntu-latest
     steps:
       - run: mkdir .e2e-passed && echo "${{ needs.source.outputs.sha }}" > .e2e-passed/sha

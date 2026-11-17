@@ -31,10 +31,17 @@ The release's SBOM (tools/sbom.py, CycloneDX) goes to build/sbom/ and to the
 registry, as an artifact whose subject is the index; to Trustify too when
 TRUSTIFY_URL is set (docs/SBOM.md).
 
+The ELF of each image (build-<chip>/flightctl_mcu_fw.elf, zephyr.elf next to
+a Zephyr image), what a device's lastFatalError is decoded against with
+addr2line, goes to the registry too, gzipped, in an artifact whose subject is
+the index, tagged sha256-<index digest>.elf: tools/fw-elf.py gets it back.
+Devices never pull it. A build without its ELF is pushed all the same.
+
 The index is then signed with tools/signing/sign.py when a signing key is
 there ($SIGNING_KEY or .secrets/signing.key); NO_SIGN=1 skips it.
 """
 import glob
+import gzip
 import hashlib
 import json
 import os
@@ -59,6 +66,10 @@ HEATSHRINK_WINDOW, HEATSHRINK_LOOKAHEAD = 12, 8
 EMPTY = b"{}"
 EMPTY_TYPE = "application/vnd.oci.empty.v1+json"
 SBOM_TYPE = "application/vnd.cyclonedx+json"
+ELF_ARTIFACT_TYPE = "application/vnd.flightctl-mcu.firmware.elf.v1"
+ELF_TYPE = "application/vnd.flightctl-mcu.firmware.elf.v1+gzip"
+PLATFORM_KEY = "io.flightctl-mcu.platform"
+IMAGE_KEY = "io.flightctl-mcu.image"  # the digest of the image layer the ELF was built with
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 
@@ -177,6 +188,34 @@ def push_sbom(base, host, repo, tag, idigest, isize, entries, empty, root):
         print(f"SBOM in Trustify: {status} {body[:120]}")
 
 
+def push_elfs(base, repo, idigest, isize, elfs, empty):
+    """The ELF of each platform's image, gzipped, in an artifact that refers to
+    the index (OCI 1.1 subject), tagged as the SBOM is: sha256-<index>.elf."""
+    layers = []
+    for platform, path, image in elfs:
+        if not os.path.exists(path):
+            print(f"  {platform:8} no ELF ({path}): its crashes cannot be decoded")
+            continue
+        with open(path, "rb") as f:
+            data = gzip.compress(f.read(), mtime=0)
+        layers.append({"mediaType": ELF_TYPE, "digest": push_blob(base, repo, data), "size": len(data),
+                       "annotations": {"org.opencontainers.image.title": f"flightctl_mcu_fw-{platform}.elf.gz",
+                                       PLATFORM_KEY: platform, IMAGE_KEY: image}})
+    if not layers:
+        return
+    manifest = {
+        "schemaVersion": 2,
+        "mediaType": MANIFEST_TYPE,
+        "artifactType": ELF_ARTIFACT_TYPE,
+        "config": {"mediaType": EMPTY_TYPE, "digest": empty, "size": len(EMPTY)},
+        "layers": layers,
+        "subject": {"mediaType": INDEX_TYPE, "digest": idigest, "size": isize},
+    }
+    edigest, _ = push_manifest(base, repo, f"{idigest.replace(':', '-')}.elf", MANIFEST_TYPE, manifest)
+    size = sum(l["size"] for l in layers)
+    print(f"ELF of {len(layers)} platforms ({size} bytes gzipped), in the registry as {edigest}")
+
+
 def platform_of(build_dir):
     """The platform a build's image is for, as the firmware names it
     (fc_port_fw_platform in port/espidf/fc_port_espidf.c): the chip, and
@@ -219,7 +258,7 @@ def main():
 
     empty = push_blob(base, repo, EMPTY)
     py = detools_python(root) if delta_from else None
-    entries = []
+    entries, elfs = [], []
     for chip in chips:
         path, platform_os, layer_type = f"{fw_dir}/build-{chip}{variant}/flightctl_mcu_fw.bin", "esp-idf", LAYER_TYPE
         if "=" in chip:
@@ -227,6 +266,8 @@ def main():
             platform_os, layer_type = "zephyr", ZEPHYR_LAYER_TYPE
         data = open(path, "rb").read()
         digest = push_blob(base, repo, data)
+        elf = "zephyr.elf" if platform_os == "zephyr" else "flightctl_mcu_fw.elf"
+        elfs.append((chip, os.path.join(os.path.dirname(path), elf), digest))
         # The whole image first: firmware that knows nothing of deltas takes
         # the first layer.
         layers = [{
@@ -269,6 +310,7 @@ def main():
     idigest, isize = push_manifest(base, repo, tag, INDEX_TYPE, index)
     print(f"{ref}@{idigest}")
     push_sbom(base, host, repo, tag, idigest, isize, entries, empty, root)
+    push_elfs(base, repo, idigest, isize, elfs, empty)
     key = os.environ.get("SIGNING_KEY") or f"{root}/.secrets/signing.key"
     if not os.environ.get("NO_SIGN") and os.path.exists(key):
         subprocess.run([f"{root}/tools/signing/sign.py", "--key", key, f"{host}/{repo}@{idigest}"], check=True)

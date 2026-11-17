@@ -1,0 +1,5 @@
+# Test only, with sdkconfig.faulttest: the fault is a loop that starves the
+# idle task, which the task watchdog, set here to panic, ends
+# (tests/e2e/fatal-emu.sh, MODE=twdt). VARIANT=faulttest-twdttest port/espidf/build.sh.
+CONFIG_FC_TEST_FAULT_TWDT=y
+CONFIG_ESP_TASK_WDT_PANIC=y

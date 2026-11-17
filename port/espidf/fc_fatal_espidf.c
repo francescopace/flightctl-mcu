@@ -61,6 +61,18 @@ static IRAM_ATTR uint32_t abort_pc(const char *details)
     return 0;
 }
 
+#if !__XTENSA__
+/* An address in the firmware's code, in flash or in IRAM. Not
+ * esp_ptr_executable: where the SRAM is one block for code and data (the C5,
+ * the C6), pointers to the stack are executable too, and filled the record. */
+static IRAM_ATTR int in_code(uint32_t a)
+{
+    extern char _iram_text_start[], _iram_text_end[], _text_start[], _text_end[];
+    return (a >= (uint32_t)_iram_text_start && a < (uint32_t)_iram_text_end) ||
+           (a >= (uint32_t)_text_start && a < (uint32_t)_text_end);
+}
+#endif
+
 static IRAM_ATTR void add_addr(uint32_t a)
 {
     if (s_rec.naddrs < FC_FATAL_ADDRS) {
@@ -80,6 +92,7 @@ void IRAM_ATTR __wrap_esp_panic_handler(panic_info_t *info)
     int cache = spi_flash_cache_enabled();
     extern bool g_panic_abort;
     extern char *g_panic_abort_details;
+    extern bool g_twdt_isr __attribute__((weak)); /* task_wdt.c, when the task watchdog is in */
     /* Cleared word by word: memset may be in flash. */
     _Static_assert(sizeof(s_rec) % 4 == 0, "fc_fatal_t in words");
     for (volatile uint32_t *w = (volatile uint32_t *)&s_rec; w < (volatile uint32_t *)(&s_rec + 1); w++) {
@@ -101,7 +114,11 @@ void IRAM_ATTR __wrap_esp_panic_handler(panic_info_t *info)
     /* Strings, names and the uptime only while flash can be read: the
      * string literals are in flash too. Without them, "fatal error". */
     if (cache) {
-        if (g_panic_abort) {
+        if (g_panic_abort && &g_twdt_isr != NULL && g_twdt_isr) {
+            /* The task watchdog set to panic goes through abort()'s path, with
+             * the frame of the task that was running: its pc is the one. */
+            fc_fatal_copy(s_rec.reason, sizeof(s_rec.reason), "task watchdog");
+        } else if (g_panic_abort) {
             /* The frame is panic_abort's own: the pc that matters is abort()'s caller. */
             fc_fatal_copy(s_rec.reason, sizeof(s_rec.reason), "abort()");
             uint32_t pc = abort_pc(g_panic_abort_details);
@@ -139,8 +156,8 @@ void IRAM_ATTR __wrap_esp_panic_handler(panic_info_t *info)
         }
 #else
         /* Without frame pointers there is no chain to follow: ra, then the
-         * words of the stack that point into code, as ESP-IDF's stack dump
-         * shows them for idf.py monitor to decode. */
+         * words of the stack that point into the firmware's code, as
+         * ESP-IDF's stack dump shows them for idf.py monitor to decode. */
         add_addr(f->ra);
         const uint32_t *sp = (const uint32_t *)f->sp;
         for (int i = 0; i < 256 && s_rec.naddrs < FC_FATAL_ADDRS; i++) {
@@ -148,7 +165,7 @@ void IRAM_ATTR __wrap_esp_panic_handler(panic_info_t *info)
                 break;
             }
             uint32_t w = sp[i];
-            if (w != f->ra && w != f->mepc && (w & 1) == 0 && esp_ptr_executable((const void *)w)) {
+            if (w != f->ra && w != f->mepc && (w & 1) == 0 && in_code(w)) {
                 add_addr(w);
             }
         }
@@ -193,13 +210,27 @@ const char *fc_espidf_last_fatal(void)
 #if CONFIG_FC_TEST_FAULT_AFTER_S > 0
 /* Test builds only (sdkconfig.faulttest): CONFIG_FC_TEST_FAULT_AFTER_S after
  * a boot that was not a crash, a task of its own writes to address 0, the
- * fault a bug makes, or calls abort() (sdkconfig.aborttest). Its name and this function's are what the test looks
- * for in lastFatalError, decoded against the ELF. */
+ * fault a bug makes, or calls abort() (sdkconfig.aborttest), or loops with
+ * interrupts off until the interrupt watchdog panics (sdkconfig.iwdttest), or
+ * loops above the idle task until the task watchdog does (sdkconfig.twdttest).
+ * Its name and this function's are what the test looks for in
+ * lastFatalError, decoded against the ELF. */
 __attribute__((noinline)) void fc_fatal_test_fault(volatile int *p)
 {
 #if CONFIG_FC_TEST_FAULT_ABORT
     if (p == NULL) {
         abort(); /* as a failed assert or ESP_ERROR_CHECK does */
+    }
+#elif CONFIG_FC_TEST_FAULT_IWDT
+    /* A driver stuck in a critical section: this core's tick stops. */
+    portDISABLE_INTERRUPTS();
+    while (p == NULL) {
+        __asm__ volatile("nop");
+    }
+#elif CONFIG_FC_TEST_FAULT_TWDT
+    /* A task that never blocks: the idle task of its core starves. */
+    while (p == NULL) {
+        __asm__ volatile("nop");
     }
 #endif
     *p = 1;

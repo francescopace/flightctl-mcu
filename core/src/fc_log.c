@@ -122,7 +122,11 @@ static void ready_locked(void)
     s_mem.boot_epoch = 0;
 }
 
-static void put_locked(uint8_t flags, const char *text)
+/* read_clock: 0 from a fatal error's handler, where the wall clock is not
+ * read (on ESP-IDF time() takes a lock of the C library: in a panic it may be
+ * held, and taking it lowers the interrupt level, which lets the interrupt
+ * watchdog that caused the panic in again). The line keeps its uptime. */
+static void put_locked(uint8_t flags, const char *text, int read_clock)
 {
     size_t len = strlen(text);
     while (len > 0 && (text[len - 1] == '\n' || text[len - 1] == '\r')) {
@@ -132,7 +136,7 @@ static void put_locked(uint8_t flags, const char *text)
         len = FC_LOG_TEXT_MAX;
     }
     uint32_t up = fc_log_uptime();
-    time_t now = time(NULL);
+    time_t now = read_clock ? time(NULL) : 0;
     if (now >= CLOCK_SET) {
         s_mem.boot_epoch = (int64_t)now - up;
     }
@@ -157,7 +161,7 @@ void fc_log_put(fc_log_level_t level, const char *text)
 {
     pthread_mutex_lock(&s_lock);
     ready_locked();
-    put_locked((uint8_t)level, text);
+    put_locked((uint8_t)level, text, 1);
     pthread_mutex_unlock(&s_lock);
 }
 
@@ -165,14 +169,14 @@ void fc_log_put_system(fc_log_level_t level, const char *text)
 {
     pthread_mutex_lock(&s_lock);
     ready_locked();
-    put_locked((uint8_t)level | F_SYSTEM, text);
+    put_locked((uint8_t)level | F_SYSTEM, text, 1);
     pthread_mutex_unlock(&s_lock);
 }
 
 void fc_log_put_fatal(const char *text)
 {
     if (s_ready) {
-        put_locked((uint8_t)FC_LOG_ERROR | F_SYSTEM, text);
+        put_locked((uint8_t)FC_LOG_ERROR | F_SYSTEM, text, 0);
     }
 }
 

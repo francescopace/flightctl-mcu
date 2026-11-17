@@ -23,8 +23,19 @@
 #include <zephyr/version.h>
 
 #include "cJSON.h"
+#include "fc_fatal.h"
 #include "fc_log.h"
 #include "fc_port.h"
+
+#if defined(CONFIG_XTENSA) && defined(CONFIG_XTENSA_ENABLE_BACKTRACE)
+/* Zephyr's own Xtensa backtrace (arch/xtensa/include, added by CMakeLists.txt). */
+#include <xtensa_asm2_context.h>
+#include <xtensa_backtrace.h>
+#include <xtensa_stack.h>
+#if XCHAL_HAVE_WINDOWED
+#define FC_XTENSA_BACKTRACE 1
+#endif
+#endif
 
 #define MNT      "/lfs"
 #define KV_DIR   MNT "/kv"
@@ -39,7 +50,7 @@ static struct fs_mount_t s_mnt = {
 };
 
 static void report_last_fatal(void);
-static char s_fatal_text[112]; /* for customInfo: empty unless the last restart was a fatal error */
+static char s_fatal_text[272]; /* for customInfo: empty unless the last restart was a fatal error */
 
 /* ---- Zephyr's own lines into the device's log ----------------------------------
  * What Zephyr prints (printk, and its minimal log: "E: ...", a fatal error's
@@ -409,39 +420,85 @@ void fc_port_reboot(void)
 /* Zephyr's default is to stop for ever on a fatal error (a fault, a stack
  * overflow): right on a desk with a debugger, not for a device no one is
  * near. Start again instead, as the ESP-IDF firmware does. What happened is
- * kept in RAM that a restart does not clear, and said at the next boot: the
- * console may be gone before a message gets out. */
-#define FATAL_MAGIC 0x46544c21u
+ * kept in RAM that a restart does not clear, in the record and the text the
+ * ESP-IDF port uses too (fc_fatal.h), and said at the next boot: the console
+ * may be gone before a message gets out. */
+static __noinit fc_fatal_t s_fatal;
 
-static __noinit struct {
-    uint32_t magic;
-    uint32_t reason;
-    uint32_t pc, lr;
-    uint32_t uptime_ms;
-    char thread[16];
-} s_fatal;
+#ifdef FC_XTENSA_BACKTRACE
+/* A return address as a pc: the window bits replaced with the code region's,
+ * then back into the call (xtensa_backtrace.c, where it is static). */
+static uint32_t xtensa_return_pc(uint32_t pc, uint32_t mask, int cause)
+{
+    if (pc & 0x80000000u) {
+        pc = (pc & 0x3fffffffu) | (cause != EXCCAUSE_INSTR_PROHIBITED ? mask : 0x40000000u);
+    }
+    return pc - 3;
+}
+
+/* The faulting instruction and the return addresses, innermost first, as
+ * Zephyr prints them in its backtrace (xtensa_backtrace_print). The esf is
+ * the interrupted stack, whose first word points to the saved registers. A
+ * k_oops() or k_panic() faults inside xtensa_arch_except: its caller is the
+ * first return address. */
+static void xtensa_fatal_addrs(const struct arch_esf *esf)
+{
+    _xtensa_irq_stack_frame_raw_t *frame = (void *)esf;
+    if (!xtensa_is_frame_pointer_valid(frame)) {
+        return;
+    }
+    const _xtensa_irq_bsa_t *bsa = frame->ptr_to_bsa;
+    s_fatal.pc = bsa->pc;
+    fc_fatal_seal(&s_fatal);
+    struct xtensa_backtrace_frame_t fr = {.cause = (int)bsa->exccause, .mask = 0x40000000u};
+    xtensa_backtrace_get_start(&fr.pc, &fr.sp, &fr.next_pc, (int *)esf);
+    if (fr.cause != EXCCAUSE_INSTR_PROHIBITED) {
+        fr.mask = fr.pc & 0xc0000000u;
+    }
+    /* Sealed one address at a time: a fault while walking the stack still
+     * leaves the record. */
+    while (fr.next_pc != 0 && s_fatal.naddrs < FC_FATAL_ADDRS) {
+        bool ok = xtensa_backtrace_get_next_frame(&fr);
+        s_fatal.addrs[s_fatal.naddrs++] = xtensa_return_pc(fr.pc, fr.mask, fr.cause);
+        fc_fatal_seal(&s_fatal);
+        if (!ok) {
+            break;
+        }
+    }
+}
+#endif
 
 void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 {
-    const char *name = k_thread_name_get(k_current_get());
-    s_fatal.magic = FATAL_MAGIC;
-    s_fatal.reason = reason;
+    memset(&s_fatal, 0, sizeof(s_fatal));
+    s_fatal.code = reason;
     s_fatal.uptime_ms = k_uptime_get_32();
-    s_fatal.pc = s_fatal.lr = 0;
+    fc_fatal_copy(s_fatal.reason, sizeof(s_fatal.reason), fatal_reason(reason));
+    fc_fatal_copy(s_fatal.thread, sizeof(s_fatal.thread), k_thread_name_get(k_current_get()));
+    fc_fatal_copy(s_fatal.firmware, sizeof(s_fatal.firmware), CONFIG_FC_FW_VERSION);
 #ifdef CONFIG_CPU_CORTEX_M
+    s_fatal.kind = FC_FATAL_LR;
     if (esf != NULL) {
         s_fatal.pc = esf->basic.pc;
-        s_fatal.lr = esf->basic.lr;
+        s_fatal.addrs[s_fatal.naddrs++] = esf->basic.lr;
+    }
+#elif defined(FC_XTENSA_BACKTRACE)
+    s_fatal.kind = FC_FATAL_BACKTRACE;
+#endif
+    fc_fatal_seal(&s_fatal);
+#ifdef FC_XTENSA_BACKTRACE
+    if (esf != NULL) {
+        xtensa_fatal_addrs(esf);
     }
 #endif
-    snprintf(s_fatal.thread, sizeof(s_fatal.thread), "%s", name != NULL ? name : "");
     /* The last lines of this boot's log: the report Zephyr printed, then
-     * what this handler knows. */
+     * what this handler knows, as the ESP-IDF port writes it. */
     keep_isr_lines(put_fatal);
-    char text[96];
-    snprintf(text, sizeof(text), "fatal: %s (%u) in thread \"%s\", pc 0x%08x: restarting", fatal_reason(reason),
-             reason, s_fatal.thread, (unsigned)s_fatal.pc);
-    fc_log_put_fatal(text);
+    /* In s_fatal_text, which this boot no longer needs: the S3's RAM is
+     * short of another buffer. */
+    memcpy(s_fatal_text, "fatal: ", 7);
+    fc_fatal_format(&s_fatal, NULL, s_fatal_text + 7, sizeof(s_fatal_text) - 7);
+    fc_log_put_fatal(s_fatal_text);
     sys_reboot(SYS_REBOOT_COLD);
     CODE_UNREACHABLE;
 }
@@ -472,15 +529,14 @@ int fc_zephyr_restart_was_crash(void)
 
 static void report_last_fatal(void)
 {
-    if (s_fatal.magic != FATAL_MAGIC) {
+    /* Believed only if it checks out: after a power cut this RAM holds
+     * anything. */
+    if (!fc_fatal_valid(&s_fatal)) {
         return;
     }
-    s_fatal.magic = 0;
     s_restart_was_crash = 1;
-    s_fatal.thread[sizeof(s_fatal.thread) - 1] = '\0';
-    snprintf(s_fatal_text, sizeof(s_fatal_text), "%s (%u) in thread \"%s\", %u ms after boot, pc 0x%08x lr 0x%08x",
-             fatal_reason(s_fatal.reason), (unsigned)s_fatal.reason, s_fatal.thread, (unsigned)s_fatal.uptime_ms,
-             (unsigned)s_fatal.pc, (unsigned)s_fatal.lr);
+    fc_fatal_format(&s_fatal, CONFIG_FC_FW_VERSION, s_fatal_text, sizeof(s_fatal_text));
+    s_fatal.magic = 0;
     fc_port_log(FC_LOG_ERROR, "restarted after a %s", s_fatal_text);
 }
 

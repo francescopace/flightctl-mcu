@@ -41,7 +41,8 @@ void fc_log_put(fc_log_level_t level, const char *text);
 void fc_log_put_system(fc_log_level_t level, const char *text);
 
 /* The same, from a fatal error's handler: without the lock, which may be
- * held by the code that crashed. Nothing runs after it but the restart. */
+ * held by the code that crashed, and without reading the wall clock (the
+ * line has its uptime). Nothing runs after it but the restart. */
 void fc_log_put_fatal(const char *text);
 
 /* The line numbered *seq or, if it is gone, the oldest after it: copied into

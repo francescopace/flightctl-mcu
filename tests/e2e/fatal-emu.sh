@@ -10,6 +10,11 @@
 #   CHIP=esp32s3 tests/e2e/fatal-emu.sh    Xtensa: a real backtrace
 #   MODE=abort ...                         abort() instead (sdkconfig.aborttest): the pc
 #                                          is abort()'s caller, not the panic's own frame
+#   MODE=iwdt ...                          a loop with interrupts off, which the interrupt
+#                                          watchdog ends (sdkconfig.iwdttest): resetReason int_wdt
+#   MODE=twdt ...                          a loop that starves the idle task, which the task
+#                                          watchdog, set to panic, ends (sdkconfig.twdttest):
+#                                          resetReason task_wdt
 #   PREBUILT=1 ...                         use port/espidf/build-<chip>-<variant> as it is
 #
 # Needs Flight Control running and logged in (tests/e2e/e2e-emu.sh deploys it),
@@ -22,8 +27,13 @@ IP="${HOST_IP:-$(local_ip)}"
 CHIP="${CHIP:-esp32c3}"
 IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.0.3}"
 MODE="${MODE:-fault}"
-VARIANT=faulttest
-[[ "$MODE" == abort ]] && VARIANT=faulttest-aborttest
+case "$MODE" in
+  fault) VARIANT=faulttest RESET=panic REASON='' ;;
+  abort) VARIANT=faulttest-aborttest RESET=panic REASON='abort() (' ;;
+  iwdt) VARIANT=faulttest-iwdttest RESET=int_wdt REASON='Interrupt wdt timeout on CPU' ;;
+  twdt) VARIANT=faulttest-twdttest RESET=task_wdt REASON='task watchdog (' ;;
+  *) echo "MODE: fault, abort, iwdt or twdt" >&2; exit 2 ;;
+esac
 BUILD="port/espidf/build-$CHIP-$VARIANT"
 WORK="$ROOT/build/fatal-emu"
 EMU_PID=""
@@ -80,12 +90,10 @@ for i in $(seq 1 100); do
   sleep 3
 done
 echo "lastFatalError: $FATAL"
-[[ "$(custom resetReason)" == panic ]] || fail "resetReason is not panic"
+[[ "$(custom resetReason)" == "$RESET" ]] || fail "resetReason is $(custom resetReason), not $RESET"
 [[ "$FATAL" == *'in thread "fc_fault"'* ]] || fail "not the fc_fault task"
-if [[ "$MODE" == abort ]]; then
-  [[ "$FATAL" == 'abort() ('* ]] || fail "not abort()"
-fi
-PANIC='Guru Meditation Error|abort\(\) was called'
+[[ "$FATAL" == "$REASON"* ]] || fail "not what $MODE gives: $REASON"
+PANIC='Guru Meditation Error|abort\(\) was called|Task watchdog got triggered'
 grep -qE "$PANIC" "$WORK/emu.log" || fail "no panic in the emulator's log"
 grep -q 'last crash: ' "$WORK/emu.log" || fail "the crash not logged at the next boot"
 

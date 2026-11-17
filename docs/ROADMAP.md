@@ -22,6 +22,7 @@ Checks not made yet:
 - [ ] On ESP-IDF, the core's own WiFi provisioning (`core/src/fc_prov.c`, as on Zephyr): built for every chip, and it passes the end-to-end tests in the emulator (C5, S3, C6), where a network given in the field is joined and kept across restarts. Not yet run on a board. (The core's delta decoder, which replaced detools' library, runs on the boards: the ESP32, C5, C6 and S3 took v3.13-rc1 and rc2 as deltas, `Applied`.)
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); not yet run.
 - [ ] Bearer tokens against a real registry (Harbor, Quay), never tried: `registry:3` asks for Basic.
+- [ ] `lastFatalError` on the ESP32-S3 with Zephyr: the `pc` and the backtrace read from Zephyr's exception frame, built, not yet run (no emulator runs this build; on Arm and with ESP-IDF it is verified, [RESULTS.md](RESULTS.md)). That build has 200 bytes of RAM to spare.
 
 What an app can do and hold:
 
@@ -62,7 +63,7 @@ Not planned here: burning eFuses on a real board. Secure Boot, flash encryption 
 
 Proposed for 2.0, from what similar products offer ([COMPARISON.md](COMPARISON.md)):
 
-- [ ] Crash reports beyond `lastFatalError`: the full coredump sent off the device, to be decoded against the release's ELF. Flight Control has no place for a file from a device; the coredump could go to the registry as an artifact, with write credentials of its own.
+- [ ] Crash reports beyond `lastFatalError`: the full coredump sent off the device, to be decoded against the release's ELF (which `tools/fw-push.py` already keeps in the registry). Flight Control has no place for a file from a device; the coredump could go to the registry as an artifact, with write credentials of its own.
 - [ ] Cellular (LTE-M, NB-IoT): a modem as the link, through ESP-IDF's PPP or Zephyr's cellular drivers. A long-poll held open over cellular costs data and power, so it comes with the battery-powered devices above.
 - [ ] Devices without IP (BLE, Thread) through a Linux gateway in the same fleet: the gateway's Flight Control agent, or an app on it, holds the device's identity and passes its spec, status and firmware.
 - [ ] More silicon: Nordic nRF (nRF7002 WiFi, nRF91 cellular), RP2350, STM32U5, the last two with TF-M to keep the device key protected.

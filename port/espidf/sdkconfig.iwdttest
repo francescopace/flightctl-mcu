@@ -1,0 +1,4 @@
+# Test only, with sdkconfig.faulttest: the fault is a loop with interrupts
+# off, which the interrupt watchdog ends with a panic (tests/e2e/fatal-emu.sh,
+# MODE=iwdt). VARIANT=faulttest-iwdttest port/espidf/build.sh.
+CONFIG_FC_TEST_FAULT_IWDT=y

@@ -8,11 +8,30 @@ config FC_TEST_FAULT_AFTER_S
         tests/e2e/fatal-emu.sh): a task named fc_fault writes to address 0,
         once per power-on. Never in a release.
 
-config FC_TEST_FAULT_ABORT
-    bool "Test only: call abort() instead of writing to address 0"
+choice FC_TEST_FAULT_KIND
+    prompt "Test only: the fault"
     depends on FC_TEST_FAULT_AFTER_S > 0
-    default n
+    default FC_TEST_FAULT_STORE
+
+config FC_TEST_FAULT_STORE
+    bool "A write to address 0"
+
+config FC_TEST_FAULT_ABORT
+    bool "abort(), as a failed assert makes"
     help
         sdkconfig.aborttest, with sdkconfig.faulttest.
+
+config FC_TEST_FAULT_IWDT
+    bool "A loop with interrupts off: the interrupt watchdog's panic"
+    help
+        sdkconfig.iwdttest, with sdkconfig.faulttest.
+
+config FC_TEST_FAULT_TWDT
+    bool "A loop above the idle task: the task watchdog's panic"
+    help
+        sdkconfig.twdttest, with sdkconfig.faulttest: the task watchdog
+        set to panic, which it is not by default.
+
+endchoice
 
 endmenu

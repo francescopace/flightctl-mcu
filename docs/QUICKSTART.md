@@ -104,6 +104,8 @@ Push a firmware index and the WASM app to the registry, then apply the fleet. `a
 tools/fw-push.py <your-ip>:5001/flightctl-mcu/fw:<firmware tag>
 ```
 
+It also pushes each image's ELF, which devices never pull: after a crash, `tools/fw-elf.py <registry>/flightctl-mcu/fw:<tag> <chip>` gets it back to decode the device's `lastFatalError` with `addr2line`.
+
 ```bash
 wasm-apps/build.sh alarm <app tag>
 ```

@@ -83,6 +83,11 @@ target_include_directories(app PRIVATE
 # WAMR 2.4.5's Zephyr port includes <autoconf.h> and <version.h>, which Zephyr
 # generates under zephyr/ and no longer puts on the include path as they are.
 target_include_directories(app PRIVATE ${ZEPHYR_BINARY_DIR}/include/generated/zephyr)
+# On Xtensa the fatal error handler walks the stack with Zephyr's own
+# backtrace, whose headers are the architecture's (fc_port_zephyr.c).
+if(CONFIG_XTENSA)
+    target_include_directories(app PRIVATE ${ZEPHYR_BASE}/arch/xtensa/include)
+endif()
 # FC_LOG_KEEP: the device's log in RAM that a restart keeps (fc_log.h).
 target_compile_definitions(app PRIVATE
     CJSON_NESTING_LIMIT=32
