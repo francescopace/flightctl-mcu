@@ -183,7 +183,7 @@ On Zephyr the board map's names come from the devicetree, not from pins: the chi
 | | |
 |---|---|
 | Apps per device | 2 |
-| Module | 64 KB |
+| Module | what the heap can load beside the agent: a quarter of the internal heap free less 32 KB, 64 KB at most (below) |
 | Linear memory | one 64 KB page, shrunk to what the module uses (see below); a module that does not export `__heap_base` and `__data_end` keeps all it declares |
 | Open handles per app (GPIOs, LEDs, timers...) | 12 |
 | Timers per app | 4 |
@@ -197,7 +197,7 @@ On Zephyr the board map's names come from the devicetree, not from pins: the chi
 
 The instruction budget counts WAMR's fast-interpreter operations. 5 million last 0.66 s on the C5, 0.9 s on the S3, 1.06 s on the C3, 1.2 s on the ESP32 and 1.3 s on the C6, measured on the boards with a counting loop until the budget stopped it (v3.14-rc1, five runs each, within 5% of each other): a call that loops is stopped within about a second and a half. (20 million, the budget before, lasted 2.2 s on the C5, 3.4 s on the C6, 3.8 s on the ESP32 and 4.0 s on the S3.) The device's functions run natively, outside that count: the time spent in them, the waits and the C library ([below](#the-c-library)), has its own limit of a second per call, and only that time counts against it. So a call that loops and calls them is stopped by whichever runs out first, and lasts at most the budget plus a second (2.3 s on the C6). A longer computation is split across ticks.
 
-What limits an app on a small chip is the heap, not the 64 KB the device accepts for a `.wasm`. Each app takes the module as WAMR's fast interpreter loads it (about 2.5 to 3.5 times the `.wasm`), its linear memory (static data and the 1 KB stack), about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)).
+What limits an app on a small chip is the heap. Each app takes the module as WAMR's fast interpreter loads it (about 2.5 to 3.5 times the `.wasm`), its linear memory (static data and the 1 KB stack), about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)). So the device takes a `.wasm` of at most a quarter of the heap it has free, less the agent's 32 KB (below): what loading it takes, the `.wasm` included until it is loaded. With 77 KB free, as a C3 running the `alarm` app, that is 11 KB; never more than 64 KB. A larger one is refused before it is downloaded, `layer is 12540 bytes (max 11520 with this heap)`, and not tried again until the spec changes. A version of the app that runs keeps its part of the heap meanwhile. The thread's 8 KB stay: with the `alarm` app 4.6 KB of them were never used on the classic ESP32 and the S3, 5.5 KB on the C3, C5 and C6, and `printf`, whose formatter runs on that thread, has not been measured on a board yet.
 
 What the apps take must leave the agent the heap it needs to open its connection again and to take a spec: 32 KB of internal RAM (with Zephyr, of the C heap). The device checks it once an app's instance is made, before the agent's connection opens again: an app that leaves less is refused, `its memory would leave the agent 8 KB of heap, less than the 32 KB it needs`, tried once more when the agent is idle, and then not started again until its image or its env vars change, the firmware changes or the device restarts. Its memory in PSRAM (on an ESP32-S3 with PSRAM) does not count. A port that cannot tell how much is free (Zephyr with its own `malloc`) does not check.
 

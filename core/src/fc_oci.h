@@ -24,7 +24,8 @@ const char *fc_oci_delta_outcome(const char **reason);
 
 /* Downloads one layer of `image` into a malloc'd buffer (caller frees):
  * through an index the manifest with platform.architecture == `arch`, then
- * the first layer with mediaType `layer_type`; sha256 checked. */
+ * the first layer with mediaType `layer_type`; sha256 checked. A layer
+ * larger than `max_size` is not downloaded: FC_OCI_REFUSED. */
 int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_type, size_t max_size,
                        unsigned char **out, size_t *out_len, char *digest, size_t digest_len,
                        char *err, size_t err_len);

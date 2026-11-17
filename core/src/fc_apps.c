@@ -45,7 +45,10 @@
 #include "wasm_export.h"
 
 #define FC_APP_ABI_VERSION 1 /* wasm-apps/sdk/fc_app.h */
-#define MAX_WASM_SIZE   (64 * 1024)
+#define MAX_WASM_SIZE   (64 * 1024) /* at most; less as the heap has less (wasm_limit) */
+/* What loading a module takes, in times its .wasm: the module as WAMR's fast
+ * interpreter keeps it (2.5 to 3.5 times), and the .wasm while it loads. */
+#define LOAD_FACTOR     4
 #define WASM_STACK      2048 /* WASM operand/frame stack per app */
 #define APP_MADE_WAIT_MS 5000 /* app_start waits this long at most for the instance */
 #if defined(__ZEPHYR__) && defined(CONFIG_ARCH_POSIX)
@@ -1777,10 +1780,38 @@ static int tick_ms_of(const cJSON *app)
  * stored, then freed) and *module the loaded module, which is what runs. A
  * module WAMR cannot load, or that this firmware cannot run, is rejected
  * before a working app is replaced. */
+/* The largest .wasm the device takes now: what it can load and still leave
+ * the agent s_heap_floor, at most MAX_WASM_SIZE. A running version of the
+ * app, kept until the new one is ready, takes its part of the heap. Its
+ * linear memory and thread come later, checked with the instance (the
+ * floor). */
+static size_t wasm_limit(void)
+{
+    long free_now = fc_port_heap_free();
+    if (free_now < 0) {
+        return MAX_WASM_SIZE;
+    }
+    long n = (free_now - s_heap_floor) / LOAD_FACTOR;
+    return n <= 0 ? 0 : n > MAX_WASM_SIZE ? MAX_WASM_SIZE : (size_t)n;
+}
+
 static int fetch_module(const char *image, const char *entry, unsigned char **out, size_t *len,
                         wasm_module_t *module, char *digest, size_t dlen, char *err, size_t err_len)
 {
-    if (fc_oci_fetch_layer(image, "wasm", LAYER_WASM, MAX_WASM_SIZE, out, len, digest, dlen, err, err_len) != 0) {
+    size_t limit = wasm_limit();
+    int rc = fc_oci_fetch_layer(image, "wasm", LAYER_WASM, limit, out, len, digest, dlen, err, err_len);
+    if (rc == FC_OCI_REFUSED) {
+        /* Larger than the limit: not downloaded, and not tried again until
+         * the spec changes. */
+        size_t n = strlen(err);
+        if (limit < MAX_WASM_SIZE && n > 0 && err[n - 1] == ')') {
+            snprintf(err + n - 1, err_len - (n - 1), " with this heap)"); /* "layer is N bytes (max M with this heap)" */
+        }
+        fc_port_log(FC_LOG_WARN, "%s: %ld KB of heap free, the agent keeps %ld KB", err, fc_port_heap_free() / 1024,
+                    s_heap_floor / 1024);
+        return 1;
+    }
+    if (rc != 0) {
         return -1;
     }
     char ebuf[96];

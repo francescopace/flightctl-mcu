@@ -341,7 +341,7 @@ static void absurd_or_too_large_layers_are_refused(void)
     char digest[80];
     CHECK_INT(fc_oci_fetch_layer("reg:5001/app:big", "test", NULL, 5, &out, &len, digest, sizeof(digest), err,
                                  sizeof(err)),
-              -1);
+              FC_OCI_REFUSED); /* not downloaded, not worth trying again */
     CHECK_CONTAINS(err, "max 5");
 }
 

@@ -97,6 +97,10 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         snprintf(err, err_len, "%s: not found", image);
         return -1;
     }
+    if (len > max_size) { /* as fc_oci.c: not downloaded */
+        snprintf(err, err_len, "%s: layer is %ld bytes (max %u)", image, (long)len, (unsigned)max_size);
+        return FC_OCI_REFUSED;
+    }
     *out = malloc(len);
     memcpy(*out, src, len);
     *out_len = len;
@@ -1384,6 +1388,8 @@ static void test_heap_floor(void)
     remove_all();
 
     stub_heap_free = 8 * 1024;
+    stub_heap_free_next[0] = 1024 * 1024; /* when it is downloaded (wasm_limit): room enough */
+    stub_heap_free_queued = 1;
     CHECK_INT(apply_one("h", "reg/app:v1", NULL, err, sizeof(err)), 0);
     const char *want = "Error its memory would leave the agent 8 KB of heap, less than the 32 KB it needs";
     CHECK_STR(wait_state_of("h", want, 3000), want);
@@ -1429,6 +1435,46 @@ static void test_instantiation_code(void)
     CHECK_INT(apply_one("c", "reg/t_ctorfc", NULL, err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("c", "Running from ctor", 3000), "Running from ctor");
     remove_all();
+}
+
+/* The largest .wasm the device takes follows its heap: what it can load
+ * and still leave the agent its floor. One larger is refused before it is
+ * downloaded, and the spec is not tried again for it. */
+static void test_wasm_limit(void)
+{
+    char err[160];
+    int retry = 0;
+    CHECK_INT((int)wasm_limit(), MAX_WASM_SIZE); /* a port that cannot tell */
+    stub_heap_free = 1024 * 1024;
+    CHECK_INT((int)wasm_limit(), MAX_WASM_SIZE);
+    stub_heap_free = 16 * 1024; /* below the floor: nothing */
+    CHECK_INT((int)wasm_limit(), 0);
+    stub_heap_free = s_heap_floor + LOAD_FACTOR * (long)(sizeof(w_app_hwcheck) - 1);
+    CHECK_INT((int)wasm_limit(), (int)sizeof(w_app_hwcheck) - 1);
+    CHECK(sizeof(s_v1) < sizeof(w_app_hwcheck));
+    int fetches = f_fetches;
+    cJSON *apps = cJSON_CreateArray();
+    cJSON *a = cJSON_CreateObject();
+    cJSON_AddStringToObject(a, "name", "w");
+    cJSON_AddStringToObject(a, "appType", "container");
+    cJSON_AddStringToObject(a, "image", "reg/app_hwcheck");
+    cJSON_AddItemToArray(apps, a);
+    CHECK_INT(fc_apps_apply(apps, err, sizeof(err), &retry), -1);
+    cJSON_Delete(apps);
+    char want[96];
+    snprintf(want, sizeof(want), "layer is %d bytes (max %d with this heap)", (int)sizeof(w_app_hwcheck),
+             (int)sizeof(w_app_hwcheck) - 1);
+    if (strstr(err, want) == NULL) {
+        fprintf(stderr, "%s\n", err);
+    }
+    CHECK(strstr(err, want) != NULL);
+    CHECK_INT(retry, 0);
+    CHECK_INT(f_fetches, fetches + 1);
+    /* A smaller one is taken. */
+    CHECK_INT(apply_one("w", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("w", "Running v1", 3000), "Running v1");
+    remove_all();
+    stub_heap_free = -1;
 }
 
 static void test_remove(void)
@@ -1478,6 +1524,7 @@ int main(void)
     RUN(test_hold_leaves_room_for_the_stack);
     RUN(test_heap_floor);
     RUN(test_instantiation_code);
+    RUN(test_wasm_limit);
     RUN(test_fc_info);
     RUN(test_fc_timer);
     RUN(test_fc_config);

@@ -1082,7 +1082,7 @@ static int fetch_layer(oci_ref_t *rp, const char *image, const char *arch, const
     }
     if ((size_t)blob_size > max_size) {
         snprintf(err, err_len, "%s: layer is %ld bytes (max %u)", image, blob_size, (unsigned)max_size);
-        return -1;
+        return FC_OCI_REFUSED; /* not downloaded: the same image would be refused again */
     }
     mem_sink_t m = {.buf = malloc((size_t)blob_size), .cap = (size_t)blob_size};
     if (m.buf == NULL) {
