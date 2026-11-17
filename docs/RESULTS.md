@@ -49,9 +49,9 @@ The ESP32-S2 and the Raspberry Pi Pico W were dropped for their RAM ([support le
 
 ### Firmware size
 
-ESP-IDF 6.0.3, v3.12, built for size (`-Os`) with WAMR, which runs the apps, at `-O2`:
+ESP-IDF 6.0.3, built for size (`-Os`), with WAMR at `-O2`:
 
-| Chip | Image | Free in the 1,664 KB OTA slot | Built for speed (`-O2`), v3.10 |
+| Chip | Image, v3.12 | Free in the 1,664 KB OTA slot | Built for speed (`-O2`), v3.10 |
 |---|---|---|---|
 | ESP32 | 978 KB | 41% | 1,121 KB |
 | ESP32-S3 | 977 KB | 41% | 1,118 KB |
@@ -59,22 +59,23 @@ ESP-IDF 6.0.3, v3.12, built for size (`-Os`) with WAMR, which runs the apps, at 
 | ESP32-C5 | 1,107 KB | 33% | 1,282 KB |
 | ESP32-C6 | 1,110 KB | 33% | 1,288 KB |
 
-`-Os` saves 141 to 178 KB per image (about 13%); what it costs in speed is under [CoreMark](#coremark). A delta from v3.11 to v3.12 is 49 to 61 KB (4.7–6.2% of the image).
+`-Os` saves 141 to 178 KB per image (about 13%). A delta from v3.11 to v3.12 is 49 to 61 KB (4.7–6.2% of the image).
 
-The largest parts, on the C3, built for speed (the agent as of v3.11, the rest measured on an earlier build):
-
-| Component | Flash (code and constants) |
+| Component, on the C3 built for speed | Flash |
 |---|---|
 | WiFi, WPA and lwIP | about 430 KB |
 | Cryptography and TLS (mbedTLS 4, TF-PSA-Crypto) | about 197 KB |
 | WAMR (fast interpreter) | 68 KB |
-| **flightctl-mcu agent** (`core/`: enrollment, spec, status with HTTP/2, resource alerts, OTA, OCI, signatures, apps, deltas) | **about 62 KB**; 79 KB with cJSON, WiFi provisioning, the delta decoder and the ESP-IDF port |
+| **The agent** (`core/`) | **about 62 KB**; 79 KB with cJSON, WiFi provisioning, the delta decoder and the ESP-IDF port |
+| The apps' C library | 7.7 KB |
+| WiFi provisioning with its access point, on the S3 | 17.4 KB, against 117.5 KB for Espressif's `network_provisioning` ([PROVISIONING.md](PROVISIONING.md#in-the-field-the-wifi-network)) |
+| Floating point in `printf`, Zephyr on the S3 | 5.4 KB, no RAM |
 
-Almost all the space goes to the network stack and to cryptography, which any securely connected device needs anyway. The core's own WiFi provisioning takes 17.4 KB on the S3 (debug build) with its access point, where Espressif's `network_provisioning` took 117.5 KB ([PROVISIONING.md](PROVISIONING.md#in-the-field-the-wifi-network)).
+Almost all the space goes to the network stack and to cryptography, which any securely connected device needs anyway.
 
 ### RAM
 
-Internal heap with the `alarm` app running. v3.12 holds one TLS connection at a time; these figures were read after 40 minutes of CoreMark installs and swaps, the lowest during CoreMark's runs:
+Internal heap with the `alarm` app running; on the ESP32, C5, C6 and S3 after 40 minutes of CoreMark installs and swaps:
 
 | Board | Firmware | Free | Lowest | Largest internal block |
 |---|---|---|---|---|
@@ -85,23 +86,27 @@ Internal heap with the `alarm` app running. v3.12 holds one TLS connection at a 
 | ESP32-C3 | v3.13-rc6, an hour after boot | 70 to 75 KB | 2.8 KB, at start-up | 36.0 KB |
 | ESP32-S3, Zephyr | before the app interface | about 50 KB | – | – |
 
-On the C3 the lowest is reached in the first seconds after boot, before any app or export. v3.13 also holds the device's log (4 KB) and sends metrics every 30 s. The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot). The app interface takes about 4.5 KB of static RAM, its C library included. The C library takes 7.7 KB of flash on the C3; the tables of native functions are const, in flash, which took static RAM 1.5 KB down. The C3 with the `alarm` app uses 1% of its CPU.
-
-Internal heap with metrics (v3.13-rc6, an export every 30 s) and with MQTT (v3.14-rc6, the `alarm` app and `mqttdemo`, the broker on the LAN with TLS):
-
-| Board | Lowest during a metrics export | Free once MQTT is connected |
+| Board | Lowest during a metrics export, every 30 s (v3.13-rc6) | Free once MQTT is connected (v3.14-rc6) |
 |---|---|---|
 | Classic ESP32 | 79 to 100 KB | 91 KB |
 | ESP32-S3 | 93 to 108 KB | 96 KB |
 | ESP32-C5 | 26 to 49 KB | 44 KB |
-| ESP32-C6 | 25 to 44 KB (WiFi buffers at ESP-IDF's defaults) | 141 KB |
+| ESP32-C6 | 25 to 44 KB, WiFi buffers at ESP-IDF's defaults | 141 KB |
 | ESP32-C3 | 19 to 20 KB; 13 KB right after it took a whole firmware | 39 KB |
+| ESP32-S3, Zephyr (z26) | 8.3 KB of the C heap, 55 KB free, steady | – |
 
-No export was skipped for want of memory, and none took a device's heap below what its boot had reached ([METRICS.md](METRICS.md)). The MQTT client's thread used 3.2 to 4.2 KB of its 8 KB stack ([APPS.md](APPS.md#mqtt)). On the C3 after a restart, MQTT connected 4 s after the agent's own connection. The connection keeps 9 KB of heap (49 KB free before, 40 KB after), and the heap's lowest in the first 23 s was 3 KB, against 9 KB without MQTT. With Zephyr on the ESP32-S3 (z26), the metrics connection takes its 17 KB receive buffer from the C heap: 55 KB of it free, 8.3 KB at the lowest, steady over the exports.
+| Part | What it takes |
+|---|---|
+| Device log | 4 KB |
+| Resource alerts | about 4 KB: 65.6 KB free on the C3 five minutes after boot |
+| App interface and C library | about 4.5 KB of static RAM; 1.5 KB less since the function tables are const, in flash |
+| A WASM app: `trend`, 1.9 KB of `.wasm`, on the C3 | 17.7 KB of heap: the loaded module about 5 KB, the instance and its WAMR stack about 3.5 KB, its memory about 1 KB, its thread's stack 8 KB |
+| The MQTT connection, on the C3 | 9 KB of heap (49 KB free before, 40 KB after); the client's thread used 3.2 to 4.2 KB of its 8 KB stack |
+| The metrics connection, Zephyr on the S3 | its 17 KB receive buffer, from the C heap |
 
-With Zephyr on the ESP32-S3, the current build leaves 4,112 bytes of the 372 KB DRAM segment once its static data is linked. That build has the Xtensa backtrace for `lastFatalError`, MQTT, floating point in `printf` (5.4 KB of code, no RAM), a 12 KB stack for the status thread and a 92 KB kernel heap. This is the margin at link time, not memory free while it runs: the heap is counted apart, above.
+On the C3 the heap's lowest comes in the first seconds after boot: 3 KB in the first 23 s with MQTT, which connects 4 s after the agent, against 9 KB without. With Zephyr on the ESP32-S3, 4,112 bytes of the 372 KB DRAM segment are left at link time, with a 12 KB status-thread stack and a 92 KB kernel heap.
 
-Stack used at most, of the stack each has (customInfo `stackMinFreeBytes`; here a KB is 1,024 bytes):
+Stack used at most (`stackMinFreeBytes`), of the stack each thread has; here a KB is 1,024 bytes:
 
 | Firmware | Spec loop, on the main task | Status thread | App thread |
 |---|---|---|---|
@@ -111,9 +116,7 @@ Stack used at most, of the stack each has (customInfo `stackMinFreeBytes`; here 
 | Zephyr on a Cortex-M3 (`mps2/an385` in QEMU) | | | 2.7 of 8 KB (`printf` of `%f`); 2.5 without the C library |
 | ESP32-C3 in the emulator, v3.14-rc4 | | | 2.8 of 8 KB (`printf` and `snprintf` of `%f`) |
 
-The spec loop's figures include the main task's start-up, which runs on the same stack first. Installing an app or downloading firmware takes about twice the stack of polling. A certificate renewal runs on the status thread and has not been measured on a board.
-
-What a WASM app costs, on the C3 (debug build): 17.7 KB of heap for the `trend` app (1.9 KB of `.wasm`). Split on a host with the same module: the module loaded by WAMR's fast interpreter (about 5 KB), the instance and its WAMR stack (about 3.5 KB), the module's linear memory (about 1 KB) and the app's thread stack (8 KB). The `.wasm` itself is freed once the module is loaded.
+Installing an app or downloading firmware takes about twice the stack of polling. The C3 with the `alarm` app uses 1% of its CPU.
 
 ### CoreMark
 
