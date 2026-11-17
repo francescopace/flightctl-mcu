@@ -51,7 +51,7 @@ With ESP-IDF 6.0.3 and mbedTLS 4, every board. The free heap is the last one mea
 | ESP32-C3 | RISC-V | everything works | ~66 KB |
 | ESP32-C5 | RISC-V | everything works; also tested in the emulator | ~131 KB |
 | ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~137 KB |
-| ESP32-C6 | RISC-V | everything except rollback, which was not exercised | ~163 KB |
+| ESP32-C6 | RISC-V | everything | ~163 KB |
 
 The C3 and C6 figures are from an earlier build, before the spec loop moved to the main task (37 KB more free on the classic ESP32): they are low.
 
