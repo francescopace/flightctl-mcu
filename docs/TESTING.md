@@ -63,6 +63,8 @@ The release is pushed as the tools push it (`tools/fw-push.py`, `oras`, `tools/s
 - a wrong password (and a wrong robot token on Quay), a token service whose CA the device lacks;
 - a token that runs out between the manifests and the blob: a second token, and the image intact. The tokens live 5 s and `registry:3` allows 60 s of clock skew, so this step waits 70 s (`QUICK=1` leaves it out).
 
+The firmware index carries the C3 and S3 images (1.1 MB) or made-up ones. The tokens seen were RS256, about 1 KB from Quay for a pull-only robot account and 0.8 KB from docker_auth, one per pull. Not run: Harbor (no arm64 image), and tokens on a board (the same code).
+
 No output may hold the password. Needs docker, oras, openssl, htpasswd (bcrypt), python3, cmake, ninja and mbedTLS 4.
 
 ```bash
