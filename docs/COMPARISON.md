@@ -37,7 +37,7 @@ Of the eight, only flightctl-mcu:
 - publishes an SBOM per release to Trustify, and Flight Control shows the CVEs on the devices that run it ([SBOM.md](SBOM.md));
 - puts microcontrollers in Red Hat Edge Manager, with the same fleets, label selectors, rollouts and RBAC as bootc devices. Most of the others manage Linux too, each in its own way.
 
-It is behind on crash reports, which stop at what the status says after a restart, and on data from the apps (the 1.0 and 2.0 items below). WiFi is its only link on real boards, deep sleep waits on Flight Control, and support is the community's.
+It is behind on crash reports, which stop at what the status says after a restart, with no coredump (a 2.0 item), and its apps' peripherals have not yet been tried with devices wired to them. WiFi is its only link on real boards, deep sleep waits on Flight Control, and support is the community's.
 
 ## Golioth, Memfault and Mender in detail
 
