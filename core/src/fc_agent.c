@@ -194,6 +194,8 @@ typedef struct {
     int exporting; /* under lock: an export runs (fc_agent_busy) */
     int metrics_poke; /* under lock: METRICS_CONFIG changed, export now */
     int mqtt_poke;    /* spec thread: the broker's config or CA changed (fc_mqtt.h) */
+    int mqtt_retry;   /* spec thread: the client could not start for want of memory */
+    int status_once;  /* under lock: a status was accepted since boot (the agent's TLS is up) */
     int console_quiet; /* spec thread: the sessions listed were all seen before */
 } agent_t;
 
@@ -751,8 +753,10 @@ static void apply_end(agent_t *a)
 static agent_t *s_running;
 
 /* fc_mqtt's may_connect, through fc_apps_mqtt_hooks: no handshake for the
- * broker while a download has the turn, a spec is applied, an export runs,
- * a status is due or a new firmware is being verified. */
+ * broker before the agent's own connection is up (at boot the two together
+ * left a C3 with 8 KB of heap), nor while a download has the turn, a spec is
+ * applied, an export runs, a status is due or a new firmware is being
+ * verified. */
 static int idle_for_mqtt(void)
 {
     agent_t *a = s_running;
@@ -760,7 +764,7 @@ static int idle_for_mqtt(void)
         return 0;
     }
     pthread_mutex_lock(&a->lock);
-    int busy = a->downloading || a->turn_depth > 0 || a->applying || a->exporting || a->status_urgent ||
+    int busy = !a->status_once || a->downloading || a->turn_depth > 0 || a->applying || a->exporting || a->status_urgent ||
                a->putting || a->verifying || a->decom != DECOM_NONE;
     pthread_mutex_unlock(&a->lock);
     return !busy;
@@ -1491,6 +1495,9 @@ static void *status_thread(void *arg)
         last_put = time(NULL);
         if (ok) {
             last_ok = last_put;
+            pthread_mutex_lock(&a->lock);
+            a->status_once = 1;
+            pthread_mutex_unlock(&a->lock);
         } else {
             fc_port_log(FC_LOG_WARN, "status update failed, retrying");
             if (!decommissioning) {
@@ -1742,7 +1749,7 @@ static void apply_rendered(agent_t *a, const char *json)
     if (a->mqtt_poke) {
         /* A new broker, a new CA, or none: once both files are written. */
         a->mqtt_poke = 0;
-        fc_mqtt_configure(a->id.name);
+        a->mqtt_retry = fc_mqtt_configure(a->id.name) == -2;
     }
 
     /* Downloads below take the connection's turn: the agent's is closed
@@ -1843,6 +1850,9 @@ static void *spec_thread(void *arg)
     agent_t *a = arg;
     time_t quiet_since = 0; /* only sessions seen before listed, since then */
     for (;;) {
+        if (a->mqtt_retry) {
+            a->mqtt_retry = fc_mqtt_configure(a->id.name) == -2;
+        }
         char known[32];
         long stack = fc_port_stack_unused();
         pthread_mutex_lock(&a->lock);
@@ -2088,7 +2098,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
      * before the apps, whose heap check then counts them; it connects once
      * the agent is idle (idle_for_mqtt). */
     fc_apps_mqtt_hooks(idle_for_mqtt);
-    fc_mqtt_configure(a.id.name);
+    a.mqtt_retry = fc_mqtt_configure(a.id.name) == -2;
 
     /* The spec loop runs on the caller's thread (the main task), which would
      * otherwise only wait: one stack less. Its stack has seen enrollment too. */

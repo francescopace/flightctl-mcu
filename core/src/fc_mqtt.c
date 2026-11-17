@@ -1641,7 +1641,7 @@ int fc_mqtt_configure(const char *device)
         fc_port_log(FC_LOG_WARN, "mqtt: no memory for the receive pool (%d bytes)", FC_MQTT_POOL_SIZE);
         cfg_free(cfg);
         unconfigure();
-        return -1;
+        return -2;
     }
     if (cfg->tls && NEEDS_TLS_BLOCK && !s_st->extra_block) {
         fc_tls_pool_extra(1);
@@ -1660,9 +1660,9 @@ int fc_mqtt_configure(const char *device)
     if (pthread_attr_setstacksize(&s_st->attr, FC_MQTT_STACK_SIZE) != 0 ||
         pthread_create(&s_st->thread, &s_st->attr, mqtt_thread, NULL) != 0) {
         pthread_attr_destroy(&s_st->attr);
-        fc_port_log(FC_LOG_ERROR, "mqtt: cannot start the client's thread (a stack of %u KB)",
+        fc_port_log(FC_LOG_WARN, "mqtt: cannot start the client's thread (a stack of %u KB): tried again later",
                     (unsigned)(FC_MQTT_STACK_SIZE / 1024));
-        return -1;
+        return -2;
     }
     s_st->running = 1;
     if (!cfg->tls) {

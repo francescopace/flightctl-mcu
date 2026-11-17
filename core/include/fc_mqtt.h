@@ -88,7 +88,8 @@ void fc_mqtt_set_hooks(const fc_mqtt_hooks_t *h);
  * `device` is the device's name, NULL until it has enrolled (no connection
  * until then). Subscriptions are kept across it, their topics under the new
  * prefixes. Returns 1 connecting, 0 no broker configured, -1 a config that
- * cannot be used (logged; the client is stopped). */
+ * cannot be used (logged; the client is stopped), -2 no memory now for the
+ * client's thread or pool: call it again later. */
 int fc_mqtt_configure(const char *device);
 /* Stops the client and closes the connection (subscriptions are kept). */
 void fc_mqtt_stop(void);
