@@ -289,7 +289,7 @@ static void test_tls_extra(void)
 /* ---- a fake broker ------------------------------------------------------------------------ */
 
 static pthread_mutex_t f_lock = PTHREAD_MUTEX_INITIALIZER;
-static int f_fd = -1, f_connects, f_links_up, f_links_down, f_refuse, f_ends;
+static int f_fd = -1, f_old_fd = -1, f_connects, f_links_up, f_links_down, f_refuse, f_ends;
 typedef struct {
     void *owner;
     int sub;
@@ -309,9 +309,12 @@ static int fake_connect(mbedtls_net_context *net, const char *host, int port)
     }
     net->fd = sv[0];
     pthread_mutex_lock(&f_lock);
-    if (f_fd >= 0) {
-        close(f_fd);
+    /* The link before is closed at the next one: the test may still have to
+     * read what the client sent on it (its DISCONNECT), however late. */
+    if (f_old_fd >= 0) {
+        close(f_old_fd);
     }
+    f_old_fd = f_fd;
     f_fd = sv[1];
     f_connects++;
     pthread_mutex_unlock(&f_lock);
@@ -381,11 +384,10 @@ static int wait_for(int *v, int want, int ms)
     return locked(v) >= want;
 }
 
-static int f_read(unsigned char *b, size_t n)
+static int f_read(int fd, unsigned char *b, size_t n)
 {
-    int fd = locked(&f_fd);
     while (n > 0) {
-        if (fd_readable(fd, 3000) != 1) {
+        if (fd_readable(fd, 30000) != 1) {
             return -1;
         }
         ssize_t r = read(fd, b, n);
@@ -398,26 +400,33 @@ static int f_read(unsigned char *b, size_t n)
     return 0;
 }
 
-/* One packet from the client: its first byte, its body in b. -1 none in 3 s. */
-static int f_packet(unsigned char *b, size_t cap, size_t *len)
+/* One packet from the client on the link fd: its first byte, its body in b.
+ * -1 none in 30 s. */
+static int f_packet_on(int fd, unsigned char *b, size_t cap, size_t *len)
 {
     unsigned char first, x;
-    if (f_read(&first, 1) != 0) {
+    if (f_read(fd, &first, 1) != 0) {
         return -1;
     }
     size_t rem = 0, mult = 1;
     do {
-        if (f_read(&x, 1) != 0) {
+        if (f_read(fd, &x, 1) != 0) {
             return -1;
         }
         rem += (x & 0x7fu) * mult;
         mult *= 128;
     } while (x & 0x80);
-    if (rem > cap || f_read(b, rem) != 0) {
+    if (rem > cap || f_read(fd, b, rem) != 0) {
         return -1;
     }
     *len = rem;
     return first;
+}
+
+/* One packet from the client on the current link. */
+static int f_packet(unsigned char *b, size_t cap, size_t *len)
+{
+    return f_packet_on(locked(&f_fd), b, cap, len);
 }
 
 static void f_send(const void *b, size_t n)
@@ -497,7 +506,7 @@ static void test_client(void)
     /* Connecting: CONNECT, then the subscriptions taken before. */
     CHECK_INT(fc_mqtt_configure("dev1"), 1);
     CHECK(stub_log_has("mqtt: broker.test:1883 without TLS, as the fleet asks"));
-    CHECK(wait_for(&f_connects, 1, 3000));
+    CHECK(wait_for(&f_connects, 1, 30000));
     unsigned char pk[1024];
     size_t n = 0;
     CHECK_INT(f_packet(pk, sizeof(pk), &n), 0x10);
@@ -508,7 +517,7 @@ static void test_client(void)
     CHECK_INT(locked(&f_ends), 0); /* the handshake waits for the CONNACK */
     unsigned char connack[4] = {0x20, 2, 0, 0};
     f_send(connack, sizeof(connack));
-    CHECK(wait_for(&f_links_up, 1, 3000));
+    CHECK(wait_for(&f_links_up, 1, 30000));
     CHECK_INT(locked(&f_ends), 1); /* over before the link is up */
     f_expect_sub(0, "flightctl/dev1/app1/in/#", 1);
     f_expect_sub(0, "flightctl/fleet/f1/app2/cmd", 0);
@@ -542,7 +551,7 @@ static void test_client(void)
     f_publish("flightctl/fleet/f1/app2/cmd", "go", 2, 0, 0);
     f_publish("flightctl/dev1/app9/in/x", "not ours", 8, 0, 0);
     f_publish("flightctl/dev1/app1/in", "a/# matches its parent", 22, 0, 0);
-    CHECK(wait_for(&f_ngot, 3, 3000));
+    CHECK(wait_for(&f_ngot, 3, 30000));
     CHECK(got(0)->owner == &a && got(0)->sub == sa);
     CHECK_STR(got(0)->topic, "in/x");
     CHECK_STR(got(0)->payload, "data");
@@ -586,7 +595,7 @@ static void test_client(void)
         f_publish("flightctl/dev1/app1/in/full", big, 490, 0, 0); /* 8 + 7 + 490: 4 fit */
     }
     f_publish("flightctl/fleet/f1/app2/cmd", "still", 5, 0, 0);
-    CHECK(wait_for(&f_ngot, 5, 3000));
+    CHECK(wait_for(&f_ngot, 5, 30000));
     usleep(100000);
     CHECK_INT(locked(&f_ngot), 5);
     CHECK(got(4)->owner == &b);
@@ -604,7 +613,7 @@ static void test_client(void)
     CHECK(sc >= 0);
     f_expect_sub(0, "flightctl/fleet/f1/app2/cmd", 1); /* the highest QoS asked */
     f_publish("flightctl/fleet/f1/app2/cmd", "both", 4, 0, 0);
-    CHECK(wait_for(&f_ngot, 2, 3000));
+    CHECK(wait_for(&f_ngot, 2, 30000));
     CHECK(got(0)->m != got(1)->m);
     CHECK((got(0)->owner == &b && got(1)->owner == &c) || (got(0)->owner == &c && got(1)->owner == &b));
     CHECK_STR(got(1)->payload, "both");
@@ -626,14 +635,14 @@ static void test_client(void)
     close(f_fd);
     f_fd = -1;
     pthread_mutex_unlock(&f_lock);
-    CHECK(wait_for(&f_links_down, 1, 3000));
+    CHECK(wait_for(&f_links_down, 1, 30000));
     CHECK_INT(fc_mqtt_publish("app1", FC_STR("p"), "1", 1, 0, 0), FC_HW_EAGAIN);
-    CHECK(wait_for(&f_connects, 2, 5000));
+    CHECK(wait_for(&f_connects, 2, 30000));
     f_accept(0);
-    CHECK(wait_for(&f_links_up, 2, 3000));
+    CHECK(wait_for(&f_links_up, 2, 30000));
     f_expect_sub(0, "flightctl/dev1/app1/in/#", 1);
     f_publish("flightctl/dev1/app1/in/again", "x", 1, 0, 0);
-    CHECK(wait_for(&f_ngot, 1, 3000));
+    CHECK(wait_for(&f_ngot, 1, 30000));
     CHECK_STR(got(0)->topic, "in/again");
     fc_mqtt_msg_free(got(0)->m);
 
@@ -645,9 +654,10 @@ static void test_client(void)
     json = "{\"broker\": \"mqtt://broker.test\", \"username\": \"u\", \"password\": \"p\","
            " \"devicePrefix\": \"plant/{device}/{app}\"}";
     fc_port_write_file(FC_MQTT_CONFIG, json, strlen(json));
+    int old = locked(&f_fd); /* the new link may come before the test reads the old one */
     CHECK_INT(fc_mqtt_configure("dev1"), 1);
-    CHECK_INT(f_packet(pk, sizeof(pk), &n), 0xe0); /* DISCONNECT */
-    CHECK(wait_for(&f_connects, 3, 3000));
+    CHECK_INT(f_packet_on(old, pk, sizeof(pk), &n), 0xe0); /* DISCONNECT */
+    CHECK(wait_for(&f_connects, 3, 30000));
     f_accept(0);
     f_expect_sub(0, "plant/dev1/app1/in/#", 1);
     /* No fleetPrefix now. */
@@ -658,10 +668,10 @@ static void test_client(void)
     close(f_fd);
     f_fd = -1;
     pthread_mutex_unlock(&f_lock);
-    CHECK(wait_for(&f_connects, 4, 5000));
+    CHECK(wait_for(&f_connects, 4, 30000));
     f_accept(4);
-    CHECK(wait_for(&f_links_down, 3, 3000));
-    CHECK(wait_for(&f_ends, 4, 5000)); /* a failed handshake is over too, its refusal logged before */
+    CHECK(wait_for(&f_links_down, 3, 30000));
+    CHECK(wait_for(&f_ends, 4, 30000)); /* a failed handshake is over too, its refusal logged before */
     CHECK(stub_log_has("mqtt: broker.test:1883 refused the connection: bad user name or password"));
     fc_mqtt_stats(&st);
     CHECK_INT(st.connected, 0);

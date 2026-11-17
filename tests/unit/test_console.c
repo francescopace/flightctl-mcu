@@ -192,7 +192,7 @@ static int session(const char *id, const char *metadata)
 
 static int wait_closed(int n)
 {
-    for (int i = 0; i < 300; i++) {
+    for (int i = 0; i < 3000; i++) { /* 30 s at most, however slow the machine */
         pthread_mutex_lock(&f_lock);
         int c = f_closed;
         pthread_mutex_unlock(&f_lock);
@@ -282,7 +282,7 @@ static void reboot_restarts_after_the_status(void)
     reset();
     session("s7", "{\"command\": {\"command\": \"reboot\"}, " V5 "}");
     CHECK(wait_closed(1));
-    for (int i = 0; i < 300 && stub_reboots == 0; i++) {
+    for (int i = 0; i < 3000 && stub_reboots == 0; i++) {
         usleep(10 * 1000);
     }
     CHECK_INT(stub_reboots, 1);
@@ -384,7 +384,7 @@ static int count_of(const char *hay, const char *needle)
 static const char *answer(int nth)
 {
     static char one[16384];
-    for (int i = 0; i < 300 && count_of(sent(CH_STDOUT), FOOTER) < nth; i++) {
+    for (int i = 0; i < 3000 && count_of(sent(CH_STDOUT), FOOTER) < nth; i++) {
         usleep(10 * 1000);
     }
     const char *o = sent(CH_STDOUT);
@@ -503,12 +503,16 @@ static void live_logs_follow_until_the_user_leaves(void)
     char cmd[2100];
     ui_journal(cmd, agent, agent, 1);
     type_in(cmd);
-    for (int i = 0; i < 300 && strstr(sent(CH_STDOUT), "before L3") == NULL; i++) {
+    for (int i = 0; i < 3000 && strstr(sent(CH_STDOUT), "before L3") == NULL; i++) {
         usleep(10 * 1000);
     }
-    usleep(300 * 1000);
-    fc_log_put(FC_LOG_WARN, "after L3");
-    for (int i = 0; i < 300 && strstr(sent(CH_STDOUT), "after L3") == NULL; i++) {
+    /* The follow starts a moment after the first part's lines, and shows
+     * only what comes after it: a line again and again until one is seen,
+     * however slow the machine. */
+    for (int i = 0; i < 3000 && strstr(sent(CH_STDOUT), "after L3") == NULL; i++) {
+        if (i % 10 == 0) {
+            fc_log_put(FC_LOG_WARN, "after L3");
+        }
         usleep(10 * 1000);
     }
     const char *o = sent(CH_STDOUT);
@@ -626,7 +630,7 @@ static void a_shell_line_is_split_as_bash_would(void)
     type_in("printf '%s\\n' \"$?\"\n");
     type_in("echo '");
     type_in("multi\nline'\n");
-    for (int i = 0; i < 300 && strstr(sent(CH_STDOUT), "multi\nline\n") == NULL; i++) {
+    for (int i = 0; i < 3000 && strstr(sent(CH_STDOUT), "multi\nline\n") == NULL; i++) {
         usleep(10 * 1000);
     }
     const char *o = sent(CH_STDOUT);

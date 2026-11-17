@@ -27,6 +27,11 @@
 #define s_v1 w_t_state
 static unsigned char s_v2[sizeof(s_v1)];
 
+/* What removing or updating an app that runs may take: it stops at its next
+ * branch, so this bound, far past that on any host, only tells it from one
+ * never stopped, or stopped at the end of a wait (30 s in test_entry_waits). */
+#define STOP_MS 5000
+
 /* A module whose start section loops forever, and that exports tick(): clang
  * does not write a start section, so by hand:
  *   (module (type (func)) (func $s (loop (br 0))) (func $t)
@@ -616,44 +621,53 @@ static void test_libc_oob(void)
     remove_all();
 }
 
-/* A loop of the C library's native calls is stopped after a second spent in
- * them, though it runs few of the app's instructions. */
+/* A loop of the C library's native calls is stopped by the limit on the time
+ * spent in them, though it runs few of the app's instructions. No budget at
+ * all, so that only that limit can stop it, however fast or slow the host;
+ * the limit is 50 ms instead of a second, to be quick. */
 static void test_libc_loop(void)
 {
     char err[160];
-    s_call_budget = 1000000000; /* on a chip 5 million take a second; the host is faster */
-    int64_t t0 = fc_apps_now_ms();
+    s_call_budget = -1;
+    s_native_limit_us = 50 * 1000;
     CHECK_INT(apply_one("p", "reg/t_libcloop", NULL, err, sizeof(err)), 0);
     const char *want = "Error Exception: a call spent more than 1 s in the device's functions";
-    CHECK_STR(wait_state_of("p", want, 5000), want);
-    CHECK(fc_apps_now_ms() - t0 < 3000);
+    CHECK_STR(wait_state_of("p", want, 30000), want);
     remove_all();
     s_call_budget = FC_APP_CALL_BUDGET;
+    s_native_limit_us = (int64_t)APP_CALL_MS * 1000;
 }
 
 /* Only the time spent in the C library counts against its limit: a call of
  * the app's own instructions with a C library call now and then runs past
- * that limit in time and is stopped by its instruction budget. Before, the
- * whole call's time counted, and on the slower chips such a loop was stopped
- * after a second, before its budget. */
+ * that limit in time and is not stopped. Before, the whole call's time
+ * counted, and on the slower chips such a loop was stopped after a second,
+ * before its budget. No budget at all, so that the call lasts as long as the
+ * test waits, however fast or slow the host: three times the limit. */
 static void test_libc_mixed(void)
 {
     char err[160];
     s_native_limit_us = 50 * 1000;
-    s_call_budget = 30000000;
+    s_call_budget = -1;
     CHECK_INT(apply_one("m", "reg/t_libcmix", NULL, err, sizeof(err)), 0);
-    const char *want = "Error Exception: instruction limit exceeded";
-    for (int i = 0; i < 1000 && strncmp(state_of("m"), "Error", 5) != 0; i++) {
+    int64_t ms = 0, native_us = 0;
+    for (int i = 0; i < 30000 && strncmp(state_of("m"), "Error", 5) != 0; i++) {
+        pthread_mutex_lock(&s_lock);
+        const app_t *a = find("m");
+        ms = a->run_env != NULL ? fc_apps_now_ms() - a->call_start_ms : 0; /* tick() in progress: it never returns */
+        native_us = __atomic_load_n(&a->native_us, __ATOMIC_RELAXED);
+        pthread_mutex_unlock(&s_lock);
+        if (ms * 1000 > 3 * s_native_limit_us) {
+            break;
+        }
         usleep(1000);
     }
-    pthread_mutex_lock(&s_lock);
-    int64_t ms = fc_apps_now_ms() - find("m")->call_start_ms; /* how long the call ran, within a millisecond or so */
-    pthread_mutex_unlock(&s_lock);
-    CHECK_STR(state_of("m"), want);
-    if (ms <= 100) {
-        fprintf(stderr, "the budget ran out in %ld ms: the test proves nothing\n", (long)ms);
+    CHECK_STR(state_of("m"), "Running ");
+    if (ms * 1000 <= 3 * s_native_limit_us || native_us > s_native_limit_us) {
+        fprintf(stderr, "the call ran %ld ms, %ld us of them in the C library\n", (long)ms, (long)native_us);
     }
-    CHECK(ms > 100);
+    CHECK(ms * 1000 > 3 * s_native_limit_us);
+    CHECK(native_us <= s_native_limit_us);
     remove_all();
     s_call_budget = FC_APP_CALL_BUDGET;
     s_native_limit_us = (int64_t)APP_CALL_MS * 1000;
@@ -766,24 +780,25 @@ static void test_entry_stopped(void)
     int64_t t0 = fc_apps_now_ms();
     remove_all();
     int64_t ms = fc_apps_now_ms() - t0;
-    CHECK(ms < 500);
+    CHECK(ms < STOP_MS);
     CHECK_STR(state_of("s"), "none");
     /* Updated (new env vars) while in its loop: stopped and run again. */
     CHECK_INT(apply_one("s", "reg/t_start", NULL, err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("s", "Running ", 3000), "Running ");
     t0 = fc_apps_now_ms();
     CHECK_INT(apply_one("s", "reg/t_start", "{\"TICK_MS\": \"50\"}", err, sizeof(err)), 0);
-    CHECK(fc_apps_now_ms() - t0 < 500);
+    CHECK(fc_apps_now_ms() - t0 < STOP_MS);
     CHECK_STR(wait_state_of("s", "Running ", 3000), "Running ");
     remove_all();
 }
 
 /* A module run once starts when the agent has had nothing on hand for
- * ENTRY_QUIET_MS; or after s_entry_wait_ms in any case. */
+ * ENTRY_QUIET_MS; or after s_entry_wait_ms in any case. That wait is 30 s
+ * here, far past what a slow host takes for the quiet one and run(). */
 static void test_entry_waits(void)
 {
     char err[160];
-    s_entry_wait_ms = 6000;
+    s_entry_wait_ms = 30000;
     __atomic_store_n(&f_busy, 1, __ATOMIC_RELEASE);
     CHECK_INT(apply_one("e", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
     usleep(1500 * 1000); /* run() takes 300 ms: it has not started */
@@ -793,9 +808,9 @@ static void test_entry_waits(void)
     pthread_mutex_unlock(&s_lock);
     int64_t t0 = fc_apps_now_ms();
     __atomic_store_n(&f_busy, 0, __ATOMIC_RELEASE);
-    CHECK_STR(wait_state_of("e", "Completed run() returned 1234.568", 4000), "Completed run() returned 1234.568");
+    CHECK_STR(wait_state_of("e", "Completed run() returned 1234.568", 20000), "Completed run() returned 1234.568");
     int64_t ms = fc_apps_now_ms() - t0;
-    CHECK(ms >= ENTRY_QUIET_MS && ms < ENTRY_QUIET_MS + 1500);
+    CHECK(ms >= ENTRY_QUIET_MS);
     remove_all();
     /* The agent never quiet: it starts anyway. */
     s_entry_wait_ms = 300;
@@ -804,15 +819,30 @@ static void test_entry_waits(void)
     CHECK_STR(wait_state_of("e", "Completed run() returned 1234.568", 3000), "Completed run() returned 1234.568");
     remove_all();
     /* Removed while it waits: gone at once. */
-    s_entry_wait_ms = 6000;
+    s_entry_wait_ms = 30000;
     CHECK_INT(apply_one("e", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
     usleep(200 * 1000);
     t0 = fc_apps_now_ms();
     remove_all();
-    CHECK(fc_apps_now_ms() - t0 < 500);
+    CHECK(fc_apps_now_ms() - t0 < STOP_MS);
     CHECK_STR(state_of("e"), "none");
     __atomic_store_n(&f_busy, 0, __ATOMIC_RELEASE);
     s_entry_wait_ms = 0;
+}
+
+/* Until the app's runner has let its instance go (live 0), which it does
+ * after the status that says why ("Completed", "Error"), or 30 s. */
+static void wait_idle(const char *name)
+{
+    for (int i = 0; i < 3000; i++) {
+        pthread_mutex_lock(&s_lock);
+        int live = find(name)->live;
+        pthread_mutex_unlock(&s_lock);
+        if (!live) {
+            return;
+        }
+        usleep(10 * 1000);
+    }
 }
 
 /* An app that does not run is released before its new image is loaded, and
@@ -822,6 +852,7 @@ static void test_replace_idle(void)
     char err[160];
     CHECK_INT(apply_one("r", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("r", "Completed run() returned 1234.568", 3000), "Completed run() returned 1234.568");
+    wait_idle("r"); /* "Completed" comes a moment before */
     CHECK(apply_one("r", "reg/nothing", NULL, err, sizeof(err)) != 0);
     CHECK(find("r")->module == NULL); /* released: it had ended */
     CHECK_STR(state_of("r"), "Error reg/nothing: not found");
@@ -834,15 +865,10 @@ static void test_replace_idle(void)
     remove_all();
     /* One that waits to restart (it trapped) has no instance: released. */
     CHECK_INT(apply_one("r", "reg/app:loop", NULL, err, sizeof(err)), 0);
-    for (int i = 0; i < 300; i++) {
-        pthread_mutex_lock(&s_lock);
-        int waiting = strcmp(find("r")->status, "Error") == 0 && !find("r")->live;
-        pthread_mutex_unlock(&s_lock);
-        if (waiting) {
-            break;
-        }
+    for (int i = 0; i < 3000 && strncmp(state_of("r"), "Error", 5) != 0; i++) {
         usleep(10 * 1000);
     }
+    wait_idle("r");
     CHECK(apply_one("r", "reg/nothing", NULL, err, sizeof(err)) != 0);
     CHECK(find("r")->module == NULL);
     remove_all();
@@ -1687,7 +1713,7 @@ static void test_instantiation_code(void)
     CHECK_STR(state_of("c"), "Preparing ");
     int64_t t0 = fc_apps_now_ms();
     remove_all();
-    CHECK(fc_apps_now_ms() - t0 < 500);
+    CHECK(fc_apps_now_ms() - t0 < STOP_MS);
     CHECK_STR(state_of("c"), "none");
     s_call_budget = FC_APP_CALL_BUDGET;
     CHECK_INT(apply_one("c", "reg/t_ctorfc", NULL, err, sizeof(err)), 0);

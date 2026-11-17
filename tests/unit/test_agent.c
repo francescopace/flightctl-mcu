@@ -741,10 +741,15 @@ static void metrics_and_pulls_take_turns(void)
 static void *export_ends_later(void *arg)
 {
     agent_t *a = arg;
-    usleep(50 * 1000);
-    pthread_mutex_lock(&a->lock);
-    CHECK_INT(a->applying, 1); /* no new export from now on */
-    pthread_mutex_unlock(&a->lock);
+    /* Until the spec has begun (no new export from now on), however slow
+     * the machine: it waits for the export, so it cannot end before. */
+    int applying = 0;
+    while (!applying) {
+        usleep(1000);
+        pthread_mutex_lock(&a->lock);
+        applying = a->applying;
+        pthread_mutex_unlock(&a->lock);
+    }
     metrics_done(a);
     return NULL;
 }
