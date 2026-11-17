@@ -53,20 +53,24 @@ What is checked for a single feature is described with it: [firmware deltas](DEL
 
 ## Registry tokens
 
-[tests/registry-bearer.sh](../tests/registry-bearer.sh), by hand, not in CI: the device's registry client (`fc_oci.c` and `fc_http.c`, built for the host as `fc-oci-pull`, without the agent) against registries that ask for Bearer tokens, in Docker. [docker_auth](https://github.com/cesanta/docker_auth) is the token service, with an account that pushes, a pull-only account for the device and anonymous pulls of `public/*`; two `registry:3` take its tokens: one with the realm on the token service's host, one behind nginx with the realm on its own host and port, as Harbor has it. Everything on a CA made for the run, on ports 9443–9445 (`REG_PORT`, `AUTH_PORT`, `PROXY_PORT`); the containers are removed at the end.
+[tests/registry-bearer.sh](../tests/registry-bearer.sh), by hand, not in CI: the device's registry client (`fc_oci.c` and `fc_http.c`, built for the host as `fc-oci-pull`, without the agent) against registries that ask for Bearer tokens, in Docker. [docker_auth](https://github.com/cesanta/docker_auth) is the token service, with an account that pushes, a pull-only account for the device and anonymous pulls of `public/*`; two `registry:3` take its tokens: one with the realm on the token service's host, one behind nginx with the realm on its own host and port, as Harbor has it. With `QUAY=1`, Quay too (3.17, with Postgres and Redis, on port 9446, `QUAY_PORT`): an organization for each repository and, for the device, a robot account that reads `flightctl-mcu`; it takes about 1 GB of memory and a minute or two to start. Everything on a CA made for the run, on ports 9443–9445 (`REG_PORT`, `AUTH_PORT`, `PROXY_PORT`); the containers are removed at the end.
 
 The release is pushed as the tools push it (`tools/fw-push.py`, `oras`, `tools/signing/sign.py`, through the same tokens), then pulled as a device, with the CA and `auth.json` where the fleet puts them, against each registry:
 
 - a firmware from a two-chip index, its signature checked, the image byte for byte, with one token for the whole pull;
 - a WASM layer, signed;
 - a public repository with no credentials (an anonymous token), a private one with none, and one the account may not read: refused with `HTTP 401` and the reason;
-- a wrong password, a token service whose CA the device lacks;
+- a wrong password (and a wrong robot token on Quay), a token service whose CA the device lacks;
 - a token that runs out between the manifests and the blob: a second token, and the image intact. The tokens live 5 s and `registry:3` allows 60 s of clock skew, so this step waits 70 s (`QUICK=1` leaves it out).
 
 No output may hold the password. Needs docker, oras, openssl, htpasswd (bcrypt), python3, cmake, ninja and mbedTLS 4.
 
 ```bash
 tests/registry-bearer.sh
+```
+
+```bash
+QUAY=1 tests/registry-bearer.sh
 ```
 
 `registry:3` finds the key that signed a token by the token's `kid`, and docker_auth writes it in the form of libtrust, which `registry:3` no longer derives from a certificate: the script gives it the key as a JWKS with that `kid`.

@@ -8,7 +8,11 @@
 #   - registry:3 with token auth on https :REG_PORT, its realm on the token
 #     service's host (another host, as GitLab has it);
 #   - registry:3 and the token service behind nginx on :PROXY_PORT, the realm
-#     on the registry's own host and port (as Harbor, Quay and GHCR have it).
+#     on the registry's own host and port (as Harbor, Quay and GHCR have it);
+#   - with QUAY=1, Quay itself (quay.io/projectquay/quay, QUAY_IMAGE) with
+#     Postgres and Redis on :QUAY_PORT: an organization per repository, the
+#     device's account a robot account with read access to flightctl-mcu
+#     (about 1 GB of memory, and a minute or two to start).
 # A CA of its own, an account that pushes and a pull-only one for the device.
 # The tools push (tools/fw-push.py, signed; oras), then fc-oci-pull pulls as
 # a device: multi-chip index, signature, firmware blob, a WASM layer, with
@@ -19,20 +23,26 @@
 # skew; QUICK=1 skips it).
 #
 # Needs docker, oras, openssl, htpasswd, python3, cmake, ninja, mbedTLS 4.
-# Usage: [REG_PORT=9443 AUTH_PORT=9444 PROXY_PORT=9445] [QUICK=1] tests/registry-bearer.sh
+# Usage: [REG_PORT=9443 AUTH_PORT=9444 PROXY_PORT=9445] [QUICK=1] [QUAY=1 QUAY_PORT=9446] \
+#          tests/registry-bearer.sh
 # Everything is removed at the end, the containers too (KEEP=1 keeps them).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source tools/local-ip.sh
 REG_PORT="${REG_PORT:-9443}" AUTH_PORT="${AUTH_PORT:-9444}" PROXY_PORT="${PROXY_PORT:-9445}"
+QUAY_PORT="${QUAY_PORT:-9446}"
+case "$(uname -m)" in arm64 | aarch64) QUAY_ARCH=-arm64 ;; *) QUAY_ARCH="" ;; esac
+QUAY_IMAGE="${QUAY_IMAGE:-quay.io/projectquay/quay:v3.17.3$QUAY_ARCH}"
 # oras refuses a realm on a loopback address: the LAN IP, through nip.io.
 IP="$(local_ip)"
 REG_HOST="reg.$IP.nip.io" AUTH_HOST="auth.$IP.nip.io"
 REG="$REG_HOST:$REG_PORT" PROXY="$REG_HOST:$PROXY_PORT"
+QUAY_HOST="quay.$IP.nip.io" QUAY="quay.$IP.nip.io:$QUAY_PORT"
 W="$ROOT/build/registry-bearer"
 NET=fc-bearer-test
-CONTAINERS=(fc-bearer-auth fc-bearer-registry fc-bearer-registry2 fc-bearer-nginx)
+CONTAINERS=(fc-bearer-auth fc-bearer-registry fc-bearer-registry2 fc-bearer-nginx fc-bearer-quay fc-bearer-quay-db
+            fc-bearer-quay-redis)
 
 cleanup() {
   if [[ -z "${KEEP:-}" ]]; then
@@ -43,7 +53,8 @@ cleanup() {
 trap cleanup EXIT
 cleanup
 rm -rf "$W"
-mkdir -p "$W/certs" "$W/auth" "$W/nginx"
+mkdir -p "$W/certs" "$W/auth" "$W/nginx" "$W/quay/conf" "$W/quay/storage"
+chmod 777 "$W/quay/storage"
 
 { cmake -S . -B build/oci-pull -G Ninja && cmake --build build/oci-pull --target fc-oci-pull; } > "$W/build.log" 2>&1 ||
   { tail -20 "$W/build.log"; exit 1; }
@@ -63,6 +74,11 @@ PULL="$ROOT/build/oci-pull/fc-oci-pull"
     openssl x509 -req -in $n.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out $n.crt -days 2 \
       -extfile $n.ext 2>/dev/null
   done
+  openssl req -newkey rsa:2048 -nodes -keyout quay.key -out quay.csr -subj "/CN=quay.$IP.nip.io" 2>/dev/null
+  printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\nkeyUsage=critical,digitalSignature,keyEncipherment\n' \
+    "quay.$IP.nip.io" > quay.ext
+  openssl x509 -req -in quay.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out quay.crt -days 2 -extfile quay.ext \
+    2>/dev/null
   openssl req -x509 -newkey rsa:2048 -nodes -keyout token.key -out token.crt -days 2 -subj /CN=fc-test-auth 2>/dev/null
   chmod 644 ./*.key
   # registry:3 finds the signing key by the token's kid, which docker_auth
@@ -118,6 +134,15 @@ authjson "$W/pusher.json" "$REG" pusher "$PUSH_PASS"
 python3 -c "import json,sys; a=json.load(open(sys.argv[1])); a['auths'][sys.argv[2]]=a['auths'][sys.argv[3]]; json.dump(a,open(sys.argv[1],'w'))" \
   "$W/pusher.json" "$PROXY" "$REG"
 authjson "$W/device.json" "$REG" device "$DEV_PASS"
+addauth() { # file key user password: one more registry in an auth.json
+  python3 - "$@" <<'EOF'
+import base64, json, sys
+f, key, user, pw = sys.argv[1:5]
+a = json.load(open(f))
+a["auths"][key] = {"auth": base64.b64encode(f"{user}:{pw}".encode()).decode()}
+json.dump(a, open(f, "w"))
+EOF
+}
 authjson "$W/device-proxy.json" "$PROXY" device "$DEV_PASS" plain
 authjson "$W/wrong.json" "$REG" device wrong-password
 echo '{"auths":{}}' > "$W/none.json"
@@ -164,6 +189,67 @@ for url in "https://$REG/v2/" "https://$AUTH_HOST:$AUTH_PORT/" "https://$PROXY/v
   done
 done
 
+if [[ -n "${QUAY:-}" ]]; then
+  cp "$W/certs/quay.crt" "$W/quay/conf/ssl.cert"
+  cp "$W/certs/quay.key" "$W/quay/conf/ssl.key"
+  DB_PASS="$(openssl rand -hex 12)" QUAY_ADMIN_PASS="$(openssl rand -hex 12)"
+  cat > "$W/quay/conf/config.yaml" <<EOF
+AUTHENTICATION_TYPE: Database
+BUILDLOGS_REDIS: {host: fc-bearer-quay-redis, port: 6379}
+USER_EVENTS_REDIS: {host: fc-bearer-quay-redis, port: 6379}
+DATABASE_SECRET_KEY: $(openssl rand -hex 24)
+SECRET_KEY: $(openssl rand -hex 24)
+DB_URI: postgresql://quay:$DB_PASS@fc-bearer-quay-db/quay
+DEFAULT_TAG_EXPIRATION: 2w
+TAG_EXPIRATION_OPTIONS: [2w]
+DISTRIBUTED_STORAGE_CONFIG:
+  default: [LocalStorage, {storage_path: /datastorage/registry}]
+DISTRIBUTED_STORAGE_DEFAULT_LOCATIONS: []
+DISTRIBUTED_STORAGE_PREFERENCE: [default]
+FEATURE_MAILING: false
+FEATURE_USER_INITIALIZE: true
+FEATURE_USER_CREATION: false
+SUPER_USERS: [quayadmin]
+SERVER_HOSTNAME: $QUAY
+PREFERRED_URL_SCHEME: https
+SETUP_COMPLETE: true
+FEATURE_GENERAL_OCI_SUPPORT: true
+EOF
+  chmod 644 "$W/quay/conf/"*
+  docker run -d --name fc-bearer-quay-db --network "$NET" -e POSTGRES_USER=quay -e POSTGRES_PASSWORD="$DB_PASS" \
+    -e POSTGRES_DB=quay postgres:15-alpine >/dev/null
+  docker run -d --name fc-bearer-quay-redis --network "$NET" redis:7-alpine >/dev/null
+  for _ in $(seq 1 60); do
+    docker exec fc-bearer-quay-db psql -U quay -d quay -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;' >/dev/null 2>&1 && break
+    sleep 1
+  done
+  docker run -d --name fc-bearer-quay --network "$NET" -p "$QUAY_PORT:8443" -v "$W/quay/conf:/conf/stack" \
+    -v "$W/quay/storage:/datastorage" "$QUAY_IMAGE" >/dev/null
+  for _ in $(seq 1 150); do
+    [[ "$(curl -s -o /dev/null -w '%{http_code}' --cacert "$W/certs/ca.crt" "https://$QUAY/v2/")" == 401 ]] && break
+    sleep 2
+  done
+  QUAY_API="$(curl -sf --cacert "$W/certs/ca.crt" -H 'Content-Type: application/json' -X POST \
+    "https://$QUAY/api/v1/user/initialize" \
+    -d "{\"username\":\"quayadmin\",\"password\":\"$QUAY_ADMIN_PASS\",\"email\":\"admin@example.invalid\",\"access_token\":true}" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+  qapi() { # method path [json]: Quay's API as its administrator
+    curl -sf --cacert "$W/certs/ca.crt" -H "Authorization: Bearer $QUAY_API" -H 'Content-Type: application/json' \
+      -X "$1" "https://$QUAY/api/v1/$2" ${3:+-d "$3"}
+  }
+  for org in flightctl-mcu public other; do
+    qapi POST organization/ "{\"name\":\"$org\",\"email\":\"$org@example.invalid\"}" >/dev/null
+  done
+  # The device's account: a robot that reads every repository of flightctl-mcu.
+  ROBOT_TOKEN="$(qapi PUT organization/flightctl-mcu/robots/device '{"description":"pull only"}' |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+  qapi POST organization/flightctl-mcu/prototypes \
+    '{"role":"read","delegate":{"kind":"user","name":"flightctl-mcu+device"}}' >/dev/null
+  addauth "$W/pusher.json" "$QUAY" quayadmin "$QUAY_ADMIN_PASS"
+  authjson "$W/device-quay.json" "$QUAY" flightctl-mcu+device "$ROBOT_TOKEN"
+  addauth "$W/wrong.json" "$QUAY" flightctl-mcu+device not-the-token
+fi
+
 # ---- push, as a release is pushed -----------------------------------------
 head -c 600000 /dev/urandom > "$W/fw-a.bin"
 head -c 700000 /dev/urandom > "$W/fw-b.bin"
@@ -193,17 +279,26 @@ runpy.run_path("tools/fw-push.py", run_name="__main__")' \
 }
 push "$REG"
 push "$PROXY"
+if [[ -n "${QUAY:-}" ]]; then
+  push "$QUAY"
+  qapi POST repository/public/app/changevisibility '{"visibility":"public"}' >/dev/null
+fi
 
 # ---- pull, as a device ----------------------------------------------------
 fails=0
-tokens() { docker logs fc-bearer-auth 2>&1 | grep -c "New token" || true; }
+tokens() { # tokens given so far: docker_auth's, and Quay's (its nginx's log)
+  local a q=0
+  a=$(docker logs fc-bearer-auth 2>&1 | grep -c "New token" || true)
+  [[ -n "${QUAY:-}" ]] && q=$(docker logs fc-bearer-quay 2>&1 | grep -c '"GET /v2/auth?[^"]*HTTP/2.0" 200' || true)
+  echo $((a + q))
+}
 # pull <name> <auth.json> <expected: ok | error text> <fc-oci-pull args...>
 pull() {
   local name="$1" auth="$2" want="$3" out rc=0 t0
   shift 3
   t0=$(tokens)
   rm -rf "$W/dev" "$W/out"
-  local cas=(--ca "$REG_HOST=$W/certs/ca.crt")
+  local cas=(--ca "$REG_HOST=$W/certs/ca.crt" --ca "$QUAY_HOST=$W/certs/ca.crt")
   [[ -z "${NO_AUTH_CA:-}" ]] && cas+=(--ca "$AUTH_HOST=$W/certs/ca.crt")
   out=$("$PULL" --data "$W/dev" "${cas[@]}" --auth "$auth" --key "$W/signing.pub" "$@" 2>&1) || rc=$?
   LAST_TOKENS=$(( $(tokens) - t0 ))
@@ -212,7 +307,7 @@ pull() {
   else
     echo "FAIL $name (exit $rc)"; echo "$out" | tail -3 | sed 's/^/     /'; fails=$((fails + 1))
   fi
-  for secret in "$DEV_PASS" "$(printf %s "device:$DEV_PASS" | base64)"; do
+  for secret in "$DEV_PASS" "$(printf %s "device:$DEV_PASS" | base64)" ${ROBOT_TOKEN:+"$ROBOT_TOKEN"}; do
     if [[ "$out" == *"$secret"* ]]; then
       echo "FAIL $name: a secret in the output"; fails=$((fails + 1))
     fi
@@ -225,10 +320,11 @@ expect_tokens() { # <name> <n>
   if [[ "$LAST_TOKENS" -eq "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: $LAST_TOKENS tokens"; fails=$((fails + 1)); fi
 }
 
-for r in "$REG" "$PROXY"; do
+for r in "$REG" "$PROXY" ${QUAY:+"$QUAY"}; do
   where="realm on the token service's host"
   auth="$W/device.json"
   if [[ "$r" == "$PROXY" ]]; then where="realm on the registry's host, behind nginx"; auth="$W/device-proxy.json"; fi
+  if [[ "$r" == "$QUAY" ]]; then where="Quay ($QUAY_IMAGE), a robot account"; auth="$W/device-quay.json"; fi
   echo "-- $r: $where"
   FC_FW_PLATFORM=chip-b pull "firmware of chip-b from the index, signed" "$auth" ok fw "$r/flightctl-mcu/fw:t1" "$W/out"
   same "  the image as pushed" "$W/out" "$W/fw-b.bin"
@@ -243,6 +339,10 @@ for r in "$REG" "$PROXY"; do
 done
 echo "-- $REG: what fails"
 pull "wrong password" "$W/wrong.json" "HTTP 401 (credentials refused)" layer "$REG/flightctl-mcu/app:t1" wasm "$WASM" "$W/out"
+if [[ -n "${QUAY:-}" ]]; then
+  pull "Quay: a wrong robot token" "$W/wrong.json" "HTTP 401 (credentials refused)" \
+    layer "$QUAY/flightctl-mcu/app:t1" wasm "$WASM" "$W/out"
+fi
 NO_AUTH_CA=1 pull "no CA for the token service's host" "$W/device.json" \
   "no CA for its token service (/etc/containers/certs.d/$AUTH_HOST/ca.crt)" layer "$REG/flightctl-mcu/app:t1" wasm "$WASM" "$W/out"
 if [[ -z "${QUICK:-}" ]]; then
