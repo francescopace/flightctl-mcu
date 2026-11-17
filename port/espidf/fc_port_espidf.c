@@ -368,13 +368,26 @@ void fc_port_custom_info(void *obj)
     (void)buf;
 }
 
+/* One stretch at a time: ESP-IDF's monitor would start again from the
+ * second start, and end at the first stop. */
+static int s_heap_watching;
+
 long fc_port_heap_watch(int start)
 {
     if (start) {
-        return heap_caps_monitor_local_minimum_free_size_start() == ESP_OK ? 0 : -1;
+        if (__atomic_exchange_n(&s_heap_watching, 1, __ATOMIC_ACQ_REL)) {
+            return -1; /* someone else is watching */
+        }
+        if (heap_caps_monitor_local_minimum_free_size_start() != ESP_OK) {
+            __atomic_store_n(&s_heap_watching, 0, __ATOMIC_RELEASE);
+            return -1;
+        }
+        return 0;
     }
-    long low = (long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
-    return heap_caps_monitor_local_minimum_free_size_stop() == ESP_OK ? low : -1;
+    long low = (long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    int ok = heap_caps_monitor_local_minimum_free_size_stop() == ESP_OK;
+    __atomic_store_n(&s_heap_watching, 0, __ATOMIC_RELEASE);
+    return ok ? low : -1;
 }
 
 long fc_port_heap_largest(void)
@@ -384,7 +397,9 @@ long fc_port_heap_largest(void)
 
 long fc_port_heap_free(void)
 {
-    return (long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    /* 8BIT: not the classic ESP32's IRAM, which INTERNAL alone counts
+     * (130 KB against 93 KB) and malloc does not give. */
+    return (long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
 void fc_port_metrics(void *obj)

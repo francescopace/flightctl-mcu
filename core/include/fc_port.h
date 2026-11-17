@@ -70,13 +70,16 @@ long fc_port_heap_largest(void);
 
 /* Bytes free now in the heap the agent allocates from (internal RAM where
  * there is PSRAM too), or -1 when the port cannot tell. An app whose memory
- * would leave less than the agent needs is refused (fc_apps.c). */
+ * would leave less than the agent needs is refused, and the largest .wasm
+ * follows it (fc_apps.c). */
 long fc_port_heap_free(void);
 
 /* The heap's low-water mark over a stretch of work: fc_port_heap_watch(1)
  * starts watching (0), fc_port_heap_watch(0) stops and returns the fewest
  * bytes of internal RAM free in between; -1 when the port cannot tell. One
- * stretch at a time (the metrics export, fc_agent.c). */
+ * stretch at a time (the metrics export, fc_agent.c; an app's start,
+ * fc_apps.c): a start while another runs returns -1, and that caller does
+ * not stop it. */
 long fc_port_heap_watch(int start);
 
 /* Writes a config file delivered through spec.config. `path` is the absolute

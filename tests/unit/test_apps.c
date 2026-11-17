@@ -1382,9 +1382,18 @@ static void test_heap_floor(void)
 {
     char err[160];
     stub_heap_free = 64 * 1024;
+    stub_heap_watch_low = 40 * 1024;
     CHECK_INT(apply_one("h", "reg/app:v1", NULL, err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("h", "Running v1", 3000), "Running v1");
     CHECK(stub_log_has("app h: instance made, 64 KB of heap left for the agent"));
+    /* What the agent took after it, once the agent has been idle a while. */
+    const char *note = "app h (install): 64 KB of heap free after its instance, 40 KB at the lowest while the agent "
+                       "went on (it took 24 KB; floor 32 KB)";
+    for (int i = 0; i < 400 && !stub_log_has(note); i++) {
+        usleep(10 * 1000);
+    }
+    CHECK(stub_log_has(note));
+    stub_heap_watch_low = -1;
     remove_all();
 
     stub_heap_free = 8 * 1024;
@@ -1431,6 +1440,15 @@ static void test_instantiation_code(void)
         CHECK(fc_apps_now_ms() - t0 < 3000);
         CHECK_STR(state_of("c"), "none");
     }
+    /* Removed while a constructor is in its loop: stopped there. */
+    s_call_budget = 1000000000;
+    CHECK_INT(apply_one("c", "reg/t_ctorloop", NULL, err, sizeof(err)), 0);
+    usleep(300 * 1000);
+    CHECK_STR(state_of("c"), "Preparing ");
+    int64_t t0 = fc_apps_now_ms();
+    remove_all();
+    CHECK(fc_apps_now_ms() - t0 < 500);
+    CHECK_STR(state_of("c"), "none");
     s_call_budget = FC_APP_CALL_BUDGET;
     CHECK_INT(apply_one("c", "reg/t_ctorfc", NULL, err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("c", "Running from ctor", 3000), "Running from ctor");

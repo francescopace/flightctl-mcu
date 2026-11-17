@@ -82,6 +82,10 @@ typedef struct app {
     int64_t stack_at_ms; /* runner: when it last read it */
     wasm_exec_env_t run_env; /* under s_lock: the call app_stop interrupts */
     int64_t started_ms;      /* when the instance started: env.clock_ms */
+    const char *start_why;   /* runner: why it was started ("boot", "install"...), NULL for a restart */
+    long heap_after;         /* runner: the heap free after the instance was made, -1 unknown */
+    int heap_watch;          /* runner: watching the heap after it (fc_apps.c, heap_note_*) */
+    int64_t heap_watch_ms, heap_quiet_ms;
     int live;                /* under s_lock: an instance exists (the runner) */
 
     /* reported (under s_lock in fc_apps.c) */

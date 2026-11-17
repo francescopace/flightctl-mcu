@@ -161,9 +161,11 @@ long fc_port_heap_free(void)
 long stub_heap_largest_next[4];
 int stub_heap_largest_queued;
 
+long stub_heap_watch_low = -1;
+
 long fc_port_heap_watch(int start)
 {
-    return -1;
+    return stub_heap_watch_low < 0 ? -1 : start ? 0 : stub_heap_watch_low;
 }
 
 long fc_port_heap_largest(void)

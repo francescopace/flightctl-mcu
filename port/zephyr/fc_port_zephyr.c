@@ -381,9 +381,11 @@ long fc_port_heap_largest(void)
 
 long fc_port_heap_free(void)
 {
-    size_t total, free_now, free_min;
-    fc_heap_stats(&total, &free_now, &free_min); /* the C heap, where TLS and cJSON allocate */
-    return total > 0 ? (long)free_now : -1;
+    /* Not yet: the C heap (fc_heap_stats) is where TLS and cJSON allocate,
+     * but an app's memory and the module's pieces are split between it and
+     * the PSRAM heap, and the floor and the .wasm limit (fc_apps.c) have not
+     * been measured with Zephyr. */
+    return -1;
 }
 
 

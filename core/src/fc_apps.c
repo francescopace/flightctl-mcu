@@ -978,6 +978,52 @@ static int check_module(wasm_module_t m, const char *entry, char *err, size_t er
     return 0;
 }
 
+/* What the agent takes of the heap after an app's instance is made: the
+ * heap free then (heap_after, instantiate), and the lowest from then until
+ * the agent has been idle ENTRY_QUIET_MS, its connection opened again and
+ * its status sent (at most HEAP_NOTE_MS), are logged, for the floor
+ * (s_heap_floor) to be checked against. Through fc_port_heap_watch, one
+ * stretch at a time: none when a metrics export holds it. */
+#define HEAP_NOTE_MS 60000
+
+static void heap_note_begin(app_t *a)
+{
+    a->heap_watch = a->heap_after >= 0 && fc_port_heap_watch(1) == 0;
+    a->heap_watch_ms = a->heap_quiet_ms = fc_apps_now_ms();
+}
+
+static void heap_note_end(app_t *a)
+{
+    if (!a->heap_watch) {
+        return;
+    }
+    a->heap_watch = 0;
+    long low = fc_port_heap_watch(0);
+    if (low >= 0) {
+        fc_port_log(FC_LOG_INFO,
+                    "app %s (%s): %ld KB of heap free after its instance, %ld KB at the lowest while the agent went on "
+                    "(it took %ld KB; floor %ld KB)",
+                    a->name, a->start_why ? a->start_why : "restart", a->heap_after / 1024, low / 1024,
+                    (a->heap_after - low) / 1024, s_heap_floor / 1024);
+    }
+}
+
+static void heap_note_tick(app_t *a, int64_t now)
+{
+    if (!a->heap_watch) {
+        return;
+    }
+    if (fc_agent_busy()) {
+        a->heap_quiet_ms = now;
+    } else if (now - a->heap_quiet_ms >= ENTRY_QUIET_MS) {
+        heap_note_end(a);
+        return;
+    }
+    if (now - a->heap_watch_ms >= HEAP_NOTE_MS) {
+        heap_note_end(a);
+    }
+}
+
 /* Before a module run once starts: waits until the agent has had nothing on
  * hand (fc_agent_busy) for ENTRY_QUIET_MS. Right after an app changes the
  * agent applies the spec and sends two status updates (the second grouped
@@ -999,6 +1045,7 @@ static void wait_quiet(app_t *a)
         usleep(100 * 1000);
         now = fc_apps_now_ms();
         guard_tick(a, now);
+        heap_note_tick(a, now);
     }
 }
 
@@ -1136,6 +1183,7 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
     while (ok && !stopping(a)) {
         int64_t now = fc_apps_now_ms();
         guard_tick(a, now);
+        heap_note_tick(a, now);
         note_stack(a, now);
         if (tick != NULL && now >= next_tick) {
             uint32_t argv[1] = {0};
@@ -1342,6 +1390,7 @@ static void instantiation_hook(wasm_exec_env_t env, bool begin)
 static wasm_module_inst_t instantiate(app_t *a, char *ebuf, size_t elen, int *short_of_heap)
 {
     *short_of_heap = 0;
+    a->heap_after = -1;
     wasm_module_inst_t inst = wasm_runtime_instantiate(a->module, WASM_STACK, 0, ebuf, (uint32_t)elen);
     if (inst == NULL) {
         fc_appapi_close_all(a); /* what code run as it was instantiated opened */
@@ -1358,6 +1407,7 @@ static wasm_module_inst_t instantiate(app_t *a, char *ebuf, size_t elen, int *sh
     if (inst != NULL && left >= 0) {
         fc_port_log(FC_LOG_INFO, "app %s: instance made, %ld KB of heap left for the agent", a->name, left / 1024);
     }
+    a->heap_after = inst != NULL ? left : -1;
     return inst;
 }
 
@@ -1392,6 +1442,9 @@ static void *runner(void *arg)
                 inst = instantiate(a, ebuf, sizeof(ebuf), &short_of_heap);
             }
         }
+        if (inst != NULL) {
+            heap_note_begin(a);
+        }
         wasm_exec_env_t env = inst ? wasm_runtime_create_exec_env(inst, WASM_STACK) : NULL;
         pthread_mutex_lock(&s_lock);
         a->live = inst != NULL;
@@ -1425,8 +1478,10 @@ static void *runner(void *arg)
                 fc_port_log(FC_LOG_WARN, "app %s: %s", a->name, ebuf);
                 set_status(a, "Error", ebuf);
                 disarm_call(a);
+                heap_note_end(a);
                 wasm_runtime_destroy_exec_env(env);
                 wasm_runtime_deinstantiate(inst);
+                fc_appapi_close_all(a); /* what code run as it was instantiated opened */
                 pthread_mutex_lock(&s_lock);
                 a->live = 0;
                 pthread_mutex_unlock(&s_lock);
@@ -1448,6 +1503,7 @@ static void *runner(void *arg)
             out_flush(a);
         }
         disarm_call(a);
+        heap_note_end(a);
         a->inst = NULL;
         if (env) {
             wasm_runtime_destroy_exec_env(env);
@@ -1455,6 +1511,8 @@ static void *runner(void *arg)
         if (inst) {
             wasm_runtime_deinstantiate(inst);
         }
+        fc_appapi_close_all(a); /* run_fc's are closed: what code run as it was instantiated opened */
+        a->start_why = NULL; /* from now on, a restart */
         pthread_mutex_lock(&s_lock);
         a->live = 0;
         pthread_mutex_unlock(&s_lock);
@@ -1501,12 +1559,13 @@ static void *hold_but_stack(void)
     return hold;
 }
 
-static void app_start(app_t *a)
+static void app_start(app_t *a, const char *why)
 {
     if (a->module == NULL) {
         return; /* the status already says why */
     }
     set_stop(a, 0);
+    a->start_why = why;
     __atomic_store_n(&a->stack_unused, -1L, __ATOMIC_RELAXED);
     a->stack_at_ms = 0;
     a->settle_at_ms = fc_apps_now_ms() + s_settle_ms;
@@ -1761,7 +1820,7 @@ int fc_apps_init(void)
             continue;
         }
         fc_port_log(FC_LOG_INFO, "starting saved app %s (%s)", a->name, a->image);
-        app_start(a);
+        app_start(a, "boot");
     }
     cJSON_Delete(list);
     return 0;
@@ -1912,7 +1971,7 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
                 set_env(a, env);
                 a->tick_ms = tick;
                 guard_begin(a->name, a->image, a->env_json, 0);
-                app_start(a);
+                app_start(a, "new env vars");
                 changed = 1;
             }
             free(env);
@@ -2001,7 +2060,7 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         a->tick_ms = tick;
         set_env(a, env);
         free(env);
-        app_start(a);
+        app_start(a, "install");
         changed = 1;
     }
     if (changed) {
@@ -2039,7 +2098,7 @@ void fc_apps_file_changed(const char *path)
         fc_port_log(FC_LOG_INFO, "new board map%s", restart[0] || restart[1] ? ": restarting the apps" : "");
         for (int i = 0; i < MAX_APPS; i++) {
             if (restart[i]) {
-                app_start(&s_apps[i]);
+                app_start(&s_apps[i], "new board map");
             }
         }
         return;
