@@ -542,8 +542,9 @@ static const char *export_sig(wasm_module_t m, const char *name, char *buf, size
 }
 
 /* The block of heap the linear memory that did not fit asked for, 0 unknown:
- * ESP-IDF's os_mmap wrap keeps it (port/espidf/fc_wasm_mem.c). */
-#ifdef ESP_PLATFORM
+ * ESP-IDF's os_mmap wrap keeps it (port/espidf/fc_wasm_mem.c). Zephyr's
+ * Espressif HAL defines ESP_PLATFORM too, without that file. */
+#if defined(ESP_PLATFORM) && !defined(__ZEPHYR__)
 long fc_wasm_mem_failed(void);
 #define mem_failed_block() fc_wasm_mem_failed()
 #else
