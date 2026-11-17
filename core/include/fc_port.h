@@ -81,6 +81,11 @@ long fc_port_heap_free(void);
  * fc_apps.c): a start while another runs returns -1, and that caller does
  * not stop it. */
 long fc_port_heap_watch(int start);
+/* The fewest bytes of internal RAM free so far: since boot, or since the
+ * start of the stretch fc_port_heap_watch is watching (ESP-IDF's monitor);
+ * -1 when the port cannot tell. Read on both sides of a piece of work, it
+ * says whether that work went lower than anything before it. */
+long fc_port_heap_low(void);
 
 /* Writes a config file delivered through spec.config. `path` is the absolute
  * path from the device spec; the port maps it onto its own storage. */

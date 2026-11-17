@@ -25,6 +25,7 @@ extern int stub_ota_commits, stub_ota_aborts;
 extern int stub_ota_end_result;      /* what committing the slot returns */
 extern const unsigned char *stub_fw; /* the running image, NULL: cannot be read */
 extern size_t stub_fw_len;
+extern int stub_ota_pending_verify; /* 1: booted a new image not confirmed yet */
 
 extern int stub_hwkey_bits;       /* > 0: a "hardware" key store, for RSA keys of this size or FC_HWKEY_ECDSA_P256 */
 extern int stub_hwkey_seal_fails; /* 1: sealing fails */

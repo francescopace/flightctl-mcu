@@ -401,6 +401,13 @@ wait_for 300 "release build confirmed, app running" \
   "ci.get('firmwareVersion', '').endswith('-release') and upd.get('status') == 'UpToDate' and apps and apps[0]['status'] == 'Running'"
 # UpToDate is enough: the device reports the new version only once the new
 # image is confirmed (and the release build does not log at INFO level).
+# The firmware and the app came in one spec: the firmware first, the app
+# after the reboot, checked by the firmware that runs it. The debug build,
+# which logs at INFO, installed no app before rebooting.
+grep -q 'installed, rebooting' "$WORK/emu.log" || fail "no reboot into the release build in the log"
+sed -n '1,/installed, rebooting/p' "$WORK/emu.log" | grep -q 'installing app alarm' &&
+  fail "the debug build installed the app before its new firmware"
+echo "ok: firmware first, the app after its reboot"
 echo "heap: free $(custom memFreeBytes), min $(custom memMinFreeBytes), largest internal block $(custom memInternalLargestBlock)"
 wait_for 30 "the release came as a delta from the debug build" \
   "(st.get('os') or {}).get('lastDelta', {}).get('outcome') == 'Applied'"

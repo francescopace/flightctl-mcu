@@ -395,6 +395,11 @@ long fc_port_heap_largest(void)
     return (long)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
 }
 
+long fc_port_heap_low(void)
+{
+    return (long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
 long fc_port_heap_free(void)
 {
     /* 8BIT: not the classic ESP32's IRAM, which INTERNAL alone counts

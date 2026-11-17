@@ -75,6 +75,7 @@ void stub_reset(void)
     stub_stack_unused = -1;
     fc_port_hwkey_forget();
     stub_ota_enabled = 0;
+    stub_ota_pending_verify = 0;
     stub_ota_len = 0;
     stub_ota_commits = stub_ota_aborts = stub_ota_end_result = 0;
     stub_fw = NULL;
@@ -147,6 +148,11 @@ long stub_heap_largest = -1;
 long stub_heap_free = -1;
 long stub_heap_free_next[4];
 int stub_heap_free_queued;
+
+long fc_port_heap_low(void)
+{
+    return -1;
+}
 
 long fc_port_heap_free(void)
 {
@@ -274,9 +280,11 @@ int fc_port_fw_read(size_t off, void *buf, size_t len)
     memcpy(buf, stub_fw + off, len);
     return 0;
 }
+int stub_ota_pending_verify;
+
 int fc_port_ota_pending_verify(void)
 {
-    return 0;
+    return stub_ota_pending_verify;
 }
 void fc_port_ota_confirm(void) {}
 void fc_port_ota_rollback(void) {}

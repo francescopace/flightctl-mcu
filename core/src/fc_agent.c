@@ -652,8 +652,8 @@ static int put_status(agent_t *a)
         fc_port_kv_del(KV_PREV_RENDERED);
         pthread_mutex_lock(&a->lock);
         a->reported_rendered[0] = '\0';
+        a->verifying = 0; /* under the lock: wait_confirmed */
         pthread_mutex_unlock(&a->lock);
-        a->verifying = 0;
         fc_port_log(FC_LOG_INFO, "firmware %s confirmed", a->os_image);
         request_status(a); /* now report the new rendered version */
     }
@@ -1777,18 +1777,14 @@ static void apply_rendered(agent_t *a, const char *json)
     /* Downloads below take the connection's turn: the agent's is closed
      * while the registry's is open (turn_begin, fc_tls_pool.h). */
 
-    /* WASM apps: replaced without reboot; a failed download keeps the old one. */
-    char aerr[160] = "";
-    int aretry = 0;
-    turn_hold(a);
-    if (fc_apps_apply(cJSON_GetObjectItem(spec, "applications"), aerr, sizeof(aerr), &aretry) != 0 && !err[0]) {
-        snprintf(err, sizeof(err), "%s", aerr);
-    }
-    turn_end(a);
-
+    /* A new firmware comes first, and the apps of the same spec are checked
+     * by it, after the reboot: an app may need what only the new firmware
+     * has (an import), which the running one would refuse, and the spec
+     * with it. Its config files are written already: the registry's CA and
+     * password may be among them. */
     const char *image = cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(spec, "os"), "image"));
     char prev_rendered[32], new_digest[80] = "";
-    int reboot = 0, retry = aretry;
+    int reboot = 0, retry = 0;
     pthread_mutex_lock(&a->lock);
     /* "0" never matches a server version, so even a first update is not
      * reported as done before the new image is confirmed. */
@@ -1822,13 +1818,30 @@ static void apply_rendered(agent_t *a, const char *json)
         }
     }
 
+    /* WASM apps: replaced without reboot; a failed download keeps the old
+     * one. Not now if a new firmware is installed (its own reboot applies
+     * this spec again), nor while its download is to be tried again; with a
+     * firmware that is not coming (refused, or rolled back), the running
+     * one's apps are updated all the same. */
+    if (!reboot && !retry) {
+        char aerr[160] = "";
+        turn_hold(a);
+        if (fc_apps_apply(cJSON_GetObjectItem(spec, "applications"), aerr, sizeof(aerr), &retry) != 0 && !err[0]) {
+            snprintf(err, sizeof(err), "%s", aerr);
+        }
+        turn_end(a);
+    }
+
     pthread_mutex_lock(&a->lock);
     snprintf(a->desired_os_image, sizeof(a->desired_os_image), "%s", image ? image : "");
     snprintf(a->update_error, sizeof(a->update_error), "%s", err);
     /* Like the Linux agent: a spec that failed to apply does not advance
      * status.config.renderedVersion, so the server shows the device OutOfDate
-     * with the error. It is not retried until a newer version arrives. */
-    if (version != NULL && !retry) {
+     * with the error. It is not retried until a newer version arrives.
+     * A spec whose firmware reboots the device is not applied yet: its apps
+     * come after the reboot, when the new firmware asks for it again (from
+     * the version before it). */
+    if (version != NULL && !retry && !reboot) {
         snprintf(a->attempted_version, sizeof(a->attempted_version), "%s", version);
         if (!err[0]) {
             snprintf(a->rendered_version, sizeof(a->rendered_version), "%s", version);
@@ -1836,7 +1849,7 @@ static void apply_rendered(agent_t *a, const char *json)
     }
     pthread_mutex_unlock(&a->lock);
 
-    if (version != NULL && !err[0]) {
+    if (version != NULL && !err[0] && !reboot) {
         kv_store_str(KV_RENDERED, version);
     }
     if (reboot) {
@@ -1865,6 +1878,21 @@ static void apply_rendered(agent_t *a, const char *json)
     if (retry) {
         sleep(3 * RETRY_DELAY_S);
     }
+}
+
+/* A new firmware is judged on its own: the spec that came with it, whose
+ * apps it applies after its reboot, waits until it is confirmed. An app
+ * pull before would close the connection that confirms it (turn_begin),
+ * and an app that crashes the device would roll the firmware back. If it
+ * never is, the status thread rolls it back (verify_deadline). */
+static void wait_confirmed(agent_t *a)
+{
+    pthread_mutex_lock(&a->lock);
+    while (a->verifying) {
+        struct timespec until = {.tv_sec = time(NULL) + RETRY_DELAY_S};
+        pthread_cond_timedwait(&a->status_sent, &a->lock, &until);
+    }
+    pthread_mutex_unlock(&a->lock);
 }
 
 static void *spec_thread(void *arg)
@@ -1907,6 +1935,7 @@ static void *spec_thread(void *arg)
         }
         quiet_since = 0;
         if (r.status == 200) {
+            wait_confirmed(a);
             apply_begin(a);
             apply_rendered(a, r.body);
             request_status(a);

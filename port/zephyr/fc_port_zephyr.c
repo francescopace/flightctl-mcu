@@ -379,6 +379,11 @@ long fc_port_heap_largest(void)
     return -1; /* sys_heap does not tell */
 }
 
+long fc_port_heap_low(void)
+{
+    return -1;
+}
+
 long fc_port_heap_free(void)
 {
     /* Not yet: the C heap (fc_heap_stats) is where TLS and cJSON allocate,

@@ -16,11 +16,17 @@
 
 /* ---- stubs ------------------------------------------------------------------ */
 
-static int s_fw_fetches, s_fw_refused;
+static agent_t s_a;
+
+static int s_fw_fetches, s_fw_refused, s_fw_ok;
 
 int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, char *err, size_t err_len)
 {
     s_fw_fetches++;
+    if (s_fw_ok) {
+        snprintf(digest, digest_len, "sha256:new");
+        return 0;
+    }
     if (s_fw_refused) {
         snprintf(err, err_len, "firmware image rejected by the bootloader checks");
         return FC_OCI_REFUSED;
@@ -47,15 +53,29 @@ int fc_apps_init(void)
 }
 
 static int s_apps_applied, s_apps_removed_all;
+static char s_apps_running_on[64]; /* the firmware the last apps were applied with */
 
+/* Two firmwares: "fw:v1" has no env.snprintf, "fw:v2" has it. An app whose
+ * image says "needs-v2" imports it, and v1 refuses it as fc_apps does. */
 int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *retry)
 {
     *retry = 0;
     s_apps_applied++;
+    snprintf(s_apps_running_on, sizeof(s_apps_running_on), "%s", s_a.os_image);
     if (cJSON_IsArray(applications) && cJSON_GetArraySize(applications) == 0) {
         s_apps_removed_all++;
     }
-    return 0;
+    int rc = 0;
+    const cJSON *app;
+    cJSON_ArrayForEach(app, applications) {
+        const char *image = cJSON_GetStringValue(cJSON_GetObjectItem(app, "image"));
+        if (image != NULL && strstr(image, "needs-v2") != NULL && strstr(s_a.os_image, "fw:v2") == NULL) {
+            snprintf(err, err_len, "app spin: %s: not a loadable WASM module: imports env.snprintf, which this "
+                     "firmware does not have", image);
+            rc = -1;
+        }
+    }
+    return rc;
 }
 
 void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
@@ -104,7 +124,6 @@ static int on_config_file(const char *path, const char *data, size_t len, void *
     return len > 0 && data[0] == '!' ? -1 : 0; /* "!..." means invalid */
 }
 
-static agent_t s_a;
 static fc_agent_config_t s_cfg = {.on_config_file = on_config_file, .agent_version = "flightctl-mcu/test"};
 
 static void new_agent(void)
@@ -123,7 +142,45 @@ static void new_agent(void)
     pthread_cond_init(&s_a.status_sent, NULL);
     fc_identity_load(&s_a.id);
     s_fw_fetches = 0;
+    s_fw_ok = 0;
     s_apps_applied = s_apps_removed_all = 0;
+    s_apps_running_on[0] = '\0';
+}
+
+/* A reboot: memory gone, storage kept, then what fc_agent_run does first.
+ * `starts`: the new image runs (else the bootloader went back to the old). */
+static void reboot_device(int starts)
+{
+    free(s_a.mgmt_cert_pem);
+    free(s_a.metrics);
+    fc_identity_free(&s_a.id);
+    memset(&s_a, 0, sizeof(s_a));
+    s_a.stack_spec = s_a.stack_status = -1;
+    s_a.export_low = -1;
+    s_a.cfg = &s_cfg;
+    pthread_mutex_init(&s_a.lock, NULL);
+    pthread_cond_init(&s_a.status_wake, NULL);
+    pthread_cond_init(&s_a.status_sent, NULL);
+    fc_identity_load(&s_a.id);
+    kv_load_str(KV_RENDERED, s_a.rendered_version, sizeof(s_a.rendered_version));
+    kv_load_str(KV_OS_IMAGE, s_a.os_image, sizeof(s_a.os_image));
+    kv_load_str(KV_OS_DIGEST, s_a.os_digest, sizeof(s_a.os_digest));
+    kv_load_str(KV_OS_FAILED, s_a.failed_os_image, sizeof(s_a.failed_os_image));
+    stub_ota_pending_verify = starts;
+    resume_firmware_update(&s_a);
+    stub_ota_pending_verify = 0;
+}
+
+/* The new firmware reached Flight Control (put_status, without the network). */
+static void confirm_firmware(void)
+{
+    CHECK_INT(s_a.verifying, 1);
+    kv_store_str(KV_OS_IMAGE, s_a.os_image);
+    fc_port_kv_del(KV_OS_PENDING);
+    fc_port_kv_del(KV_PREV_RENDERED);
+    s_a.reported_rendered[0] = '\0';
+    s_a.verifying = 0;
+    wait_confirmed(&s_a); /* returns at once now */
 }
 
 static void apply(const char *version, const char *spec)
@@ -330,6 +387,96 @@ static void a_refused_firmware_is_not_downloaded_again(void)
     CHECK_STR(s_a.attempted_version, "6");
     CHECK_STR(s_a.rendered_version, ""); /* not applied: the device stays out of date, with the error */
     s_fw_refused = 0;
+}
+
+/* A spec with a new firmware and an app that needs it, in one step: the
+ * running firmware (v1) would refuse the app, so the firmware comes first
+ * and the app after the reboot, checked by v2. The 17/11 case: fw v3.14-rc1
+ * and spin importing env.snprintf, refused by v3.13 with the firmware. */
+static const char *FW_AND_APP = "{\"os\":{\"image\":\"reg/fw:v2\"},\"applications\":[{\"name\":\"spin\","
+                                "\"appType\":\"container\",\"image\":\"reg/spin:needs-v2\"}]}";
+
+static void a_new_firmware_and_an_app_that_needs_it_in_one_spec(void)
+{
+    new_agent();
+    snprintf(s_a.os_image, sizeof(s_a.os_image), "reg/fw:v1");
+    kv_store_str(KV_OS_IMAGE, "reg/fw:v1");
+    apply("4", "{\"os\":{\"image\":\"reg/fw:v1\"}}");
+    CHECK_STR(stub_kv("rendered.ver"), "4");
+
+    s_fw_ok = 1;
+    apply("5", FW_AND_APP);
+    CHECK_INT(s_fw_fetches, 1);
+    CHECK_INT(stub_reboots, 1);
+    CHECK_INT(s_apps_applied, 1); /* the "4" spec's only: v1 never saw the app */
+    CHECK_STR(s_a.update_error, "");
+    CHECK_STR(stub_kv("rendered.ver"), "4"); /* not applied yet: asked for again after the reboot */
+    CHECK_STR(s_a.reported_rendered, "4");
+
+    reboot_device(1);
+    CHECK_STR(s_a.os_image, "reg/fw:v2");
+    CHECK_STR(s_a.rendered_version, "4"); /* the poll gets "5" again */
+    confirm_firmware();
+    apply("5", FW_AND_APP);
+    CHECK_INT(s_fw_fetches, 1); /* v2 runs: not downloaded again */
+    CHECK_INT(stub_reboots, 1);
+    CHECK_INT(s_apps_applied, 2);
+    CHECK_STR(s_apps_running_on, "reg/fw:v2");
+    CHECK_STR(s_a.update_error, "");
+    CHECK_STR(s_a.rendered_version, "5");
+    CHECK_STR(stub_kv("rendered.ver"), "5");
+    cJSON *st = build_status(&s_a);
+    CHECK_STR(status_at(st, "updated", "status"), "UpToDate");
+    CHECK_STR(status_at(st, "config", "renderedVersion"), "5");
+    cJSON_Delete(st);
+}
+
+/* The new firmware does not start: the old one is back, says why, and keeps
+ * its apps; the spec's app, which needs v2, is refused by v1 as before, but
+ * the error shown is the firmware's. */
+static void a_firmware_rolled_back_leaves_the_apps_to_the_old_one(void)
+{
+    new_agent();
+    snprintf(s_a.os_image, sizeof(s_a.os_image), "reg/fw:v1");
+    kv_store_str(KV_OS_IMAGE, "reg/fw:v1");
+    kv_store_str(KV_RENDERED, "4");
+    snprintf(s_a.rendered_version, sizeof(s_a.rendered_version), "4");
+    s_fw_ok = 1;
+    apply("5", FW_AND_APP);
+    CHECK_INT(s_apps_applied, 0);
+    reboot_device(0);
+    CHECK_STR(s_a.os_image, "reg/fw:v1");
+    CHECK_STR(s_a.failed_os_image, "reg/fw:v2");
+    CHECK_STR(s_a.rendered_version, "4");
+    apply("5", FW_AND_APP);
+    CHECK_INT(s_fw_fetches, 1); /* not tried again */
+    CHECK_INT(s_apps_applied, 1);
+    CHECK_STR(s_apps_running_on, "reg/fw:v1");
+    CHECK_CONTAINS(s_a.update_error, "failed to start and was rolled back");
+    CHECK_STR(s_a.rendered_version, "4");
+    CHECK_STR(s_a.attempted_version, "5");
+}
+
+/* A firmware download to be tried again leaves the apps as they are: v1
+ * would refuse the new app, and download it again at every try. One the
+ * device refused is not coming: the apps are updated by the running one. */
+static void the_apps_wait_for_a_firmware_still_to_come(void)
+{
+    new_agent();
+    snprintf(s_a.os_image, sizeof(s_a.os_image), "reg/fw:v1");
+    apply("5", FW_AND_APP);
+    CHECK_INT(s_fw_fetches, 1);
+    CHECK_INT(s_apps_applied, 0);
+    CHECK_CONTAINS(s_a.update_error, "registry down");
+    CHECK_STR(s_a.attempted_version, "");
+    s_fw_refused = 1;
+    apply("6", "{\"os\":{\"image\":\"reg/fw:v2\"},\"applications\":[{\"name\":\"a\","
+               "\"appType\":\"container\",\"image\":\"reg/a:2\"}]}");
+    s_fw_refused = 0;
+    CHECK_INT(s_apps_applied, 1);
+    CHECK_STR(s_apps_running_on, "reg/fw:v1");
+    CHECK_CONTAINS(s_a.update_error, "rejected by the bootloader");
+    CHECK_STR(s_a.attempted_version, "6");
 }
 
 /* ---- certificates ----------------------------------------------------------- */
@@ -997,6 +1144,9 @@ int main(void)
     RUN(a_deeply_nested_spec_is_refused_without_crashing);
     RUN(the_current_firmware_is_not_downloaded_again);
     RUN(a_refused_firmware_is_not_downloaded_again);
+    RUN(a_new_firmware_and_an_app_that_needs_it_in_one_spec);
+    RUN(a_firmware_rolled_back_leaves_the_apps_to_the_old_one);
+    RUN(the_apps_wait_for_a_firmware_still_to_come);
     RUN(a_renewed_certificate_for_our_key_is_installed);
     RUN(a_certificate_for_another_key_is_refused);
     RUN(a_denied_request_is_a_failure);
