@@ -724,6 +724,28 @@ static void turn_hold(agent_t *a)
     pthread_mutex_unlock(&a->lock);
 }
 
+/* A spec is about to be applied: no export starts from now on (metrics_tick
+ * sees `applying`), and one under way ends first. Parsing a spec, writing
+ * its files and starting its apps take the heap that an export's TLS
+ * connection holds: on a C6, a spec that came during an export left 1 KB. */
+static void apply_begin(agent_t *a)
+{
+    pthread_mutex_lock(&a->lock);
+    a->applying = 1;
+    struct timespec until = {.tv_sec = time(NULL) + TURN_WAIT_S};
+    while (a->exporting && time(NULL) < until.tv_sec) {
+        pthread_cond_timedwait(&a->status_sent, &a->lock, &until);
+    }
+    pthread_mutex_unlock(&a->lock);
+}
+
+static void apply_end(agent_t *a)
+{
+    pthread_mutex_lock(&a->lock);
+    a->applying = 0;
+    pthread_mutex_unlock(&a->lock);
+}
+
 static agent_t *s_running;
 
 int fc_agent_busy(void)
@@ -1824,14 +1846,10 @@ static void *spec_thread(void *arg)
         }
         quiet_since = 0;
         if (r.status == 200) {
-            pthread_mutex_lock(&a->lock);
-            a->applying = 1;
-            pthread_mutex_unlock(&a->lock);
+            apply_begin(a);
             apply_rendered(a, r.body);
             request_status(a);
-            pthread_mutex_lock(&a->lock);
-            a->applying = 0;
-            pthread_mutex_unlock(&a->lock);
+            apply_end(a);
             pthread_mutex_lock(&a->lock);
             int decommissioning = a->decom != DECOM_NONE;
             pthread_mutex_unlock(&a->lock);

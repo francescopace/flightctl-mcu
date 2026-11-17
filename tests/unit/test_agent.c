@@ -582,6 +582,39 @@ static void metrics_and_pulls_take_turns(void)
     CHECK_INT(fc_agent_busy(), 1); /* not started: busy anyway */
 }
 
+/* A spec waits for an export under way, and no export starts while it is
+ * applied: both take the heap. */
+static void *export_ends_later(void *arg)
+{
+    agent_t *a = arg;
+    usleep(50 * 1000);
+    pthread_mutex_lock(&a->lock);
+    CHECK_INT(a->applying, 1); /* no new export from now on */
+    pthread_mutex_unlock(&a->lock);
+    metrics_done(a);
+    return NULL;
+}
+
+static void a_spec_waits_for_an_export(void)
+{
+    new_agent();
+    s_a.exporting = 1;
+    pthread_t t;
+    pthread_create(&t, NULL, export_ends_later, &s_a);
+    time_t t0 = time(NULL);
+    apply_begin(&s_a);
+    CHECK_INT(s_a.exporting, 0); /* it waited for metrics_done */
+    CHECK(time(NULL) - t0 < 5);
+    pthread_join(t, NULL);
+    const char *j = "{\"endpoint\": \"telemetry.example.com:443\"}";
+    fc_port_write_file(METRICS_CONFIG, j, strlen(j));
+    metrics_tick(&s_a); /* due, but a spec is being applied */
+    CHECK_INT(s_a.exporting, 0);
+    CHECK_STR(s_a.otel_csr_name, "");
+    apply_end(&s_a);
+    CHECK_INT(s_a.applying, 0);
+}
+
 static void a_download_takes_the_connections_turn(void)
 {
     new_agent();
@@ -925,6 +958,7 @@ int main(void)
     RUN(an_expired_certificate_starts_over_as_a_new_device);
     RUN(status_requests_are_urgent_or_grouped);
     RUN(a_download_takes_the_connections_turn);
+    RUN(a_spec_waits_for_an_export);
     RUN(metrics_and_pulls_take_turns);
     RUN(a_console_alone_is_not_applied_again);
     RUN(counters_are_read_again_only_when_due);
