@@ -162,6 +162,7 @@ ESP-IDF boards with an early build, unless the row says otherwise:
 | WASM app update across the fleet (canary, then the rest) | about 50 s, almost all of it waiting for the rollout; on the device the swap is immediate |
 | App state change, to Flight Control | about 2 s |
 | Memory rule added to the fleet, to `Warning` and Flight Control's `DeviceMemoryWarning` (end-to-end test) | 21 s; `DeviceMemoryNormal` once the rule is removed |
+| An app call's budget of 5 million instructions, used up by a counting loop (v3.14-rc1) | 0.66 s on the C5, 0.9 s on the S3, 1.06 s on the C3, 1.2 s on the classic ESP32, 1.3 s on the C6 ([APPS.md](APPS.md#size-and-limits)) |
 | MQTT connected, from the spec that gives the broker (v3.14-rc6) | within 70 s |
 | Decommissioning, from the request to `Completed` | 2.4 to 3 s ([below](#the-registry-with-tls-and-decommissioning-on-boards)) |
 
