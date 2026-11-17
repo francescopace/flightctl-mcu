@@ -41,13 +41,12 @@ What an app can do and hold:
 - [ ] The app interface for 1.0 ([APPS.md](APPS.md)):
   - GPIO interrupts, and I2C, SPI, UART, ADC and PWM with devices wired to them, on a board; on Zephyr also a board that names its hardware in the devicetree, and RS-485;
   - the 1 s limit of a call in the device's functions, on a board (unit tests only);
-  - the C library on a board, with the app's stack measured on Xtensa;
+  - the app's stack with the C library, measured on Xtensa;
   - whether apps get `malloc` and the math functions.
 - [ ] MQTT for the apps ([APPS.md](APPS.md#mqtt)):
   - on the C3 with an app using MQTT, the first metrics exports after a restart fail for want of memory, the heap down to 6 to 10 KB ([RESULTS.md](RESULTS.md#ram));
   - on the boards: the connection kept through a download, and MQTT with Zephyr (built for the ESP32-S3, not run);
   - not planned for 1.0: the device's certificate for the broker, a QoS 1 message sent again after a lost link, QoS 2, a will message, a persistent session.
-- [ ] A new firmware and an app that needs it, in one spec: the device now installs the firmware first and applies the apps after its restart (unit tests); to be verified end to end ([RESULTS.md](RESULTS.md#current-limitations)).
 
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):
 

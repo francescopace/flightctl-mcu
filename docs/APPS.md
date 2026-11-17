@@ -210,7 +210,7 @@ What the apps take must leave the agent the heap it needs to open its connection
 
 `fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `fc_config_double`, `fc_config_milli`, `FC_STR`). They are compiled into the app, so they can change without touching the interface. Build and push with `wasm-apps/build.sh <app> <version>`, and keep its link flags. Exporting `__heap_base` and `__data_end` lets WAMR shrink the WebAssembly memory page to what the module actually uses, without which an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses. Tail calls are the one feature beyond the MVP it has.
 
-An app that imports a function the fleet's firmware does not have yet (the [C library](#the-c-library)'s `snprintf` came with v3.14) is refused by that firmware, and in the same spec it holds a new firmware back too: publish the app once the fleet runs the firmware it needs ([RESULTS.md](RESULTS.md#current-limitations)).
+An app that imports a function only a newer firmware has (the [C library](#the-c-library)'s `snprintf` came with v3.14, `strrchr` with v3.14-rc9) goes out in the same spec as that firmware. The device installs the firmware first, and once the new one is confirmed after its restart, applies the spec's apps with it. While the firmware's download is to be tried again, the apps stay as they are; a firmware refused or rolled back leaves them to the one that runs. Published alone to a fleet whose firmware lacks the function, the app is refused (`imports env.strrchr, which this firmware does not have`) and the version that runs is kept. A device on a firmware before v3.14-rc7 checks the apps first, and refuses the app and the firmware with it. On the five ESP-IDF chips, a fleet on v3.14-rc8 took v3.14-rc9 with `libccheck` in one spec, canary first, in about two minutes.
 
 ### The C library
 
@@ -235,6 +235,8 @@ Neither has a `tick`: timers wake them, and they sleep in between.
 - [trend](../wasm-apps/trend/trend.c): no grants needed. It reports whether the temperature is rising or falling, and how fast. With `metrics` granted it also sends the temperature and the rate as metrics (`app_<name>_temp_c`, `app_<name>_rate_c_per_min`). It formats its state with `snprintf` and logs with `printf` ([the C library](#the-c-library)). About 1.6 KB.
 
 On a chip without a temperature sensor both set their state to say so and stay idle, with no timer running.
+
+- [libccheck](../wasm-apps/libccheck/libccheck.c): no grants needed. It runs the [C library](#the-c-library)'s functions and gives what they returned as its state, with `bad=0` when each gave what C says. It imports `strrchr`, so it needs v3.14-rc9. About 2 KB.
 
 - [hwcheck](../wasm-apps/hwcheck/hwcheck.c): a board's buses and channels, checked. Granted `i2c0 spi0 uart0 adc0 pwm0` (names the fleet's `board.json` gives), it says every 2 s what each answers: the I2C devices that acknowledge, an SPI transfer, the UART's bytes written and read back, the ADC's millivolts, the PWM set to half. About 1.3 KB.
 

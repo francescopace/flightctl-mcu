@@ -16,6 +16,7 @@ What works, where it was verified, and the measurements. The devices are microco
 | Config | Files from the spec, no reboot | ✓ | – | ✓ | [QUICKSTART](QUICKSTART.md#6-give-it-firmware-config-and-an-app) |
 | Firmware OTA | A/B slots, staged rollouts | ✓ | ✓ | – | [Timings](#timings) |
 | Firmware deltas | A patch from the running release | ✓ | ✓ | ✓ | [DELTA](DELTA.md) |
+| Firmware and apps in one spec | The firmware first, then the apps that need it | ✓ | ✓ | ✓ | [APPS](APPS.md#size-and-limits) |
 | Automatic rollback | Back to the previous firmware if the new one fails | ✓ | ✓ | – | [The way back](#the-way-back-on-the-esp32-s3-both-ports) |
 | Mixed fleets | One fleet for every chip | ✓ | – | – | [DEVICES](DEVICES.md) |
 | WASM apps | Installed and updated without a reboot | ✓ | ✓ | ✓ | [APPS](APPS.md) |
@@ -292,7 +293,6 @@ Each in short; the source references, how it was found and the workarounds are i
 - **Offline longer than the certificate** (a year by default): the device enrolls again as a new device, with its apps, config and firmware (limitation 13).
 - **Server unreachable**: without an accepted status for 10 minutes the device restarts, its apps with it, and again every 10 minutes; a write gives up after 30 s.
 - **App format**: WASM OCI artifacts only (`application/vnd.wasm.content.layer.v1+wasm`), not a `.wasm` inside a container image.
-- **Firmware and an app that needs it, in one spec**: the firmware goes first and the apps after its restart; checked in unit tests, not yet end to end.
 - **JSON depth**: at most 32 levels; real documents use fewer than 10.
 - **Not yet on a board**: the `secure` variant, certificate renewal, registry tokens, GPIO interrupts, wired peripherals; with Zephyr, MQTT, `lastFatalError` and downloads over HTTP/2.
 - **Zephyr**: an app's heap floor and the `.wasm` size limit are not checked yet.
