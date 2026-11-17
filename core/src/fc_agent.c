@@ -46,6 +46,12 @@
 /* While a console session is listed, the server answers the long-poll at
  * once with the same version: the next poll waits this long. */
 #define CONSOLE_POLL_S 5
+/* Only sessions seen before listed for this long (Flight Control leaves one
+ * listed when its user left before the device came): polled less often.
+ * A new one is still seen within CONSOLE_STALE_POLL_S, well under the 50 s
+ * the UI's Logs tab waits. */
+#define CONSOLE_STALE_AFTER_S 60
+#define CONSOLE_STALE_POLL_S 15
 #define RETRY_DELAY_S 10
 /* A new firmware must reach Flight Control (one accepted status update)
  * within this time, or it is rolled back to the previous image
@@ -151,6 +157,7 @@ typedef struct {
      * -1 unknown): spec (the caller's thread, from boot) under lock, status
      * in add_metrics. */
     long stack_spec, stack_status;
+    int console_quiet; /* spec thread: the sessions listed were all seen before */
 } agent_t;
 
 static int hex_digit(char c)
@@ -239,6 +246,7 @@ static int consoles(agent_t *a, const char *json, const char *known)
     const char *version = cJSON_GetStringValue(
         cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(dev, "metadata"), "annotations"), RENDERED_ANNOTATION));
     int same = 0;
+    a->console_quiet = 0;
     if (cJSON_GetArraySize(list) > 0) {
         fc_http_target_t t = enrollment_target(a, 30);
         pthread_mutex_lock(&a->lock);
@@ -249,7 +257,9 @@ static int consoles(agent_t *a, const char *json, const char *known)
             t.key_pem = a->id.key_pem;
             t.hw_key = a->id.hw_key;
             t.session = a->sess;
-            same = fc_console_sync(list, &t) && version != NULL && known[0] && strcmp(version, known) == 0;
+            int listed = fc_console_sync(list, &t);
+            a->console_quiet = listed == 1;
+            same = listed && version != NULL && known[0] && strcmp(version, known) == 0;
             free(cert);
         }
     }
@@ -1235,6 +1245,7 @@ static void apply_rendered(agent_t *a, const char *json)
 static void *spec_thread(void *arg)
 {
     agent_t *a = arg;
+    time_t quiet_since = 0; /* only sessions seen before listed, since then */
     for (;;) {
         char known[32];
         long stack = fc_port_stack_unused();
@@ -1257,9 +1268,16 @@ static void *spec_thread(void *arg)
         }
         if (r.status == 200 && consoles(a, r.body, known)) {
             fc_http_free(&r);
-            sleep(CONSOLE_POLL_S);
+            time_t now = time(NULL);
+            if (!a->console_quiet) {
+                quiet_since = 0;
+            } else if (quiet_since == 0) {
+                quiet_since = now;
+            }
+            sleep(quiet_since != 0 && now - quiet_since >= CONSOLE_STALE_AFTER_S ? CONSOLE_STALE_POLL_S : CONSOLE_POLL_S);
             continue;
         }
+        quiet_since = 0;
         if (r.status == 200) {
             pthread_mutex_lock(&a->lock);
             a->applying = 1;

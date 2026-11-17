@@ -3,6 +3,7 @@ set(ROOT ${CMAKE_CURRENT_LIST_DIR}/../../../..)
 idf_component_register(
     SRCS ${ROOT}/core/src/fc_agent.c
          ${ROOT}/core/src/fc_console.c
+         ${ROOT}/core/src/fc_log.c
          ${ROOT}/core/src/fc_http.c
          ${ROOT}/core/src/fc_identity.c
          ${ROOT}/core/src/fc_oci.c

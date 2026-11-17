@@ -35,7 +35,7 @@ What the Zephyr port does not have, and the ESP-IDF firmware has:
 What Flight Control offers and the agent does not answer yet:
 
 - [ ] The remote console on a board with Zephyr ([CONSOLE.md](CONSOLE.md)). With ESP-IDF it answers on the ESP32, C5, C6 and S3, one command or at a prompt; with Zephyr in the end-to-end test only (native_sim, the emulated Cortex-M3).
-- [ ] The device's log from the UI. Flight Control has no API for logs: the Log tab runs `journalctl` through the terminal's channel. So it comes after the terminal: a log kept in RAM (today it goes to the serial port only), shown by a command, and then an answer to the commands the UI sends, which holds only as long as the UI sends those.
+- [ ] The device's log in the UI's Logs tab, looked at in the UI itself, and with Zephyr on a board (with ESP-IDF it answers the tab's commands on the ESP32, C5, C6 and S3). The device answers the tab's commands through the console ([CONSOLE.md](CONSOLE.md#the-log)), checked with Flight Control 1.4.0 through `flightctl console`; the answer holds as long as the UI sends the same commands (they are the same in 1.4.0 and on the UI's main branch of 16 November 2026). Also: the lines of ESP-IDF and Zephyr themselves (WiFi, TLS), which go to the serial port only, and the log of the boot before a crash.
 
 What an app can do and hold:
 
@@ -106,4 +106,4 @@ Checked against Flight Control 1.4.0:
 - mTLS with TLS 1.3 and ECDSA P-256. The device name is derived from the public key: `lower(base32hex_nopad(sha256(X || Y)))`.
 - A device is up to date when `status.config.renderedVersion` equals the rendered version served; the OS is out of date when `status.os.image` differs from `spec.os.image` as a string.
 - A device becomes `Unknown` after 5 minutes without contact.
-- `consoles` in the rendered spec (someone asked for a terminal on the device) is ignored: see [Next](#next).
+- `consoles` in the rendered spec (someone asked for a terminal on the device, or the UI's Logs tab): the device opens `flightctl.v1.RouterService/Stream` on the agent's connection ([CONSOLE.md](CONSOLE.md)).

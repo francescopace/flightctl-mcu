@@ -1,8 +1,9 @@
 /*
  * Fuzzes what the remote console does with the server's bytes: gRPC framing,
- * the StreamResponse protobuf, the remote command channels and the line
- * editor of a terminal session. Commands run (help, status, apps); reboot is
- * counted, not done.
+ * the StreamResponse protobuf, the remote command channels, the line editor
+ * of a terminal session and the shell of a session reading its commands on
+ * stdin (quotes, operators, journalctl's options). Commands run (help,
+ * status, apps, journalctl...); reboot is counted, not done.
  */
 #include "../../core/src/fc_console.c"
 
@@ -36,8 +37,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     session_t *s = calloc(1, sizeof(*s));
     s->st = &st;
     s->tty = size > 0 && (data[0] & 1);
+    s->script = !s->tty && size > 0 && (data[0] & 2);
+    if (s->script) {
+        s->sbuf = malloc(SCRIPT_MAX + 1);
+    }
+    if (size > 0 && (data[0] & 4)) {
+        fc_log_put(FC_LOG_WARN, "app alarm: a line to show");
+    }
     on_bytes(s, data, size);
-    free(s->command);
-    free(s);
+    session_free(s);
     return 0;
 }

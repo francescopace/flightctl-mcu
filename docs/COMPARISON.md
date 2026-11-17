@@ -62,7 +62,7 @@ For flightctl-mcu, 🔜 is on the [roadmap](ROADMAP.md#next) for 1.0, ⏳ waits 
 | **Remote configuration** | ✅ files the firmware can reject | ✅ settings | ➖ | ➖ |
 | **Health and alerts** | ✅ CPU, heap, storage against the fleet's rules | 🟡 device state and logs | ✅ metrics and alerts | 🟡 inventory |
 | **Crash reports** | 🟡 after a restart, `resetReason` in the status; on Zephyr also `lastFatalError` (reason, thread, `pc`) · 🔜 `lastFatalError` on ESP-IDF · 💡 backtraces and coredumps off the device | ➖ | ✅ its core feature | ➖ |
-| **Remote log** | 🔜 through the remote console ([CONSOLE.md](CONSOLE.md)) | ✅ | ✅ with crashes | ➖ |
+| **Remote log** | ✅ the last lines, kept in RAM, in the UI's Logs tab and the console ([CONSOLE.md](CONSOLE.md#the-log)) | ✅ | ✅ with crashes | ➖ |
 | **Remote commands** | 🔜 Flight Control's terminal, with a fixed set of commands | ✅ RPC | ➖ | ➖ |
 | **Data from apps** | 🔜 MQTT to your broker, metrics as OTLP to Flight Control | ✅ LightDB Stream and pipelines | 🟡 metrics only | ➖ |
 | **Peripherals from apps** | 🟡 GPIO, LEDs, timers on ESP-IDF · 🔜 I2C, SPI, UART, ADC, PWM, and GPIO on Zephyr | ➖ in the firmware | ➖ in the firmware | ➖ in the firmware |

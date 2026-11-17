@@ -33,6 +33,7 @@
 #include "freertos/task.h"
 #include "esp_wifi.h"
 #include "fc_crypto.h"
+#include "fc_log.h"
 #include "fc_port.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -556,6 +557,10 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+#if CONFIG_LOG_DEFAULT_LEVEL < 4 /* debug lines are not printed: nor kept */
+    if (level < FC_LOG_DEBUG)
+#endif
+        fc_log_put(level, buf);
     ESP_LOG_LEVEL(map[level], TAG, "%s", buf);
 }
 

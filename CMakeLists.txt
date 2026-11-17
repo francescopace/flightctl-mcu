@@ -54,6 +54,7 @@ set(DELTA_SRCS core/src/fc_delta.c)
 add_library(fc_core STATIC
     core/src/fc_agent.c
     core/src/fc_console.c
+    core/src/fc_log.c
     core/src/fc_http.c
     core/src/fc_identity.c
     core/src/fc_oci.c
@@ -96,10 +97,10 @@ if(FC_FUZZ)
         target_link_libraries(${name} PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::tfpsacrypto Threads::Threads)
     endfunction()
     fc_fuzzer(fuzz_http ${CJSON})
-    fc_fuzzer(fuzz_oci port/host/fc_port_host.c ${CJSON} ${DELTA_SRCS})
+    fc_fuzzer(fuzz_oci port/host/fc_port_host.c core/src/fc_log.c ${CJSON} ${DELTA_SRCS})
     fc_fuzzer(fuzz_delta ${DELTA_SRCS})
-    fc_fuzzer(fuzz_console port/host/fc_port_host.c ${CJSON})
-    fc_fuzzer(fuzz_agent core/src/fc_http.c core/src/fc_console.c core/src/fc_identity.c core/src/fc_apps.c core/src/fc_appapi.c core/src/fc_board.c core/src/fc_resources.c port/host/fc_port_host.c ${CJSON})
+    fc_fuzzer(fuzz_console port/host/fc_port_host.c core/src/fc_log.c ${CJSON})
+    fc_fuzzer(fuzz_agent core/src/fc_http.c core/src/fc_console.c core/src/fc_identity.c core/src/fc_apps.c core/src/fc_appapi.c core/src/fc_board.c core/src/fc_resources.c core/src/fc_log.c port/host/fc_port_host.c ${CJSON})
     target_link_libraries(fuzz_agent PRIVATE vmlib)
 endif()
 
@@ -128,7 +129,7 @@ if(FC_UNIT)
     fc_unit(test_identity core/src/fc_identity.c core/src/fc_http.c third_party/cjson/cJSON.c)
     fc_unit(test_agent core/src/fc_identity.c core/src/fc_http.c core/src/fc_resources.c third_party/cjson/cJSON.c)
     fc_unit(test_resources third_party/cjson/cJSON.c)
-    fc_unit(test_console third_party/cjson/cJSON.c)
+    fc_unit(test_console third_party/cjson/cJSON.c core/src/fc_log.c)
     fc_unit(test_apps third_party/cjson/cJSON.c core/src/fc_appapi.c core/src/fc_board.c)
     target_link_libraries(test_apps PRIVATE vmlib)
     fc_unit(test_threads third_party/cjson/cJSON.c)

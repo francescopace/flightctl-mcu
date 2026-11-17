@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "cJSON.h"
+#include "fc_log.h"
 #include "fc_port.h"
 
 #ifdef __APPLE__
@@ -298,17 +299,17 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
         return;
     }
     static const char *names[] = {"E", "W", "I", "D"};
-    char ts[32];
+    char ts[32], line[512];
     time_t now = time(NULL);
     struct tm tm;
     localtime_r(&now, &tm);
     strftime(ts, sizeof(ts), "%H:%M:%S", &tm);
-    fprintf(stderr, "%s %s fc: ", ts, names[level]);
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
-    fputc('\n', stderr);
+    fc_log_put(level, line);
+    fprintf(stderr, "%s %s fc: %s\n", ts, names[level], line);
 }
 
 /* No hardware key store on the host: the device key stays in storage. */

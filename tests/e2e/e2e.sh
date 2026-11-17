@@ -326,6 +326,15 @@ out=$(console status) || fail "console: status failed: $out"
 grep -q "device     $DEVICE" <<<"$out" || fail "console: no status in: $out"
 if out=$(console nosuch); then fail "console: an unknown command succeeded"; fi
 grep -q "not a command of this device" <<<"$out" || fail "console: unknown command: $out"
+# The UI's Logs tab: a session with `bash -s`, and on its stdin the command
+# its deviceLogCommandBuilder.ts writes (the agent's log, info and above).
+out=$(python3 -c 'import subprocess, sys; r = subprocess.run(sys.argv[2:], input=sys.argv[1], capture_output=True, text=True, timeout=60); print(r.stdout + r.stderr, end="")' \
+  "sudo --non-interactive bash -c 'set -o pipefail; journalctl '\\''-u'\\'' '\\''flightctl-agent.service'\\'' '\\''-p'\\'' '\\''info'\\'' '\\''--no-pager'\\'' 2>&1 | tail -n 100000' 2>&1
+printf '%s %s\\n' '__FLIGHTCTL_DEVICE_LOGS_EOF__' \"\$?\"
+" flightctl console "device/$DEVICE" -- /bin/bash -s)
+grep -q "I fc: console: session .* (commands on stdin)" <<<"$out" || fail "console: no log for the Logs tab: $out"
+grep -q "^__FLIGHTCTL_DEVICE_LOGS_EOF__ 0$" <<<"$out" || fail "console: no end of the log for the Logs tab: $out"
+echo "ok: the log, as the UI's Logs tab asks for it"
 wait_for 60 "device Online after the console sessions" "st['summary']['status'] == 'Online'"
 
 log "resource alerts"

@@ -22,6 +22,7 @@
 #include <zephyr/version.h>
 
 #include "cJSON.h"
+#include "fc_log.h"
 #include "fc_port.h"
 
 #define MNT      "/lfs"
@@ -357,6 +358,7 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
+    fc_log_put(level, line);
     printk("%c (%u) fc: %s\n", tags[level], (unsigned)k_uptime_get_32(), line);
 }
 
