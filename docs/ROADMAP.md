@@ -22,7 +22,7 @@ Checks not made yet:
 - [ ] On ESP-IDF, the core's own WiFi provisioning (`core/src/fc_prov.c`, as on Zephyr): built for every chip, and it passes the end-to-end tests in the emulator (C5, S3, C6), where a network given in the field is joined and kept across restarts. Not yet run on a board. (The core's delta decoder, which replaced detools' library, runs on the boards: the ESP32, C5, C6 and S3 took v3.13-rc1 and rc2 as deltas, `Applied`.)
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); not yet run.
 - [ ] Bearer tokens against a real registry (Harbor, Quay), never tried: `registry:3` asks for Basic.
-- [ ] `lastFatalError` on the ESP32-S3 with Zephyr: the `pc` and the backtrace read from Zephyr's exception frame, built, not yet run (no emulator runs this build; on Arm and with ESP-IDF it is verified, [RESULTS.md](RESULTS.md)). That build has 200 bytes of RAM to spare.
+- [ ] `lastFatalError` on the ESP32-S3 with Zephyr: the `pc` and the backtrace read from Zephyr's exception frame, built, not yet run (no emulator runs this build; on Arm and with ESP-IDF it is verified, [RESULTS.md](RESULTS.md)). A risk on that build: about 200 bytes of DRAM are left when it links (static data, not the heap the firmware runs with), so the next static buffer in the core or the Zephyr port must take its room from something else, or the S3 build no longer links.
 
 What an app can do and hold:
 
@@ -48,6 +48,7 @@ What an app can do and hold:
   - one connection to the broker for all the apps, with the broker and its CA from `/etc/fc/mqtt.json`. Its TLS connection takes the RAM that one TLS connection at a time frees, and a second block in the TLS receive-buffer pool: unlike the agent's connection, it stays open during downloads. Even then, a C3 at its lowest has room for one more TLS handshake at a time;
   - for the payloads received, a pool shared by the apps' event queues, which could otherwise hold 8 KB per app.
 - [ ] A size limit for an app that the chip can hold. The device accepts a `.wasm` up to 64 KB, which no chip can run: in RAM an app costs about 3 times its `.wasm` once loaded, plus its linear memory, about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)). The limit should follow the heap, and the thread stack, the largest part of what a small app costs, can shrink.
+- [ ] A new firmware and an app that needs it, in one spec. The device checks a spec's apps before it installs the firmware, so the running firmware refuses an app that imports a function only the new one has (`env.snprintf`, before v3.14), and the firmware is held back with it ([RESULTS.md](RESULTS.md#current-limitations)); today such a release takes two steps. The fix is in the device: when the spec also changes the firmware, install the firmware first and check the apps with the new one, or leave an app that fails on a missing import for after the restart.
 
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):
 

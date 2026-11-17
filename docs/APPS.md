@@ -160,6 +160,8 @@ What limits an app on a small chip is the heap, not the 64 KB the device accepts
 
 `fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `fc_config_double`, `fc_config_milli`, `FC_STR`). They are compiled into the app, so they can change without touching the interface. Build and push with `wasm-apps/build.sh <app> <version>`, and keep its link flags. Exporting `__heap_base` and `__data_end` lets WAMR shrink the WebAssembly memory page to what the module actually uses, without which an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses. Tail calls are the one feature beyond the MVP it has.
 
+An app that imports a function the fleet's firmware does not have yet (the [C library](#the-c-library)'s `snprintf` came with v3.14) is refused by that firmware, and in the same spec it holds a new firmware back too: publish the app once the fleet runs the firmware it needs ([RESULTS.md](RESULTS.md#current-limitations)).
+
 ### The C library
 
 The firmware has a small C library for apps, part of the interface: WAMR's libc-builtin, of which an app may import these functions from `env`, declared in [wasm-apps/sdk/libc/](../wasm-apps/sdk/libc/) (`string.h`, `stdio.h`, `stdlib.h`, `ctype.h`):
