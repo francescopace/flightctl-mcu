@@ -44,7 +44,7 @@ What an app can do and hold:
   - the C library on a board, with the app's stack measured on Xtensa;
   - whether apps get `malloc` and the math functions.
 - [ ] MQTT for the apps ([APPS.md](APPS.md#mqtt)):
-  - the C3's heap after a restart: its lowest is 3 KB with MQTT, 9 KB without ([RESULTS.md](RESULTS.md#ram)); the cause is not found yet;
+  - on the C3 with an app using MQTT, the first metrics exports after a restart fail for want of memory, the heap down to 6 to 10 KB ([RESULTS.md](RESULTS.md#ram));
   - on the boards: the connection kept through a download, and MQTT with Zephyr (built for the ESP32-S3, not run);
   - not planned for 1.0: the device's certificate for the broker, a QoS 1 message sent again after a lost link, QoS 2, a will message, a persistent session.
 - [ ] A new firmware and an app that needs it, in one spec: the device now installs the firmware first and applies the apps after its restart (unit tests); to be verified end to end ([RESULTS.md](RESULTS.md#current-limitations)).

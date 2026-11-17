@@ -95,10 +95,19 @@ Internal heap with the `alarm` app running; on the ESP32, C5, C6 and S3 after 40
 | Resource alerts | about 4 KB: 65.6 KB free on the C3 five minutes after boot |
 | App interface and C library | about 4.5 KB of static RAM; 1.5 KB less since the function tables are const, in flash |
 | A WASM app: `trend`, 1.9 KB of `.wasm`, on the C3 | 17.7 KB of heap: the loaded module about 5 KB, the instance and its WAMR stack about 3.5 KB, its memory about 1 KB, its thread's stack 8 KB |
-| The MQTT connection, on the C3 | 9 KB of heap (49 KB free before, 40 KB after); the client's thread used 3.2 to 4.2 KB of its 8 KB stack |
+| The MQTT connection, on the C3 | 10 KB of heap (49 KB free before, 39 KB after, v3.14-rc7), and 29 to 31 KB free at the lowest during its handshake; the client's thread used 3.2 to 4.2 KB of its 8 KB stack |
 | The metrics connection, Zephyr on the S3 | its 17 KB receive buffer, from the C heap |
 
-On the C3 the heap's lowest comes in the first seconds after boot: 3 KB in the first 23 s with MQTT, which connects 4 s after the agent, against 9 KB without. With Zephyr on the ESP32-S3, 4,112 bytes of the 372 KB DRAM segment are left at link time, with a 12 KB status-thread stack and a 92 KB kernel heap.
+The heap's lowest in the first 25 s after a restart (v3.14-rc7, three restarts each; the block held while a TLS connection opens left out):
+
+| Board | `alarm` alone | `alarm` and `mqttdemo`, MQTT connected |
+|---|---|---|
+| ESP32-C3 | 51 to 55 KB | 16 to 19 KB |
+| ESP32-C5 | 56 to 58 KB | 21 to 24 KB |
+| Classic ESP32 | 67 to 69 KB | 33 to 34 KB |
+| ESP32-C6 | 151 to 154 KB | 119 to 120 KB |
+
+The difference is what the app and MQTT keep (`mqttdemo`'s instance 19 KB and its thread, the client's 8 KB thread and 4 KB pool), not a handshake beside another: the lowest comes during the first metrics export, before the broker's handshake. With the held block counted, the heap's own lowest is 1 to 10 KB on every chip, with or without MQTT. On the C3 with MQTT connected, a metrics export goes down to 6 to 10 KB, and the first one or two after a restart fail for want of memory (a 4.4 KB allocation); the later ones are sent. The C5 goes down to 9 to 15 KB and sends them. With Zephyr on the ESP32-S3, 4,112 bytes of the 372 KB DRAM segment are left at link time, with a 12 KB status-thread stack and a 92 KB kernel heap.
 
 Stack used at most (`stackMinFreeBytes`), of the stack each thread has; here a KB is 1,024 bytes:
 
