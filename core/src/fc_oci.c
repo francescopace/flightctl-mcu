@@ -526,14 +526,21 @@ static cJSON *get_manifest(oci_ref_t *r, const char *ref, char digest[72], char 
     int rc = reg_get(r, path, ACCEPT_MANIFESTS, &resp, err, err_len);
     if (rc != 0 || resp.status != 200) {
         if (rc != 1) {
-            /* A 401 after authenticating: the token does not let these
-             * credentials (or no credentials) pull this repository, or
-             * the registry refused the password. */
-            const char *why = "";
+            /* A 401 after authenticating: the registry refused the
+             * password, or the token: one that does not let these
+             * credentials (or none) pull this repository (insufficient_scope,
+             * or no reason given), or one it does not take at all. */
+            char why[80] = "", error[32] = "";
             if (rc == 0 && resp.status == 401 && r->authorization != NULL) {
-                why = strncmp(r->authorization, "Bearer", 6) != 0 ? " (credentials refused)"
-                      : r->basic != NULL                          ? " (no pull access with these credentials)"
-                                                                  : " (no pull access without credentials)";
+                if (strncmp(r->authorization, "Bearer", 6) != 0) {
+                    snprintf(why, sizeof(why), " (credentials refused)");
+                } else if (resp.www_authenticate != NULL &&
+                           challenge_param(resp.www_authenticate, "error", error, sizeof(error)) &&
+                           strcmp(error, "insufficient_scope") != 0) {
+                    snprintf(why, sizeof(why), " (the registry refused the token: %s)", error);
+                } else {
+                    snprintf(why, sizeof(why), " (no pull access %s credentials)", r->basic ? "with these" : "without");
+                }
             }
             snprintf(err, err_len, "registry %s: GET manifest %s: HTTP %d%s", r->hostport, ref, resp.status, why);
         }

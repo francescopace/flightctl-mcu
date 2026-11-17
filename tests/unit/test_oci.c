@@ -749,7 +749,8 @@ static void a_bearer_token_as_registries_give_it(void)
     CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
     free(out);
     CHECK_STR(s_token_path, "/token?scope=repository%3Ateam%2Fapp%3Apull");
-    s_challenge = "Bearer realm=\"https://reg:5443/token?account=x\",service=\"reg\",scope=\"repository:team/app:pull\"";
+    s_challenge = "Bearer realm=\"https://reg:5443/token?account=x\",service=\"reg\","
+                  "scope=\"repository:team/app:pull\"";
     CHECK_INT(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len), 0);
     free(out);
     CHECK_STR(s_token_path, "/token?account=x&service=reg&scope=repository%3Ateam%2Fapp%3Apull");
@@ -784,6 +785,14 @@ static void a_bearer_token_as_registries_give_it(void)
     CHECK(strstr(err, "T0K3N") == NULL && strstr(err, "dTpw") == NULL);
     fc_port_write_file("/etc/containers/auth.json", "{}", 2);
     s_token_basic = NULL;
+    CHECK(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "HTTP 401 (no pull access without credentials)");
+    /* A token the registry does not take (its key unknown to it, say). */
+    s_challenge = "Bearer realm=\"https://reg:5443/token\",error=\"invalid_token\"";
+    CHECK(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len) != 0);
+    CHECK_CONTAINS(err, "HTTP 401 (the registry refused the token: invalid_token)");
+    s_challenge = "Bearer realm=\"https://reg:5443/token\",scope=\"repository:team/app:pull\","
+                  "error=\"insufficient_scope\"";
     CHECK(fetch("reg:5443/team/app:v1", err, sizeof(err), &out, &len) != 0);
     CHECK_CONTAINS(err, "HTTP 401 (no pull access without credentials)");
     /* Basic refused at the registry. */

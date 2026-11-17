@@ -211,7 +211,7 @@ pull() {
   else
     echo "FAIL $name (exit $rc)"; echo "$out" | tail -3 | sed 's/^/     /'; fails=$((fails + 1))
   fi
-  for secret in "$DEV_PASS" "$(base64 <<< "device:$DEV_PASS")"; do
+  for secret in "$DEV_PASS" "$(printf %s "device:$DEV_PASS" | base64)"; do
     if [[ "$out" == *"$secret"* ]]; then
       echo "FAIL $name: a secret in the output"; fails=$((fails + 1))
     fi
