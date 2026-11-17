@@ -170,12 +170,13 @@ head -c 700000 /dev/urandom > "$W/fw-b.bin"
 { printf '\0asm\1\0\0\0'; head -c 3000 /dev/urandom; } > "$W/app.wasm"
 WASM=application/vnd.wasm.content.layer.v1+wasm
 push() { # registry
-  # tools/fw-push.py, for two made-up chips (their SBOM takes no modules).
+  # tools/fw-push.py, for two made-up chips, with an empty SBOM (the real
+  # one reads the ESP-IDF and Zephyr trees).
   REGISTRY_CA="$W/certs/ca.crt" REGISTRY_AUTH_FILE="$W/pusher.json" SIGNING_KEY="$W/signing.key" python3 -c '
 import runpy, sys
 sys.path.insert(0, "tools")
 import sbom
-sbom.ZEPHYR_BOARD_MODULES.update({"chip-a": (), "chip-b": ()})
+sbom.make_sbom = lambda *a, **k: {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
 sys.argv = ["tools/fw-push.py"] + sys.argv[1:]
 runpy.run_path("tools/fw-push.py", run_name="__main__")' \
     "$1/flightctl-mcu/fw:t1" chip-a="$W/fw-a.bin" chip-b="$W/fw-b.bin" >/dev/null
