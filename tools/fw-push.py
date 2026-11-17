@@ -310,12 +310,17 @@ def main():
     idigest, isize = push_manifest(base, repo, tag, INDEX_TYPE, index)
     print(f"{ref}@{idigest}")
     push_sbom(base, host, repo, tag, idigest, isize, entries, empty, root)
-    push_elfs(base, repo, idigest, isize, elfs, empty)
     key = os.environ.get("SIGNING_KEY") or f"{root}/.secrets/signing.key"
     if not os.environ.get("NO_SIGN") and os.path.exists(key):
         subprocess.run([f"{root}/tools/signing/sign.py", "--key", key, f"{host}/{repo}@{idigest}"], check=True)
     else:
         print("not signed (no signing key)")
+    # Last, once the release is complete and signed: the ELFs are for whoever
+    # decodes a crash, and a failure here leaves the release as it is.
+    try:
+        push_elfs(base, repo, idigest, isize, elfs, empty)
+    except (OSError, urllib.error.URLError) as e:
+        print(f"warning: the ELFs were not pushed ({e}): crashes of this release cannot be decoded from the registry")
 
 
 if __name__ == "__main__":
