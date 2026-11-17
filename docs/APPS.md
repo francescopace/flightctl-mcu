@@ -163,6 +163,8 @@ The device reconnects by itself, 1 to 2 s after a lost link, then waiting longer
 
 What it costs: 12.9 KB of flash on the C3 (12.7 KB on the S3 with Zephyr) and 150 bytes of static RAM; about 1 KB at the first subscription; once a broker is configured, the pool (4 KB), the client's thread (12 KB of stack, not yet measured on a board), 1 KB of packet buffers, and the TLS connection: with ESP-IDF, mbedTLS's buffers sized to each record, small for MQTT; on Zephyr, where the receive buffer is the full record, a second 17 KB block reserved for it, since this connection stays open while a download takes the agent's block.
 
+For a lab, `tools/mqtt/up.sh` starts mosquitto in Docker on port 8883 of the machine as `mqtt.<LAN IP>.nip.io`, with its CA and a password in `.secrets/mqtt/`, the user limited to `flightctl/#`; `tools/fleet/mqtt-config.py` adds the two files to a fleet's manifest.
+
 ## Ports
 
 On Zephyr the board map's names come from the devicetree, not from pins: the children of a node with compatible `flightctl,app-hw` ([ZEPHYR.md](ZEPHYR.md#hardware-for-apps)). The fleet's `board.json` may give those nodes other names (`"dt": "<node>"`), never pins. A board without that node has only the simulated `led0` and `die_temp`.
@@ -230,5 +232,7 @@ Neither has a `tick`: timers wake them, and they sleep in between.
 On a chip without a temperature sensor both set their state to say so and stay idle, with no timer running.
 
 - [hwcheck](../wasm-apps/hwcheck/hwcheck.c): a board's buses and channels, checked. Granted `i2c0 spi0 uart0 adc0 pwm0` (names the fleet's `board.json` gives), it says every 2 s what each answers: the I2C devices that acknowledge, an SPI transfer, the UART's bytes written and read back, the ADC's millivolts, the PWM set to half. About 1.3 KB.
+
+- [mqttdemo](../wasm-apps/mqttdemo/mqttdemo.c): MQTT both ways, for when the firmware has it ([MQTT](#mqtt)). Granted `mqtt` (and `led0`), it publishes the temperature on `temp` every `period_ms`, takes commands on `cmd/#` and on the fleet's `cmd`, answers each on `ack`, and turns `led0` on and off for `led on` and `led off`. On a firmware without MQTT its state says so and it stays idle. About 1.9 KB.
 
 - [CoreMark](../wasm-apps/coremark/fetch.sh), as published, not rebuilt: `wasm-apps/coremark/fetch.sh` downloads both builds and checks them against their SHA-256, then `wasm-apps/push.sh coremark wasm3` pushes one. See [Modules built for no device](#modules-built-for-no-device).
