@@ -52,9 +52,9 @@ What an app can do and hold:
 
 The documentation:
 
-- [ ] Screenshots of Flight Control's UI, of real boards on Flight Control 1.4, in `docs/img/`: README, QUICKSTART, DEVICES, ZEPHYR, APPS (with the software catalog), DELTA, CONSOLE, SBOM and REGISTRY have theirs. Left:
+- [ ] Screenshots of Flight Control's UI, of real boards on Flight Control 1.4, in `docs/img/`: README, QUICKSTART, DEVICES, ZEPHYR, APPS (with the software catalog), DELTA, CONSOLE, METRICS (in Prometheus: the UI of 1.4 has no view of metrics), SBOM and REGISTRY have theirs. Left:
   - PROVISIONING: an enrollment request waiting for approval, with its labels (a board enrolling);
-  - METRICS: the device's and an app's metrics in Prometheus. The UI of 1.4 has no view of metrics, and the kind setup runs no Prometheus, only the gateway's exporter; `alarm` sends no metric of its own (`trend` does);
+  - METRICS: an app's metric beside the device's (`alarm` sends none of its own, `trend` does);
   - SBOM: a device with a vulnerability listed (Trustify running, with a test advisory); the panels shot show none.
 
   None for COMPARISON, DEPENDENCIES, RESULTS, SECURITY and TESTING: what they show is not in the UI.
