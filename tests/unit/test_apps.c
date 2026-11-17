@@ -1641,8 +1641,10 @@ static void test_instantiation_code(void)
         CHECK(fc_apps_now_ms() - t0 < 3000);
         CHECK_STR(state_of("c"), "none");
     }
-    /* Removed while a constructor is in its loop: stopped there. */
-    s_call_budget = 1000000000;
+    /* Removed while a constructor is in its loop: stopped there. No budget
+     * at all (-1, as a module run once has), so that the loop is still
+     * running when it is removed, however fast or slow the host. */
+    s_call_budget = -1;
     CHECK_INT(apply_one("c", "reg/t_ctorloop", NULL, err, sizeof(err)), 0);
     usleep(300 * 1000);
     CHECK_STR(state_of("c"), "Preparing ");
