@@ -54,8 +54,12 @@ typedef struct {
     int fired;
 } app_handle_t;
 
+/* 12 bytes on a 32-bit chip, as before it carried a message: on the ESP32-S3
+ * with Zephyr the static RAM has little to spare. */
 typedef struct {
-    int32_t type, handle, value;
+    int8_t type;        /* EV_* */
+    int8_t handle;      /* < APP_HANDLES, or -1 */
+    int32_t value;
     fc_mqtt_msg_t *msg; /* FC_EV_MQTT: the message, the queue's until it is handled */
 } app_event_t;
 

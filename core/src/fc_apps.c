@@ -219,7 +219,7 @@ int fc_apps_post_locked(app_t *a, int32_t type, int32_t handle, int32_t value, f
         a->ev_count--;
         a->ev_lost++;
     }
-    a->ev[(a->ev_head + a->ev_count) % APP_EVENTS] = (app_event_t){type, handle, value, msg};
+    a->ev[(a->ev_head + a->ev_count) % APP_EVENTS] = (app_event_t){(int8_t)type, (int8_t)handle, value, msg};
     a->ev_count++;
     pthread_cond_signal(a->ev_cond);
     return 0;
