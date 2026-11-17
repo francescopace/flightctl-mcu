@@ -84,7 +84,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/t_startloop", s_startloop, sizeof(s_startloop)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
-        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(t_env),
+        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
         V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_ctorloop), V(t_ctorfc), V(t_mqtt),
 #undef V
@@ -137,6 +137,7 @@ static void *f_ctx[64];
 static int f_led_open, f_led_writes;
 static uint8_t f_led[3];
 static int32_t f_temp = 41000;
+static int32_t f_temp_step; /* added to die_temp at each read */
 static pthread_mutex_t f_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static char *f_defaults(void)
@@ -211,7 +212,7 @@ static int f_sensor(const char *name, int32_t *v)
     if (strcmp(name, "die_temp") != 0) {
         return FC_HW_ENOENT;
     }
-    *v = __atomic_load_n(&f_temp, __ATOMIC_ACQUIRE);
+    *v = __atomic_fetch_add(&f_temp, __atomic_load_n(&f_temp_step, __ATOMIC_ACQUIRE), __ATOMIC_ACQ_REL);
     return 0;
 }
 
@@ -1453,6 +1454,35 @@ static void test_example_apps(void)
     remove_all();
 }
 
+/* tinyml: emlearn's model, as WebAssembly. A temperature that does not move
+ * is steady; one that moves by the same step at each read (0.5 C, 6 C a
+ * minute at the model's 5 s) is warming or cooling, whenever the app reads
+ * it. */
+static void tinyml_with_step(int32_t step, const char *want)
+{
+    char err[160];
+    __atomic_store_n(&f_temp, 41000, __ATOMIC_RELEASE);
+    __atomic_store_n(&f_temp_step, step, __ATOMIC_RELEASE);
+    CHECK_INT(apply_one("ml", "reg/app_tinyml", NULL, err, sizeof(err)), 0);
+    for (int i = 0; i < 3000 && strncmp(state_of("ml"), want, strlen(want)) != 0; i++) {
+        usleep(10 * 1000);
+    }
+    CHECK_CONTAINS(state_of("ml"), want);
+    remove_all();
+    __atomic_store_n(&f_temp_step, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&f_temp, 41000, __ATOMIC_RELEASE);
+}
+
+static void test_tinyml(void)
+{
+    const char *cfg = "{\"sample_ms\": 20}";
+    fc_port_write_file("/etc/fc-app/ml.json", cfg, strlen(cfg));
+    tinyml_with_step(0, "Running steady (41.0 C)");
+    tinyml_with_step(500, "Running warming (");
+    tinyml_with_step(-500, "Running cooling (");
+    fc_port_remove_file("/etc/fc-app/ml.json");
+}
+
 
 /* A restart: a crash (1) or not (0). */
 static void restart(int crash)
@@ -1870,6 +1900,7 @@ int main(void)
     RUN(test_board_map);
     RUN(test_board_dt);
     RUN(test_example_apps);
+    RUN(test_tinyml);
     power_cycle(); /* stops the threads; leaves nothing for the leak checker */
     wasm_runtime_destroy();
     return TEST_RESULT();

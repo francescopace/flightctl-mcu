@@ -240,3 +240,19 @@ On a chip without a temperature sensor both set their state to say so and stay i
 - [mqttdemo](../wasm-apps/mqttdemo/mqttdemo.c): MQTT both ways ([MQTT](#mqtt)). Granted `mqtt` (and `led0`), it publishes the temperature on `temp` every `period_ms`, takes commands on `cmd/#` and on the fleet's `cmd`, answers each on `ack`, and turns `led0` on and off for `led on` and `led off`. On a firmware without MQTT its state says so and it stays idle. About 1.9 KB.
 
 - [CoreMark](../wasm-apps/coremark/fetch.sh), as published, not rebuilt: `wasm-apps/coremark/fetch.sh` downloads both builds and checks them against their SHA-256, then `wasm-apps/push.sh coremark wasm3` pushes one. See [Modules built for no device](#modules-built-for-no-device).
+
+- [tinyml](../wasm-apps/tinyml/tinyml.c): a TinyML model from emlearn ([below](#tinyml-with-emlearn)). No grants needed. About 3.9 KB.
+
+### TinyML with emlearn
+
+`tinyml` runs a random forest made with [emlearn](https://emlearn.readthedocs.io). It reads the last minute of `die_temp` (12 samples, 5 s apart) and says whether the temperature is `steady`, `warming`, `cooling` or `unstable` (swinging up and down), as `warming (52.4 C)`. `sample_ms` in `/etc/fc-app/<name>.json` changes the period; the model still reads the samples as 5 s apart, so 500 makes a minute pass in 6 s. Of its 3.9 KB of `.wasm`, the model (5 trees, 193 nodes) takes 1.6 KB. It imports only from `fc`.
+
+The model is the C that emlearn writes ([model.h](../wasm-apps/tinyml/model.h)), built unmodified with `fc_app.h`: with `method="inline"` it needs only `stdint.h`. [train.py](../wasm-apps/tinyml/train.py) trains it on synthetic data from a fixed seed; with the versions in [requirements.txt](../wasm-apps/tinyml/requirements.txt) (emlearn 0.23.2, scikit-learn 1.9.1) it writes the same file, byte for byte. For a model of your own:
+
+- emlearn's default thresholds are `int16_t` and truncated (`x <= 12.5` becomes `x < 12`). With `dtype="float"` they stay exact, and WebAssembly has floats without imports.
+- emlearn goes left when a feature is less than a threshold, scikit-learn when it is less or equal. For integer features, `model_predict_int()` in [features.h](../wasm-apps/tinyml/features.h) passes each a quarter less, and the two agree.
+- emlearn gives each tree one vote; scikit-learn averages the trees' probabilities, and on a close vote may answer otherwise.
+
+`tests/unit/test_tinyml.c` checks on the host that the C features are those trained on, and that the C model gives the trees' majority vote on 200 test windows and around each threshold. `test_apps.c` runs the `.wasm` under WAMR.
+
+A neural network (emlearn's `eml_net.h`) also needs `expf`, `tanhf` and `logf`, which [the C library](#the-c-library) does not have. Built into the app from musl 1.2.5 they add 0.7, 0.7 and 0.9 KB of `.wasm`, 2.2 KB together, with no import.
