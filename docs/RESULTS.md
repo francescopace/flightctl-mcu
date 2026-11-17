@@ -78,7 +78,7 @@ Internal heap with the `alarm` app running. v3.12 holds one TLS connection at a 
 
 On the C3 the lowest is reached in the first seconds after boot, before any app or export; v3.13 also holds the device's log (4 KB) and sends metrics every 30 s, with 19 to 20 KB of internal heap left during an export ([METRICS.md](METRICS.md)). The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot), the app interface about 4.5 KB of static RAM, its C library included (the tables of native functions are const, in flash).
 
-With Zephyr on the ESP32-S3, the current build (with the Xtensa backtrace for `lastFatalError`) with MQTT and floating point in `printf` (5.4 KB of code, no RAM), leaves 4,112 bytes of the 372 KB DRAM segment once its static data is linked: 16 before the status thread's stack went from 16 KB to the core's 12 KB, taken from the kernel heap, which shrank by as much (on the board the thread had used 4.7 KB of its 16, the spec loop 5.4 of its 16 KB, the `alarm` app's thread 3 KB of its 8). That is the margin at link time, not memory free while it runs: the heap is counted apart, above.
+With Zephyr on the ESP32-S3, the current build (with the Xtensa backtrace for `lastFatalError`) with MQTT and floating point in `printf` (5.4 KB of code, no RAM), leaves 4,112 bytes of the 372 KB DRAM segment once its static data is linked, with the status thread's stack at 12 KB and a 92 KB kernel heap. That is the margin at link time, not memory free while it runs: the heap is counted apart, above.
 
 Stack used at most, of the stack each has (customInfo `stackMinFreeBytes`; here a KB is 1,024 bytes):
 
@@ -86,6 +86,8 @@ Stack used at most, of the stack each has (customInfo `stackMinFreeBytes`; here 
 |---|---|---|---|
 | Classic ESP32 | 8.9 of 24 KB (installing an app) | 4.2 of 12 KB | 3.4 of 8 KB |
 | Zephyr on the Pico W | 9.2 of 14 KB (downloading firmware over TLS, whole or as a delta); 4.6 polling | 3.8 of 8 KB | 2.2 of 8 KB |
+| Zephyr on the ESP32-S3 | 5.4 of 16 KB (polling, no firmware download) | 4.7 KB (now given 12 KB; no certificate renewal) | 3.0 of 8 KB (`alarm`) |
+| Zephyr on a Cortex-M3 (`mps2/an385` in QEMU) | | | 2.7 of 8 KB (`printf` of `%f`); 2.5 without the C library |
 
 The spec loop's figures include the main task's start-up, which runs on the same stack first. Installing an app or downloading firmware takes about twice the stack of polling. A certificate renewal runs on the status thread and has not been measured on a board.
 

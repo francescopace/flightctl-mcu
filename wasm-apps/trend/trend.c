@@ -21,8 +21,8 @@ FC_APP_ABI()
 static int32_t samples[WINDOW], count, last_key = -1, last_trend = -2;
 static int32_t avg_mc; /* exponential moving average */
 
-/* "41.2" from tenths, "+0.8" with plus. Integers only: %f is not in every
- * port's C library (docs/APPS.md). */
+/* "41.2" from tenths, "+0.8" with plus. Integers only, so that it prints the
+ * same on firmware whose C library has no %f (docs/APPS.md). */
 static void fmt_tenths(char *p, int32_t cap, int32_t tenths, int plus)
 {
     int32_t a = tenths < 0 ? -tenths : tenths;
