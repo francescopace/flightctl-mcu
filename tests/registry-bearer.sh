@@ -229,10 +229,16 @@ EOF
     [[ "$(curl -s -o /dev/null -w '%{http_code}' --cacert "$W/certs/ca.crt" "https://$QUAY/v2/")" == 401 ]] && break
     sleep 2
   done
-  QUAY_API="$(curl -sf --cacert "$W/certs/ca.crt" -H 'Content-Type: application/json' -X POST \
-    "https://$QUAY/api/v1/user/initialize" \
-    -d "{\"username\":\"quayadmin\",\"password\":\"$QUAY_ADMIN_PASS\",\"email\":\"admin@example.invalid\",\"access_token\":true}" |
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+  # The first administrator, once the API answers (after the registry does).
+  QUAY_API=""
+  for _ in $(seq 1 60); do
+    QUAY_API="$(curl -sf --cacert "$W/certs/ca.crt" -H 'Content-Type: application/json' -X POST \
+      "https://$QUAY/api/v1/user/initialize" \
+      -d "{\"username\":\"quayadmin\",\"password\":\"$QUAY_ADMIN_PASS\",\"email\":\"admin@example.invalid\",\"access_token\":true}" |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])' 2>/dev/null)" && break
+    sleep 2
+  done
+  [[ -n "$QUAY_API" ]] || { echo "Quay did not start: docker logs fc-bearer-quay" >&2; exit 1; }
   qapi() { # method path [json]: Quay's API as its administrator
     curl -sf --cacert "$W/certs/ca.crt" -H "Authorization: Bearer $QUAY_API" -H 'Content-Type: application/json' \
       -X "$1" "https://$QUAY/api/v1/$2" ${3:+-d "$3"}
