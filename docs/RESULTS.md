@@ -15,9 +15,9 @@ Where each function was verified:
 | Enrollment | A P-256 key generated on the device, a CSR approved with `flightctl approve`, mTLS with TLS 1.3 | Boards, emulator, CI | [QUICKSTART.md](QUICKSTART.md#5-approve-it) |
 | Automatic approval | Approves devices from an allow list of names or MACs, with their labels | CI | [QUICKSTART.md](QUICKSTART.md#5-approve-it) |
 | Status | The agent API's full status: resources, `customInfo` (heap, RSSI, temperature, traffic); `Unknown` after 5 minutes offline | Boards, emulator, CI | [Label sync](#label-sync) |
-| Resource alerts | CPU, heap and storage checked against the fleet's `spec.resources` rules, as the Linux agent does | ESP32-C3, CI | [Timings](#timings) |
-| Config | Inline `spec.config` applied without a reboot, after the app validates it; a file the spec drops is removed | Boards, CI | [Timings](#timings) |
-| Firmware OTA | `spec.os.image` points to an OCI index with one firmware per chip, written to the other A/B slot and checked with sha256; staged rollouts | Boards, emulator | [Timings](#timings) |
+| Resource alerts | CPU, heap and storage checked against the fleet's `spec.resources` rules, as the Linux agent does: `Warning` or `Critical` per resource, `Degraded` or `Error` in the summary | ESP32-C3, CI | [Timings](#timings) |
+| Config | Inline `spec.config` applied without a reboot, after the app validates it (an invalid one is refused, the device OutOfDate with the error); a file the spec drops is removed | Boards, CI | [QUICKSTART.md](QUICKSTART.md#6-give-it-firmware-config-and-an-app), [timings](#timings) |
+| Firmware OTA | `spec.os.image` points to an OCI index with one firmware per chip, written to the other A/B slot and checked with sha256; staged rollouts | Boards, emulator | [QUICKSTART.md](QUICKSTART.md#6-give-it-firmware-config-and-an-app), [timings](#timings) |
 | Firmware deltas | The device downloads a patch from the release it runs and rebuilds the image: 1 to 15% of the image | ESP32, C5, C6, S3, the S3 with Zephyr, emulator | [DELTA.md](DELTA.md) |
 | Automatic rollback | A new firmware is kept only once the server accepts a status from it; otherwise the device goes back, and the rollout stops at the canary | ESP32-S3 with both ports, C6, emulator | [The way back](#the-way-back-on-the-esp32-s3-both-ports) |
 | Mixed fleets | One fleet and one firmware reference for every chip, with per-device settings from labels | ESP-IDF boards | [DEVICES.md](DEVICES.md) |
@@ -28,7 +28,7 @@ Where each function was verified:
 | Apps that crash the device | An app whose start crashed the firmware twice is not started again; its status says `Error` | Unit tests, emulated C6 | [APPS.md](APPS.md#how-an-app-runs) |
 | Crash reports | After a crash, `lastFatalError` in the status: the fault, the task, the `pc` and the callers, decoded against the release's ELF | Emulator (C3, C5, C6, S3), CI. Zephyr: the fault's report in the log on the S3; `lastFatalError` not yet checked on a board | [A crash in the status](#a-crash-in-the-status) |
 | Certificate renewal | The device renews its management certificate for the same key | Emulator, CI, with 2-minute certificates. Not on a board, where a certificate lasts a year | [TESTING.md](TESTING.md) |
-| Signed images | Firmware and apps signed in cosign's format, checked on the device before anything is installed | Boards, emulator, CI | [SECURITY.md](SECURITY.md#two-signing-keys) |
+| Signed images | Firmware and apps signed in cosign's format, checked on the device; an unsigned image or one signed with another key is refused, the running one kept, the device OutOfDate with the reason | Boards, emulator, CI | [SECURITY.md](SECURITY.md#two-signing-keys) |
 | Registry with TLS and a password | The registry's CA and `auth.json` come from the fleet | ESP32-C3, the S3 with Zephyr, emulator, CI | [REGISTRY.md](REGISTRY.md), [on boards](#the-registry-with-tls-and-decommissioning-on-boards) |
 | Registry tokens (Bearer) | A token from the registry's realm, with the `auth.json` credentials or none, renewed when it runs out | The device's client on a host, against Quay 3.17 and docker_auth. Not on a board, not with Harbor | [TESTING.md](TESTING.md#registry-tokens) |
 | Decommissioning | Key and certificate wiped; no new enrollment until the flash is erased | ESP32-C3, the S3 with Zephyr, emulator, CI | [QUICKSTART.md](QUICKSTART.md#7-take-it-out) |
@@ -137,7 +137,7 @@ Building the firmware for size, with WAMR still at `-O2`, costs CoreMark about 5
 | Release | Classic ESP32 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-S3 N4R2 |
 |---|---|---|---|---|---|
 | v3.12 | 14.12–14.27 | | about 19.7 or about 22.3 from one run to the next, once 14.8 (not explained yet) | 11.45–11.98 | |
-| v3.13 | 14.19 | 14.46 | 19.46 (one run) | wasm3's build 11.81–11.98 (four runs), wasm-coremark's 13.24 and 13.71 | |
+| v3.13 | 14.19 | 14.46 | 19.46 (one run) | wasm3's build 11.81–11.98 (four runs), wasm-coremark's 13.24 and 13.71 | 17.63–18.08 |
 | v3.14-rc4, one run of wasm3's build | 14.22 | 14.27 | 19.65 | 11.75 | 17.56 |
 
 The linear memory needs one free block of its size, rounded up by the heap: 64 KB takes a block of 68 KB, 128 KB one of 136 KB. Whether that block is there depends on how broken up the heap is:
@@ -193,7 +193,7 @@ Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on
 
 The C3 figures match the board's. `tests/e2e/e2e-emu.sh` runs the whole sequence on the images CI builds for the boards, and CI runs it for the C5, the S3 and the C6 ([TESTING.md](TESTING.md)). It updates the default build over the air to the release build, then tries a broken build that cannot reach the server, which is rolled back once its confirmation window ends.
 
-Up to v3.13 the emulated C6 could stall in about one run in two: with an app running, the release build had 2.9 KB of internal heap left while it wrote the HTTP/2 preface, and the agent stayed silent. Since v3.14 the block the TLS handshake takes is given back before the preface, and 6 runs of 6 passed. The real C6 never showed it.
+Before v3.14 the emulated C6 could stall in about one run in two: with an app running, the release build had 2.9 KB of internal heap left while it wrote the HTTP/2 preface, and the agent stayed silent. Since v3.14 the block the TLS handshake takes is given back before the preface, and 6 runs of 6 passed. The real C6 never showed it.
 
 ### ESP-IDF 6.0.3 on a board (ESP32-S3)
 
@@ -221,7 +221,7 @@ An ESP32-S3 with each port in turn, against Flight Control 1.4.0. Each was given
 | Back | the bootloader takes the previous slot | MCUboot swaps the slots back: 15 s |
 | Reported | 53 s after the fleet changed: "failed to start and was rolled back; not retried" | 1 min 53 s, the same message |
 
-Neither tried the image again. The ESP32-C6 (ESP-IDF) was back on the previous firmware, and reporting it, 50 s after it restarted into a broken one; with v3.13, in three more runs with the default and the release build, it was online again 3 to 5 s after the restart back.
+Neither tried the image again. The ESP32-C6 (ESP-IDF) was back on the previous firmware, and reporting it, 50 s after it restarted into a broken one; with v3.13, in three more runs with two different builds, it was online again 3 to 5 s after the restart back.
 
 ### A crash in the status
 
