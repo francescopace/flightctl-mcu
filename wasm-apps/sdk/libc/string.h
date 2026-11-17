@@ -8,6 +8,7 @@ FC_LIBC(memmove) void *memmove(void *dst, const void *src, size_t n);
 FC_LIBC(memset) void *memset(void *s, int c, size_t n);
 FC_LIBC(memchr) void *memchr(const void *s, int c, size_t n);
 FC_LIBC(strchr) char *strchr(const char *s, int c);
+FC_LIBC(strrchr) char *strrchr(const char *s, int c); /* since v3.14-rc9 */
 FC_LIBC(strcmp) int strcmp(const char *a, const char *b);
 FC_LIBC(strcpy) char *strcpy(char *dst, const char *src);
 FC_LIBC(strlen) size_t strlen(const char *s);

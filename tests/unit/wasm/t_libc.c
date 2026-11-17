@@ -29,6 +29,7 @@ static int others(void)
     memmove(a + 1, a, 5); /* overlapping: "hhello" */
     CHECK(strcmp(a, "hhello") == 0);
     CHECK(memchr(a, 'e', 6) == a + 2 && strchr(a, 'l') == a + 3);
+    CHECK(strrchr(a, 'l') == a + 4 && strrchr(a, 'z') == NULL && strrchr(a, 0) == a + 6);
     CHECK(strcpy(b, "abc") == b && strcmp(b, "abc") == 0);
     CHECK(strncmp("abcd", "abcx", 3) == 0 && strncasecmp("ABC", "abd", 2) == 0);
     CHECK(strncpy(b, "xy", 5) == b && b[1] == 'y' && b[2] == 0 && b[4] == 0);

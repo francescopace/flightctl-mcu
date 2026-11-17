@@ -4,6 +4,7 @@ memmove
 memset
 memchr
 strchr
+strrchr
 strcmp
 strcpy
 strlen

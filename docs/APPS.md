@@ -217,7 +217,7 @@ The firmware has a small C library for apps, part of the interface: WAMR's libc-
 
 | Header | Functions |
 |---|---|
-| `string.h` | `memcmp`, `memcpy`, `memmove`, `memset`, `memchr`, `strlen`, `strcmp`, `strncmp`, `strncasecmp`, `strcpy`, `strncpy`, `strchr`, `strstr`, `strspn`, `strcspn` |
+| `string.h` | `memcmp`, `memcpy`, `memmove`, `memset`, `memchr`, `strlen`, `strcmp`, `strncmp`, `strncasecmp`, `strcpy`, `strncpy`, `strchr`, `strrchr` (from v3.14-rc9), `strstr`, `strspn`, `strcspn` |
 | `stdio.h` | `snprintf`, `sprintf`, `printf`, `puts`, `putchar` |
 | `stdlib.h` | `atoi`, `strtol`, `strtoul`, `abort` |
 | `ctype.h` | `isalnum`, `isalpha`, `isdigit`, `isgraph`, `isprint`, `isspace`, `isupper`, `isxdigit`, `tolower`, `toupper` |

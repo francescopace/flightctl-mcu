@@ -575,7 +575,7 @@ static const NativeSymbol s_env_natives[] = { /* const: see s_libc_natives */
  * and strncpy, atoi and ctype are the device's own (below). */
 static const char *const s_libc[] = {
     "memcmp", "memcpy", "memmove", "memset", "memchr", "strchr", "strcmp", "strcpy", "strlen", "strncmp",
-    "strncpy", "strncasecmp", "strspn", "strcspn", "strstr", "sprintf", "snprintf", "printf", "puts",
+    "strncpy", "strncasecmp", "strrchr", "strspn", "strcspn", "strstr", "sprintf", "snprintf", "printf", "puts",
     "putchar", "atoi", "strtol", "strtoul", "isalnum", "isalpha", "isdigit", "isgraph", "isprint",
     "isspace", "isupper", "isxdigit", "tolower", "toupper", "abort",
 };
@@ -681,6 +681,15 @@ LIBC_PP(strstr)
 static uint32_t env_strchr(wasm_exec_env_t env, const char *s, int32_t c)
 {
     LIBC_TIMED(uint32_t, ((wa_pi_t)s_wa_strchr)(env, s, c));
+}
+
+/* The device's own: WAMR's libc-builtin has no strrchr. */
+static uint32_t env_strrchr(wasm_exec_env_t env, const char *s, int32_t c)
+{
+    int64_t t0 = fc_apps_now_us();
+    const char *r = strrchr(s, c);
+    fc_apps_native_time(env, wasm_runtime_get_user_data(env), t0);
+    return r != NULL ? (uint32_t)wasm_runtime_addr_native_to_app(wasm_runtime_get_module_inst(env), (void *)r) : 0;
 }
 
 static uint32_t env_strlen(wasm_exec_env_t env, const char *s)
@@ -857,6 +866,7 @@ static const NativeSymbol s_libc_natives[] = {
     {"strncasecmp", (void *)env_strncasecmp, "($$i)i", NULL},
     {"strncmp", (void *)env_strncmp, "($$i)i", NULL},
     {"strncpy", (void *)env_strncpy, "(*$i)i", NULL},
+    {"strrchr", (void *)env_strrchr, "($i)i", NULL},
     {"strspn", (void *)env_strspn, "($$)i", NULL},
     {"strstr", (void *)env_strstr, "($$)i", NULL},
     {"strtol", (void *)env_strtol, "($ii)i", NULL},
