@@ -407,20 +407,23 @@ struct fc_mqtt_msg {
 
 _Static_assert(FC_MQTT_POOL_SIZE % 4 == 0 && FC_MQTT_POOL_SIZE <= 65532, "FC_MQTT_POOL_SIZE");
 
-static pthread_mutex_t s_pool_lock = PTHREAD_MUTEX_INITIALIZER;
-static unsigned char *s_pool; /* allocated with the first broker, kept */
-static size_t s_pool_used, s_pool_peak;
-static struct {
+typedef struct {
     void *owner;
     size_t bytes;
-} s_owners[FC_MQTT_MAX_SUBS];
+} pool_owner_t;
+
+static pthread_mutex_t s_pool_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Allocated with the first broker, kept: the owners' table, then the blocks. */
+static pool_owner_t *s_owners;
+static unsigned char *s_pool;
+static size_t s_pool_used, s_pool_peak;
 
 static int pool_init(void)
 {
     pthread_mutex_lock(&s_pool_lock);
-    if (s_pool == NULL && (s_pool = malloc(FC_MQTT_POOL_SIZE)) != NULL) {
+    if (s_pool == NULL && (s_owners = calloc(1, sizeof(pool_owner_t) * FC_MQTT_MAX_SUBS + FC_MQTT_POOL_SIZE)) != NULL) {
+        s_pool = (unsigned char *)(s_owners + FC_MQTT_MAX_SUBS);
         struct fc_mqtt_msg *b = (struct fc_mqtt_msg *)s_pool;
-        memset(b, 0, MSG_HDR);
         b->size = FC_MQTT_POOL_SIZE;
     }
     int rc = s_pool != NULL ? 0 : -1;
@@ -533,6 +536,7 @@ typedef struct conn {
     mbedtls_ssl_config conf;
     mbedtls_x509_crt ca;
     int broken;        /* __atomic: a write failed, the client's thread closes it */
+    int quick;         /* under s_io: a packet's first read, which does not wait */
     long long last_tx; /* under s_io */
     long long ping_at; /* a PINGREQ waits for its answer since then, 0 none */
     unsigned char tx[TX_CAP];
@@ -543,11 +547,17 @@ static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t s_io = PTHREAD_MUTEX_INITIALIZER;
 
+/* The subscriptions and the prefixes: allocated at the first subscription or
+ * broker, kept (on the ESP32-S3 with Zephyr there is no static RAM to spare). */
+typedef struct {
+    char dev_prefix[FC_MQTT_MAX_PREFIX + 1];   /* "" unconfigured */
+    char fleet_prefix[FC_MQTT_MAX_PREFIX + 1]; /* "" none */
+    sub_t subs[FC_MQTT_MAX_SUBS];
+} state_t;
+
 static fc_mqtt_hooks_t s_hooks;           /* set before the thread */
 static cfg_t *s_cfg;                      /* under s_lock: the running config, the thread reads it */
-static char s_dev_prefix[FC_MQTT_MAX_PREFIX + 1];   /* under s_lock, "" unconfigured */
-static char s_fleet_prefix[FC_MQTT_MAX_PREFIX + 1]; /* under s_lock, "" none */
-static sub_t s_subs[FC_MQTT_MAX_SUBS];    /* under s_lock */
+static state_t *s_st;                     /* under s_lock, NULL until needed */
 static int s_up;                          /* under s_lock: CONNACK accepted, not lost since */
 static int s_stop;                        /* under s_lock */
 static int s_running;                     /* the thread exists (agent's thread only) */
@@ -607,6 +617,23 @@ static int bio_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_t 
     return rc;
 }
 
+/* The TLS connection's transport: as bio_*, and during a packet's first
+ * read a wait of FIRST_READ_MS that ends in WANT_READ. */
+static int tls_bio_send(void *ctx, const unsigned char *buf, size_t len)
+{
+    return bio_send(&((struct conn *)ctx)->net, buf, len);
+}
+
+static int tls_bio_recv(void *ctx, unsigned char *buf, size_t len, uint32_t timeout)
+{
+    struct conn *c = ctx;
+    if (c->quick) {
+        int rc = bio_recv_timeout(&c->net, buf, len, FIRST_READ_MS);
+        return rc == MBEDTLS_ERR_SSL_TIMEOUT ? MBEDTLS_ERR_SSL_WANT_READ : rc;
+    }
+    return bio_recv_timeout(&c->net, buf, len, timeout);
+}
+
 static int fd_readable(int fd, int timeout_ms)
 {
     fd_set rf;
@@ -662,14 +689,12 @@ static int tp_read_some(conn_t *c, unsigned char *b, size_t n)
         if (c->tls) {
             /* A record without data (a TLS 1.3 session ticket, a key
              * update) would otherwise hold s_io until the next one comes:
-             * a short wait, and a record only begun is finished next time
-             * (mbedTLS keeps what it read). */
-            mbedtls_ssl_conf_read_timeout(&c->conf, FIRST_READ_MS);
+             * the transport waits FIRST_READ_MS and answers WANT_READ, after
+             * which mbedTLS goes on with what it read (a timeout would end
+             * the connection). */
+            c->quick = 1;
             rc = mbedtls_ssl_read(&c->ssl, b, n);
-            mbedtls_ssl_conf_read_timeout(&c->conf, READ_TIMEOUT_MS);
-            if (rc == MBEDTLS_ERR_SSL_TIMEOUT) {
-                return 0;
-            }
+            c->quick = 0;
             if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE ||
                 rc == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {
                 if (mbedtls_ssl_get_bytes_avail(&c->ssl) == 0 && !mbedtls_ssl_check_pending(&c->ssl) &&
@@ -767,7 +792,7 @@ static int tls_start(conn_t *c, const cfg_t *cfg)
         log_mbedtls("ssl_setup", rc);
         return -1;
     }
-    mbedtls_ssl_set_bio(&c->ssl, &c->net, bio_send, NULL, bio_recv_timeout);
+    mbedtls_ssl_set_bio(&c->ssl, c, tls_bio_send, NULL, tls_bio_recv);
     while ((rc = mbedtls_ssl_handshake(&c->ssl)) != 0) {
         if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) {
             log_mbedtls("handshake", rc);
@@ -900,6 +925,15 @@ static uint16_t send_subscribe(int unsub, const char *filter, int qos)
 
 /* ---- subscriptions ------------------------------------------------------------------ */
 
+/* s_st, allocated if it was not; NULL without memory. Under s_lock. */
+static state_t *state(void)
+{
+    if (s_st == NULL) {
+        s_st = calloc(1, sizeof(*s_st));
+    }
+    return s_st;
+}
+
 static void sub_clear(sub_t *s)
 {
     free(s->app);
@@ -916,7 +950,7 @@ static int sub_expand(sub_t *s)
 {
     free(s->filter);
     s->filter = NULL;
-    const char *tmpl = s->scope == FC_MQTT_FLEET ? s_fleet_prefix : s_dev_prefix;
+    const char *tmpl = s->scope == FC_MQTT_FLEET ? s_st->fleet_prefix : s_st->dev_prefix;
     if (tmpl[0] == '\0') {
         return 0;
     }
@@ -941,9 +975,9 @@ static int filter_qos(const char *filter)
 {
     int q = -1;
     for (int i = 0; i < FC_MQTT_MAX_SUBS; i++) {
-        if (s_subs[i].owner != NULL && s_subs[i].filter != NULL && strcmp(s_subs[i].filter, filter) == 0 &&
-            s_subs[i].qos > q) {
-            q = s_subs[i].qos;
+        if (s_st->subs[i].owner != NULL && s_st->subs[i].filter != NULL && strcmp(s_st->subs[i].filter, filter) == 0 &&
+            s_st->subs[i].qos > q) {
+            q = s_st->subs[i].qos;
         }
     }
     return q;
@@ -951,7 +985,7 @@ static int filter_qos(const char *filter)
 
 static int sub_handle(int i)
 {
-    return (int)((s_subs[i].gen % 0x100000u) * FC_MQTT_MAX_SUBS) + i;
+    return (int)((s_st->subs[i].gen % 0x100000u) * FC_MQTT_MAX_SUBS) + i;
 }
 
 int fc_mqtt_subscribe(void *owner, const char *app, int scope, const char *topic, size_t tlen, int qos)
@@ -971,11 +1005,13 @@ int fc_mqtt_subscribe(void *owner, const char *app, int scope, const char *topic
     int rc = FC_HW_ENOSPC, send_qos = -1;
     char *send = NULL;
     pthread_mutex_lock(&s_lock);
-    if (scope == FC_MQTT_FLEET && s_dev_prefix[0] != '\0' && s_fleet_prefix[0] == '\0') {
+    if (state() == NULL) {
+        rc = FC_HW_ENOSPC;
+    } else if (scope == FC_MQTT_FLEET && s_st->dev_prefix[0] != '\0' && s_st->fleet_prefix[0] == '\0') {
         rc = FC_HW_ENOENT;
     } else {
         for (int i = 0; i < FC_MQTT_MAX_SUBS; i++) {
-            sub_t *s = &s_subs[i];
+            sub_t *s = &s_st->subs[i];
             if (s->owner != NULL) {
                 continue;
             }
@@ -1006,8 +1042,8 @@ int fc_mqtt_subscribe(void *owner, const char *app, int scope, const char *topic
         uint16_t pid = send_subscribe(0, send, send_qos);
         pthread_mutex_lock(&s_lock);
         int i = rc % FC_MQTT_MAX_SUBS;
-        if (s_subs[i].owner == owner && sub_handle(i) == rc) {
-            s_subs[i].pid = pid;
+        if (s_st->subs[i].owner == owner && sub_handle(i) == rc) {
+            s_st->subs[i].pid = pid;
         }
         pthread_mutex_unlock(&s_lock);
         free(send);
@@ -1020,7 +1056,7 @@ int fc_mqtt_subscribe(void *owner, const char *app, int scope, const char *topic
  * is not on the broker. */
 static char *sub_close(int i)
 {
-    sub_t *s = &s_subs[i];
+    sub_t *s = &s_st->subs[i];
     char *filter = s->filter;
     s->filter = NULL;
     sub_clear(s);
@@ -1038,7 +1074,7 @@ int fc_mqtt_unsubscribe(void *owner, int sub)
     }
     int i = sub % FC_MQTT_MAX_SUBS;
     pthread_mutex_lock(&s_lock);
-    if (owner == NULL || s_subs[i].owner != owner || sub_handle(i) != sub) {
+    if (owner == NULL || s_st == NULL || s_st->subs[i].owner != owner || sub_handle(i) != sub) {
         pthread_mutex_unlock(&s_lock);
         return FC_HW_EINVAL;
     }
@@ -1055,7 +1091,7 @@ void fc_mqtt_drop_owner(void *owner)
 {
     for (int i = 0; owner != NULL && i < FC_MQTT_MAX_SUBS; i++) {
         pthread_mutex_lock(&s_lock);
-        char *f = s_subs[i].owner == owner ? sub_close(i) : NULL;
+        char *f = s_st != NULL && s_st->subs[i].owner == owner ? sub_close(i) : NULL;
         pthread_mutex_unlock(&s_lock);
         if (f != NULL) {
             send_subscribe(1, f, 0);
@@ -1071,11 +1107,11 @@ static void resubscribe_all(void)
         char *f = NULL;
         int q = 0;
         pthread_mutex_lock(&s_lock);
-        sub_t *s = &s_subs[i];
+        sub_t *s = &s_st->subs[i];
         if (s->owner != NULL && s->filter != NULL) {
             int first = 1;
             for (int j = 0; j < i; j++) {
-                if (s_subs[j].owner != NULL && s_subs[j].filter != NULL && strcmp(s_subs[j].filter, s->filter) == 0) {
+                if (s_st->subs[j].owner != NULL && s_st->subs[j].filter != NULL && strcmp(s_st->subs[j].filter, s->filter) == 0) {
                     first = 0;
                 }
             }
@@ -1089,8 +1125,8 @@ static void resubscribe_all(void)
             uint16_t pid = send_subscribe(0, f, q);
             pthread_mutex_lock(&s_lock);
             for (int j = 0; j < FC_MQTT_MAX_SUBS; j++) {
-                if (s_subs[j].owner != NULL && s_subs[j].filter != NULL && strcmp(s_subs[j].filter, f) == 0) {
-                    s_subs[j].pid = pid;
+                if (s_st->subs[j].owner != NULL && s_st->subs[j].filter != NULL && strcmp(s_st->subs[j].filter, f) == 0) {
+                    s_st->subs[j].pid = pid;
                 }
             }
             pthread_mutex_unlock(&s_lock);
@@ -1111,7 +1147,7 @@ int fc_mqtt_publish(const char *app, const char *topic, size_t tlen, const void 
     char prefix[FC_MQTT_MAX_PREFIX + 1];
     pthread_mutex_lock(&s_lock);
     int up = s_up;
-    int pl = s_dev_prefix[0] != '\0' ? replace(s_dev_prefix, "{app}", app, prefix, sizeof(prefix)) : -1;
+    int pl = s_st != NULL && s_st->dev_prefix[0] != '\0' ? replace(s_st->dev_prefix, "{app}", app, prefix, sizeof(prefix)) : -1;
     pthread_mutex_unlock(&s_lock);
     if (!up) {
         return FC_HW_EAGAIN;
@@ -1191,7 +1227,7 @@ static int rx_publish(conn_t *c, unsigned char first, size_t rem, delivery_t *d)
         int k = 0;
         pthread_mutex_lock(&s_lock);
         for (int i = 0; i < FC_MQTT_MAX_SUBS; i++) {
-            sub_t *s = &s_subs[i];
+            sub_t *s = &s_st->subs[i];
             if (s->owner != NULL && s->filter != NULL && topic_matches(s->filter, topic, tl) &&
                 tl - s->prefix_len <= FC_MQTT_MAX_TOPIC) {
                 to[k].owner = s->owner;
@@ -1284,8 +1320,8 @@ static int rx_packet(conn_t *c)
             uint16_t pid = (uint16_t)(c->rx[0] << 8 | c->rx[1]);
             pthread_mutex_lock(&s_lock);
             for (int i = 0; i < FC_MQTT_MAX_SUBS; i++) {
-                if (s_subs[i].owner != NULL && s_subs[i].pid == pid && s_subs[i].filter != NULL) {
-                    fc_port_log(FC_LOG_WARN, "mqtt: the broker refused the subscription to %s", s_subs[i].filter);
+                if (s_st->subs[i].owner != NULL && s_st->subs[i].pid == pid && s_st->subs[i].filter != NULL) {
+                    fc_port_log(FC_LOG_WARN, "mqtt: the broker refused the subscription to %s", s_st->subs[i].filter);
                     break;
                 }
             }
@@ -1538,12 +1574,15 @@ void fc_mqtt_stop(void)
 /* New prefixes for every subscription; under s_lock. */
 static void set_prefixes(const char *dev, const char *fleet)
 {
-    snprintf(s_dev_prefix, sizeof(s_dev_prefix), "%s", dev);
-    snprintf(s_fleet_prefix, sizeof(s_fleet_prefix), "%s", fleet);
+    if (s_st == NULL) {
+        return;
+    }
+    snprintf(s_st->dev_prefix, sizeof(s_st->dev_prefix), "%s", dev);
+    snprintf(s_st->fleet_prefix, sizeof(s_st->fleet_prefix), "%s", fleet);
     for (int i = 0; i < FC_MQTT_MAX_SUBS; i++) {
-        if (s_subs[i].owner != NULL && sub_expand(&s_subs[i]) != 0) {
+        if (s_st->subs[i].owner != NULL && sub_expand(&s_st->subs[i]) != 0) {
             fc_port_log(FC_LOG_WARN, "mqtt: app %s's subscription %s does not fit under the new prefix",
-                        s_subs[i].app, s_subs[i].rel);
+                        s_st->subs[i].app, s_st->subs[i].rel);
         }
     }
 }
@@ -1595,7 +1634,10 @@ int fc_mqtt_configure(const char *device)
         return 1;
     }
     fc_mqtt_stop();
-    if (pool_init() != 0) {
+    pthread_mutex_lock(&s_lock);
+    int have_state = state() != NULL;
+    pthread_mutex_unlock(&s_lock);
+    if (!have_state || pool_init() != 0) {
         fc_port_log(FC_LOG_WARN, "mqtt: no memory for the receive pool (%d bytes)", FC_MQTT_POOL_SIZE);
         cfg_free(cfg);
         unconfigure();

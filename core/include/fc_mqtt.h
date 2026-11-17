@@ -25,8 +25,8 @@
  * which connects, reads, keeps the link alive and calls the hooks. Hooks are
  * called with no lock held.
  *
- * RAM: about 1.1 KB of static data (the subscriptions, the prefixes), and
- * nothing more until a broker is configured. Then the thread's stack
+ * RAM: about 1 KB at the first subscription (the subscriptions, the
+ * prefixes), nothing more until a broker is configured. Then the thread's stack
  * (FC_MQTT_STACK_SIZE), the receive pool (FC_MQTT_POOL_SIZE, kept from then
  * on), about 1 KB of packet buffers, and the TLS connection: on a port where
  * mbedTLS's receive buffer is the full record (Zephyr), a second reserved

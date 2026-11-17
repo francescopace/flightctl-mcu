@@ -234,7 +234,7 @@ static void test_pool(void)
     CHECK_INT(st.pool_used, 0);
     CHECK_INT(st.pool_peak, FC_MQTT_POOL_SIZE);
     /* All free again: one block of the whole pool. */
-    struct fc_mqtt_msg *whole = (struct fc_mqtt_msg *)s_pool;
+    struct fc_mqtt_msg *whole = (struct fc_mqtt_msg *)s_pool; /* the blocks, after the owners */
     CHECK(pool_alloc(&a, 0, FC_MQTT_POOL_SIZE / 2 - MSG_HDR) == whole);
     CHECK_INT(whole->size, FC_MQTT_POOL_SIZE / 2);
     fc_mqtt_msg_free(whole);

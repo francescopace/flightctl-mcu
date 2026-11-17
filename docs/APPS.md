@@ -150,7 +150,7 @@ spec:
 
 | Field | What it is |
 |---|---|
-| `broker` | `mqtts://host:port` (8883 if no port) or `host:port`: TLS, the broker's certificate checked against `mqtt-ca.crt` and its name. `mqtt://host:port` (1883): plain TCP, for a broker on a network the fleet trusts; the device logs it. Required. |
+| `broker` | `mqtts://host:port` (8883 if no port) or `host:port`: TLS 1.2 or 1.3, the broker's certificate checked against `mqtt-ca.crt` and its name. `mqtt://host:port` (1883): plain TCP, for a broker on a network the fleet trusts; the device logs it. Required. |
 | `username`, `password` | the broker's user, if it asks for one. They are in the fleet's spec, readable by whoever reads the fleet: give each fleet its own user, limited by the broker to its prefixes. |
 | `clientId` | `{device}` by default, the device's name in Flight Control |
 | `keepAliveSeconds` | 60 by default, 10 to 3600 |
@@ -161,7 +161,7 @@ spec:
 
 The device reconnects by itself, 1 to 2 s after a lost link, then waiting longer after each failure, up to 2 minutes, and subscribes again; a session is not kept on the broker. QoS 1 is sent once: a message published while the link drops, before the broker's acknowledgment, is not sent again. A message received waits for its app in a pool of 4 KB shared by all the apps, of which one app holds at most half; a message larger than 512 bytes, with a topic longer than 64 characters under its prefix, or for which there is no room is dropped, counted, logged once a minute at most, and still acknowledged. At most 16 subscriptions for all the apps together.
 
-What it costs: on the C3, 12.6 KB of flash and 1.1 KB of static RAM; once a broker is configured, the pool (4 KB), the client's thread (12 KB of stack, not yet measured on a board), 1 KB of packet buffers, and the TLS connection: with ESP-IDF, mbedTLS's buffers sized to each record, small for MQTT; on Zephyr, where the receive buffer is the full record, a second 17 KB block reserved for it, since this connection stays open while a download takes the agent's block.
+What it costs: 12.9 KB of flash on the C3 (12.7 KB on the S3 with Zephyr) and 150 bytes of static RAM; about 1 KB at the first subscription; once a broker is configured, the pool (4 KB), the client's thread (12 KB of stack, not yet measured on a board), 1 KB of packet buffers, and the TLS connection: with ESP-IDF, mbedTLS's buffers sized to each record, small for MQTT; on Zephyr, where the receive buffer is the full record, a second 17 KB block reserved for it, since this connection stays open while a download takes the agent's block.
 
 ## Ports
 
