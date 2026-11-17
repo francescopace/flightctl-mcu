@@ -1526,12 +1526,19 @@ static void *mqtt_thread(void *arg)
         pthread_mutex_lock(&s_lock);
         const cfg_t *cfg = s_st->cfg; /* replaced only while this thread is stopped */
         pthread_mutex_unlock(&s_lock);
-        long free_before = fc_port_heap_free();
+        long free_before = fc_port_heap_free(), low_before = fc_port_heap_low();
         conn_t *c = conn_open(cfg);
         if (s_hooks.connect_end != NULL) {
             s_hooks.connect_end();
         }
         note_stack();
+        /* Whether the handshake took the heap lower than anything before it
+         * (the lowest so far, before and after: fc_port_heap_low). */
+        long low_after = fc_port_heap_low();
+        if (low_before >= 0 && low_after >= 0) {
+            fc_port_log(FC_LOG_INFO, "mqtt: handshake %s; internal heap at its lowest %ld bytes, %ld before it",
+                        c != NULL ? "done" : "failed", low_after, low_before);
+        }
         if (c == NULL) {
             next_try = now_ms() + jitter(backoff);
             backoff = backoff * 2 > BACKOFF_MAX_MS ? BACKOFF_MAX_MS : backoff * 2;

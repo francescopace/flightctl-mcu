@@ -734,8 +734,7 @@ static void turn_hold(agent_t *a)
  * broker starts from now on (both see `applying`), and one under way ends
  * first. Parsing a spec, writing its files and starting its apps take the
  * heap that a TLS handshake holds: on a C6, a spec that came during an
- * export left 1 KB; on a C3 with v3.14-rc6, the broker's handshake beside
- * the spec after a reboot left 3 KB. */
+ * export left 1 KB. */
 static void apply_begin(agent_t *a)
 {
     pthread_mutex_lock(&a->lock);
