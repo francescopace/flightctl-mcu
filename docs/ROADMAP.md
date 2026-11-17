@@ -31,10 +31,6 @@ What the Zephyr port does not have, and the ESP-IDF firmware has:
 
 - [ ] Protection of the device beyond signed images and anti-rollback: the device key is in the storage partition in clear, the flash is not encrypted. On the ESP32-S3 it takes Espressif's MCUboot port; a chip with TF-M (RP2350, nRF54L, STM32U5) would keep the key protected ([SECURITY.md](SECURITY.md#zephyr)).
 
-What Flight Control offers and the agent does not answer yet:
-
-- [ ] More in the device's log, which the UI's Logs tab shows ([CONSOLE.md](CONSOLE.md#the-log)): the lines of ESP-IDF and Zephyr themselves (WiFi, TLS), which go to the serial port only, and the log of the boot before a crash. The tab works as long as the UI sends the same commands (they are the same in 1.4.0 and on the UI's main branch of 16 November 2026).
-
 What an app can do and hold:
 
 - [ ] A large app's memory on the classic ESP32, the C5 and the C3, every time. CoreMark's 64 KB takes one free block of 68 KB, and in v3.12 one install or swap in seven still failed on each for want of it (largest free block 48 and 64 KB, [RESULTS.md](RESULTS.md#coremark)); after an hour of app changes the C5's largest block was 60 KB with the `alarm` app. To find: what stays in the middle of the heap from one app to the next, and whether an app that failed for want of memory is tried again on its own. With v3.13 it fitted once in two tries on the ESP32 and the C5 and once in five on the C3 (only right after a restart; a swap found 22 KB the largest of 66 KB free), with the metrics on or off.

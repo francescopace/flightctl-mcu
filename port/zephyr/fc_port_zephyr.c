@@ -17,6 +17,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/printk-hooks.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/sys/sys_heap.h>
 #include <zephyr/version.h>
@@ -40,16 +41,134 @@ static struct fs_mount_t s_mnt = {
 static void report_last_fatal(void);
 static char s_fatal_text[112]; /* for customInfo: empty unless the last restart was a fatal error */
 
+/* ---- Zephyr's own lines into the device's log ----------------------------------
+ * What Zephyr prints (printk, and its minimal log: "E: ...", a fatal error's
+ * report, the WiFi driver's) passes here a character at a time: printed as
+ * before, and each line kept (fc_log_put_system). The agent's lines ("fc:")
+ * are kept by fc_port_log. A line ended in an interrupt or an exception, as a
+ * fault's report is, waits in s_isr until a thread keeps it, or until the
+ * fatal error's handler does, before the restart. */
+static printk_hook_fn_t s_printk_out;
+static struct k_spinlock s_pk_lock;
+static char s_pk_line[160];
+static size_t s_pk_len;
+static char s_isr[384]; /* lines, each ending with a newline */
+static size_t s_isr_len;
+
+static const char *fatal_reason(uint32_t reason);
+
+/* A line of Zephyr's log, "E (12) tag: text" or "E: text" (the minimal
+ * log's, a fault's report), kept as "tag: text"; a bare printk (the
+ * simulated LED, the boot banner) is only printed. Its buffer is static, as
+ * the stack of a thread that prints may be small: only one caller at a time
+ * (s_pk_mutex, or the fatal error's handler). */
+static void keep_zephyr_line(const char *line, void (*put)(fc_log_level_t, const char *))
+{
+    static char text[sizeof(s_pk_line) + 8];
+    fc_log_level_t level = FC_LOG_INFO;
+    int tagged = line[0] != '\0' && strchr("EWID", line[0]) != NULL;
+    const char *close = strchr(line, ')');
+    if (tagged && line[1] == ' ' && line[2] == '(' && close != NULL && close[1] == ' ') {
+        if (strncmp(close + 2, "fc: ", 4) == 0) {
+            return; /* the agent's: kept already */
+        }
+        snprintf(text, sizeof(text), "%s", close + 2);
+    } else if (tagged && line[1] == ':' && line[2] == ' ') {
+        snprintf(text, sizeof(text), "zephyr: %s", line + 3);
+    } else {
+        return;
+    }
+    level = line[0] == 'E' ? FC_LOG_ERROR : line[0] == 'W' ? FC_LOG_WARN : FC_LOG_INFO;
+    put(level, text);
+}
+
+static void put_fatal(fc_log_level_t level, const char *text)
+{
+    (void)level;
+    fc_log_put_fatal(text);
+}
+
+/* The lines waiting in s_isr, kept by a thread (or, with put_fatal, by the
+ * fatal error's handler). */
+static void keep_isr_lines(void (*put)(fc_log_level_t, const char *))
+{
+    static char lines[sizeof(s_isr)];
+    k_spinlock_key_t key = k_spin_lock(&s_pk_lock);
+    size_t n = s_isr_len;
+    memcpy(lines, s_isr, n);
+    s_isr_len = 0;
+    k_spin_unlock(&s_pk_lock, key);
+    for (size_t at = 0; at < n;) {
+        char *nl = memchr(lines + at, '\n', n - at);
+        if (nl == NULL) {
+            break;
+        }
+        *nl = '\0';
+        keep_zephyr_line(lines + at, put);
+        at = (size_t)(nl - lines) + 1;
+    }
+}
+
+static K_MUTEX_DEFINE(s_pk_mutex);
+
+static int printk_keep(int c)
+{
+    static char line[sizeof(s_pk_line)];
+    int r = s_printk_out != NULL ? s_printk_out(c) : c;
+    if (c != '\n' && s_pk_len < sizeof(s_pk_line) - 1) {
+        k_spinlock_key_t key = k_spin_lock(&s_pk_lock);
+        if (c != '\r' && s_pk_len < sizeof(s_pk_line) - 1) {
+            s_pk_line[s_pk_len++] = (char)c;
+        }
+        k_spin_unlock(&s_pk_lock, key);
+        return r;
+    }
+    /* A line ends: a thread that can take the mutex keeps it now, anyone
+     * else (an interrupt, an exception) leaves it in s_isr. */
+    int now = !k_is_in_isr() && k_mutex_lock(&s_pk_mutex, K_NO_WAIT) == 0;
+    k_spinlock_key_t key = k_spin_lock(&s_pk_lock);
+    s_pk_line[s_pk_len] = '\0';
+    if (now) {
+        memcpy(line, s_pk_line, s_pk_len + 1);
+    } else if (s_isr_len + s_pk_len + 1 <= sizeof(s_isr)) {
+        memcpy(s_isr + s_isr_len, s_pk_line, s_pk_len);
+        s_isr_len += s_pk_len;
+        s_isr[s_isr_len++] = '\n';
+    }
+    s_pk_len = 0;
+    if (c != '\n' && c != '\r') {
+        s_pk_line[s_pk_len++] = (char)c; /* a line too long: the rest is the next */
+    }
+    int pending = s_isr_len > 0;
+    k_spin_unlock(&s_pk_lock, key);
+    if (now) {
+        if (pending) {
+            keep_isr_lines(fc_log_put_system);
+        }
+        keep_zephyr_line(line, fc_log_put_system);
+        k_mutex_unlock(&s_pk_mutex);
+    }
+    return r;
+}
+
 int fc_port_zephyr_init(void)
 {
+    s_printk_out = __printk_get_hook();
+    __printk_hook_install(printk_keep);
     report_last_fatal();
     int rc = fs_mount(&s_mnt); /* formats a blank partition */
     if (rc != 0) {
         fc_port_log(FC_LOG_ERROR, "cannot mount the storage (%d)", rc);
         return -1;
     }
-    fs_mkdir(KV_DIR);   /* -EEXIST after the first boot */
-    fs_mkdir(FILE_DIR);
+    /* Made at the first boot; asked again, LittleFS logs an error. */
+    struct fs_dirent st;
+    if (fs_stat(KV_DIR, &st) != 0) {
+        fs_mkdir(KV_DIR);
+    }
+    if (fs_stat(FILE_DIR, &st) != 0) {
+        fs_mkdir(FILE_DIR);
+    }
     return 0;
 }
 
@@ -316,6 +435,13 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
     }
 #endif
     snprintf(s_fatal.thread, sizeof(s_fatal.thread), "%s", name != NULL ? name : "");
+    /* The last lines of this boot's log: the report Zephyr printed, then
+     * what this handler knows. */
+    keep_isr_lines(put_fatal);
+    char text[96];
+    snprintf(text, sizeof(text), "fatal: %s (%u) in thread \"%s\", pc 0x%08x: restarting", fatal_reason(reason),
+             reason, s_fatal.thread, (unsigned)s_fatal.pc);
+    fc_log_put_fatal(text);
     sys_reboot(SYS_REBOOT_COLD);
     CODE_UNREACHABLE;
 }

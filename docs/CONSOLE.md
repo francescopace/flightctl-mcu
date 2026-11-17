@@ -23,23 +23,31 @@ Or a prompt, in a terminal (`--tty`, and the UI's terminal), with the line edite
 
 ## The log
 
-The device keeps its last log lines in RAM: the agent's and the apps' (an app's are `app <name>: ...`), as the serial port shows them, in a ring of 4 KB reserved at build time (about 40 to 80 lines; the oldest go first). Debug lines are kept only in a build that prints them. Only this boot: the ring is not kept across a restart. The lines of ESP-IDF and Zephyr themselves (WiFi, TLS) are not in it, only on the serial port.
+The device keeps its last log lines in RAM, as the serial port shows them, in a ring of 4 KB reserved at build time (about 40 to 80 lines; the oldest go first):
+
+- the agent's and the apps' (an app's are `app <name>: ...`), as `fc:`; debug lines only in a build that prints them, the agent's info lines also in a release build, which does not print them;
+- the system's own, with their tag: ESP-IDF's errors and warnings (WiFi, TLS, drivers), with the firmware's own info lines and the address the WiFi got; Zephyr's log as it prints it (its errors, a fault's report). The rest, ESP-IDF's other info lines (about 40 at each WiFi start) and bare printk lines, stays on the serial port: it would push the agent's lines out of the ring.
+
+The ring is in RAM that a restart does not clear: after a restart (a crash, a watchdog, an update, `reboot`) the previous boot's lines are still there, up to the last one written, as journalctl's boot -1; the boot before it goes. After a crash, the new boot's first line says so: on ESP-IDF `restarted after a reset: panic` (or the watchdog, a brownout), on Zephyr the fault and where it was. A power cut, or a ring that does not check out after the restart (another firmware's layout, RAM overwritten), starts it empty. A test build (`VARIANT=crashtest` on ESP-IDF, `CONFIG_FC_CONSOLE_CRASH` on Zephyr) has a console command, `crash`, that makes the device fault, to see this; never a release.
 
 ```
 Nov 16 21:07:04 I fc: enrolled, starting management loop
+Nov 16 21:07:05 W wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2
 Nov 16 21:12:30 W fc: app alarm: 31.5 C over the threshold
 ```
 
-The time is UTC; before the device has set its clock, a line shows its uptime instead.
+The time is UTC; before the device has set its clock, a line shows its uptime instead (in the previous boot, if that boot never set it).
 
 **The UI's Logs tab.** Flight Control has no API for a device's log: the UI's Logs tab opens a console session with `/bin/bash -s` and writes on its stdin what a Linux device would run, `journalctl` with the tab's filters piped to `tail -n`, then a line that prints an end marker with the exit status. The device answers those commands from its RAM log:
 
 | The tab's filter | What the device shows |
 |---|---|
-| Agent (`-u flightctl-agent.service`) | every line (the apps run inside the agent) |
-| System, with a unit | the lines of an app when the unit is the app's name (`alarm` or `alarm.service`); every line for `flightctl-agent` or a glob that takes it; none for another unit |
+| Agent (`-u flightctl-agent.service`) | the agent's and the apps' lines (the apps run inside the agent) |
+| System, without a unit | every line, the system's too |
+| System, with a unit | the lines of an app when the unit is the app's name (`alarm` or `alarm.service`); the agent's and the apps' for `flightctl-agent` or a glob that takes it; none for another unit |
+| The kernel's (`-k`, from a command) | the system's lines |
 | Level (`-p`) | E is `err`, W `warning`, I `info`, D `debug`; the level chosen and above |
-| Current boot (`-b 0`), the last hour, day, week, a range of dates | as asked; the previous boot is empty |
+| Current boot (`-b 0`), previous boot (`-b -1`), the last hour, day, week, a range of dates | as asked; without a boot, both; an older boot is empty |
 | Live | the lines kept, then the new ones as they are written, until the tab stops |
 | File path (under `/var/log`) | not found: the device has no files to show |
 
@@ -56,7 +64,7 @@ While a session is listed, the server answers the spec's long-poll at once with 
 - **One session at a time.** A second gets "another console session is open on this device" and fails.
 - **A session ends** after 10 minutes without input (unless it follows the log: `log -f`, the Logs tab's live mode), and when the device needs its connection for a download (a firmware or an app takes the connection's turn, [REGISTRY.md](REGISTRY.md#memory)).
 - **Input**: up to 4 KB not yet read by the device; more at once (a large paste) ends the session. A line of a session reading stdin is up to 2 KB, one typed at the prompt 160 characters.
-- **RAM**: the log's ring, 4 KB, always; while a session lasts, its thread's stack (8 KB, of which the Logs tab's commands used 5.2 KB at most on the ESP32, C5, C6 and S3), the session with its 2 KB input buffer, the stream's buffer, a 1 KB output buffer while a command writes, and 2 KB more for a session reading stdin; none otherwise.
+- **RAM**: the log's ring, 4 KB, always (with Zephyr, 0.9 KB more for the lines on their way into it); while a session lasts, its thread's stack (8 KB, of which the Logs tab's commands used 5.2 KB at most on the ESP32, C5, C6 and S3), the session with its 2 KB input buffer, the stream's buffer, a 1 KB output buffer while a command writes, and 2 KB more for a session reading stdin; none otherwise.
 - **Access** is Flight Control's: whoever may open a console on the device may also restart it.
 
 Tried against Flight Control 1.4.0 on the classic ESP32, C3, C5, C6 and S3 (ESP-IDF), on the ESP32-S3 with Zephyr, and in the end-to-end test on the simulated device and the Zephyr builds for native_sim and the emulated Cortex-M3. The Logs tab was looked at in Flight Control 1.4.0's UI.

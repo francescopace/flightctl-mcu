@@ -66,7 +66,9 @@ typedef struct {
     char unit[2][128]; /* -u: globs, any of them */
     int units;
     int prio_min, prio_max; /* syslog priorities: 0 emerg ... 7 debug */
-    int none;               /* another boot, the kernel's: nothing kept */
+    int none;               /* a boot not kept: nothing */
+    int boot;               /* -1 every boot kept, 0 this one, 1 the previous one */
+    int kernel;             /* -k: the system's lines only */
     int since_now;
     int has_since, has_until;
     time_t since, until;
@@ -491,7 +493,7 @@ static int unit_is(const char *pattern, const char *unit)
 
 static int jmatch(const jfilter_t *f, const fc_log_entry_t *e, time_t now, uint32_t up)
 {
-    if (f->none) {
+    if (f->none || (f->boot == 0 && e->previous) || (f->boot == 1 && !e->previous) || (f->kernel && !e->system)) {
         return 0;
     }
     int prio = s_prio[e->level & 3];
@@ -499,7 +501,12 @@ static int jmatch(const jfilter_t *f, const fc_log_entry_t *e, time_t now, uint3
         return 0;
     }
     if (f->units > 0) {
-        /* Every line is the agent's; an app's ("app NAME: ...") is also NAME.service's. */
+        /* The system's lines are no unit's (they are the kernel's, -k). The
+         * others are the agent's; an app's ("app NAME: ...") is also
+         * NAME.service's. */
+        if (e->system) {
+            return 0;
+        }
         char app[80] = "";
         const char *colon = strncmp(e->text, "app ", 4) == 0 ? strchr(e->text + 4, ':') : NULL;
         if (colon != NULL && colon - e->text - 4 < 64) {
@@ -514,11 +521,14 @@ static int jmatch(const jfilter_t *f, const fc_log_entry_t *e, time_t now, uint3
         }
     }
     if (now >= CLOCK_SET && (f->has_since || f->has_until)) {
-        time_t t = now - (time_t)(up > e->up_s ? up - e->up_s : 0);
-        if ((f->has_since && t < f->since) || (f->has_until && t > f->until)) {
+        /* A line of the previous boot from before its clock was set: out of
+         * any range. */
+        time_t t = (time_t)e->when;
+        if (t == 0 || (f->has_since && t < f->since) || (f->has_until && t > f->until)) {
             return 0;
         }
     }
+    (void)up;
     return 1;
 }
 
@@ -528,15 +538,18 @@ static int jmatch(const jfilter_t *f, const fc_log_entry_t *e, time_t now, uint3
 static size_t jline(char *line, size_t cap, const fc_log_entry_t *e, time_t now, uint32_t up)
 {
     char when[24];
-    if (now >= CLOCK_SET) {
-        time_t t = now - (time_t)(up > e->up_s ? up - e->up_s : 0);
+    (void)now;
+    (void)up;
+    if (e->when != 0) {
+        time_t t = (time_t)e->when;
         struct tm tm;
         gmtime_r(&t, &tm);
         strftime(when, sizeof(when), "%b %d %H:%M:%S", &tm);
     } else {
         snprintf(when, sizeof(when), "uptime %" PRIu32 "s", e->up_s);
     }
-    int n = snprintf(line, cap, "%s %c fc: %s\n", when, s_level[e->level & 3], e->text);
+    /* The system's lines say whose they are ("wifi: ..."); the others are fc's. */
+    int n = snprintf(line, cap, "%s %c %s%s\n", when, s_level[e->level & 3], e->system ? "" : "fc: ", e->text);
     return n < 0 ? 0 : (size_t)n < cap ? (size_t)n : cap - 1;
 }
 
@@ -685,7 +698,8 @@ static int journal_args(session_t *s, char **argv, int argc, jfilter_t *f, int i
     memset(f, 0, sizeof(*f));
     f->prio_max = 7;
     f->lines = is_log ? 50 : -1;
-    int lines_given = 0;
+    f->boot = -1; /* every boot kept, as journalctl without -b */
+    int lines_given = 0, boot_given = 0;
     time_t now = time(NULL);
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = NULL;
@@ -730,8 +744,16 @@ static int journal_args(session_t *s, char **argv, int argc, jfilter_t *f, int i
             if (v == NULL && i + 1 < argc && (is_digits(argv[i + 1]) || (argv[i + 1][0] == '-' && is_digits(argv[i + 1] + 1)))) {
                 v = argv[++i];
             }
-            /* Only this boot is kept: 0 (or none given) is it, any other is empty. */
-            f->none |= v != NULL && v[0] != '\0' && strcmp(v, "0") != 0 && strcmp(v, "-0") != 0;
+            /* Two boots are kept at most: 0 (or none given) is this one, -1
+             * the one before; any other is empty. */
+            if (v == NULL || v[0] == '\0' || strcmp(v, "0") == 0 || strcmp(v, "-0") == 0) {
+                f->boot = 0;
+            } else if (strcmp(v, "-1") == 0) {
+                f->boot = 1;
+            } else {
+                f->none = 1;
+            }
+            boot_given = 1;
         } else if (IS("-S") || IS("--since") || IS("-U") || IS("--until")) {
             NEED();
             time_t t;
@@ -761,7 +783,7 @@ static int journal_args(session_t *s, char **argv, int argc, jfilter_t *f, int i
         } else if (IS("-o") || IS("--output")) {
             NEED(); /* one format: short */
         } else if (IS("-k") || IS("--dmesg")) {
-            f->none = 1;
+            f->kernel = 1; /* the system's lines, of this boot unless -b says */
         } else if (IS("-e") || IS("--pager-end")) {
             if (!lines_given) {
                 f->lines = 1000;
@@ -774,6 +796,9 @@ static int journal_args(session_t *s, char **argv, int argc, jfilter_t *f, int i
         /* FIELD=VALUE matches: every line passes. */
 #undef IS
 #undef NEED
+    }
+    if (f->kernel && !boot_given) {
+        f->boot = 0;
     }
     if (f->follow && !lines_given && !is_log) {
         f->lines = 10; /* as journalctl -f */
@@ -1085,6 +1110,14 @@ static int command(session_t *s, char **argv, int argc, long limit, int depth)
     } else if (strcmp(b, "tail") == 0 || strcmp(b, "head") == 0 || strcmp(b, "cat") == 0 ||
                strcmp(b, "less") == 0 || strcmp(b, "stat") == 0 || strcmp(b, "file") == 0) {
         return cmd_file(s, argv, argc, b);
+#ifdef FC_CONSOLE_CRASH
+    } else if (strcmp(b, "crash") == 0) {
+        /* Test builds only: the fault a bug makes, a write to address 0, to
+         * see what the device keeps of it (fc_log.h). */
+        fc_port_log(FC_LOG_WARN, "console: crashing on purpose");
+        *(volatile int *)0 = 1;
+        return 1;
+#endif
     } else {
         char msg[160];
         snprintf(msg, sizeof(msg), "%.60s: not a command of this device (help lists them)\n", argv[0]);

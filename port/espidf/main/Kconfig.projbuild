@@ -33,6 +33,13 @@ config FC_OTA_VERIFY_TIMEOUT
         Counted from the boot into the new image. The rollback test build
         (sdkconfig.broken) shortens it.
 
+config FC_CONSOLE_CRASH
+    bool "Test only: a console command, crash, that makes the device fault"
+    default n
+    help
+        For the test of what the device's log keeps across a crash
+        (sdkconfig.crashtest). Never in a release.
+
 config FC_TEST_SERVER_PORT
     int "Test only: force this agent endpoint port (0: off)"
     default 0

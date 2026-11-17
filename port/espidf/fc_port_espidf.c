@@ -31,6 +31,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_wifi.h"
 #include "fc_crypto.h"
 #include "fc_log.h"
@@ -71,8 +72,106 @@ static esp_err_t store_init(void)
 #endif
 }
 
+/* ---- ESP-IDF's own lines into the device's log -------------------------------
+ * What ESP-IDF prints through esp_log (WiFi, TLS, drivers) goes through here:
+ * printed as before, and the line kept (fc_log_put_system), "wifi: ..." as
+ * the serial port shows it. The agent's lines (tag "fc") are kept by
+ * fc_port_log, also the ones a release build does not print. Lines printed
+ * in an interrupt, or while another task holds the line, are only printed. */
+static vprintf_like_t s_vprintf = vprintf;
+static SemaphoreHandle_t s_line_lock;
+static char s_line[FC_LOG_TEXT_MAX + 24];
+static size_t s_line_len;
+static int s_line_cut; /* the rest of a line too long: dropped up to its newline */
+
+/* Info lines kept besides warnings and errors: the firmware's own (main.c,
+ * hw.c, led.c), and the address the WiFi got. ESP-IDF's other info lines (40
+ * at each WiFi start) would push the agent's out of the ring. */
+static int info_kept(const char *text)
+{
+    static const char *const tags[] = {"main:", "hw:", "led:", "esp_netif_handlers:"};
+    for (size_t i = 0; i < sizeof(tags) / sizeof(tags[0]); i++) {
+        if (strncmp(text, tags[i], strlen(tags[i])) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* "W (1234) wifi: text": kept as "wifi: text", at its level. */
+static void keep_system_line(char *line)
+{
+    size_t n = strlen(line);
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) {
+        line[--n] = '\0';
+    }
+    const char *close = strchr(line, ')');
+    if (n < 6 || line[1] != ' ' || line[2] != '(' || close == NULL || close[1] != ' ') {
+        return; /* not esp_log's */
+    }
+    const char *text = close + 2;
+    if (strncmp(text, TAG, strlen(TAG)) == 0 && text[strlen(TAG)] == ':') {
+        return; /* the agent's: kept already */
+    }
+    fc_log_level_t level = line[0] == 'E' ? FC_LOG_ERROR : line[0] == 'W' ? FC_LOG_WARN : FC_LOG_INFO;
+    if ((line[0] != 'E' && line[0] != 'W' && line[0] != 'I') || (line[0] == 'I' && !info_kept(text))) {
+        return; /* printed only */
+    }
+    fc_log_put_system(level, text);
+}
+
+static int log_vprintf(const char *fmt, va_list ap)
+{
+    if (xPortInIsrContext() || xSemaphoreTake(s_line_lock, 0) != pdTRUE) {
+        return s_vprintf(fmt, ap);
+    }
+    va_list again;
+    va_copy(again, ap);
+    int printed = s_vprintf(fmt, ap);
+    int n = vsnprintf(s_line + s_line_len, sizeof(s_line) - s_line_len, fmt, again);
+    va_end(again);
+    if (n > 0) {
+        size_t room = sizeof(s_line) - 1 - s_line_len;
+        int whole = (size_t)n <= room;
+        s_line_len += whole ? (size_t)n : room;
+        if (s_line_cut) {
+            /* the end of a line already kept: wait for its newline */
+            s_line_cut = strchr(s_line, '\n') == NULL;
+            s_line_len = 0;
+        } else if (strchr(s_line, '\n') != NULL || !whole) {
+            s_line_cut = strchr(s_line, '\n') == NULL;
+            keep_system_line(s_line);
+            s_line_len = 0;
+        }
+    }
+    xSemaphoreGive(s_line_lock);
+    return printed;
+}
+
+/* Why the chip last restarted, as status.customInfo resetReason says it. */
+static const char *reset_reason_name(void)
+{
+    static const char *const reasons[] = {
+        [ESP_RST_UNKNOWN] = "unknown", [ESP_RST_POWERON] = "poweron", [ESP_RST_EXT] = "external",
+        [ESP_RST_SW] = "software", [ESP_RST_PANIC] = "panic", [ESP_RST_INT_WDT] = "int_wdt",
+        [ESP_RST_TASK_WDT] = "task_wdt", [ESP_RST_WDT] = "wdt", [ESP_RST_DEEPSLEEP] = "deepsleep",
+        [ESP_RST_BROWNOUT] = "brownout", [ESP_RST_SDIO] = "sdio", [ESP_RST_USB] = "usb",
+    };
+    esp_reset_reason_t rr = esp_reset_reason();
+    return (unsigned)rr < sizeof(reasons) / sizeof(reasons[0]) && reasons[rr] ? reasons[rr] : "other";
+}
+
 int fc_port_espidf_init(void)
 {
+    static StaticSemaphore_t line_lock;
+    s_line_lock = xSemaphoreCreateMutexStatic(&line_lock);
+    s_vprintf = esp_log_set_vprintf(log_vprintf);
+    esp_reset_reason_t rr = esp_reset_reason();
+    if (rr == ESP_RST_PANIC || rr == ESP_RST_INT_WDT || rr == ESP_RST_TASK_WDT || rr == ESP_RST_WDT ||
+        rr == ESP_RST_BROWNOUT) {
+        /* Its last lines are the previous boot's: journalctl -b -1. */
+        fc_port_log(FC_LOG_WARN, "restarted after a reset: %s", reset_reason_name());
+    }
     esp_err_t err = store_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         /* The device key, its certificate and the apps are in there: after
@@ -239,15 +338,7 @@ void fc_port_custom_info(void *obj)
     fc_port_sysinfo(&si);
     cJSON_AddStringToObject(o, "mac", si.hw_id);
     cJSON_AddStringToObject(o, "firmwareVersion", esp_app_get_description()->version);
-    static const char *const reasons[] = {
-        [ESP_RST_UNKNOWN] = "unknown", [ESP_RST_POWERON] = "poweron", [ESP_RST_EXT] = "external",
-        [ESP_RST_SW] = "software", [ESP_RST_PANIC] = "panic", [ESP_RST_INT_WDT] = "int_wdt",
-        [ESP_RST_TASK_WDT] = "task_wdt", [ESP_RST_WDT] = "wdt", [ESP_RST_DEEPSLEEP] = "deepsleep",
-        [ESP_RST_BROWNOUT] = "brownout", [ESP_RST_SDIO] = "sdio", [ESP_RST_USB] = "usb",
-    };
-    esp_reset_reason_t rr = esp_reset_reason();
-    cJSON_AddStringToObject(o, "resetReason",
-                            (unsigned)rr < sizeof(reasons) / sizeof(reasons[0]) && reasons[rr] ? reasons[rr] : "other");
+    cJSON_AddStringToObject(o, "resetReason", reset_reason_name());
     /* What the chip enforces (eFuses), not what the image was built for. */
     cJSON_AddStringToObject(o, "deviceKey", hwkey_info());
     cJSON_AddStringToObject(o, "secureBoot", esp_secure_boot_enabled() ? "true" : "false");

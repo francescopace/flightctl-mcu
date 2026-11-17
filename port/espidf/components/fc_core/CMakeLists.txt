@@ -26,6 +26,11 @@ idf_component_register(
 # default of 1000 levels overflowed the agent's 24 KB thread stacks
 # (RESULTS.md, problem 14).
 target_compile_definitions(${COMPONENT_LIB} PUBLIC CJSON_NESTING_LIMIT=32)
+# The device's log in RAM that a restart keeps (fc_log.h).
+target_compile_definitions(${COMPONENT_LIB} PRIVATE FC_LOG_KEEP=1)
+if(CONFIG_FC_CONSOLE_CRASH)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE FC_CONSOLE_CRASH=1)
+endif()
 # The firmware's security variant, read from an update before it is installed
 # (fc_port_espidf.c): unreferenced, so kept explicitly.
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u fc_fw_desc")

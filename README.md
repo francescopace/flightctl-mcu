@@ -33,7 +33,7 @@ Here the microcontroller speaks the Flight Control agent API itself. That API is
 | `status` | `resources` from those rules, heap, CPU use, firmware version, RSSI, temperature, app state |
 | `flightctl console` and the UI's terminal | A closed set of commands (`status`, `apps`, `log`, `reboot`...) over a gRPC stream on the agent's connection ([CONSOLE.md](docs/CONSOLE.md)) |
 | Telemetry Gateway (OpenTelemetry) | The device's metrics (heap, traffic, CPU, WiFi, temperature) and the apps' (`fc_metric`) in OTLP over gRPC, with a certificate the device asks for on its own, to Prometheus ([METRICS.md](docs/METRICS.md)) |
-| The UI's Logs tab | The device's log kept in RAM, answered to the `journalctl` the tab runs through the console: level, unit (the agent, or an app), time range, live ([CONSOLE.md](docs/CONSOLE.md#the-log)) |
+| The UI's Logs tab | The device's log kept in RAM, the agent's, the apps' and the system's (WiFi, TLS, a fault's report), answered to the `journalctl` the tab runs through the console: level, unit (the agent, or an app), time range, live, and the previous boot, kept across a restart or a crash ([CONSOLE.md](docs/CONSOLE.md#the-log)) |
 | Fleet rollout | Works unchanged |
 
 ## How it works

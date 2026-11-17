@@ -1,0 +1,3 @@
+# Test only: the console's crash command, for the test of the device's log
+# across a crash (docs/CONSOLE.md). VARIANT=crashtest port/espidf/build.sh.
+CONFIG_FC_CONSOLE_CRASH=y

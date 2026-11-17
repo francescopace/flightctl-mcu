@@ -20,6 +20,12 @@ config FC_AGENT_STACK_SIZE
 	  short of RAM can give less once it has measured what the threads use
 	  (customInfo stackMinFreeBytes).
 
+config FC_CONSOLE_CRASH
+	bool "Test only: a console command, crash, that makes the device fault"
+	help
+	  For the test of what the device's log keeps across a crash. Never
+	  in a release.
+
 config FC_FW_VERSION
 	string "Firmware version, logged at boot"
 	default "dev"

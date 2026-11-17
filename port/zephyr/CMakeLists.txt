@@ -82,8 +82,13 @@ target_include_directories(app PRIVATE
 # WAMR 2.4.5's Zephyr port includes <autoconf.h> and <version.h>, which Zephyr
 # generates under zephyr/ and no longer puts on the include path as they are.
 target_include_directories(app PRIVATE ${ZEPHYR_BINARY_DIR}/include/generated/zephyr)
+# FC_LOG_KEEP: the device's log in RAM that a restart keeps (fc_log.h).
 target_compile_definitions(app PRIVATE
-    CJSON_NESTING_LIMIT=32)
+    CJSON_NESTING_LIMIT=32
+    FC_LOG_KEEP=1)
+if(CONFIG_FC_CONSOLE_CRASH)
+    target_compile_definitions(app PRIVATE FC_CONSOLE_CRASH=1)
+endif()
 if(CONFIG_FC_AGENT_STACK_SIZE)
     target_compile_definitions(app PRIVATE FC_AGENT_STACK_SIZE=${CONFIG_FC_AGENT_STACK_SIZE})
 endif()

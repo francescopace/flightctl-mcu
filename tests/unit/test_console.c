@@ -526,6 +526,55 @@ static void live_logs_follow_until_the_user_leaves(void)
     CHECK(wait_closed(1));
 }
 
+/* One journalctl as a command of its own: its output. */
+static const char *journal_of(const char *id, const char *args)
+{
+    static char out[8192];
+    reset();
+    char meta[300];
+    snprintf(meta, sizeof(meta), "{\"command\": {\"command\": \"journalctl\", \"args\": [%s]}, " V5 "}", args);
+    session(id, meta);
+    CHECK(wait_closed(1));
+    snprintf(out, sizeof(out), "%s", sent(CH_STDOUT));
+    return out;
+}
+
+/* The system's lines (ESP-IDF's, Zephyr's) are the kernel's, no unit's;
+ * a restart keeps the previous boot's lines, journalctl's boot -1, and the
+ * one before it goes. */
+static void the_previous_boot_and_the_systems_lines(void)
+{
+    fc_log_put(FC_LOG_INFO, "agent B1");
+    fc_log_put_system(FC_LOG_WARN, "wifi: disconnected B1");
+    fc_log_put_fatal("fatal: crashed B1");
+    fc_log_restart();
+    fc_log_put(FC_LOG_INFO, "agent B2");
+    fc_log_put_system(FC_LOG_INFO, "wifi: connected B2");
+    const char *o = journal_of("b1", "");
+    CHECK(strstr(o, " W wifi: disconnected B1\n") != NULL);
+    CHECK(strstr(o, " E fatal: crashed B1\n") != NULL);
+    CHECK(strstr(o, " I fc: agent B2\n") != NULL);
+    CHECK(strstr(o, "disconnected B1") < strstr(o, "agent B2"));
+    o = journal_of("b2", "\"-b\", \"-1\"");
+    CHECK(strstr(o, "agent B1") != NULL && strstr(o, "crashed B1") != NULL && strstr(o, "B2") == NULL);
+    o = journal_of("b3", "\"-b\"");
+    CHECK(strstr(o, "B1") == NULL && strstr(o, "agent B2") != NULL && strstr(o, "connected B2") != NULL);
+    o = journal_of("b4", "\"-u\", \"flightctl-agent.service\", \"-b\", \"-1\"");
+    CHECK(strstr(o, "agent B1") != NULL && strstr(o, "wifi") == NULL && strstr(o, "fatal") == NULL);
+    o = journal_of("b5", "\"-k\"");
+    CHECK(strstr(o, "connected B2") != NULL && strstr(o, "agent") == NULL && strstr(o, "B1") == NULL);
+    o = journal_of("b6", "\"-b\", \"-2\"");
+    CHECK(strstr(o, "B1") == NULL && strstr(o, "B2") == NULL);
+    /* Another restart: B2 is the previous boot, B1 is gone. */
+    fc_log_restart();
+    fc_log_put(FC_LOG_INFO, "agent B3");
+    o = journal_of("b7", "");
+    CHECK(strstr(o, "B1") == NULL && strstr(o, "agent B2") != NULL && strstr(o, "agent B3") != NULL);
+    o = journal_of("b8", "\"-b\", \"-1\"");
+    CHECK(strstr(o, "agent B2") != NULL && strstr(o, "B3") == NULL);
+    reset();
+}
+
 static void a_script_ends_with_its_input_and_its_last_code(void)
 {
     reset();
@@ -681,5 +730,6 @@ int main(void)
     RUN(a_session_nobody_joins_ends);
     RUN(journal_parts);
     RUN(the_ring_drops_its_oldest_lines);
+    RUN(the_previous_boot_and_the_systems_lines);
     return TEST_RESULT();
 }
