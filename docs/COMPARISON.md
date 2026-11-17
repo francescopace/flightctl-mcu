@@ -64,7 +64,7 @@ For flightctl-mcu, 🔜 is on the [roadmap](ROADMAP.md#next) for 1.0, ⏳ waits 
 | **Crash reports** | 🟡 after a restart, `resetReason` and `lastFatalError` in the status (reason, thread, uptime; the `pc` and return addresses, decoded against the release's ELF, which the registry keeps next to the release, with ESP-IDF and with Zephyr on Arm; with Zephyr on Xtensa built, not yet run on a crash) · 💡 coredumps off the device | ➖ | ✅ its core feature | ➖ |
 | **Remote log** | ✅ the last lines, kept in RAM, in the UI's Logs tab and the console ([CONSOLE.md](CONSOLE.md#the-log)) | ✅ | ✅ with crashes | ➖ |
 | **Remote commands** | ✅ Flight Control's terminal and `flightctl console`, with a closed set of commands ([CONSOLE.md](CONSOLE.md)) | ✅ RPC | ➖ | ➖ |
-| **Data from apps** | 🔜 MQTT to your broker, metrics as OTLP to Flight Control | ✅ LightDB Stream and pipelines | 🟡 metrics only | ➖ |
+| **Data from apps** | ✅ MQTT to your broker, both ways ([APPS.md](APPS.md#mqtt)), and metrics as OTLP to Flight Control ([METRICS.md](METRICS.md)), with ESP-IDF · 🔜 MQTT with Zephyr on a board | ✅ LightDB Stream and pipelines | 🟡 metrics only | ➖ |
 | **Peripherals from apps** | 🟡 GPIO, LEDs, I2C, SPI, UART, ADC and PWM by name, with ESP-IDF and Zephyr ([APPS.md](APPS.md#ports)) · 🔜 tried with devices wired to them | ➖ in the firmware | ➖ in the firmware | ➖ in the firmware |
 | **SBOM and known vulnerabilities** | ✅ an SBOM per release, CVEs shown in Flight Control through Trustify | ➖ | ➖ | ➖ |
 | **Links** | 🟡 WiFi; Ethernet in QEMU · 🔜 Ethernet on a board · 💡 cellular (LTE-M, NB-IoT) | ✅ WiFi, Ethernet, cellular | ✅ any, including BLE through a phone or gateway | ✅ what the Zephyr board has |

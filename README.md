@@ -146,7 +146,7 @@ Known limits:
 - On Zephyr the device key is in flash in clear and the flash is not encrypted: on an Espressif chip, a device that must be protected runs the ESP-IDF firmware. On Zephyr the protection comes with chips that have TF-M, after 1.0 ([SECURITY.md](docs/SECURITY.md#zephyr)).
 - WiFi is the only link tried.
 - Flight Control 1.4.0 cannot revoke an enrollment certificate; its main branch can, not yet in a release.
-- Apps: MQTT is not in the firmware yet (its calls return `FC_ENOTSUP`), and I2C, SPI, UART, ADC and PWM answer on the boards but have not been tried with devices wired to them ([APPS.md](docs/APPS.md)).
+- Apps: MQTT runs on the five ESP-IDF chips; with Zephyr it is built, not yet tried on a board. I2C, SPI, UART, ADC and PWM answer on the boards but have not been tried with devices wired to them ([APPS.md](docs/APPS.md)).
 - Apps must be WASM OCI artifacts. Podman-style images with a `.wasm` inside a tarball are not supported.
 
 The work also found gaps in Flight Control for this class of device, such as a fixed 5-minute disconnect timeout. They are written up in [docs/RESULTS.md](docs/RESULTS.md#flight-control-limitations-found-upstream-proposals), with the [current limitations](docs/RESULTS.md#current-limitations) in full.
