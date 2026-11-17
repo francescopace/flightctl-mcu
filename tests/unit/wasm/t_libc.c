@@ -36,6 +36,10 @@ static int others(void)
     CHECK(sprintf(b, "%d-%u", -1, 2u) == 4 && strcmp(b, "-1-2") == 0 && atoi(" 31") == 31);
     CHECK(isalnum('a') && isalpha('a') && isdigit('1') && isgraph('!') && isprint(' ') && isspace('\t'));
     CHECK(isupper('A') && isxdigit('f') && tolower('A') == 'a' && toupper('z') == 'Z' && !isdigit('x'));
+    /* Not a character: no class, given back as it is (C leaves it undefined;
+     * the device does not index a table with it). */
+    volatile int far = 0x7fffff00, neg = -5;
+    CHECK(!isdigit(far) && !isalpha(neg) && tolower(neg) == neg && toupper(far) == far);
     /* A string 3 bytes from the end of memory, with an n past it: C's
      * strncmp and strncpy stop at its end. */
     char *end = (char *)&__heap_base - 3;

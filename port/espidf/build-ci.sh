@@ -33,6 +33,9 @@ if [[ "$VARIANT" == secure* ]]; then
   echo "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n" > "$BUILD/sdkconfig.external_signer"
   DEFAULTS="$DEFAULTS;$BUILD/sdkconfig.external_signer"
 fi
+# The settings come only from the sdkconfig.* files, as in build.sh: ESP-IDF
+# keeps an existing sdkconfig's values over new defaults.
+rm -f "$BUILD/sdkconfig"
 ccache -z >/dev/null   # the stats at the end are this build's
 # A merged image of a secure build needs its signed bootloader: made once
 # signed (merge-secure.py), not here.

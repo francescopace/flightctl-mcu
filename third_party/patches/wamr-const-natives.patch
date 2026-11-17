@@ -1,0 +1,89 @@
+flightctl-mcu: native tables in flash. register_natives sorts a table only
+when it is not in order already, so a const table stays in flash; WAMR does
+not register its libc-builtin table, which is const: the embedder registers
+the functions it allows (core/src/fc_apps.c).
+
+--- a/core/iwasm/common/wasm_native.c
++++ b/core/iwasm/common/wasm_native.c
+@@ -280,8 +280,16 @@
+     node->next = g_native_symbols_list;
+     g_native_symbols_list = node;
+ 
+-    qsort(native_symbols, n_native_symbols, sizeof(NativeSymbol),
+-          native_symbol_cmp);
++    /* flightctl-mcu: a table already in order is not sorted again, so that it
++       can be const, in flash rather than RAM. */
++    for (uint32 i = 1; i < n_native_symbols; i++) {
++        if (native_symbol_cmp(&native_symbols[i - 1], &native_symbols[i])
++            > 0) {
++            qsort(native_symbols, n_native_symbols, sizeof(NativeSymbol),
++                  native_symbol_cmp);
++            break;
++        }
++    }
+ 
+     return true;
+ }
+@@ -480,7 +488,7 @@
+ bool
+ wasm_native_init()
+ {
+-#if WASM_ENABLE_SPEC_TEST != 0 || WASM_ENABLE_LIBC_BUILTIN != 0          \
++#if WASM_ENABLE_SPEC_TEST != 0 /* flightctl-mcu: not LIBC_BUILTIN */   \
+     || WASM_ENABLE_BASE_LIB != 0 || WASM_ENABLE_LIBC_EMCC != 0           \
+     || WASM_ENABLE_LIB_RATS != 0 || WASM_ENABLE_WASI_NN != 0             \
+     || WASM_ENABLE_APP_FRAMEWORK != 0 || WASM_ENABLE_LIBC_WASI != 0      \
+@@ -490,11 +498,9 @@
+     uint32 n_native_symbols;
+ #endif
+ 
+-#if WASM_ENABLE_LIBC_BUILTIN != 0
+-    n_native_symbols = get_libc_builtin_export_apis(&native_symbols);
+-    if (!wasm_native_register_natives("env", native_symbols, n_native_symbols))
+-        goto fail;
+-#endif /* WASM_ENABLE_LIBC_BUILTIN */
++    /* flightctl-mcu: libc-builtin is not registered here. The embedder
++       registers the functions it allows, and takes WAMR's from
++       get_libc_builtin_export_apis (a const table). */
+ 
+ #if WASM_ENABLE_SPEC_TEST
+     n_native_symbols = get_spectest_export_apis(&native_symbols);
+@@ -597,7 +603,7 @@
+ 
+ #if WASM_ENABLE_QUICK_AOT_ENTRY != 0
+     if (!quick_aot_entry_init()) {
+-#if WASM_ENABLE_SPEC_TEST != 0 || WASM_ENABLE_LIBC_BUILTIN != 0          \
++#if WASM_ENABLE_SPEC_TEST != 0 /* flightctl-mcu: not LIBC_BUILTIN */   \
+     || WASM_ENABLE_BASE_LIB != 0 || WASM_ENABLE_LIBC_EMCC != 0           \
+     || WASM_ENABLE_LIB_RATS != 0 || WASM_ENABLE_WASI_NN != 0             \
+     || WASM_ENABLE_APP_FRAMEWORK != 0 || WASM_ENABLE_LIBC_WASI != 0      \
+@@ -611,7 +617,7 @@
+ #endif
+ 
+     return true;
+-#if WASM_ENABLE_SPEC_TEST != 0 || WASM_ENABLE_LIBC_BUILTIN != 0          \
++#if WASM_ENABLE_SPEC_TEST != 0 /* flightctl-mcu: not LIBC_BUILTIN */   \
+     || WASM_ENABLE_BASE_LIB != 0 || WASM_ENABLE_LIBC_EMCC != 0           \
+     || WASM_ENABLE_LIB_RATS != 0 || WASM_ENABLE_WASI_NN != 0             \
+     || WASM_ENABLE_APP_FRAMEWORK != 0 || WASM_ENABLE_LIBC_WASI != 0      \
+--- a/core/iwasm/libraries/libc-builtin/libc_builtin_wrapper.c
++++ b/core/iwasm/libraries/libc-builtin/libc_builtin_wrapper.c
+@@ -1041,7 +1041,8 @@
+     { #func_name, func_name##_wrapper, signature, NULL }
+ /* clang-format on */
+ 
+-static NativeSymbol native_symbols_libc_builtin[] = {
++/* flightctl-mcu: const, in flash; not registered by WAMR (wasm_native.c). */
++static const NativeSymbol native_symbols_libc_builtin[] = {
+     REG_NATIVE_FUNC(printf, "($*)i"),
+     REG_NATIVE_FUNC(sprintf, "($$*)i"),
+     REG_NATIVE_FUNC(snprintf, "(*~$*)i"),
+@@ -1112,7 +1113,7 @@
+ uint32
+ get_libc_builtin_export_apis(NativeSymbol **p_libc_builtin_apis)
+ {
+-    *p_libc_builtin_apis = native_symbols_libc_builtin;
++    *p_libc_builtin_apis = (NativeSymbol *)native_symbols_libc_builtin;
+     return sizeof(native_symbols_libc_builtin) / sizeof(NativeSymbol);
+ }
+ 

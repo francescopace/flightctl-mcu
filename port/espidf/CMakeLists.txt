@@ -48,6 +48,11 @@ target_compile_definitions(${wamr_lib} PUBLIC WASM_ENABLE_TAIL_CALL=1)
 # The apps' C library (CONFIG_WAMR_ENABLE_LIBC_BUILTIN): the component defines
 # WASM_ENABLE_LIBC_BUILTIN for its own sources only, and the core needs it to
 # put printf in the app's log and allow the functions (core/src/fc_apps.c).
-if(CONFIG_WAMR_ENABLE_LIBC_BUILTIN)
-    target_compile_definitions(${wamr_lib} PUBLIC WASM_ENABLE_LIBC_BUILTIN=1)
+# Part of the app interface: a firmware without it would refuse the apps that
+# use it. Off in a build whose sdkconfig is older than sdkconfig.defaults
+# (build.sh and build-ci.sh remove it; idf.py alone keeps it).
+if(NOT CONFIG_WAMR_ENABLE_LIBC_BUILTIN)
+    message(FATAL_ERROR "CONFIG_WAMR_ENABLE_LIBC_BUILTIN is off: the apps' C library is part of the app interface. "
+                        "Remove this build's sdkconfig (or build with port/espidf/build.sh).")
 endif()
+target_compile_definitions(${wamr_lib} PUBLIC WASM_ENABLE_LIBC_BUILTIN=1)

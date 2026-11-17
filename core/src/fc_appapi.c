@@ -983,49 +983,52 @@ static int32_t fc_event_data(wasm_exec_env_t env, void *b, int32_t cap) { return
 
 /* ---- the table ----------------------------------------------------------------------------------- */
 
-static NativeSymbol s_natives[] = {
-    {"set_state", (void *)fc_apps_set_state_native, "(*~)", NULL},
-    {"log", (void *)fc_log, "(i*~)", NULL},
-    {"info", (void *)fc_info, "(*~*~)i", NULL},
-    {"time_ms", (void *)fc_time_ms, "()I", NULL},
-    {"time_unix_ms", (void *)fc_time_unix_ms, "()I", NULL},
-    {"sleep_ms", (void *)fc_sleep_ms, "(i)i", NULL},
-    {"random", (void *)fc_random, "(*~)i", NULL},
-    {"timer_start", (void *)fc_timer_start, "(ii)i", NULL},
-    {"config_get", (void *)fc_config_get, "(*~*~)i", NULL},
-    {"kv_get", (void *)fc_kv_get, "(*~*~)i", NULL},
-    {"kv_set", (void *)fc_kv_set, "(*~*~)i", NULL},
-    {"kv_del", (void *)fc_kv_del, "(*~)i", NULL},
+/* const, in flash: in strcmp order of the names, so WAMR does not sort it
+ * (third_party/patches/wamr-const-natives.patch; test_apps.c checks the
+ * order, as a table out of order would be written to at start). */
+static const NativeSymbol s_natives[] = {
+    {"adc_open", (void *)fc_adc_open, "(*~)i", NULL},
+    {"adc_read_mv", (void *)fc_adc_read_mv, "(i)i", NULL},
     {"close", (void *)fc_close, "(i)i", NULL},
+    {"config_get", (void *)fc_config_get, "(*~*~)i", NULL},
+    {"event_data", (void *)fc_event_data, "(*~)i", NULL},
+    {"gpio_irq", (void *)fc_gpio_irq, "(iii)i", NULL},
     {"gpio_open", (void *)fc_gpio_open, "(*~i)i", NULL},
     {"gpio_read", (void *)fc_gpio_read, "(i)i", NULL},
     {"gpio_write", (void *)fc_gpio_write, "(ii)i", NULL},
-    {"gpio_irq", (void *)fc_gpio_irq, "(iii)i", NULL},
+    {"i2c_open", (void *)fc_i2c_open, "(*~)i", NULL},
+    {"i2c_read", (void *)fc_i2c_read, "(ii*~)i", NULL},
+    {"i2c_write", (void *)fc_i2c_write, "(ii*~)i", NULL},
+    {"i2c_write_read", (void *)fc_i2c_write_read, "(ii*~*~)i", NULL},
+    {"info", (void *)fc_info, "(*~*~)i", NULL},
+    {"kv_del", (void *)fc_kv_del, "(*~)i", NULL},
+    {"kv_get", (void *)fc_kv_get, "(*~*~)i", NULL},
+    {"kv_set", (void *)fc_kv_set, "(*~*~)i", NULL},
     {"led_open", (void *)fc_led_open, "(*~)i", NULL},
     {"led_rgb", (void *)fc_led_rgb, "(iiii)i", NULL},
-    {"i2c_open", (void *)fc_i2c_open, "(*~)i", NULL},
-    {"i2c_write", (void *)fc_i2c_write, "(ii*~)i", NULL},
-    {"i2c_read", (void *)fc_i2c_read, "(ii*~)i", NULL},
-    {"i2c_write_read", (void *)fc_i2c_write_read, "(ii*~*~)i", NULL},
-    {"spi_open", (void *)fc_spi_open, "(*~)i", NULL},
-    {"spi_transfer", (void *)fc_spi_transfer, "(iiiii)i", NULL},
-    {"uart_open", (void *)fc_uart_open, "(*~ii)i", NULL},
-    {"uart_write", (void *)fc_uart_write, "(i*~)i", NULL},
-    {"uart_read", (void *)fc_uart_read, "(i*~i)i", NULL},
-    {"adc_open", (void *)fc_adc_open, "(*~)i", NULL},
-    {"adc_read_mv", (void *)fc_adc_read_mv, "(i)i", NULL},
-    {"pwm_open", (void *)fc_pwm_open, "(*~i)i", NULL},
-    {"pwm_duty", (void *)fc_pwm_duty, "(ii)i", NULL},
-    {"sensor_read", (void *)fc_sensor_read, "(*~i)i", NULL},
+    {"log", (void *)fc_log, "(i*~)", NULL},
     {"metric", (void *)fc_metric, "(*~iF)i", NULL},
     {"mqtt_publish", (void *)fc_mqtt_publish, "(*~*~ii)i", NULL},
     {"mqtt_subscribe", (void *)fc_mqtt_subscribe, "(i*~i)i", NULL},
     {"mqtt_topic", (void *)fc_mqtt_topic, "(*~)i", NULL},
-    {"event_data", (void *)fc_event_data, "(*~)i", NULL},
+    {"pwm_duty", (void *)fc_pwm_duty, "(ii)i", NULL},
+    {"pwm_open", (void *)fc_pwm_open, "(*~i)i", NULL},
+    {"random", (void *)fc_random, "(*~)i", NULL},
+    {"sensor_read", (void *)fc_sensor_read, "(*~i)i", NULL},
+    {"set_state", (void *)fc_apps_set_state_native, "(*~)", NULL},
+    {"sleep_ms", (void *)fc_sleep_ms, "(i)i", NULL},
+    {"spi_open", (void *)fc_spi_open, "(*~)i", NULL},
+    {"spi_transfer", (void *)fc_spi_transfer, "(iiiii)i", NULL},
+    {"time_ms", (void *)fc_time_ms, "()I", NULL},
+    {"time_unix_ms", (void *)fc_time_unix_ms, "()I", NULL},
+    {"timer_start", (void *)fc_timer_start, "(ii)i", NULL},
+    {"uart_open", (void *)fc_uart_open, "(*~ii)i", NULL},
+    {"uart_read", (void *)fc_uart_read, "(i*~i)i", NULL},
+    {"uart_write", (void *)fc_uart_write, "(i*~)i", NULL},
 };
 
 NativeSymbol *fc_appapi_natives(int *count)
 {
     *count = (int)(sizeof(s_natives) / sizeof(s_natives[0]));
-    return s_natives;
+    return (NativeSymbol *)s_natives;
 }

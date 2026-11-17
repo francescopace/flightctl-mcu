@@ -619,6 +619,39 @@ static void test_fc_info(void)
     fc_apps_set_device(NULL);
 }
 
+/* The native tables are const, so WAMR must find them in order: one out of
+ * order would be sorted in place at start, a write to flash on a chip. */
+static void check_sorted(const char *what, const NativeSymbol *t, size_t n)
+{
+    for (size_t i = 1; i < n; i++) {
+        if (strcmp(t[i - 1].symbol, t[i].symbol) > 0) {
+            fprintf(stderr, "%s: \"%s\" comes before \"%s\"\n", what, t[i - 1].symbol, t[i].symbol);
+            CHECK(0);
+        }
+    }
+}
+
+static void test_native_tables_sorted(void)
+{
+    int n_fc = 0;
+    const NativeSymbol *fc = fc_appapi_natives(&n_fc);
+    check_sorted("fc", fc, (size_t)n_fc);
+    check_sorted("env (libc)", s_libc_natives, sizeof(s_libc_natives) / sizeof(s_libc_natives[0]));
+    check_sorted("env (raw)", s_env_natives, sizeof(s_env_natives) / sizeof(s_env_natives[0]));
+    /* Every function of the allowed list is in the table. */
+    for (size_t i = 0; i < sizeof(s_libc) / sizeof(s_libc[0]); i++) {
+        int found = 0;
+        for (size_t j = 0; j < sizeof(s_libc_natives) / sizeof(s_libc_natives[0]); j++) {
+            found |= strcmp(s_libc[i], s_libc_natives[j].symbol) == 0;
+        }
+        if (!found) {
+            fprintf(stderr, "env.%s is allowed but not in s_libc_natives\n", s_libc[i]);
+        }
+        CHECK(found);
+    }
+    CHECK_INT((int)(sizeof(s_libc_natives) / sizeof(s_libc_natives[0])), (int)(sizeof(s_libc) / sizeof(s_libc[0])));
+}
+
 static void test_fc_refused(void)
 {
     char err[160];
@@ -1294,6 +1327,7 @@ int main(void)
     RUN(test_entry_waits);
     RUN(test_replace_idle);
     RUN(test_tail_calls);
+    RUN(test_native_tables_sorted);
     RUN(test_libc);
     RUN(test_libc_oob);
     RUN(test_libc_loop);

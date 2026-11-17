@@ -74,7 +74,7 @@ Internal heap with the `alarm` app running. v3.12 holds one TLS connection at a 
 | ESP32-C3 | v3.13-rc6, an hour after boot | 70 to 75 KB | 2.8 KB, at start-up | 36.0 KB |
 | ESP32-S3, Zephyr | before the app interface | about 50 KB | – | – |
 
-On the C3 the lowest is reached in the first seconds after boot, before any app or export; v3.13 also holds the device's log (4 KB) and sends metrics every 30 s, with 19 to 20 KB of internal heap left during an export ([METRICS.md](METRICS.md)). The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot), the app interface about 5 KB of static RAM, and its C library 1 KB more (WAMR's table of its functions).
+On the C3 the lowest is reached in the first seconds after boot, before any app or export; v3.13 also holds the device's log (4 KB) and sends metrics every 30 s, with 19 to 20 KB of internal heap left during an export ([METRICS.md](METRICS.md)). The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot), the app interface about 4.5 KB of static RAM, its C library included (the tables of native functions are const, in flash).
 
 Stack used at most, of the stack each has (customInfo `stackMinFreeBytes`; here a KB is 1,024 bytes):
 

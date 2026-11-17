@@ -28,6 +28,7 @@
  */
 #include "fc_apps.h"
 
+#include <ctype.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -484,19 +485,20 @@ static void env_clock_ms(wasm_exec_env_t env, uint64_t *args)
     args[0] = (uint64_t)(fc_apps_now_ms() - (a ? a->started_ms : 0));
 }
 
-static NativeSymbol s_env_natives[] = {
+static const NativeSymbol s_env_natives[] = { /* const: see s_libc_natives */
     {"clock_ms", (void *)env_clock_ms, NULL, NULL}, /* checked in check_module */
 };
 
 /* A small C library, in "env" as clang's wasm32 build imports it
  * (wasm-apps/sdk/libc/): WAMR's libc-builtin, of which an app may import only
  * the functions named here (check_env_import). Not malloc and the rest: an
- * app has no heap in its linear memory. Some are the device's own, registered
- * after WAMR's and so found first: each checks the time a call has taken
- * (libc_overdue) before WAMR's own; printf, puts and putchar write to the
+ * app has no heap in its linear memory. The device registers them itself
+ * (s_libc_natives), WAMR none: each that does work checks the time a call has
+ * taken (libc_overdue) before WAMR's own; printf, puts and putchar write to the
  * app's log, a line at a time, as fc_log does at INFO (WAMR's write to the
  * serial port only); strtol and strtoul take a NULL endptr (WAMR's would
- * write at the app's address 0); abort takes no argument, as C's. */
+ * write at the app's address 0); abort takes no argument, as C's; strncmp
+ * and strncpy, atoi and ctype are the device's own (below). */
 static const char *const s_libc[] = {
     "memcmp", "memcpy", "memmove", "memset", "memchr", "strchr", "strcmp", "strcpy", "strlen", "strncmp",
     "strncpy", "strncasecmp", "strspn", "strcspn", "strstr", "sprintf", "snprintf", "printf", "puts",
@@ -710,33 +712,86 @@ static uint32_t env_strtoul(wasm_exec_env_t env, const char *nptr, uint32_t endp
     return v > UINT32_MAX ? UINT32_MAX : (uint32_t)v;
 }
 
-static NativeSymbol s_libc_natives[] = {
-    {"printf", (void *)env_printf, "($*)i", NULL},
-    {"puts", (void *)env_puts, "($)i", NULL},
-    {"putchar", (void *)env_putchar, "(i)i", NULL},
+/* atoi as a clamped strtol, and the character classes: a value outside
+ * 0..255 is no character (tolower and toupper give it back), where WAMR's
+ * passed any int to the C library, whose table it indexes. */
+static int32_t env_atoi(wasm_exec_env_t env, const char *s)
+{
+    (void)env;
+    long v = strtol(s, NULL, 10);
+    return v > INT32_MAX ? INT32_MAX : v < INT32_MIN ? INT32_MIN : (int32_t)v;
+}
+
+#define LIBC_CTYPE(n)                                                                                                \
+    static int32_t env_##n(wasm_exec_env_t env, int32_t c)                                                           \
+    {                                                                                                                \
+        (void)env;                                                                                                   \
+        return c >= 0 && c <= 255 && n((unsigned char)c) ? 1 : 0;                                                    \
+    }
+LIBC_CTYPE(isalnum)
+LIBC_CTYPE(isalpha)
+LIBC_CTYPE(isdigit)
+LIBC_CTYPE(isgraph)
+LIBC_CTYPE(isprint)
+LIBC_CTYPE(isspace)
+LIBC_CTYPE(isupper)
+LIBC_CTYPE(isxdigit)
+
+static int32_t env_tolower(wasm_exec_env_t env, int32_t c)
+{
+    (void)env;
+    return c >= 0 && c <= 255 ? tolower((unsigned char)c) : c;
+}
+
+static int32_t env_toupper(wasm_exec_env_t env, int32_t c)
+{
+    (void)env;
+    return c >= 0 && c <= 255 ? toupper((unsigned char)c) : c;
+}
+
+/* Every function an app may import from env but clock_ms (s_libc), in
+ * strcmp order of the names: const, in flash, as WAMR does not sort a table
+ * in order (third_party/patches/wamr-const-natives.patch; test_apps.c checks
+ * the order). WAMR registers none of its own. */
+static const NativeSymbol s_libc_natives[] = {
     {"abort", (void *)env_abort, "()", NULL},
-    {"strtol", (void *)env_strtol, "($ii)i", NULL},
-    {"strtoul", (void *)env_strtoul, "($ii)i", NULL},
-    {"strncmp", (void *)env_strncmp, "($$i)i", NULL},
-    {"strncpy", (void *)env_strncpy, "(*$i)i", NULL},
+    {"atoi", (void *)env_atoi, "($)i", NULL},
+    {"isalnum", (void *)env_isalnum, "(i)i", NULL},
+    {"isalpha", (void *)env_isalpha, "(i)i", NULL},
+    {"isdigit", (void *)env_isdigit, "(i)i", NULL},
+    {"isgraph", (void *)env_isgraph, "(i)i", NULL},
+    {"isprint", (void *)env_isprint, "(i)i", NULL},
+    {"isspace", (void *)env_isspace, "(i)i", NULL},
+    {"isupper", (void *)env_isupper, "(i)i", NULL},
+    {"isxdigit", (void *)env_isxdigit, "(i)i", NULL},
+    {"memchr", (void *)env_memchr, "(*ii)i", NULL},
     {"memcmp", (void *)env_memcmp, "(**~)i", NULL},
     {"memcpy", (void *)env_memcpy, "(**~)i", NULL},
     {"memmove", (void *)env_memmove, "(**~)i", NULL},
     {"memset", (void *)env_memset, "(*ii)i", NULL},
-    {"memchr", (void *)env_memchr, "(*ii)i", NULL},
+    {"printf", (void *)env_printf, "($*)i", NULL},
+    {"putchar", (void *)env_putchar, "(i)i", NULL},
+    {"puts", (void *)env_puts, "($)i", NULL},
+    {"snprintf", (void *)env_snprintf, "(*~$*)i", NULL},
+    {"sprintf", (void *)env_sprintf, "($$*)i", NULL},
     {"strchr", (void *)env_strchr, "($i)i", NULL},
     {"strcmp", (void *)env_strcmp, "($$)i", NULL},
     {"strcpy", (void *)env_strcpy, "(*$)i", NULL},
+    {"strcspn", (void *)env_strcspn, "($$)i", NULL},
     {"strlen", (void *)env_strlen, "($)i", NULL},
     {"strncasecmp", (void *)env_strncasecmp, "($$i)i", NULL},
+    {"strncmp", (void *)env_strncmp, "($$i)i", NULL},
+    {"strncpy", (void *)env_strncpy, "(*$i)i", NULL},
     {"strspn", (void *)env_strspn, "($$)i", NULL},
-    {"strcspn", (void *)env_strcspn, "($$)i", NULL},
     {"strstr", (void *)env_strstr, "($$)i", NULL},
-    {"sprintf", (void *)env_sprintf, "($$*)i", NULL},
-    {"snprintf", (void *)env_snprintf, "(*~$*)i", NULL},
+    {"strtol", (void *)env_strtol, "($ii)i", NULL},
+    {"strtoul", (void *)env_strtoul, "($ii)i", NULL},
+    {"tolower", (void *)env_tolower, "(i)i", NULL},
+    {"toupper", (void *)env_toupper, "(i)i", NULL},
 };
 
-/* After wasm_runtime_full_init, which registers WAMR's libc-builtin. */
+/* After wasm_runtime_full_init: WAMR's own functions, which the ones here
+ * call, from its table. */
 static void libc_init(void)
 {
     NativeSymbol *wa = NULL;
@@ -758,7 +813,8 @@ static void libc_init(void)
             }
         }
     }
-    wasm_runtime_register_natives("env", s_libc_natives, sizeof(s_libc_natives) / sizeof(s_libc_natives[0]));
+    wasm_runtime_register_natives("env", (NativeSymbol *)s_libc_natives,
+                                  sizeof(s_libc_natives) / sizeof(s_libc_natives[0]));
 }
 #else
 static void out_flush(app_t *a)
@@ -1516,7 +1572,8 @@ int fc_apps_init(void)
     int n_fc = 0;
     NativeSymbol *fc = fc_appapi_natives(&n_fc);
     wasm_runtime_register_natives("fc", fc, (uint32_t)n_fc);
-    wasm_runtime_register_natives_raw("env", s_env_natives, sizeof(s_env_natives) / sizeof(s_env_natives[0]));
+    wasm_runtime_register_natives_raw("env", (NativeSymbol *)s_env_natives,
+                                      sizeof(s_env_natives) / sizeof(s_env_natives[0]));
     libc_init();
     fc_board_load(g_fc_hw);
     s_inited = 1;
