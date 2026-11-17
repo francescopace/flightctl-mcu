@@ -14,13 +14,16 @@ What it does today is in the [README](../README.md#what-maps-to-what), and how i
 
 Chips ([support levels](DEVICES.md#support-levels)):
 
-- [ ] The Zephyr port on a real Arm board with Ethernet: an ST Nucleo (H563ZI or F767ZI). In QEMU (`mps2/an385`, a Cortex-M3 on Ethernet) it passes the end-to-end test, in CI ([ZEPHYR.md](ZEPHYR.md#on-an-emulated-arm-cortex-m3)).
+- [ ] The Zephyr port on a real Arm board with Ethernet, an ST Nucleo (H563ZI or F767ZI). Arm is tried only in QEMU so far ([ZEPHYR.md](ZEPHYR.md#on-an-emulated-arm-cortex-m3)).
 
 Checks not made yet:
 
-- [ ] The rest of HTTP/2 on the boards. On the five ESP-IDF chips and on the ESP32-S3 with Zephyr the spec's long-poll and the status share one HTTP/2 connection, with the receive buffer from the block reserved at start; on the ESP32, C5, C6 and S3 (ESP-IDF) firmware and apps are downloaded from the registry over HTTP/2 with the agent's connection closed meanwhile, and the TLS buffers are dynamic again (only full-size records take the reserved block). Left: a certificate renewal, Zephyr's downloads over HTTP/2 on a board, and the traffic it saves or costs. (The end-to-end tests pass over HTTP/2, in CI and in the emulator.)
-- [ ] On ESP-IDF, the core's own WiFi provisioning (`core/src/fc_prov.c`, as on Zephyr): built for every chip, and it passes the end-to-end tests in the emulator (C5, S3, C6), where a network given in the field is joined and kept across restarts. Not yet run on a board. (The core's delta decoder, which replaced detools' library, runs on the boards: the ESP32, C5, C6 and S3 took v3.13-rc1 and rc2 as deltas, `Applied`.)
-- [ ] `lastFatalError` on the ESP32-S3 with Zephyr: the `pc` and the backtrace read from Zephyr's exception frame. It is in z27, which runs on the board, but no crash has been caused there yet, so that code has not run on Xtensa (no emulator runs this build; on Arm and with ESP-IDF it is verified, [RESULTS.md](RESULTS.md)). A risk on that build: 4 KB of DRAM are left when it links (static data, not the heap the firmware runs with), with the status thread's stack at 12 KB (4.7 KB used on the board; a certificate renewal not measured): a larger static buffer in the core or the Zephyr port must still take its room from something else.
+- [ ] The rest of HTTP/2 on the boards ([REGISTRY.md](REGISTRY.md)):
+  - a certificate renewal over it;
+  - Zephyr's downloads from the registry over HTTP/2;
+  - the traffic it saves or costs ([RESULTS.md](RESULTS.md#idle-traffic) has HTTP/1.1's only).
+- [ ] The core's own WiFi provisioning on an ESP-IDF board: it passes in the emulator only ([PROVISIONING.md](PROVISIONING.md)).
+- [ ] `lastFatalError` after a real crash on the ESP32-S3 with Zephyr: the code is on the board but has never run on Xtensa ([RESULTS.md](RESULTS.md#a-crash-in-the-status)). That build has 4 KB of DRAM left at link time, so a larger static buffer must take its room from something else.
 
 What an app can do and hold:
 
