@@ -96,6 +96,9 @@ typedef struct app {
      * and the event queue are also touched by GPIO callbacks: under ev_lock. */
     wasm_module_inst_t inst;
     int64_t call_start_ms;
+    int unlimited; /* the call has no limits: a module run once (FC_ENTRY, _start) */
+    char out[96]; /* printf/puts/putchar: the line not yet logged (fc_apps.c) */
+    int out_len;
     cJSON *config;
     app_handle_t h[APP_HANDLES];
     app_irq_ctx_t irq_ctx[APP_HANDLES];

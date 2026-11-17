@@ -11,25 +11,13 @@
  * A UART with TX wired to RX reads back what it wrote; a PWM pin wired to
  * the ADC's (through an RC filter) reads about half the supply.
  */
+#include <stdio.h>
+
 #include "fc_app.h"
 
 FC_APP_ABI()
 
 static int32_t i2c, spi, uart, adc, pwm;
-static char s[128];
-static int32_t n;
-
-static void put(const char *str)
-{
-    for (; *str; str++) {
-        s[n++] = *str;
-    }
-}
-
-static void num(int32_t v)
-{
-    n += fc_fmt_int(s + n, v);
-}
 
 int32_t init(void)
 {
@@ -41,50 +29,45 @@ int32_t init(void)
     return 0;
 }
 
+/* The devices that acknowledged, or the error that is not a missing device. */
+static int32_t scan_i2c(int32_t *err)
+{
+    int32_t found = 0;
+    uint8_t b;
+    *err = 0;
+    for (int32_t addr = 0x08; addr <= 0x77; addr++) {
+        int32_t rc = fc_i2c_read(i2c, addr, &b, 1);
+        if (rc == 0) {
+            found++;
+        } else if (rc != FC_EIO) {
+            *err = rc;
+        }
+    }
+    return found;
+}
+
 void tick(void)
 {
-    n = 0;
-    put("i2c ");
-    if (i2c < 0) {
-        num(i2c);
-    } else {
-        int32_t found = 0, err = 0;
-        uint8_t b;
-        for (int32_t addr = 0x08; addr <= 0x77; addr++) {
-            int32_t rc = fc_i2c_read(i2c, addr, &b, 1);
-            if (rc == 0) {
-                found++;
-            } else if (rc != FC_EIO) {
-                err = rc;
-            }
-        }
-        num(found);
-        if (err) {
-            put("!");
-            num(err);
-        }
-    }
-    put(" spi ");
+    char s[128];
+    int32_t n = 0, err = 0;
+    /* A handle below 0 is the error that opening it gave. */
+    int32_t found = i2c < 0 ? i2c : scan_i2c(&err);
+    n += snprintf(s + n, sizeof(s) - n, err ? "i2c %d!%d" : "i2c %d", found, err);
     if (spi < 0) {
-        num(spi);
+        n += snprintf(s + n, sizeof(s) - n, " spi %d", spi);
     } else {
         uint8_t tx[4] = {0x9f, 0, 0, 0}, rx[4] = {0, 0, 0, 0}; /* a flash's JEDEC ID */
-        num(fc_spi_transfer(spi, tx, rx, 4, 0));
-        put(":");
-        num(rx[1]);
+        int32_t rc = fc_spi_transfer(spi, tx, rx, 4, 0);
+        n += snprintf(s + n, sizeof(s) - n, " spi %d:%d", rc, rx[1]);
     }
-    put(" uart ");
     if (uart < 0) {
-        num(uart);
+        n += snprintf(s + n, sizeof(s) - n, " uart %d", uart);
     } else {
-        num(fc_uart_write(uart, "hwcheck", 7));
-        put("/");
         uint8_t buf[16];
-        num(fc_uart_read(uart, buf, sizeof(buf), 50));
+        int32_t w = fc_uart_write(uart, "hwcheck", 7);
+        n += snprintf(s + n, sizeof(s) - n, " uart %d/%d", w, fc_uart_read(uart, buf, sizeof(buf), 50));
     }
-    put(" adc ");
-    num(adc < 0 ? adc : fc_adc_read_mv(adc));
-    put(" pwm ");
-    num(pwm < 0 ? pwm : fc_pwm_duty(pwm, 32768));
+    int32_t mv = adc < 0 ? adc : fc_adc_read_mv(adc);
+    n += snprintf(s + n, sizeof(s) - n, " adc %d pwm %d", mv, pwm < 0 ? pwm : fc_pwm_duty(pwm, 32768));
     fc_set_state(s, n);
 }

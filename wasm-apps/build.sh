@@ -10,7 +10,8 @@ source "$DIR/../tools/local-ip.sh"
 APP="${1:?app}"; VER="${2:?version (v1, v2, ...)}"; REG="${3:-${REGISTRY:-$(local_ip):5001}}"
 OUT="$DIR/build/$APP-$VER"
 mkdir -p "$OUT"
-# Small module for MCUs: 1 KB stack placed first, no libc, and __data_end +
+# Small module for MCUs: 1 KB stack placed first, the device's C library
+# (sdk/libc: libc.syms lets wasm-ld import just those functions), and __data_end +
 # __heap_base exported so WAMR shrinks the 64 KB linear memory page to what
 # the module really uses (a few KB), which the C3/C5 heap can satisfy.
 # APP_VERSION is the major version from the tag (v2.1 -> 2), for apps that
@@ -18,7 +19,7 @@ mkdir -p "$OUT"
 # -mcpu=mvp: the device's WAMR has no reference types, and clang 20 and later
 # otherwise encode call_indirect in a way it refuses ("zero byte expected"),
 # so any app with a function pointer would not load.
-clang --target=wasm32 -mcpu=mvp -O2 -nostdlib -I"$DIR/sdk" -DAPP_VERSION="$(echo "${VER#v}" | cut -d. -f1 | tr -cd '0-9')" \
+clang --target=wasm32 -mcpu=mvp -O2 -nostdlib -I"$DIR/sdk" -I"$DIR/sdk/libc" -Wl,--allow-undefined-file="$DIR/sdk/libc/libc.syms" -DAPP_VERSION="$(echo "${VER#v}" | cut -d. -f1 | tr -cd '0-9')" \
   -Wl,--no-entry -Wl,--export=__heap_base -Wl,--export=__data_end -Wl,--stack-first -Wl,-z,stack-size=1024 \
   -Wl,--initial-memory=65536 -Wl,--max-memory=65536 -Wl,--strip-all \
   -o "$OUT/$APP.wasm" "$DIR/$APP/$APP.c"

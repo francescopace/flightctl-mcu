@@ -1,6 +1,6 @@
 # Writing a WASM app
 
-An app is a WebAssembly module that Flight Control deploys as a container application, with a WASM OCI artifact as its image. The device runs it with WAMR, one thread per app, and replaces it without a reboot. The app reaches the device only through the functions in [wasm-apps/sdk/fc_app.h](../wasm-apps/sdk/fc_app.h) (import module `fc`), version 1 of the interface. Until the v1.0.0 tag it can still change; after that, functions are only added.
+An app is a WebAssembly module that Flight Control deploys as a container application, with a WASM OCI artifact as its image. The device runs it with WAMR, one thread per app, and replaces it without a reboot. The app reaches the device only through the functions in [wasm-apps/sdk/fc_app.h](../wasm-apps/sdk/fc_app.h) (import module `fc`) and a small [C library](#the-c-library) (import module `env`), version 1 of the interface. Until the v1.0.0 tag it can still change; after that, functions are only added.
 
 | Group | Functions | Granted by |
 |---|---|---|
@@ -14,6 +14,7 @@ An app is a WebAssembly module that Flight Control deploys as a container applic
 | Chip sensors | `fc_sensor_read` (`die_temp`) | always |
 | Metrics | `fc_metric` | `metrics` |
 | MQTT | `fc_mqtt_publish/subscribe/topic`, `fc_event_data` | `mqtt` |
+| C library | `string.h`, `stdio.h` (`snprintf`, `printf` to the log), `stdlib.h`, `ctype.h` from [wasm-apps/sdk/libc](../wasm-apps/sdk/libc/) | always |
 
 MQTT is not in the firmware yet: it returns `FC_ENOTSUP` once granted, so an app written for it loads and can tell. What each port has is under [Ports](#ports).
 
@@ -40,7 +41,7 @@ A module built for no device in particular, such as a benchmark, runs as it was 
 - on the app's thread, at the priority of the agent's threads, so they take turns on the CPU;
 - when it returns, the app is `Completed` and not run again until its image or env vars change, or the device restarts. What it returned is its state, in `customInfo["app.<name>"]`, such as `run() returned 12.500`; a float is given to the thousandth. A trap is an `Error`, and it is run again after a few seconds, as any app.
 
-Such a module may import `env.clock_ms`, as CoreMark does: the milliseconds since the app started, as an i32 or an i64. That is the only function the device has in `env`, the module that clang's `wasm-ld --allow-undefined` and Emscripten import from by default; any other is refused when downloaded. It may also use tail calls (`return_call`). It may not yet import from `fc`: its call has none of an app's handles, events or limits on waits around it.
+Such a module may import `env.clock_ms`, as CoreMark does: the milliseconds since the app started, as an i32 or an i64. `env` is the module that clang's `wasm-ld --allow-undefined` and Emscripten import from by default; there the device has `clock_ms` and the functions of its [C library](#the-c-library), and refuses any other when the module is downloaded. It may also use tail calls (`return_call`). It may not yet import from `fc`: its call has none of an app's handles, events or limits on waits around it.
 
 [CoreMark](../wasm-apps/coremark/fetch.sh) runs that way, from either published build: wasm3's, 7.7 KB with 64 KB of memory, or wasm-coremark's, 12.5 KB with 128 KB. Neither exports `__heap_base`, so the device holds all their memory, in one block (see below): 64 KB takes 68 KB of ESP-IDF's heap, which rounds a block up to its size class. `run()` runs for at least 10 seconds and returns the score, in iterations per second (0 when the run was not valid); the scores measured are in [RESULTS.md](RESULTS.md#coremark):
 
@@ -147,27 +148,42 @@ On Zephyr the board map's names come from the devicetree, not from pins: the chi
 | Timers per app | 4 |
 | Storage per app | 4 KB |
 | Queued events | 16 per app; past that the oldest go, and the app hears how many with `FC_EV_OVERFLOW` |
-| One call of `init`, `tick` or `on_event` | 20 million instructions, and 1 s of waiting |
+| One call of `init`, `tick` or `on_event` | 5 million instructions, and 1 s in the device's functions (waits, and the C library) |
 | The export in `FC_ENTRY`, or `_start` | no limit, stopped when the app is removed or updated |
 | One wait (`fc_sleep_ms`, `fc_uart_read`), one I2C transfer, one UART write, or waiting for another app's SPI device | 100 ms |
 | One I2C transfer | 1 KB each way (`FC_I2C_MAX`) |
 | One SPI transfer | 4 KB (`FC_SPI_MAX`) |
 
-The instruction budget counts WAMR's fast-interpreter operations. 20 million last 2.2 s on the C5, 3.4 s on the C6, 3.8 s on the ESP32 and 4.0 s on the S3 (a counting loop until the budget stopped it): a call that loops is stopped within about 4 s. It is to come down to about a second on the slowest chip ([ROADMAP.md](ROADMAP.md)).
+The instruction budget counts WAMR's fast-interpreter operations. 5 million last about a second on the slowest chip, the S3: a call that loops is stopped within about a second. (20 million, the budget before, lasted 2.2 s on the C5, 3.4 s on the C6, 3.8 s on the ESP32 and 4.0 s on the S3, measured with a counting loop until the budget stopped it.) The C library's functions run natively, outside that count; the time a call spends in them is limited instead, to the same second as its waits ([below](#the-c-library)). A longer computation is split across ticks.
 
 What limits an app on a small chip is the heap, not the 64 KB the device accepts for a `.wasm`. Each app takes the module as WAMR's fast interpreter loads it (about 2.5 to 3.5 times the `.wasm`), its linear memory (static data and the 1 KB stack), about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)).
 
-There is no libc: `fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `fc_config_double`, `fc_config_milli`, `FC_STR`). They are compiled into the app, so they can change without touching the interface. Build and push with `wasm-apps/build.sh <app> <version>`, and keep its link flags. Exporting `__heap_base` and `__data_end` lets WAMR shrink the WebAssembly memory page to what the module actually uses, without which an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses. Tail calls are the one feature beyond the MVP it has.
+`fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `fc_config_double`, `fc_config_milli`, `FC_STR`). They are compiled into the app, so they can change without touching the interface. Build and push with `wasm-apps/build.sh <app> <version>`, and keep its link flags. Exporting `__heap_base` and `__data_end` lets WAMR shrink the WebAssembly memory page to what the module actually uses, without which an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses. Tail calls are the one feature beyond the MVP it has.
+
+### The C library
+
+The firmware has a small C library for apps, part of the interface: WAMR's libc-builtin, of which an app may import these functions from `env`, declared in [wasm-apps/sdk/libc/](../wasm-apps/sdk/libc/) (`string.h`, `stdio.h`, `stdlib.h`, `ctype.h`):
+
+| Header | Functions |
+|---|---|
+| `string.h` | `memcmp`, `memcpy`, `memmove`, `memset`, `memchr`, `strlen`, `strcmp`, `strncmp`, `strncasecmp`, `strcpy`, `strncpy`, `strchr`, `strstr`, `strspn`, `strcspn` |
+| `stdio.h` | `snprintf`, `sprintf`, `printf`, `puts`, `putchar` |
+| `stdlib.h` | `atoi`, `strtol`, `strtoul`, `abort` |
+| `ctype.h` | `isalnum`, `isalpha`, `isdigit`, `isgraph`, `isprint`, `isspace`, `isupper`, `isxdigit`, `tolower`, `toupper` |
+
+They run as native code, outside the app's instruction budget, and take nothing from the app's memory or the heap. A call into the app may spend at most a second in them too, as in the device's waits: past it, the next one stops the app (`a call took more than 1 s`), so a loop of `memset` or `strstr` over a large buffer cannot run on. A module run once (`FC_ENTRY`) has no such limit. A pointer or a length that leaves the app's memory stops the app, as a trap does; so does `abort()`. `printf`, `puts` and `putchar` write to the app's log at INFO, as `fc_log` does, a line at a time: a line longer than 96 characters is split, one `printf` writes at most 127, and a line without its newline is logged when the call into the app returns. The formats are C's (`%d`, `%ld`, `%u`, `%x`, `%s`, `%c`, `%f`, widths and precisions); `%f` is formatted by the firmware's own C library, and was tried on the host only. In firmware the library costs 7.7 KB of flash and 1 KB of RAM on the ESP32-C3, plus a 100-byte line buffer per app.
+
+There is no `malloc` (an app has no heap in its memory), no `vsnprintf`, no math functions and no files. `build.sh` passes `-I wasm-apps/sdk/libc` and `--allow-undefined-file=wasm-apps/sdk/libc/libc.syms`, which lets the linker import exactly these functions, also when clang calls `memcpy` or `memset` itself (a struct copy, a zeroed array).
 
 ## Examples
 
 Neither has a `tick`: timers wake them, and they sleep in between.
 
 - [alarm](../wasm-apps/alarm/alarm.c): the line temperature alarm. It reads `die_temp`, takes `threshold_c`, `hysteresis_c` and `sample_ms` from `/etc/fc-app/alarm.json`, and applies a new file without restarting. It drives `led0` when the fleet grants it (`FC_ALLOW: "led0"`); without the grant it reports only its state. The same source builds two images, to show an app updated without a reboot: `alarm:v1` lights the LED solid blue above the threshold, and `alarm:v2` adds a pre-alarm (dim blue, 2 °C below) and blinks with a second timer. Blue only, so boards with a single-colour LED look the same as RGB ones. About 2 KB of `.wasm`.
-- [trend](../wasm-apps/trend/trend.c): no grants needed. It reports whether the temperature is rising or falling, and how fast. With `metrics` granted it also sends the temperature and the rate as metrics (`app_<name>_temp_c`, `app_<name>_rate_c_per_min`). About 2 KB.
+- [trend](../wasm-apps/trend/trend.c): no grants needed. It reports whether the temperature is rising or falling, and how fast. With `metrics` granted it also sends the temperature and the rate as metrics (`app_<name>_temp_c`, `app_<name>_rate_c_per_min`). It formats its state with `snprintf` and logs with `printf` ([the C library](#the-c-library)). About 1.6 KB.
 
 On a chip without a temperature sensor both set their state to say so and stay idle, with no timer running.
 
-- [hwcheck](../wasm-apps/hwcheck/hwcheck.c): a board's buses and channels, checked. Granted `i2c0 spi0 uart0 adc0 pwm0` (names the fleet's `board.json` gives), it says every 2 s what each answers: the I2C devices that acknowledge, an SPI transfer, the UART's bytes written and read back, the ADC's millivolts, the PWM set to half.
+- [hwcheck](../wasm-apps/hwcheck/hwcheck.c): a board's buses and channels, checked. Granted `i2c0 spi0 uart0 adc0 pwm0` (names the fleet's `board.json` gives), it says every 2 s what each answers: the I2C devices that acknowledge, an SPI transfer, the UART's bytes written and read back, the ADC's millivolts, the PWM set to half. About 1.3 KB.
 
 - [CoreMark](../wasm-apps/coremark/fetch.sh), as published, not rebuilt: `wasm-apps/coremark/fetch.sh` downloads both builds and checks them against their SHA-256, then `wasm-apps/push.sh coremark wasm3` pushes one. See [Modules built for no device](#modules-built-for-no-device).

@@ -57,8 +57,9 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/app:loop", w_loop, sizeof(w_loop)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
-        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(t_env),
+        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
+        V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop),
 #undef V
     };
     f_fetches++;
@@ -551,6 +552,59 @@ static void test_fc_imports(void)
     remove_all();
 }
 
+/* The C library: its results, and printf, puts and putchar in the app's
+ * log a line at a time, the last part line at the end of the call. */
+static void test_libc(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("l", "reg/t_libc", NULL, err, sizeof(err)), 0);
+    const char *want = "Running copied 7 -42 255 ff 3.14 xyz 0 A bad=0";
+    CHECK_STR(wait_state_of("l", want, 3000), want);
+    CHECK(stub_log_has("app l: hello"));
+    CHECK(stub_log_has("app l: n=5 more"));
+    CHECK(stub_log_has("app l: ok"));
+    CHECK(stub_log_has("app l: line"));
+    CHECK(stub_log_has("app l: partial"));
+    remove_all();
+}
+
+/* Addresses outside the app's memory given to the C library stop the app:
+ * memcpy's destination, a %s, snprintf's size, strtol's endptr; and abort. */
+static void test_libc_oob(void)
+{
+    static const char *const img[] = {"reg/t_libcoob_1", "reg/t_libcoob_2", "reg/t_libcoob_3", "reg/t_libcoob_4"};
+    char err[160];
+    for (size_t i = 0; i < sizeof(img) / sizeof(img[0]); i++) {
+        CHECK_INT(apply_one("o", img[i], NULL, err, sizeof(err)), 0);
+        for (int j = 0; j < 300 && strncmp(state_of("o"), "Error", 5) != 0; j++) {
+            usleep(10 * 1000);
+        }
+        if (strstr(state_of("o"), "out of bounds") == NULL) {
+            fprintf(stderr, "%s: %s\n", img[i], state_of("o"));
+        }
+        CHECK(strstr(state_of("o"), "out of bounds") != NULL);
+        remove_all();
+    }
+    CHECK_INT(apply_one("o", "reg/t_libcoob_5", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("o", "Error Exception: abort()", 3000), "Error Exception: abort()");
+    remove_all();
+}
+
+/* A loop of the C library's native calls is stopped after a second, though
+ * it runs few of the app's instructions. */
+static void test_libc_loop(void)
+{
+    char err[160];
+    s_call_budget = 1000000000; /* on a chip 5 million take a second; the host is faster */
+    int64_t t0 = fc_apps_now_ms();
+    CHECK_INT(apply_one("p", "reg/t_libcloop", NULL, err, sizeof(err)), 0);
+    const char *want = "Error Exception: a call took more than 1 s";
+    CHECK_STR(wait_state_of("p", want, 5000), want);
+    CHECK(fc_apps_now_ms() - t0 < 3000);
+    remove_all();
+    s_call_budget = FC_APP_CALL_BUDGET;
+}
+
 static void test_fc_info(void)
 {
     char err[160];
@@ -579,7 +633,7 @@ static void test_fc_refused(void)
     CHECK_INT(apply_one("r", "reg/t_envtype", NULL, err, sizeof(err)), -1);
     CHECK(strstr(err, "imports env.clock_ms with a type other than () -> i32 or i64") != NULL);
     CHECK_INT(apply_one("r", "reg/t_envother", NULL, err, sizeof(err)), -1);
-    CHECK(strstr(err, "imports env.memcpy, which this firmware does not have") != NULL);
+    CHECK(strstr(err, "imports env.malloc, which this firmware does not have") != NULL);
     CHECK_INT(apply_one("r", "reg/t_entry", NULL, err, sizeof(err)), -1); /* run() only, and no FC_ENTRY */
     CHECK(strstr(err, "exports neither tick() nor on_event() nor _start(), and has no FC_ENTRY") != NULL);
     CHECK_INT(apply_one("r", "reg/t_entry", "{\"FC_ENTRY\": \"walk\"}", err, sizeof(err)), -1);
@@ -1066,6 +1120,14 @@ static void test_example_apps(void)
     CHECK_STR(wait_state_of("alarm", "Running v2 ok", 3000), "Running v2 ok");
     CHECK(f_led[2] == 0);
     remove_all();
+    /* hwcheck: the fake board has an I2C bus with one device, and none of
+     * the other names it looks for. */
+    CHECK_INT(apply_one("hw", "reg/app_hwcheck", "{\"FC_ALLOW\": \"i2c0 spi0 uart0 adc0 pwm0\", \"TICK_MS\": \"100\"}",
+                        err, sizeof(err)),
+              0);
+    const char *hw = "Running i2c 1 spi -2 uart -2 adc -2 pwm -2";
+    CHECK_STR(wait_state_of("hw", hw, 3000), hw);
+    remove_all();
 }
 
 
@@ -1232,6 +1294,9 @@ int main(void)
     RUN(test_entry_waits);
     RUN(test_replace_idle);
     RUN(test_tail_calls);
+    RUN(test_libc);
+    RUN(test_libc_oob);
+    RUN(test_libc_loop);
     RUN(test_fc_info);
     RUN(test_fc_timer);
     RUN(test_fc_config);

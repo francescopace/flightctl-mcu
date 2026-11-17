@@ -67,9 +67,9 @@ static int64_t s_entry_wait_ms = ENTRY_WAIT_MS;
  * traps, so that an app in an endless loop can always be stopped. Counted by
  * WAMR's instruction metering, where the port builds WAMR with it; host
  * calls (a sleep, a bus transfer) do not count, and check the time themselves.
- * Provisional: to be measured on the slowest chip (about a second there). */
+ * 5 million last about a second on the slowest chip (the S3, with ESP-IDF). */
 #ifndef FC_APP_CALL_BUDGET
-#define FC_APP_CALL_BUDGET 20000000
+#define FC_APP_CALL_BUDGET 5000000
 #endif
 #if WASM_ENABLE_INSTRUCTION_METERING
 static int s_call_budget = FC_APP_CALL_BUDGET;
@@ -472,7 +472,7 @@ static const char *export_sig(wasm_module_t m, const char *name, char *buf, size
 }
 
 /* "env": the module wasm-ld and Emscripten import from by default. The device
- * has clock_ms there, as CoreMark's builds import it, with an i32 or an i64
+ * has its C library there (below), and clock_ms, as CoreMark's builds import it, with an i32 or an i64
  * result: milliseconds since the app started. The earlier app interface put
  * its functions there too; those are named so the module can be rebuilt. */
 static void env_clock_ms(wasm_exec_env_t env, uint64_t *args)
@@ -487,6 +487,289 @@ static void env_clock_ms(wasm_exec_env_t env, uint64_t *args)
 static NativeSymbol s_env_natives[] = {
     {"clock_ms", (void *)env_clock_ms, NULL, NULL}, /* checked in check_module */
 };
+
+/* A small C library, in "env" as clang's wasm32 build imports it
+ * (wasm-apps/sdk/libc/): WAMR's libc-builtin, of which an app may import only
+ * the functions named here (check_env_import). Not malloc and the rest: an
+ * app has no heap in its linear memory. Some are the device's own, registered
+ * after WAMR's and so found first: each checks the time a call has taken
+ * (libc_overdue) before WAMR's own; printf, puts and putchar write to the
+ * app's log, a line at a time, as fc_log does at INFO (WAMR's write to the
+ * serial port only); strtol and strtoul take a NULL endptr (WAMR's would
+ * write at the app's address 0); abort takes no argument, as C's. */
+static const char *const s_libc[] = {
+    "memcmp", "memcpy", "memmove", "memset", "memchr", "strchr", "strcmp", "strcpy", "strlen", "strncmp",
+    "strncpy", "strncasecmp", "strspn", "strcspn", "strstr", "sprintf", "snprintf", "printf", "puts",
+    "putchar", "atoi", "strtol", "strtoul", "isalnum", "isalpha", "isdigit", "isgraph", "isprint",
+    "isspace", "isupper", "isxdigit", "tolower", "toupper", "abort",
+};
+
+static int libc_function(const char *name)
+{
+    for (size_t i = 0; i < sizeof(s_libc) / sizeof(s_libc[0]); i++) {
+        if (strcmp(name, s_libc[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+#if WASM_ENABLE_LIBC_BUILTIN
+uint32_t get_libc_builtin_export_apis(NativeSymbol **p_libc_builtin_apis);
+
+/* WAMR's snprintf, which formats from the app's va_list in its memory. */
+typedef int (*wa_snprintf_t)(wasm_exec_env_t env, char *str, uint32_t size, const char *fmt, void *va);
+static wa_snprintf_t s_wa_snprintf;
+
+static void out_flush(app_t *a)
+{
+    if (a->out_len > 0) {
+        fc_port_log(FC_LOG_INFO, "app %s: %.*s", a->name, a->out_len, a->out);
+        a->out_len = 0;
+    }
+}
+
+/* NULL app: called while the module is instantiated, before the app's
+ * context exists; the text is dropped. */
+static void out_put(app_t *a, const char *s, size_t n)
+{
+    if (a == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] == '\n') {
+            out_flush(a);
+            continue;
+        }
+        a->out[a->out_len++] = s[i];
+        if (a->out_len == (int)sizeof(a->out)) {
+            out_flush(a);
+        }
+    }
+}
+
+/* A call into the app may spend at most APP_CALL_MS in these functions too,
+ * as in fc's waits: they run natively, outside the instruction budget, and
+ * a loop of them over a large buffer would otherwise run for minutes. Checked
+ * before each one that does work; a module run once has no limit. 1: the
+ * call is stopped (the exception is set, so the app traps on return). */
+static int libc_overdue(wasm_exec_env_t env)
+{
+    app_t *a = wasm_runtime_get_user_data(env);
+    if (a == NULL || a->unlimited || fc_apps_now_ms() - a->call_start_ms <= APP_CALL_MS) {
+        return 0;
+    }
+    wasm_runtime_set_exception(wasm_runtime_get_module_inst(env), "a call took more than 1 s");
+    return 1;
+}
+
+/* WAMR's own functions, called after that check. Pointers arrive converted
+ * and checked by WAMR, as their signatures say (the same as WAMR's). */
+static void *s_wa_memcmp, *s_wa_memcpy, *s_wa_memmove, *s_wa_memset, *s_wa_memchr, *s_wa_strchr, *s_wa_strcmp,
+    *s_wa_strcpy, *s_wa_strlen, *s_wa_strncasecmp, *s_wa_strspn, *s_wa_strcspn, *s_wa_strstr, *s_wa_sprintf;
+
+typedef uint32_t (*wa_ppn_t)(wasm_exec_env_t, void *, void *, uint32_t);
+typedef uint32_t (*wa_pin_t)(wasm_exec_env_t, void *, int32_t, uint32_t);
+typedef uint32_t (*wa_pi_t)(wasm_exec_env_t, const char *, int32_t);
+typedef uint32_t (*wa_pp_t)(wasm_exec_env_t, const char *, const char *);
+typedef uint32_t (*wa_p_t)(wasm_exec_env_t, const char *);
+typedef uint32_t (*wa_ppi_t)(wasm_exec_env_t, const char *, const char *, uint32_t);
+typedef uint32_t (*wa_ppv_t)(wasm_exec_env_t, char *, const char *, void *);
+
+#define LIBC_PPN(n)                                                                                                  \
+    static uint32_t env_##n(wasm_exec_env_t env, void *a, void *b, uint32_t len)                                     \
+    {                                                                                                                \
+        return libc_overdue(env) ? 0 : ((wa_ppn_t)s_wa_##n)(env, a, b, len);                                         \
+    }
+#define LIBC_PIN(n)                                                                                                  \
+    static uint32_t env_##n(wasm_exec_env_t env, void *a, int32_t c, uint32_t len)                                   \
+    {                                                                                                                \
+        return libc_overdue(env) ? 0 : ((wa_pin_t)s_wa_##n)(env, a, c, len);                                         \
+    }
+#define LIBC_PP(n)                                                                                                   \
+    static uint32_t env_##n(wasm_exec_env_t env, const char *a, const char *b)                                       \
+    {                                                                                                                \
+        return libc_overdue(env) ? 0 : ((wa_pp_t)s_wa_##n)(env, a, b);                                               \
+    }
+LIBC_PPN(memcmp)
+LIBC_PPN(memcpy)
+LIBC_PPN(memmove)
+LIBC_PIN(memset)
+LIBC_PIN(memchr)
+LIBC_PP(strcmp)
+LIBC_PP(strcpy)
+LIBC_PP(strspn)
+LIBC_PP(strcspn)
+LIBC_PP(strstr)
+
+static uint32_t env_strchr(wasm_exec_env_t env, const char *s, int32_t c)
+{
+    return libc_overdue(env) ? 0 : ((wa_pi_t)s_wa_strchr)(env, s, c);
+}
+
+static uint32_t env_strlen(wasm_exec_env_t env, const char *s)
+{
+    return libc_overdue(env) ? 0 : ((wa_p_t)s_wa_strlen)(env, s);
+}
+
+static uint32_t env_strncasecmp(wasm_exec_env_t env, const char *a, const char *b, uint32_t n)
+{
+    return libc_overdue(env) ? 0 : ((wa_ppi_t)s_wa_strncasecmp)(env, a, b, n);
+}
+
+static uint32_t env_sprintf(wasm_exec_env_t env, char *str, const char *fmt, void *va)
+{
+    return libc_overdue(env) ? 0 : ((wa_ppv_t)s_wa_sprintf)(env, str, fmt, va);
+}
+
+static int env_snprintf(wasm_exec_env_t env, char *str, uint32_t size, const char *fmt, void *va)
+{
+    return libc_overdue(env) ? 0 : s_wa_snprintf(env, str, size, fmt, va);
+}
+
+/* strncmp and strncpy read the source only up to its end, as C's: WAMR's
+ * check n bytes at the source, so "on" near the end of the app's memory,
+ * compared or copied with a larger n, stopped the app. */
+static int32_t env_strncmp(wasm_exec_env_t env, const char *a, const char *b, uint32_t n)
+{
+    return libc_overdue(env) ? 0 : strncmp(a, b, n);
+}
+
+static uint32_t env_strncpy(wasm_exec_env_t env, char *dst, const char *src, uint32_t n)
+{
+    wasm_module_inst_t inst = wasm_runtime_get_module_inst(env);
+    if (libc_overdue(env) || !wasm_runtime_validate_native_addr(inst, dst, n)) {
+        return 0;
+    }
+    strncpy(dst, src, n);
+    return (uint32_t)wasm_runtime_addr_native_to_app(inst, dst);
+}
+
+/* One printf writes at most 127 characters; the rest is cut. */
+static int env_printf(wasm_exec_env_t env, const char *fmt, void *va)
+{
+    char buf[128];
+    if (libc_overdue(env)) {
+        return 0;
+    }
+    int n = s_wa_snprintf(env, buf, sizeof(buf), fmt, va);
+    if (n > 0) {
+        out_put(wasm_runtime_get_user_data(env), buf, n < (int)sizeof(buf) ? (size_t)n : sizeof(buf) - 1);
+    }
+    return n;
+}
+
+static int env_puts(wasm_exec_env_t env, const char *s)
+{
+    size_t n = strlen(s);
+    out_put(wasm_runtime_get_user_data(env), s, n);
+    out_put(wasm_runtime_get_user_data(env), "\n", 1);
+    return (int)n + 1;
+}
+
+static int env_putchar(wasm_exec_env_t env, int c)
+{
+    char ch = (char)c;
+    out_put(wasm_runtime_get_user_data(env), &ch, 1);
+    return c & 0xff;
+}
+
+static void env_abort(wasm_exec_env_t env)
+{
+    wasm_runtime_set_exception(wasm_runtime_get_module_inst(env), "abort()");
+}
+
+/* endptr: an address in the app's memory, 0 for none. */
+static int set_endptr(wasm_exec_env_t env, uint32_t endptr, const char *end)
+{
+    wasm_module_inst_t inst = wasm_runtime_get_module_inst(env);
+    if (endptr == 0) {
+        return 0;
+    }
+    if (!wasm_runtime_validate_app_addr(inst, endptr, sizeof(uint32_t))) {
+        return -1; /* the exception is set: the app traps */
+    }
+    uint32_t off = (uint32_t)wasm_runtime_addr_native_to_app(inst, (void *)end);
+    memcpy(wasm_runtime_addr_app_to_native(inst, endptr), &off, sizeof(off));
+    return 0;
+}
+
+static int32_t env_strtol(wasm_exec_env_t env, const char *nptr, uint32_t endptr, int32_t base)
+{
+    char *end;
+    long v = strtol(nptr, &end, base);
+    set_endptr(env, endptr, end);
+    return v > INT32_MAX ? INT32_MAX : v < INT32_MIN ? INT32_MIN : (int32_t)v;
+}
+
+static uint32_t env_strtoul(wasm_exec_env_t env, const char *nptr, uint32_t endptr, int32_t base)
+{
+    char *end;
+    unsigned long v = strtoul(nptr, &end, base);
+    set_endptr(env, endptr, end);
+    return v > UINT32_MAX ? UINT32_MAX : (uint32_t)v;
+}
+
+static NativeSymbol s_libc_natives[] = {
+    {"printf", (void *)env_printf, "($*)i", NULL},
+    {"puts", (void *)env_puts, "($)i", NULL},
+    {"putchar", (void *)env_putchar, "(i)i", NULL},
+    {"abort", (void *)env_abort, "()", NULL},
+    {"strtol", (void *)env_strtol, "($ii)i", NULL},
+    {"strtoul", (void *)env_strtoul, "($ii)i", NULL},
+    {"strncmp", (void *)env_strncmp, "($$i)i", NULL},
+    {"strncpy", (void *)env_strncpy, "(*$i)i", NULL},
+    {"memcmp", (void *)env_memcmp, "(**~)i", NULL},
+    {"memcpy", (void *)env_memcpy, "(**~)i", NULL},
+    {"memmove", (void *)env_memmove, "(**~)i", NULL},
+    {"memset", (void *)env_memset, "(*ii)i", NULL},
+    {"memchr", (void *)env_memchr, "(*ii)i", NULL},
+    {"strchr", (void *)env_strchr, "($i)i", NULL},
+    {"strcmp", (void *)env_strcmp, "($$)i", NULL},
+    {"strcpy", (void *)env_strcpy, "(*$)i", NULL},
+    {"strlen", (void *)env_strlen, "($)i", NULL},
+    {"strncasecmp", (void *)env_strncasecmp, "($$i)i", NULL},
+    {"strspn", (void *)env_strspn, "($$)i", NULL},
+    {"strcspn", (void *)env_strcspn, "($$)i", NULL},
+    {"strstr", (void *)env_strstr, "($$)i", NULL},
+    {"sprintf", (void *)env_sprintf, "($$*)i", NULL},
+    {"snprintf", (void *)env_snprintf, "(*~$*)i", NULL},
+};
+
+/* After wasm_runtime_full_init, which registers WAMR's libc-builtin. */
+static void libc_init(void)
+{
+    NativeSymbol *wa = NULL;
+    uint32_t n = get_libc_builtin_export_apis(&wa);
+    static const struct {
+        const char *name;
+        void **fp;
+    } want[] = {
+        {"memcmp", &s_wa_memcmp},   {"memcpy", &s_wa_memcpy}, {"memmove", &s_wa_memmove},
+        {"memset", &s_wa_memset},   {"memchr", &s_wa_memchr}, {"strchr", &s_wa_strchr},
+        {"strcmp", &s_wa_strcmp},   {"strcpy", &s_wa_strcpy}, {"strlen", &s_wa_strlen},
+        {"strncasecmp", &s_wa_strncasecmp}, {"strspn", &s_wa_strspn}, {"strcspn", &s_wa_strcspn},
+        {"strstr", &s_wa_strstr},   {"sprintf", &s_wa_sprintf}, {"snprintf", (void **)&s_wa_snprintf},
+    };
+    for (uint32_t i = 0; i < n; i++) {
+        for (size_t j = 0; j < sizeof(want) / sizeof(want[0]); j++) {
+            if (strcmp(wa[i].symbol, want[j].name) == 0) {
+                *want[j].fp = wa[i].func_ptr;
+            }
+        }
+    }
+    wasm_runtime_register_natives("env", s_libc_natives, sizeof(s_libc_natives) / sizeof(s_libc_natives[0]));
+}
+#else
+static void out_flush(app_t *a)
+{
+    (void)a;
+}
+
+static void libc_init(void)
+{
+}
+#endif
 
 static int earlier_interface(const char *name)
 {
@@ -508,6 +791,18 @@ static int check_env_import(const wasm_import_t *im, char *err, size_t err_len)
             return 0;
         }
         snprintf(err, err_len, "imports env.clock_ms with a type other than () -> i32 or i64");
+        return -1;
+    }
+    if (im->kind == WASM_IMPORT_EXPORT_KIND_FUNC && libc_function(im->name)) {
+        if (im->linked) {
+            return 0;
+        }
+#if WASM_ENABLE_LIBC_BUILTIN
+        snprintf(err, err_len, "imports env.%.20s with a type other than the C library's (wasm-apps/sdk/libc)",
+                 im->name);
+#else
+        snprintf(err, err_len, "imports env.%.20s: this firmware is built without the C library", im->name);
+#endif
         return -1;
     }
     if (earlier_interface(im->name)) {
@@ -664,7 +959,9 @@ static int call_fc(app_t *a, wasm_exec_env_t env, wasm_function_inst_t f, uint32
                    const char *what)
 {
     a->call_start_ms = fc_apps_now_ms();
+    a->unlimited = 0;
     int ok = call_app(a, env, f, argc, argv);
+    out_flush(a);
     fc_appapi_end_call(a);
     if (ok) {
         return 0;
@@ -875,6 +1172,7 @@ static int run_entry(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env, con
     fc_port_log(FC_LOG_INFO, "app %s running %s() (%s)", a->name, name, a->image);
     uint32_t argv[2] = {0, 0};
     a->call_start_ms = fc_apps_now_ms();
+    a->unlimited = 1; /* the C library's calls too (libc_overdue) */
     int ok = arm_call(a, env, -1) && wasm_runtime_call_wasm(env, f, 0, argv);
     if (!ok) {
         if (!stopping(a)) {
@@ -914,6 +1212,7 @@ static void *runner(void *arg)
     }
     while (!stopping(a)) {
         a->started_ms = fc_apps_now_ms();
+        a->out_len = 0;
         /* The instance first, its memory in one block while the agent
          * waits (app_start): made later, after the agent's connection had
          * opened again, a 64 KB memory no longer fitted on an ESP32-C5. */
@@ -975,6 +1274,7 @@ static void *runner(void *arg)
             } else if (run_entry(a, inst, env, entry)) {
                 completed = 1;
             }
+            out_flush(a);
         }
         disarm_call(a);
         a->inst = NULL;
@@ -1217,6 +1517,7 @@ int fc_apps_init(void)
     NativeSymbol *fc = fc_appapi_natives(&n_fc);
     wasm_runtime_register_natives("fc", fc, (uint32_t)n_fc);
     wasm_runtime_register_natives_raw("env", s_env_natives, sizeof(s_env_natives) / sizeof(s_env_natives[0]));
+    libc_init();
     fc_board_load(g_fc_hw);
     s_inited = 1;
     guard_boot();

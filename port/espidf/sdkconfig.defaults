@@ -48,12 +48,13 @@ CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
-# WASM apps: WAMR fast interpreter only (no AOT/JIT, no WASI or libc, no
-# wasm threads) to keep RAM low on C3/C5.
+# WASM apps: WAMR fast interpreter only (no AOT/JIT, no WASI, no wasm
+# threads) to keep RAM low on C3/C5. libc-builtin: a few C library functions
+# for the apps (core/src/fc_apps.c, s_libc), in flash.
 CONFIG_WAMR_ENABLE_INTERP=y
 CONFIG_WAMR_INTERP_FAST=y
 # CONFIG_WAMR_ENABLE_AOT is not set
 # CONFIG_WAMR_ENABLE_LIBC_WASI is not set
-# CONFIG_WAMR_ENABLE_LIBC_BUILTIN is not set
+CONFIG_WAMR_ENABLE_LIBC_BUILTIN=y
 # CONFIG_WAMR_ENABLE_LIB_PTHREAD is not set
 

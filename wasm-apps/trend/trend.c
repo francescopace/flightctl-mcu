@@ -3,12 +3,14 @@
  * reports whether it is rising, falling or steady, with the rate in tenths
  * of a degree per minute, e.g. "rising +0.8 C/min (41.2 C)". The state is
  * sent only when the trend or the rounded value changes, and a log line is
- * written when the trend changes.
+ * written (printf) when the trend changes.
  *
  * Grants: none needed. With "metrics" in FC_ALLOW it sends the smoothed
  * temperature and the rate as metrics, once the firmware has them. It has no
  * tick(): a timer samples every SAMPLE_MS and the app sleeps in between.
  */
+#include <stdio.h>
+
 #include "fc_app.h"
 
 FC_APP_ABI()
@@ -19,28 +21,12 @@ FC_APP_ABI()
 static int32_t samples[WINDOW], count, last_key = -1, last_trend = -2;
 static int32_t avg_mc; /* exponential moving average */
 
-static int32_t append(char *p, const char *s)
+/* "41.2" from tenths, "+0.8" with plus. Integers only: %f is not in every
+ * port's C library (docs/APPS.md). */
+static void fmt_tenths(char *p, int32_t cap, int32_t tenths, int plus)
 {
-    int32_t n = 0;
-    while (s[n]) {
-        p[n] = s[n];
-        n++;
-    }
-    return n;
-}
-
-/* "41.2" from tenths (one decimal). */
-static int32_t fmt_tenths(char *p, int32_t tenths)
-{
-    int32_t n = 0;
-    if (tenths < 0) {
-        p[n++] = '-';
-        tenths = -tenths;
-    }
-    n += fc_fmt_int(p + n, tenths / 10);
-    p[n++] = '.';
-    p[n++] = (char)('0' + tenths % 10);
-    return n;
+    int32_t a = tenths < 0 ? -tenths : tenths;
+    snprintf(p, cap, "%s%d.%d", tenths < 0 ? "-" : plus && tenths > 0 ? "+" : "", a / 10, a % 10);
 }
 
 static void sample(void)
@@ -72,21 +58,18 @@ static void sample(void)
         return;
     }
     last_key = key;
-    char s[64];
-    int32_t n = append(s, trend > 0 ? "rising " : trend < 0 ? "falling " : "steady ");
+    char s[64], temp[12], rate_s[12];
+    fmt_tenths(temp, sizeof(temp), (avg_mc + 50) / 100, 0);
+    int32_t n;
     if (trend != 0) {
-        if (rate > 0) {
-            s[n++] = '+';
-        }
-        n += fmt_tenths(s + n, rate);
-        n += append(s + n, " C/min ");
+        fmt_tenths(rate_s, sizeof(rate_s), rate, 1);
+        n = snprintf(s, sizeof(s), "%s %s C/min (%s C)", trend > 0 ? "rising" : "falling", rate_s, temp);
+    } else {
+        n = snprintf(s, sizeof(s), "steady (%s C)", temp);
     }
-    s[n++] = '(';
-    n += fmt_tenths(s + n, (avg_mc + 50) / 100);
-    n += append(s + n, " C)");
     fc_set_state(s, n);
     if (trend != last_trend) {
-        fc_log(FC_LOG_INFO, s, n);
+        printf("%s\n", s); /* the app's log, at INFO */
         last_trend = trend;
     }
 }

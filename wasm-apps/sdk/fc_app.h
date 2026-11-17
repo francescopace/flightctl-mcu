@@ -8,10 +8,12 @@
  * and PWM are on ESP-IDF, on Zephyr from the devicetree, and simulated on the
  * host.
  *
- * An app is a WebAssembly module (wasm32, MVP, no libc, no WASI) deployed by
+ * An app is a WebAssembly module (wasm32, MVP, no WASI) deployed by
  * Flight Control as a container application whose image is a WASM OCI
  * artifact. The device runs it with WAMR, one thread per app. Everything the
- * app can reach goes through the functions below (import module "fc").
+ * app can reach goes through the functions below (import module "fc"), and
+ * a small C library in libc/ (string.h, stdio.h, stdlib.h, ctype.h; import
+ * module "env"): no malloc, no math functions.
  *
  * ---- What the app exports ----------------------------------------------------
  *
@@ -322,7 +324,7 @@ FC_IMPORT("mqtt_topic") int32_t fc_mqtt_topic(char *buf, int32_t cap);
 /* The data of the event being handled (an MQTT payload), during on_event. */
 FC_IMPORT("event_data") int32_t fc_event_data(void *buf, int32_t cap);
 
-/* ---- Helpers (no libc) ------------------------------------------------------------------------ */
+/* ---- Helpers ----------------------------------------------------------------------------------- */
 
 #define FC_STATE(lit)       fc_set_state(lit, sizeof(lit) - 1)
 #define FC_LOG(level, lit)  fc_log(level, lit, sizeof(lit) - 1)

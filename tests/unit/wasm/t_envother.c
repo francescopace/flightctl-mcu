@@ -1,8 +1,9 @@
-/* A function from env that the device does not have: refused. */
-__attribute__((import_module("env"), import_name("memcpy"))) void *memcpy_(void *d, const void *s, unsigned long n);
+/* A function from env that the device does not have: refused. malloc is in
+ * WAMR's libc-builtin, but an app has no heap. */
+__attribute__((import_module("env"), import_name("malloc"))) void *malloc_(unsigned long n);
 
 __attribute__((export_name("_start"))) void start(void)
 {
-    char a[4], b[4] = "abc";
-    memcpy_(a, b, 4);
+    char *p = malloc_(4);
+    p[0] = 1;
 }

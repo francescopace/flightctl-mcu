@@ -4,6 +4,7 @@
  */
 #include "port_stub.h"
 
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -261,16 +262,42 @@ void fc_port_reboot(void)
     stub_reboots++;
 }
 
+/* The log's last lines, one per line: stub_log_has. */
+static char s_log[4096];
+static size_t s_log_len;
+static pthread_mutex_t s_log_lock = PTHREAD_MUTEX_INITIALIZER;
+
 void fc_port_log(fc_log_level_t level, const char *fmt, ...)
 {
-    if (!stub_verbose) {
-        return;
-    }
+    char line[512];
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
-    fputc('\n', stderr);
+    size_t n = strlen(line);
+    pthread_mutex_lock(&s_log_lock);
+    if (s_log_len + n + 2 > sizeof(s_log)) {
+        s_log_len = 0;
+    }
+    memcpy(s_log + s_log_len, line, n);
+    s_log_len += n;
+    s_log[s_log_len++] = '\n';
+    s_log[s_log_len] = 0;
+    pthread_mutex_unlock(&s_log_lock);
+    if (stub_verbose) {
+        fprintf(stderr, "%s\n", line);
+    }
+}
+
+int stub_log_has(const char *line)
+{
+    pthread_mutex_lock(&s_log_lock);
+    int found = 0;
+    for (const char *p = s_log; !found && (p = strstr(p, line)) != NULL; p++) {
+        found = (p == s_log || p[-1] == '\n') && p[strlen(line)] == '\n';
+    }
+    pthread_mutex_unlock(&s_log_lock);
+    return found;
 }
 
 /* "Hardware" key store: the sealed key is a PSA key that cannot be exported,

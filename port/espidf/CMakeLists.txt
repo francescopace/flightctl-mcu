@@ -45,3 +45,9 @@ target_compile_definitions(${wamr_lib} PUBLIC WASM_ENABLE_INSTRUCTION_METERING=1
 # Tail calls (return_call), which the component has no option for either:
 # CoreMark as wasm-coremark publishes it uses them.
 target_compile_definitions(${wamr_lib} PUBLIC WASM_ENABLE_TAIL_CALL=1)
+# The apps' C library (CONFIG_WAMR_ENABLE_LIBC_BUILTIN): the component defines
+# WASM_ENABLE_LIBC_BUILTIN for its own sources only, and the core needs it to
+# put printf in the app's log and allow the functions (core/src/fc_apps.c).
+if(CONFIG_WAMR_ENABLE_LIBC_BUILTIN)
+    target_compile_definitions(${wamr_lib} PUBLIC WASM_ENABLE_LIBC_BUILTIN=1)
+endif()
