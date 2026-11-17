@@ -116,6 +116,11 @@ int fc_apps_heap_agent(char *text, size_t len)
     return 0;
 }
 
+long fc_apps_heap_floor(void)
+{
+    return 24 * 1024;
+}
+
 void fc_apps_set_hw(const fc_hw_t *hw) {}
 void fc_apps_set_device(const char *name) {}
 
@@ -758,6 +763,30 @@ static void metrics_and_pulls_take_turns(void)
     CHECK_INT(fc_agent_busy(), 1); /* not started: busy anyway */
 }
 
+/* An export waits for room above the agent's floor: an app's memory may
+ * leave the agent that and no more. */
+static void an_export_waits_for_room_above_the_floor(void)
+{
+    new_agent();
+    s_a.otel_cert_pem = strdup("otel"); /* one, still valid */
+    s_a.otel_renew_at = time(NULL) + 3600;
+    s_a.otel_not_after = time(NULL) + 7200;
+    const char *j = "{\"endpoint\": \"telemetry.example.com:443\"}";
+    fc_port_write_file(METRICS_CONFIG, j, strlen(j));
+    stub_heap_free = fc_apps_heap_floor() + FC_METRICS_HEAP_ROOM - 1;
+    metrics_tick(&s_a);
+    CHECK_INT(s_a.metrics_skipped, 1);
+    CHECK_INT(s_a.exporting, 0);
+    CHECK(s_a.metrics_next > time(NULL));
+    char line[160];
+    snprintf(line, sizeof(line), "metrics: %ld bytes free, under %ld (the agent's %ld and the export's %d): export skipped",
+             stub_heap_free, fc_apps_heap_floor() + FC_METRICS_HEAP_ROOM, fc_apps_heap_floor(), FC_METRICS_HEAP_ROOM);
+    CHECK(stub_log_has(line));
+    stub_heap_free = -1;
+    free(s_a.otel_cert_pem);
+    s_a.otel_cert_pem = NULL;
+}
+
 /* A spec waits for an export under way, and no export starts while it is
  * applied: both take the heap. */
 static void *export_ends_later(void *arg)
@@ -1214,6 +1243,7 @@ int main(void)
     RUN(a_spec_waits_for_an_export);
     RUN(a_spec_waits_for_the_brokers_handshake);
     RUN(metrics_and_pulls_take_turns);
+    RUN(an_export_waits_for_room_above_the_floor);
     RUN(a_console_alone_is_not_applied_again);
     RUN(counters_are_read_again_only_when_due);
     RUN(stack_headroom_is_reported_per_thread);

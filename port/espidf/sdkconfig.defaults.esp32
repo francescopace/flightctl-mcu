@@ -13,3 +13,9 @@ CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
 CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
 CONFIG_ESP_WIFI_RX_BA_WIN=4
+
+# The main task runs the spec loop (TLS, JSON, an app's install, a firmware
+# download): 8.9 KB at most of 24 on the classic ESP32 installing an app,
+# 6.2 KB on the S3 with v3.14-rc7. Xtensa's frames are larger than RISC-V's:
+# 16 KB gives the heap 8 KB back (docs/APPS.md, Size and limits).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384

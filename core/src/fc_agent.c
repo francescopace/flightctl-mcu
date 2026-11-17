@@ -118,6 +118,12 @@
 #ifndef FC_METRICS_HEAP_MIN
 #define FC_METRICS_HEAP_MIN (24 * 1024) /* the largest free block, for a second TLS connection */
 #endif
+/* And the heap an export takes above what the agent keeps for itself
+ * (fc_apps_heap_floor): its second TLS connection took 8 to 22 KB more than
+ * the agent alone on the boards (v3.14-rc7). */
+#ifndef FC_METRICS_HEAP_ROOM
+#define FC_METRICS_HEAP_ROOM (16 * 1024)
+#endif
 
 /* Decommissioning, as the Linux agent does it: the DeviceDecommissioning
  * condition Started, then Completed, and then the device key and the
@@ -1372,6 +1378,17 @@ static void metrics_tick(agent_t *a)
         }
         busy = 1;
     }
+    /* And with room above the agent's floor: an app's memory (CoreMark's
+     * 64 KB on a C3) may leave the agent its floor and no more. */
+    long free_now = fc_port_heap_free();
+    long room = fc_apps_heap_floor() + FC_METRICS_HEAP_ROOM;
+    if (!busy && free_now >= 0 && free_now < room) {
+        if (a->metrics_skipped % 10 == 0) {
+            fc_port_log(FC_LOG_WARN, "metrics: %ld bytes free, under %ld (the agent's %ld and the export's %d): export skipped",
+                        free_now, room, fc_apps_heap_floor(), FC_METRICS_HEAP_ROOM);
+        }
+        busy = 1;
+    }
     if (busy) {
         metrics_done(a);
         a->metrics_skipped++;
@@ -2190,6 +2207,8 @@ int fc_agent_run(const fc_agent_config_t *cfg)
      * classic ESP32 and the Pico W. A board can say what it gives. */
 #if defined(FC_AGENT_STACK_SIZE)
     size_t stack = FC_AGENT_STACK_SIZE;
+#elif defined(ESP_PLATFORM) && !defined(__ZEPHYR__) && defined(__riscv)
+    size_t stack = 8 * 1024; /* ESP-IDF on RISC-V (C3, C5, C6): 4.6 KB at most used, v3.14-rc7 */
 #elif defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
     size_t stack = 12 * 1024;
 #else

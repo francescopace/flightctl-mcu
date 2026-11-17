@@ -56,6 +56,9 @@ long fc_apps_stack_unused(void);
  * without the blocks held (fc_heap_hold.h), as "after=.. low=.. raw=..
  * floor=.." in bytes: 1, or 0 when unknown. */
 int fc_apps_heap_agent(char *text, size_t len);
+/* The heap an app's memory must leave the agent (FC_APP_HEAP_FLOOR): what
+ * else the agent starts (a metrics export) waits for room above it. */
+long fc_apps_heap_floor(void);
 
 /* MQTT for the apps (fc_mqtt.h): sets the client's hooks, so that messages
  * reach the apps' event queues and FC_EV_NET the apps granted "mqtt". The

@@ -1,1 +1,7 @@
 CONFIG_FC_LED_GPIO=8
+
+# The main task runs the spec loop (TLS, JSON, an app's install, a firmware
+# download): it used 5.2 KB at most of 24 on the C3, C5 and C6 with
+# v3.14-rc7, about twice that is expected for a firmware delta. 14 KB gives
+# the heap 10 KB back (docs/APPS.md, Size and limits).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=14336
