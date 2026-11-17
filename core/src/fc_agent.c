@@ -6,6 +6,7 @@
 #include "fc_agent.h"
 
 #include "fc_apps.h"
+#include "fc_heap_hold.h"
 #include "fc_console.h"
 
 #include <pthread.h>
@@ -190,7 +191,7 @@ typedef struct {
     time_t metrics_next;
     int metrics_backoff_s;
     unsigned long metrics_skipped;
-    long export_low; /* the heap's low during the last export (fc_port_heap_watch), -1 unknown */
+    long export_low; /* the heap's low during the last export (fc_heap_low_end), -1 unknown */
     int exporting; /* under lock: an export runs (fc_agent_busy) */
     int metrics_poke; /* under lock: METRICS_CONFIG changed, export now */
     int mqtt_poke;    /* spec thread: the broker's config or CA changed (fc_mqtt.h) */
@@ -334,6 +335,11 @@ static void add_stacks(agent_t *a, cJSON *m)
     }
     if (n > 0 && n < sizeof(text)) {
         cJSON_AddStringToObject(m, "stackMinFreeBytes", text);
+    }
+    /* heapAgentBytes: what the agent took of the heap since the last app's
+     * instance (fc_apps_heap_agent), for the floor. */
+    if (fc_apps_heap_agent(text, sizeof(text))) {
+        cJSON_AddStringToObject(m, "heapAgentBytes", text);
     }
 }
 
@@ -1388,7 +1394,7 @@ static void metrics_tick(agent_t *a)
     free(pts);
     int rc = -1;
     if (len > 0) {
-        int watching = fc_port_heap_watch(1) == 0;
+        int stretch = fc_heap_low_begin(); /* a TLS handshake's hold left out (fc_heap_hold.h) */
         fc_http_target_t t = {
             .host = mc.host,
             .port = mc.port,
@@ -1400,7 +1406,7 @@ static void metrics_tick(agent_t *a)
             .connect_timeout_s = METRICS_TIMEOUT_S,
         };
         rc = fc_metrics_send(&t, msg, (size_t)len);
-        long low = watching ? fc_port_heap_watch(0) : -1;
+        long low = fc_heap_low_end(stretch, NULL);
         if (low >= 0 && (a->export_low < 0 || low < a->export_low - 1024)) {
             fc_port_log(FC_LOG_INFO, "metrics: %s; internal heap at its lowest %ld bytes during the export",
                         rc == 0 ? "sent" : "not sent", low);

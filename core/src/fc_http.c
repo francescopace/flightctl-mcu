@@ -307,6 +307,146 @@ void fc_tls_pool_usage(int *now, int *peak)
     pthread_mutex_unlock(&s_pool_lock);
 }
 
+/* ---- holds and the heap's low (fc_heap_hold.h) ----------------------------- */
+
+#define HEAP_HOLDS 3 /* at once: the agent's connection, MQTT's, an app's load */
+
+static pthread_mutex_t s_meter_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct {
+    void *p;
+    long n;
+} s_holds[HEAP_HOLDS];
+static long s_held;                                /* bytes held now */
+static long s_low[FC_HEAP_LOWS], s_low_raw[FC_HEAP_LOWS];
+static unsigned char s_low_open, s_watching;       /* stretches open (bits); the port's watch on */
+
+/* The port's low since the last fold, the bytes held meanwhile added, into
+ * every open stretch; then watching again while one is open. Between the
+ * two calls, microseconds, a dip of another thread is not seen. */
+static void meter_fold(void)
+{
+    if (s_watching) {
+        long raw = fc_port_heap_watch(0);
+        s_watching = 0;
+        for (int i = 0; raw >= 0 && i < FC_HEAP_LOWS; i++) {
+            if (s_low_open & (1u << i)) {
+                if (s_low[i] < 0 || raw + s_held < s_low[i]) {
+                    s_low[i] = raw + s_held;
+                }
+                if (s_low_raw[i] < 0 || raw < s_low_raw[i]) {
+                    s_low_raw[i] = raw;
+                }
+            }
+        }
+    }
+    if (s_low_open) {
+        s_watching = fc_port_heap_watch(1) == 0;
+    }
+}
+
+void *fc_heap_hold(size_t leave)
+{
+    long big = fc_port_heap_largest();
+    if (big < (long)(FC_HOLD_MIN + leave)) {
+        return NULL;
+    }
+    long n = big - (long)leave - 64;
+    pthread_mutex_lock(&s_meter_lock);
+    int slot = -1;
+    for (int i = 0; i < HEAP_HOLDS && slot < 0; i++) {
+        slot = s_holds[i].p == NULL ? i : -1;
+    }
+    void *p = NULL;
+    if (slot >= 0) {
+        /* Counted before it is taken: the heap's own low falls with it. */
+        meter_fold();
+        s_held += n;
+        if ((p = malloc((size_t)n)) != NULL) {
+            s_holds[slot].p = p;
+            s_holds[slot].n = n;
+        } else {
+            s_held -= n; /* the low of a moment over by n: never under */
+        }
+    }
+    pthread_mutex_unlock(&s_meter_lock);
+    return p;
+}
+
+void fc_heap_unhold(void *hold)
+{
+    if (hold == NULL) {
+        return;
+    }
+    /* Given back before it is no longer counted. */
+    free(hold);
+    pthread_mutex_lock(&s_meter_lock);
+    for (int i = 0; i < HEAP_HOLDS; i++) {
+        if (s_holds[i].p == hold) {
+            meter_fold();
+            s_held -= s_holds[i].n;
+            s_holds[i].p = NULL;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&s_meter_lock);
+}
+
+int fc_heap_low_begin(void)
+{
+    int k = -1;
+    pthread_mutex_lock(&s_meter_lock);
+    for (int i = 0; i < FC_HEAP_LOWS && k < 0; i++) {
+        k = s_low_open & (1u << i) ? -1 : i;
+    }
+    if (k >= 0) {
+        meter_fold();
+        s_low_open |= (unsigned char)(1u << k);
+        s_low[k] = s_low_raw[k] = -1;
+        if (!s_watching) {
+            s_watching = fc_port_heap_watch(1) == 0;
+        }
+        if (!s_watching) {
+            s_low_open &= (unsigned char)~(1u << k); /* the port cannot watch (or another caller does) */
+            k = -1;
+        }
+    }
+    pthread_mutex_unlock(&s_meter_lock);
+    return k;
+}
+
+static long low_read(int k, long *raw, int end)
+{
+    long low = -1, r = -1;
+    pthread_mutex_lock(&s_meter_lock);
+    if (k >= 0 && k < FC_HEAP_LOWS && (s_low_open & (1u << k))) {
+        meter_fold();
+        low = s_low[k];
+        r = s_low_raw[k];
+        if (end) {
+            s_low_open &= (unsigned char)~(1u << k);
+            if (!s_low_open && s_watching) {
+                fc_port_heap_watch(0);
+                s_watching = 0;
+            }
+        }
+    }
+    pthread_mutex_unlock(&s_meter_lock);
+    if (raw != NULL) {
+        *raw = r;
+    }
+    return low;
+}
+
+long fc_heap_low_peek(int stretch, long *raw)
+{
+    return low_read(stretch, raw, 0);
+}
+
+long fc_heap_low_end(int stretch, long *raw)
+{
+    return low_read(stretch, raw, 1);
+}
+
 /* ---- init and logging ----------------------------------------------------- */
 
 static int s_inited;
@@ -1171,7 +1311,7 @@ static conn_t *conn_open_once(const fc_http_target_t *t, void **hold)
         conn_free(c);
         return NULL;
     }
-    free(*hold);
+    fc_heap_unhold(*hold);
     *hold = NULL;
     snprintf(c->host, sizeof(c->host), "%s", t->host);
     c->port = t->port;
@@ -1195,11 +1335,11 @@ static conn_t *conn_open(const fc_http_target_t *t)
     conn_t *c = conn_open_once(t, &hold);
     if (c == NULL && hold != NULL) {
         /* The TLS connection did not open with the block held. */
-        free(hold);
+        fc_heap_unhold(hold);
         hold = NULL;
         c = conn_open_once(t, &hold);
     }
-    free(hold);
+    fc_heap_unhold(hold);
     return c;
 }
 

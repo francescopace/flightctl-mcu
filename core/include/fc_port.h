@@ -77,9 +77,9 @@ long fc_port_heap_free(void);
 /* The heap's low-water mark over a stretch of work: fc_port_heap_watch(1)
  * starts watching (0), fc_port_heap_watch(0) stops and returns the fewest
  * bytes of internal RAM free in between; -1 when the port cannot tell. One
- * stretch at a time (the metrics export, fc_agent.c; an app's start,
- * fc_apps.c): a start while another runs returns -1, and that caller does
- * not stop it. */
+ * stretch at a time: a start while another runs returns -1, and that caller
+ * does not stop it. Its one caller is the core's meter (fc_heap_hold.h),
+ * which serves the metrics export and an app's start from it. */
 long fc_port_heap_watch(int start);
 /* The fewest bytes of internal RAM free so far: since boot, or since the
  * start of the stretch fc_port_heap_watch is watching (ESP-IDF's monitor);

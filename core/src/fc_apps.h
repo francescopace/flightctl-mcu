@@ -36,6 +36,10 @@ void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info);
 /* The least stack any app's thread left unused so far (fc_port_stack_unused),
  * or -1 when no app has run or the port cannot tell. */
 long fc_apps_stack_unused(void);
+/* The heap free after the last app's instance, and the lowest since with and
+ * without the blocks held (fc_heap_hold.h), as "after=.. low=.. raw=..
+ * floor=.." in bytes: 1, or 0 when unknown. */
+int fc_apps_heap_agent(char *text, size_t len);
 
 /* MQTT for the apps (fc_mqtt.h): sets the client's hooks, so that messages
  * reach the apps' event queues and FC_EV_NET the apps granted "mqtt". The

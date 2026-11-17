@@ -18,9 +18,23 @@
 
 /* Holds the largest block but `leave` bytes of it (taken from its end): room
  * there for what is allocated meanwhile, when the smaller holes may not be
- * enough. NULL when there is no block worth holding. */
-static inline void *fc_heap_hold(size_t leave)
-{
-    long big = fc_port_heap_largest();
-    return big >= (long)(FC_HOLD_MIN + leave) ? malloc((size_t)big - leave - 64) : NULL;
-}
+ * enough. NULL when there is no block worth holding. Given back with
+ * fc_heap_unhold (NULL is fine). (fc_http.c) */
+void *fc_heap_hold(size_t leave);
+void fc_heap_unhold(void *hold);
+
+/*
+ * The heap's low-water mark over a stretch of work, what is held above left
+ * out: a hold is not used, and during a TLS handshake it took the largest
+ * block but 24 KB, so the heap's own low (fc_port_heap_watch) fell by that
+ * much. The port's watch runs while a stretch is open; at each hold taken or
+ * given back its low is read and the bytes held meanwhile added to it.
+ * fc_heap_low_begin returns a stretch (>= 0), or -1 when the port cannot
+ * watch or FC_HEAP_LOWS stretches are open; fc_heap_low_peek reads it,
+ * fc_heap_low_end reads and closes it. Both return the low with the holds
+ * left out, and in *raw (may be NULL) the heap's own; -1 when unknown.
+ */
+#define FC_HEAP_LOWS 4
+int fc_heap_low_begin(void);
+long fc_heap_low_peek(int stretch, long *raw);
+long fc_heap_low_end(int stretch, long *raw);

@@ -1006,14 +1006,81 @@ static int check_module(wasm_module_t m, const char *entry, char *err, size_t er
  * heap free then (heap_after, instantiate), and the lowest from then until
  * the agent has been idle ENTRY_QUIET_MS, its connection opened again and
  * its status sent (at most HEAP_NOTE_MS), are logged, for the floor
- * (s_heap_floor) to be checked against. Through fc_port_heap_watch, one
- * stretch at a time: none when a metrics export holds it. */
+ * (s_heap_floor) to be checked against. The lowest leaves out the block a
+ * TLS handshake holds meanwhile (fc_heap_hold.h), which the heap's own low,
+ * logged beside it, counts. heap_watch: the stretch + 1, 0 none. */
 #define HEAP_NOTE_MS 60000
+
+/* And over the whole run of the last app whose instance was made, until a
+ * module is loaded or that app stops: the agent's spec, its certificate
+ * renewed, an export, a download, MQTT. Kept for the status
+ * (fc_apps_heap_agent), and logged when lower by 1 KB. */
+static pthread_mutex_t s_run_lock = PTHREAD_MUTEX_INITIALIZER;
+static const app_t *s_run_app;
+static int s_run_stretch = -1;
+static long s_run_after = -1, s_run_low = -1, s_run_raw = -1, s_run_logged = -1;
+
+static void run_low_end(const app_t *only)
+{
+    pthread_mutex_lock(&s_run_lock);
+    if (s_run_stretch >= 0 && (only == NULL || only == s_run_app)) {
+        long raw, low = fc_heap_low_end(s_run_stretch, &raw);
+        if (low >= 0) {
+            s_run_low = low;
+            s_run_raw = raw;
+        }
+        s_run_stretch = -1;
+        s_run_app = NULL;
+    }
+    pthread_mutex_unlock(&s_run_lock);
+}
+
+static void run_low_begin(const app_t *a)
+{
+    run_low_end(NULL);
+    pthread_mutex_lock(&s_run_lock);
+    s_run_stretch = fc_heap_low_begin();
+    s_run_app = s_run_stretch >= 0 ? a : NULL;
+    s_run_after = s_run_stretch >= 0 ? a->heap_after : -1;
+    s_run_low = s_run_raw = s_run_logged = -1;
+    pthread_mutex_unlock(&s_run_lock);
+}
+
+int fc_apps_heap_agent(char *text, size_t len)
+{
+    pthread_mutex_lock(&s_run_lock);
+    if (s_run_stretch >= 0) {
+        long raw, low = fc_heap_low_peek(s_run_stretch, &raw);
+        if (low >= 0) {
+            s_run_low = low;
+            s_run_raw = raw;
+        }
+    }
+    long after = s_run_after, low = s_run_low, raw = s_run_raw;
+    int log = low >= 0 && (s_run_logged < 0 || low < s_run_logged - 1024);
+    if (log) {
+        s_run_logged = low;
+    }
+    pthread_mutex_unlock(&s_run_lock);
+    if (after < 0 || low < 0) {
+        return 0;
+    }
+    if (log) {
+        fc_port_log(FC_LOG_INFO, "heap: %ld KB free after the last instance, %ld KB at the lowest since (it took %ld KB; "
+                    "%ld KB at the heap's own lowest; floor %ld KB)", after / 1024, low / 1024, (after - low) / 1024,
+                    raw / 1024, s_heap_floor / 1024);
+    }
+    snprintf(text, len, "after=%ld low=%ld raw=%ld floor=%ld", after, low, raw, s_heap_floor);
+    return 1;
+}
 
 static void heap_note_begin(app_t *a)
 {
-    a->heap_watch = a->heap_after >= 0 && fc_port_heap_watch(1) == 0;
+    a->heap_watch = a->heap_after >= 0 ? fc_heap_low_begin() + 1 : 0;
     a->heap_watch_ms = a->heap_quiet_ms = fc_apps_now_ms();
+    if (a->heap_after >= 0) {
+        run_low_begin(a);
+    }
 }
 
 static void heap_note_end(app_t *a)
@@ -1021,14 +1088,14 @@ static void heap_note_end(app_t *a)
     if (!a->heap_watch) {
         return;
     }
+    long raw, low = fc_heap_low_end(a->heap_watch - 1, &raw);
     a->heap_watch = 0;
-    long low = fc_port_heap_watch(0);
     if (low >= 0) {
         fc_port_log(FC_LOG_INFO,
                     "app %s (%s): %ld KB of heap free after its instance, %ld KB at the lowest while the agent went on "
-                    "(it took %ld KB; floor %ld KB)",
+                    "(it took %ld KB; %ld KB at the heap's own lowest; floor %ld KB)",
                     a->name, a->start_why ? a->start_why : "restart", a->heap_after / 1024, low / 1024,
-                    (a->heap_after - low) / 1024, s_heap_floor / 1024);
+                    (a->heap_after - low) / 1024, raw / 1024, s_heap_floor / 1024);
     }
 }
 
@@ -1584,7 +1651,7 @@ static void *hold_but_stack(void)
     if (hold != NULL) {
         long rest = fc_port_heap_largest(); /* the largest block but the one held */
         if (rest >= 0 && rest < THREAD_STACK + THREAD_SLACK) {
-            free(hold);
+            fc_heap_unhold(hold);
             hold = fc_heap_hold(THREAD_STACK + THREAD_SLACK);
         }
     }
@@ -1613,11 +1680,11 @@ static void app_start(app_t *a, const char *why)
     int sized = pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK) == 0;
     a->thread_running = sized && pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
     if (sized && !a->thread_running && hold != NULL) {
-        free(hold);
+        fc_heap_unhold(hold);
         hold = NULL;
         a->thread_running = pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
     }
-    free(hold);
+    fc_heap_unhold(hold);
     __atomic_store_n(&a->go, 1, __ATOMIC_RELEASE);
     /* Until the instance is made (or could not be): the caller, the spec
      * being applied, holds the agent's connection closed meanwhile
@@ -1649,6 +1716,7 @@ static void app_stop(app_t *a)
         pthread_attr_destroy(&a->thread_attr);
         a->thread_running = 0;
     }
+    run_low_end(a);
     set_status(a, "Stopped", NULL);
 }
 
@@ -1908,14 +1976,15 @@ static int fetch_module(const char *image, const char *entry, unsigned char **ou
     char ebuf[96];
     /* What WAMR keeps of the module (functions, the interpreter's code,
      * many pieces) goes around the largest block (fc_heap_hold.h). */
+    run_low_end(NULL); /* the module's pieces are not the agent's */
     void *hold = fc_heap_hold(0);
     *module = load_app(*out, *len, entry, ebuf, sizeof(ebuf));
     if (*module == NULL && hold != NULL) {
-        free(hold);
+        fc_heap_unhold(hold);
         hold = NULL;
         *module = load_app(*out, *len, entry, ebuf, sizeof(ebuf));
     }
-    free(hold);
+    fc_heap_unhold(hold);
     if (*module == NULL) {
         snprintf(err, err_len, "%s: not a loadable WASM module: %s", image, ebuf);
         free(*out);

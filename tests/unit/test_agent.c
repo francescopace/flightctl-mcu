@@ -90,6 +90,11 @@ long fc_apps_stack_unused(void)
     return s_apps_stack;
 }
 
+int fc_apps_heap_agent(char *text, size_t len)
+{
+    return 0;
+}
+
 void fc_apps_set_hw(const fc_hw_t *hw) {}
 void fc_apps_set_device(const char *name) {}
 

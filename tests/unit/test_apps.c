@@ -1566,7 +1566,7 @@ static void test_hold_leaves_room_for_the_stack(void)
     void *hold = hold_but_stack();
     CHECK(hold != NULL);
     CHECK((long)usable_size(hold) >= big - 1024);
-    free(hold);
+    fc_heap_unhold(hold);
     /* None has: the hold leaves room for the stack and what comes with it. */
     stub_heap_largest_next[0] = big;
     stub_heap_largest_next[1] = 4096;
@@ -1576,13 +1576,41 @@ static void test_hold_leaves_room_for_the_stack(void)
     CHECK(hold != NULL);
     CHECK((long)usable_size(hold) <= big - THREAD_STACK - THREAD_SLACK);
     CHECK((long)usable_size(hold) >= big - THREAD_STACK - THREAD_SLACK - 1024);
-    free(hold);
+    fc_heap_unhold(hold);
     CHECK_INT(stub_heap_largest_queued, 0);
     /* No block worth holding, or a port that cannot tell: no hold. */
     stub_heap_largest_next[0] = 16 * 1024;
     stub_heap_largest_queued = 1;
     CHECK(hold_but_stack() == NULL);
     CHECK(hold_but_stack() == NULL); /* stub_heap_largest: -1 */
+}
+
+/* The heap's low over a stretch leaves out what a hold took meanwhile: the
+ * heap's own low fell by it, the agent did not use it. */
+static void test_heap_low_holds(void)
+{
+    stub_heap_watch_low = 50 * 1024;
+    int k = fc_heap_low_begin();
+    CHECK(k >= 0);
+    stub_heap_largest_next[0] = 100 * 1024;
+    stub_heap_largest_queued = 1;
+    void *hold = fc_heap_hold(24 * 1024); /* folds the stretch so far: 50 KB, nothing held */
+    CHECK(hold != NULL);
+    long n = 100 * 1024 - 24 * 1024 - 64;
+    stub_heap_watch_low = 5 * 1024; /* the handshake, with the hold */
+    long raw, low = fc_heap_low_peek(k, &raw);
+    CHECK_INT(low, 50 * 1024);
+    CHECK_INT(raw, 5 * 1024);
+    fc_heap_unhold(hold); /* 5 KB + n: above 50 KB */
+    stub_heap_watch_low = 45 * 1024; /* after it */
+    low = fc_heap_low_end(k, &raw);
+    CHECK_INT(low, 45 * 1024);
+    CHECK_INT(raw, 5 * 1024);
+    CHECK(n + 5 * 1024 > 50 * 1024);
+    CHECK_INT(fc_heap_low_end(k, NULL), -1); /* closed */
+    /* A port that cannot watch: no stretch. */
+    stub_heap_watch_low = -1;
+    CHECK_INT(fc_heap_low_begin(), -1);
 }
 
 /* An app whose memory would leave the agent less heap than it needs for a
@@ -1598,7 +1626,7 @@ static void test_heap_floor(void)
     CHECK(stub_log_has("app h: instance made, 64 KB of heap left for the agent"));
     /* What the agent took after it, once the agent has been idle a while. */
     const char *note = "app h (install): 64 KB of heap free after its instance, 40 KB at the lowest while the agent "
-                       "went on (it took 24 KB; floor 32 KB)";
+                       "went on (it took 24 KB; 40 KB at the heap's own lowest; floor 32 KB)";
     for (int i = 0; i < 400 && !stub_log_has(note); i++) {
         usleep(10 * 1000);
     }
@@ -1752,6 +1780,7 @@ int main(void)
     RUN(test_libc_loop);
     RUN(test_libc_mixed);
     RUN(test_hold_leaves_room_for_the_stack);
+    RUN(test_heap_low_holds);
     RUN(test_heap_floor);
     RUN(test_instantiation_code);
     RUN(test_wasm_limit);
