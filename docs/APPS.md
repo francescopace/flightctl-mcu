@@ -130,7 +130,7 @@ And their own way out:
 
 ### MQTT
 
-Tested on the host, against mosquitto with and without TLS and with apps against a fake broker; not yet on a board. The fleet gives the broker in `/etc/fc/mqtt.json` and its CA in `/etc/fc/mqtt-ca.crt`, two config files:
+Tested on the host, against mosquitto with and without TLS and with apps against a fake broker, and on the boards with v3.14-rc5: the classic ESP32, C3, C6 and S3 publish and receive; the C5 with two apps has too little heap for it ([RESULTS.md](RESULTS.md#what-works)). The fleet gives the broker in `/etc/fc/mqtt.json` and its CA in `/etc/fc/mqtt-ca.crt`, two config files:
 
 ```yaml
 spec:
