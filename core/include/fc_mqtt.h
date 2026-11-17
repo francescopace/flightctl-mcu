@@ -119,6 +119,9 @@ typedef struct {
     size_t pool_used, pool_peak;
 } fc_mqtt_stats_t;
 void fc_mqtt_stats(fc_mqtt_stats_t *s);
+/* How much of the client thread's stack was never used, the lowest seen;
+ * -1 before it ran, or where the port cannot tell. */
+long fc_mqtt_stack_unused(void);
 
 #ifdef __cplusplus
 }

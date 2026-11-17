@@ -2184,9 +2184,15 @@ void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
 /* ---- MQTT (fc_mqtt.h) --------------------------------------------------------------- */
 
 /* A TLS handshake for the broker needs a block as large as the metrics
- * export's (fc_agent.c), and must leave the agent its floor afterwards. */
+ * export's (fc_agent.c); the connection then keeps up to FC_MQTT_CONN_COST
+ * (its TLS context and buffers, the packet buffers), which must leave the
+ * agent its floor. The handshake's own peak comes while the agent is idle,
+ * its connection open. */
 #ifndef FC_MQTT_HEAP_MIN
 #define FC_MQTT_HEAP_MIN (24 * 1024)
+#endif
+#ifndef FC_MQTT_CONN_COST
+#define FC_MQTT_CONN_COST (12 * 1024)
 #endif
 
 static int (*s_agent_idle)(void);
@@ -2198,12 +2204,14 @@ static int mqtt_may_connect(void)
         return 0;
     }
     long largest = fc_port_heap_largest(), free_now = fc_port_heap_free();
-    int room = (largest < 0 || largest >= FC_MQTT_HEAP_MIN) && (free_now < 0 || free_now >= s_heap_floor + FC_MQTT_HEAP_MIN);
+    int room = (largest < 0 || largest >= FC_MQTT_HEAP_MIN) && (free_now < 0 || free_now >= s_heap_floor + FC_MQTT_CONN_COST);
     int64_t now = fc_apps_now_ms();
     if (!room && (s_mqtt_heap_logged == 0 || now - s_mqtt_heap_logged >= 60000)) {
         s_mqtt_heap_logged = now;
-        fc_port_log(FC_LOG_WARN, "mqtt: %ld bytes free (largest block %ld): waiting for %d KB more than the agent's %ld KB",
-                    free_now, largest, FC_MQTT_HEAP_MIN / 1024, s_heap_floor / 1024);
+        fc_port_log(FC_LOG_WARN,
+                    "mqtt: %ld bytes free (largest block %ld): waiting for %d KB more than the agent's %ld KB, and a "
+                    "block of %d KB",
+                    free_now, largest, FC_MQTT_CONN_COST / 1024, s_heap_floor / 1024, FC_MQTT_HEAP_MIN / 1024);
     }
     return room;
 }

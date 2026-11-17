@@ -322,8 +322,8 @@ static long stack_low(long seen, long now)
 static void add_stacks(agent_t *a, cJSON *m)
 {
     a->stack_status = stack_low(a->stack_status, fc_port_stack_unused());
-    const char *names[] = {"spec", "status", "apps"};
-    long v[] = {a->stack_spec, a->stack_status, fc_apps_stack_unused()};
+    const char *names[] = {"spec", "status", "apps", "mqtt"};
+    long v[] = {a->stack_spec, a->stack_status, fc_apps_stack_unused(), fc_mqtt_stack_unused()};
     char text[96];
     size_t n = 0;
     for (size_t i = 0; i < sizeof(v) / sizeof(v[0]); i++) {

@@ -61,8 +61,10 @@
 
 #ifndef FC_MQTT_STACK_SIZE
 #if defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
-/* The TLS handshake (ECDHE, X.509): as the agent's status thread. */
-#define FC_MQTT_STACK_SIZE (12 * 1024)
+/* The TLS handshake (ECDHE, X.509): the agent's status thread, which makes
+ * the same ones, used 4.2 to 4.7 KB of its 12 KB on the C3, C5 and C6
+ * (v3.14-rc5). What this one leaves is in stackMinFreeBytes ("mqtt"). */
+#define FC_MQTT_STACK_SIZE (8 * 1024)
 #else
 #define FC_MQTT_STACK_SIZE (256 * 1024)
 #endif
@@ -564,6 +566,7 @@ typedef struct {
     unsigned long connects, published, received, dropped, dropped_logged;
     long long drop_log_at;
     unsigned long long tx, rx; /* bytes on the wire */
+    long stack_low;            /* the thread's stack never used, the lowest seen; -1 none yet */
 } state_t;
 
 static fc_mqtt_hooks_t s_hooks;           /* set before the thread */
@@ -927,10 +930,29 @@ static uint16_t send_subscribe(int unsub, const char *filter, int qos)
 /* s_st, allocated if it was not; NULL without memory. Under s_lock. */
 static state_t *state(void)
 {
-    if (s_st == NULL) {
-        s_st = calloc(1, sizeof(*s_st));
+    if (s_st == NULL && (s_st = calloc(1, sizeof(*s_st))) != NULL) {
+        s_st->stack_low = -1;
     }
     return s_st;
+}
+
+/* The client's thread: how much of its stack it never used. */
+static void note_stack(void)
+{
+    long now = fc_port_stack_unused();
+    pthread_mutex_lock(&s_lock);
+    if (now >= 0 && (s_st->stack_low < 0 || now < s_st->stack_low)) {
+        s_st->stack_low = now;
+    }
+    pthread_mutex_unlock(&s_lock);
+}
+
+long fc_mqtt_stack_unused(void)
+{
+    pthread_mutex_lock(&s_lock);
+    long v = s_st != NULL ? s_st->stack_low : -1;
+    pthread_mutex_unlock(&s_lock);
+    return v;
 }
 
 static void sub_clear(sub_t *s)
@@ -1465,6 +1487,7 @@ static void run(conn_t *c, int keepalive_s)
             int rc;
             while ((rc = rx_packet(c)) > 0) {
             }
+            note_stack();
             if (rc < 0) {
                 break;
             }
@@ -1503,14 +1526,22 @@ static void *mqtt_thread(void *arg)
         pthread_mutex_lock(&s_lock);
         const cfg_t *cfg = s_st->cfg; /* replaced only while this thread is stopped */
         pthread_mutex_unlock(&s_lock);
+        long free_before = fc_port_heap_free();
         conn_t *c = conn_open(cfg);
+        note_stack();
         if (c == NULL) {
             next_try = now_ms() + jitter(backoff);
             backoff = backoff * 2 > BACKOFF_MAX_MS ? BACKOFF_MAX_MS : backoff * 2;
             continue;
         }
         backoff = BACKOFF_MIN_MS;
-        fc_port_log(FC_LOG_INFO, "mqtt: connected to %s:%d%s", cfg->host, cfg->port, cfg->tls ? "" : " (no TLS)");
+        long free_after = fc_port_heap_free();
+        if (free_before >= 0 && free_after >= 0) {
+            fc_port_log(FC_LOG_INFO, "mqtt: connected to %s:%d%s; heap %ld KB free before, %ld KB after", cfg->host,
+                        cfg->port, cfg->tls ? "" : " (no TLS)", free_before / 1024, free_after / 1024);
+        } else {
+            fc_port_log(FC_LOG_INFO, "mqtt: connected to %s:%d%s", cfg->host, cfg->port, cfg->tls ? "" : " (no TLS)");
+        }
         pthread_mutex_lock(&s_io);
         s_conn = c;
         pthread_mutex_unlock(&s_io);
