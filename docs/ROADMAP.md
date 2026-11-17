@@ -51,8 +51,7 @@ What an app can do and hold:
 The documentation:
 
 - [ ] Screenshots of Flight Control's UI, of real boards on Flight Control 1.4, in `docs/img/`: README, QUICKSTART, DEVICES, ZEPHYR, APPS (with the software catalog), DELTA, CONSOLE, METRICS (in Prometheus: the UI of 1.4 has no view of metrics), SBOM and REGISTRY have theirs. Left:
-  - PROVISIONING: an enrollment request waiting for approval, with its labels (a board enrolling);
-  - SBOM: a device with a vulnerability listed (Trustify running, with a test advisory); the panels shot show none.
+  - PROVISIONING: an enrollment request waiting for approval, with its labels (a board enrolling).
 
   None for COMPARISON, DEPENDENCIES, RESULTS, SECURITY and TESTING: what they show is not in the UI.
 
