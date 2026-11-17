@@ -20,6 +20,9 @@
  */
 
 #define FC_TLS_POOL_SLOTS 1
+/* A second block, reserved only while a connection that stays open beside
+ * the agent's needs it (MQTT, fc_mqtt.h): it is not closed for a download. */
+#define FC_TLS_POOL_MAX 2
 /* The slot's size, and the smallest allocation served from it: mbedTLS's
  * receive buffer is MBEDTLS_SSL_IN_CONTENT_LEN (16384) plus the record's
  * header, IV, tag and padding. */
@@ -35,5 +38,9 @@ int fc_tls_pool_give(void *p);
 /* calloc and free with the pool first, the C heap otherwise. */
 void *fc_tls_calloc(size_t n, size_t size);
 void fc_tls_free(void *p);
+/* fc_tls_pool_extra(1) reserves the second block now (0, or -1: no room
+ * for it, the connection's buffer will come from the heap); (0) gives it
+ * back to the heap, at once if free, otherwise when it is. */
+int fc_tls_pool_extra(int on);
 /* Slots in use now, and the most ever at once (for the status). */
 void fc_tls_pool_usage(int *now, int *peak);

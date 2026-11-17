@@ -156,8 +156,9 @@ static int count_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_
 #endif
 
 static pthread_mutex_t s_pool_lock = PTHREAD_MUTEX_INITIALIZER;
-static unsigned char *s_slot[FC_TLS_POOL_SLOTS]; /* each its own block */
-static int s_pool_used[FC_TLS_POOL_SLOTS];
+static unsigned char *s_slot[FC_TLS_POOL_MAX]; /* each its own block; the extra one may be NULL */
+static int s_pool_used[FC_TLS_POOL_MAX];
+static int s_pool_release; /* the extra block goes back to the heap when given back */
 static int s_pool_now, s_pool_peak, s_pool_hooked, s_pool_logged, s_pool_short;
 
 int fc_tls_pool_init(void)
@@ -202,7 +203,7 @@ void *fc_tls_pool_take(size_t n, size_t size)
     unsigned char *p = NULL;
     int any = 0, first = 0, short_first = 0;
     pthread_mutex_lock(&s_pool_lock);
-    for (int i = 0; i < FC_TLS_POOL_SLOTS; i++) {
+    for (int i = 0; i < FC_TLS_POOL_MAX; i++) {
         any |= s_slot[i] != NULL;
         if (s_slot[i] != NULL && !s_pool_used[i]) {
             s_pool_used[i] = 1;
@@ -221,11 +222,10 @@ void *fc_tls_pool_take(size_t n, size_t size)
     pthread_mutex_unlock(&s_pool_lock);
     /* Once each: that the pool serves, and that it ran short. */
     if (first) {
-        fc_port_log(FC_LOG_INFO, "TLS receive buffers: from the %d reserved block(s)", FC_TLS_POOL_SLOTS);
+        fc_port_log(FC_LOG_INFO, "TLS receive buffers: from the reserved block(s)");
     }
     if (short_first) {
-        fc_port_log(FC_LOG_WARN, "TLS receive buffers: all %d reserved block(s) in use, one from the heap",
-                    FC_TLS_POOL_SLOTS);
+        fc_port_log(FC_LOG_WARN, "TLS receive buffers: all reserved blocks in use, one from the heap");
     }
     if (p != NULL) {
         memset(p, 0, total);
@@ -236,19 +236,54 @@ void *fc_tls_pool_take(size_t n, size_t size)
 int fc_tls_pool_give(void *p)
 {
     int mine = 0;
+    unsigned char *drop = NULL;
     pthread_mutex_lock(&s_pool_lock);
-    for (int i = 0; p != NULL && i < FC_TLS_POOL_SLOTS; i++) {
+    for (int i = 0; p != NULL && i < FC_TLS_POOL_MAX; i++) {
         if (s_slot[i] == p) {
             mine = 1;
             if (s_pool_used[i]) {
                 s_pool_used[i] = 0;
                 s_pool_now--;
             }
+            if (i >= FC_TLS_POOL_SLOTS && s_pool_release) {
+                drop = s_slot[i];
+                s_slot[i] = NULL;
+                s_pool_release = 0;
+            }
             break;
         }
     }
     pthread_mutex_unlock(&s_pool_lock);
+    free(drop);
     return mine;
+}
+
+int fc_tls_pool_extra(int on)
+{
+    const int i = FC_TLS_POOL_SLOTS; /* the extra block */
+    unsigned char *drop = NULL;
+    int rc = 0;
+    pthread_mutex_lock(&s_pool_lock);
+    if (on) {
+        s_pool_release = 0;
+        if (s_slot[i] == NULL && (s_slot[i] = TLS_HEAP_CALLOC(1, FC_TLS_POOL_SLOT_SIZE)) == NULL) {
+            rc = -1;
+        }
+    } else if (s_slot[i] != NULL) {
+        if (s_pool_used[i]) {
+            s_pool_release = 1;
+        } else {
+            drop = s_slot[i];
+            s_slot[i] = NULL;
+        }
+    }
+    pthread_mutex_unlock(&s_pool_lock);
+    free(drop);
+    if (rc != 0) {
+        fc_port_log(FC_LOG_WARN, "no room for a second TLS buffer (%d KB): it will come from the heap",
+                    FC_TLS_POOL_SLOT_SIZE / 1024);
+    }
+    return rc;
 }
 
 void *fc_tls_calloc(size_t n, size_t size)
@@ -959,12 +994,12 @@ static void tls_debug(void *ctx, int level, const char *file, int line, const ch
  * Zephyr the port's mbedtls_net_connect (fc_net_zephyr.c) is bounded already,
  * by CONFIG_NET_SOCKETS_CONNECT_TIMEOUT. */
 #if defined(__ZEPHYR__)
-static int connect_within(mbedtls_net_context *ctx, const char *host, const char *port, int timeout_s)
+int fc_net_connect_within(mbedtls_net_context *ctx, const char *host, const char *port, int timeout_s)
 {
     return mbedtls_net_connect(ctx, host, port, MBEDTLS_NET_PROTO_TCP);
 }
 #else
-static int connect_within(mbedtls_net_context *ctx, const char *host, const char *port, int timeout_s)
+int fc_net_connect_within(mbedtls_net_context *ctx, const char *host, const char *port, int timeout_s)
 {
     struct addrinfo hints, *list = NULL;
     memset(&hints, 0, sizeof(hints));
@@ -1076,7 +1111,7 @@ static int conn_tls_open(conn_t *c, const fc_http_target_t *t)
         log_mbedtls("ssl_set_hostname", rc);
         return -1;
     }
-    rc = t->connect_timeout_s > 0 ? connect_within(&c->net, t->host, port, t->connect_timeout_s)
+    rc = t->connect_timeout_s > 0 ? fc_net_connect_within(&c->net, t->host, port, t->connect_timeout_s)
                                   : mbedtls_net_connect(&c->net, t->host, port, MBEDTLS_NET_PROTO_TCP);
     if (rc != 0) {
         log_mbedtls("connect", rc);

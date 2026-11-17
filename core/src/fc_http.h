@@ -92,3 +92,8 @@ void fc_http_traffic(unsigned long long *tx, unsigned long long *rx);
 
 /* TLS handshakes since boot. */
 unsigned long fc_http_handshakes(void);
+
+/* mbedtls_net_connect (TCP), given up after timeout_s; on Zephyr the port's
+ * own, bounded already. For a client of its own (fc_mqtt.c). */
+struct mbedtls_net_context;
+int fc_net_connect_within(struct mbedtls_net_context *ctx, const char *host, const char *port, int timeout_s);

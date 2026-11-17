@@ -56,6 +56,7 @@ target_sources(app PRIVATE
     ${ROOT}/core/src/fc_console.c
     ${ROOT}/core/src/fc_log.c
     ${ROOT}/core/src/fc_metrics.c
+    ${ROOT}/core/src/fc_mqtt.c
     ${ROOT}/core/src/fc_http.c
     ${ROOT}/core/src/fc_identity.c
     ${ROOT}/core/src/fc_oci.c

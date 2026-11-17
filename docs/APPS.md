@@ -16,7 +16,7 @@ An app is a WebAssembly module that Flight Control deploys as a container applic
 | MQTT | `fc_mqtt_publish/subscribe/topic`, `fc_event_data` | `mqtt` |
 | C library | `string.h`, `stdio.h` (`snprintf`, `printf` to the log), `stdlib.h`, `ctype.h` from [wasm-apps/sdk/libc](../wasm-apps/sdk/libc/) | always |
 
-MQTT is not in the firmware yet: it returns `FC_ENOTSUP` once granted, so an app written for it loads and can tell. What each port has is under [Ports](#ports).
+MQTT is not in the firmware yet: it returns `FC_ENOTSUP` once granted, so an app written for it loads and can tell. The client it will use is in the core already ([MQTT](#mqtt)). What each port has is under [Ports](#ports).
 
 ![The app on a device's page](img/app-on-device.png)
 *An app on its device's page: `Running`, with its image in the registry. Flight Control shows a WASM app as a container application (`Single Container`).*
@@ -126,7 +126,42 @@ Today an app reports its **state** (`fc_set_state`): a short text in Flight Cont
 
 One more way is part of the interface, for when the firmware has it ([ROADMAP.md](ROADMAP.md)):
 
-- **MQTT** (`fc_mqtt_*`): the application's own data and commands, with a broker the fleet gives in `/etc/fc/mqtt.json` (address, user, topic prefixes) and its CA. The device keeps one connection for all the apps. Each app publishes and subscribes under its own prefix, by default `flightctl/<device>/<app>/`, and can subscribe under the fleet's, to receive a command sent once to every device. QoS is 0 or 1; topics are at most 64 characters and payloads 512 bytes.
+- **MQTT** (`fc_mqtt_*`): the application's own data and commands, with a broker the fleet gives. The device keeps one connection for all the apps. Each app publishes and subscribes under its own prefix, by default `flightctl/<device>/<app>/`, and can subscribe under the fleet's, to receive a command sent once to every device. QoS is 0 or 1; topics are at most 64 characters and payloads 512 bytes.
+
+### MQTT
+
+The core's client is written and tested on the host, against mosquitto with and without TLS; the apps' calls are not wired to it yet. The fleet gives the broker in `/etc/fc/mqtt.json` and its CA in `/etc/fc/mqtt-ca.crt`, two config files:
+
+```yaml
+spec:
+  template:
+    spec:
+      config:
+        - name: mqtt
+          inline:
+            - path: /etc/fc/mqtt.json
+              content: '{"broker": "mqtts://broker.example.com:8883", "username": "pumps", "password": "...",
+                         "fleetPrefix": "flightctl/fleet/pumps/{app}/"}'
+            - path: /etc/fc/mqtt-ca.crt
+              content: |
+                -----BEGIN CERTIFICATE-----
+                ...
+```
+
+| Field | What it is |
+|---|---|
+| `broker` | `mqtts://host:port` (8883 if no port) or `host:port`: TLS, the broker's certificate checked against `mqtt-ca.crt` and its name. `mqtt://host:port` (1883): plain TCP, for a broker on a network the fleet trusts; the device logs it. Required. |
+| `username`, `password` | the broker's user, if it asks for one. They are in the fleet's spec, readable by whoever reads the fleet: give each fleet its own user, limited by the broker to its prefixes. |
+| `clientId` | `{device}` by default, the device's name in Flight Control |
+| `keepAliveSeconds` | 60 by default, 10 to 3600 |
+| `devicePrefix` | where an app publishes and subscribes, `flightctl/{device}/{app}/` by default |
+| `fleetPrefix` | where an app may subscribe too, for commands to every device of the fleet; none by default |
+
+`{device}` and `{app}` are the device's and the app's names; a prefix ends with `/` (added if missing) and has no wildcard. An app's topics are relative to them: `fc_mqtt_publish("temp")` from app `pump` on device `abc` is `flightctl/abc/pump/temp`, and a subscription takes MQTT's wildcards (`+`, `#`) within the prefix. A message for two apps reaches each with its own topic.
+
+The device reconnects by itself, 1 to 2 s after a lost link, then waiting longer after each failure, up to 2 minutes, and subscribes again; a session is not kept on the broker. QoS 1 is sent once: a message published while the link drops, before the broker's acknowledgment, is not sent again. A message received waits for its app in a pool of 4 KB shared by all the apps, of which one app holds at most half; a message larger than 512 bytes, with a topic longer than 64 characters under its prefix, or for which there is no room is dropped, counted, logged once a minute at most, and still acknowledged. At most 16 subscriptions for all the apps together.
+
+What it costs: on the C3, 12.6 KB of flash and 1.1 KB of static RAM; once a broker is configured, the pool (4 KB), the client's thread (12 KB of stack, not yet measured on a board), 1 KB of packet buffers, and the TLS connection: with ESP-IDF, mbedTLS's buffers sized to each record, small for MQTT; on Zephyr, where the receive buffer is the full record, a second 17 KB block reserved for it, since this connection stays open while a download takes the agent's block.
 
 ## Ports
 

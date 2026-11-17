@@ -57,6 +57,7 @@ add_library(fc_core STATIC
     core/src/fc_console.c
     core/src/fc_log.c
     core/src/fc_metrics.c
+    core/src/fc_mqtt.c
     core/src/fc_http.c
     core/src/fc_identity.c
     core/src/fc_oci.c
@@ -146,4 +147,12 @@ if(FC_UNIT)
     fc_unit(test_metrics third_party/cjson/cJSON.c)
     fc_unit(test_fatal third_party/cjson/cJSON.c)
     fc_unit(test_log third_party/cjson/cJSON.c)
+    fc_unit(test_mqtt core/src/fc_http.c third_party/cjson/cJSON.c)
+    # The MQTT client against a real broker (tests/mqtt-broker.sh), not in ctest.
+    add_executable(mqtt-broker-check EXCLUDE_FROM_ALL tests/unit/mqtt_broker_check.c tests/unit/port_stub.c
+                   core/src/fc_mqtt.c core/src/fc_http.c third_party/cjson/cJSON.c)
+    target_include_directories(mqtt-broker-check PRIVATE core/include core/src third_party/cjson tests/unit)
+    target_compile_definitions(mqtt-broker-check PRIVATE CJSON_NESTING_LIMIT=32)
+    target_compile_options(mqtt-broker-check PRIVATE -Wno-deprecated-declarations)
+    target_link_libraries(mqtt-broker-check PRIVATE MbedTLS::mbedtls MbedTLS::mbedx509 MbedTLS::tfpsacrypto Threads::Threads)
 endif()
