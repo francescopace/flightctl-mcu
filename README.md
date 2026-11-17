@@ -139,7 +139,7 @@ The requirements in full, the boards tried and how to add a chip, a board or an 
 
 Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), deltas, rollback, a registry with TLS and a password, decommissioning. Certificate renewal, Secure Boot and provisioning in the field are tested on emulated chips ([RESULTS.md](docs/RESULTS.md#what-works)).
 
-Not there yet:
+Known limits:
 
 - The device trusts only the registry CA its fleet gives it: no public CA bundle, and no blobs redirected to another host ([REGISTRY.md](docs/REGISTRY.md)).
 - Secure Boot and flash encryption (the `secure` variant) are tested in the emulator only. Without them the device key is in flash in clear.

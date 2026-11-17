@@ -37,7 +37,7 @@ Of the eight, only flightctl-mcu:
 - publishes an SBOM per release to Trustify, and Flight Control shows the CVEs on the devices that run it ([SBOM.md](SBOM.md));
 - puts microcontrollers in Red Hat Edge Manager, with the same fleets, label selectors, rollouts and RBAC as bootc devices. Most of the others manage Linux too, each in its own way.
 
-It is behind on crash reports, remote log and commands, and data from the apps (the 1.0 and 2.0 items below). WiFi is its only link on real boards, deep sleep waits on Flight Control, and support is the community's.
+It is behind on crash reports, which stop at what the status says after a restart, and on data from the apps (the 1.0 and 2.0 items below). WiFi is its only link on real boards, deep sleep waits on Flight Control, and support is the community's.
 
 ## Golioth, Memfault and Mender in detail
 
@@ -49,7 +49,7 @@ For flightctl-mcu, 🔜 is on the [roadmap](ROADMAP.md#next) for 1.0, ⏳ waits 
 |---|---|---|---|---|
 | **Server you run yourself** | ✅ Flight Control on Kubernetes, OpenShift or Podman; Red Hat Edge Manager is its supported build | ❌ hosted | ❌ hosted (Memfault, nRF Cloud) | ❌ hosted only; on-premise planned |
 | **ESP-IDF** | ✅ ESP32, S3, C3, C5, C6 | ✅ | ✅ | ❌ Zephyr only |
-| **Zephyr** | 🟡 without the device protection of the ESP-IDF port · 🔜 adds it | ✅ | ✅ | ✅ ESP32-S3 as reference board |
+| **Zephyr** | 🟡 without the device protection of the ESP-IDF port · 💡 adds it | ✅ | ✅ | ✅ ESP32-S3 as reference board |
 | **Other chips** | 🟡 Arm Cortex-M3 in QEMU · 🔜 an ST Nucleo with Ethernet · 💡 Nordic nRF, RP2350, STM32U5 | ✅ Nordic, Espressif, Infineon, NXP and more | ✅ any Cortex-M or ESP32 | ✅ any Zephyr board with MCUboot |
 | **Linux devices in the same fleets** | ✅ the Flight Control agent, bootc images and containers | 🟡 Linux SDK, experimental | ✅ Linux (Yocto) and Android SDKs | ✅ Mender's main client |
 | **WebAssembly apps** | ✅ run by WAMR, installed and updated without a reboot or a firmware release; one `.wasm` for Xtensa, RISC-V and Arm | 🟡 a [demo](https://blog.golioth.io/webassembly-on-zephyr/) with WAMR, modules sent as settings; not a product feature | ❌ | ❌ |
@@ -63,9 +63,9 @@ For flightctl-mcu, 🔜 is on the [roadmap](ROADMAP.md#next) for 1.0, ⏳ waits 
 | **Health and alerts** | ✅ CPU, heap, storage against the fleet's rules | 🟡 device state and logs | ✅ metrics and alerts | 🟡 inventory |
 | **Crash reports** | 🟡 after a restart, `resetReason` and `lastFatalError` in the status (reason, thread, uptime; the `pc` and return addresses, decoded against the release's ELF, which the registry keeps next to the release, with ESP-IDF and with Zephyr on Arm and Xtensa) · 💡 coredumps off the device | ➖ | ✅ its core feature | ➖ |
 | **Remote log** | ✅ the last lines, kept in RAM, in the UI's Logs tab and the console ([CONSOLE.md](CONSOLE.md#the-log)) | ✅ | ✅ with crashes | ➖ |
-| **Remote commands** | 🔜 Flight Control's terminal, with a fixed set of commands | ✅ RPC | ➖ | ➖ |
+| **Remote commands** | ✅ Flight Control's terminal and `flightctl console`, with a closed set of commands ([CONSOLE.md](CONSOLE.md)) | ✅ RPC | ➖ | ➖ |
 | **Data from apps** | 🔜 MQTT to your broker, metrics as OTLP to Flight Control | ✅ LightDB Stream and pipelines | 🟡 metrics only | ➖ |
-| **Peripherals from apps** | 🟡 GPIO, LEDs, timers on ESP-IDF · 🔜 I2C, SPI, UART, ADC, PWM, and GPIO on Zephyr | ➖ in the firmware | ➖ in the firmware | ➖ in the firmware |
+| **Peripherals from apps** | 🟡 GPIO, LEDs, I2C, SPI, UART, ADC and PWM by name, with ESP-IDF and Zephyr ([APPS.md](APPS.md#ports)) · 🔜 tried with devices wired to them | ➖ in the firmware | ➖ in the firmware | ➖ in the firmware |
 | **SBOM and known vulnerabilities** | ✅ an SBOM per release, CVEs shown in Flight Control through Trustify | ➖ | ➖ | ➖ |
 | **Links** | 🟡 WiFi; Ethernet in QEMU · 🔜 Ethernet on a board · 💡 cellular (LTE-M, NB-IoT) | ✅ WiFi, Ethernet, cellular | ✅ any, including BLE through a phone or gateway | ✅ what the Zephyr board has |
 | **Devices without IP** | 💡 BLE or Thread devices behind a Linux gateway in the same fleet | ✅ Bluetooth through gateways (Pouch) | ✅ BLE through a phone or gateway | ➖ |
