@@ -23,14 +23,6 @@ Checks not made yet:
 - [ ] A soak test: the lab fleet left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); not yet run.
 - [ ] Bearer tokens against a real registry (Harbor, Quay), never tried: `registry:3` asks for Basic.
 
-What the ESP-IDF firmware does not have, and the Zephyr port has:
-
-- [ ] What a crash was, in the status after the restart. ESP-IDF reports `resetReason` (`panic`, a watchdog) only; Zephyr also gives `lastFatalError`, with the reason, the thread, the uptime and the `pc`. The same on ESP-IDF, from the panic handler's record kept across the restart: the exception, the task, the `pc` and a few return addresses, decoded against the release's ELF. Coredumps are for after 1.0 ([below](#after-10)).
-
-What the Zephyr port does not have, and the ESP-IDF firmware has:
-
-- [ ] Protection of the device beyond signed images and anti-rollback: the device key is in the storage partition in clear, the flash is not encrypted. On the ESP32-S3 it takes Espressif's MCUboot port; a chip with TF-M (RP2350, nRF54L, STM32U5) would keep the key protected ([SECURITY.md](SECURITY.md#zephyr)).
-
 What an app can do and hold:
 
 - [ ] A large app's memory on the classic ESP32, the C5 and the C3, every time. CoreMark's 64 KB takes one free block of 68 KB, and in v3.12 one install or swap in seven still failed on each for want of it (largest free block 48 and 64 KB, [RESULTS.md](RESULTS.md#coremark)); after an hour of app changes the C5's largest block was 60 KB with the `alarm` app. To find: what stays in the middle of the heap from one app to the next, and whether an app that failed for want of memory is tried again on its own. With v3.13 it fitted once in two tries on the ESP32 and the C5 and once in five on the C3 (only right after a restart; a swap found 22 KB the largest of 66 KB free), with the metrics on or off.
@@ -74,6 +66,7 @@ Proposed for 2.0, from what similar products offer ([COMPARISON.md](COMPARISON.m
 - [ ] Cellular (LTE-M, NB-IoT): a modem as the link, through ESP-IDF's PPP or Zephyr's cellular drivers. A long-poll held open over cellular costs data and power, so it comes with the battery-powered devices above.
 - [ ] Devices without IP (BLE, Thread) through a Linux gateway in the same fleet: the gateway's Flight Control agent, or an app on it, holds the device's identity and passes its spec, status and firmware.
 - [ ] More silicon: Nordic nRF (nRF7002 WiFi, nRF91 cellular), RP2350, STM32U5, the last two with TF-M to keep the device key protected.
+- [ ] On Zephyr, the device protected beyond signed images and anti-rollback: today its key is in the storage partition in clear and the flash is not encrypted. On an Espressif chip a protected device runs the ESP-IDF firmware; on Zephyr the protection comes with the TF-M chips above. For the ESP32-S3 under Zephyr, it would take Espressif's port of MCUboot in place of sysbuild's ([what it takes](SECURITY.md#zephyr)), and with encryption on each write to the storage erases its 4 KB sector and writes it back whole, which a power cut in between breaks.
 
 ## Upstream (Flight Control)
 

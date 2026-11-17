@@ -30,7 +30,7 @@ Here the microcontroller speaks the Flight Control agent API itself. That API is
 | Registry credentials and CA (`auth.json`, `certs.d`) | The same files as on Linux, as config: TLS and a password to the [registry](docs/REGISTRY.md) |
 | Decommission | Key and certificate wiped; the device does not enroll again until its storage is erased |
 | `spec.resources` | CPU, heap and storage sampled against the fleet's alert rules, as the Linux agent does. Without rules, CPU and storage take the Linux defaults; the heap warns under 10% free, since the network stack holds most of it. |
-| `status` | `resources` from those rules, heap, CPU use, firmware version, RSSI, temperature, app state |
+| `status` | `resources` from those rules, heap, CPU use, firmware version, RSSI, temperature, app state; after a crash, what it was (`lastFatalError`: the fault, the task, the `pc` and return addresses, which `addr2line` decodes against the release's ELF) |
 | `flightctl console` and the UI's terminal | A closed set of commands (`status`, `apps`, `log`, `reboot`...) over a gRPC stream on the agent's connection ([CONSOLE.md](docs/CONSOLE.md)) |
 | Telemetry Gateway (OpenTelemetry) | The device's metrics (heap, traffic, CPU, WiFi, temperature) and the apps' (`fc_metric`) in OTLP over gRPC, with a certificate the device asks for on its own, to Prometheus ([METRICS.md](docs/METRICS.md)) |
 | The UI's Logs tab | The device's log kept in RAM, the agent's, the apps' and the system's (WiFi, TLS, a fault's report), answered to the `journalctl` the tab runs through the console: level, unit (the agent, or an app), time range, live, and the previous boot, kept across a restart or a crash ([CONSOLE.md](docs/CONSOLE.md#the-log)) |
@@ -97,7 +97,7 @@ The image is streamed into the inactive slot and checked against its sha256. The
 | Stack | Runs on | What works |
 |---|---|---|
 | **ESP-IDF** 6.0 | ESP32, S3, C3, C5, C6 | Everything, plus Secure Boot, flash encryption and WiFi provisioning over SoftAP. Five boards, and emulated chips in CI. |
-| **Zephyr** 4.5 | ESP32-S3; an Arm Cortex-M3 on Ethernet in QEMU | Enrollment, monitoring, config, WASM apps, firmware through MCUboot. A new board is two files. |
+| **Zephyr** 4.5 | ESP32-S3; an Arm Cortex-M3 on Ethernet in QEMU | Enrollment, monitoring, config, WASM apps, signed firmware through MCUboot. No flash encryption: the device key is in clear. A new board is two files. |
 | **Linux, macOS** | Any POSIX system | The simulated device of the tests. A firmware update only saves the image to a file. |
 
 "Everything" is enrollment, monitoring, config, firmware OTA with rollback and WASM apps. The same `.wasm` file runs on all of them, whatever the CPU. A device needs 384 KB of SRAM, 2 MB of flash and a TCP/IP network. Supported: ESP32-S3, ESP32, C6 and C5; the C3 is best effort ([support levels](docs/DEVICES.md#support-levels)).
@@ -137,6 +137,7 @@ Not there yet:
 
 - The device trusts only the registry CA its fleet gives it: no public CA bundle, and no blobs redirected to another host ([REGISTRY.md](docs/REGISTRY.md)).
 - Secure Boot and flash encryption (the `secure` variant) are tested in the emulator only. Without them the device key is in flash in clear.
+- On Zephyr the device key is in flash in clear and the flash is not encrypted: on an Espressif chip, a device that must be protected runs the ESP-IDF firmware. On Zephyr the protection comes with chips that have TF-M, after 1.0 ([SECURITY.md](docs/SECURITY.md#zephyr)).
 - WiFi is the only link tried.
 - Flight Control 1.4.0 cannot revoke an enrollment certificate; its main branch can, not yet in a release.
 - Apps must be WASM OCI artifacts. Podman-style images with a `.wasm` inside a tarball are not supported.

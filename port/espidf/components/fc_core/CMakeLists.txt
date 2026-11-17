@@ -17,10 +17,11 @@ idf_component_register(
          ${ROOT}/third_party/cjson/cJSON.c
          ${ROOT}/port/espidf/fc_port_espidf.c
          ${ROOT}/port/espidf/fc_wasm_mem.c
+         ${ROOT}/port/espidf/fc_fatal_espidf.c
     INCLUDE_DIRS ${ROOT}/core/include ${ROOT}/third_party/cjson
     PRIV_INCLUDE_DIRS ${ROOT}/core/src
     REQUIRES mbedtls pthread wamr
-    PRIV_REQUIRES lwip soc nvs_flash bootloader_support esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update efuse)
+    PRIV_REQUIRES lwip soc nvs_flash bootloader_support esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update efuse esp_system spi_flash)
 # cJSON is the core's copy, as in the host build (ESP-IDF 6 no longer has
 # one), with the agent's nesting limit: cJSON parses recursively, and its
 # default of 1000 levels overflowed the agent's 24 KB thread stacks
@@ -36,3 +37,6 @@ endif()
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u fc_fw_desc")
 # WASM apps' linear memories sized for the heap's size classes (fc_wasm_mem.c).
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=os_mmap" "-u __wrap_os_mmap")
+# What a crash was, kept across the restart (fc_fatal_espidf.c): ESP-IDF's
+# panic handler wrapped, as its own panic tests do.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler" "-u __wrap_esp_panic_handler")

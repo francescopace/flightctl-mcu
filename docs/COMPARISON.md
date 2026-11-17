@@ -61,7 +61,7 @@ For flightctl-mcu, 🔜 is on the [roadmap](ROADMAP.md#next) for 1.0, ⏳ waits 
 | **Staged rollouts** | ✅ Flight Control's batches with a failure threshold | ✅ cohorts | ✅ cohorts and percentages | 🟡 phased deployments, on paid plans |
 | **Remote configuration** | ✅ files the firmware can reject | ✅ settings | ➖ | ➖ |
 | **Health and alerts** | ✅ CPU, heap, storage against the fleet's rules | 🟡 device state and logs | ✅ metrics and alerts | 🟡 inventory |
-| **Crash reports** | 🟡 after a restart, `resetReason` in the status; on Zephyr also `lastFatalError` (reason, thread, `pc`) · 🔜 `lastFatalError` on ESP-IDF · 💡 backtraces and coredumps off the device | ➖ | ✅ its core feature | ➖ |
+| **Crash reports** | 🟡 after a restart, `resetReason` and `lastFatalError` in the status (reason, thread, uptime; the `pc` and return addresses, decoded against the release's ELF, with ESP-IDF and with Zephyr on Arm) · 💡 coredumps off the device | ➖ | ✅ its core feature | ➖ |
 | **Remote log** | ✅ the last lines, kept in RAM, in the UI's Logs tab and the console ([CONSOLE.md](CONSOLE.md#the-log)) | ✅ | ✅ with crashes | ➖ |
 | **Remote commands** | 🔜 Flight Control's terminal, with a fixed set of commands | ✅ RPC | ➖ | ➖ |
 | **Data from apps** | 🔜 MQTT to your broker, metrics as OTLP to Flight Control | ✅ LightDB Stream and pipelines | 🟡 metrics only | ➖ |

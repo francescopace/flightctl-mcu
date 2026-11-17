@@ -1,0 +1,4 @@
+# Test only, with sdkconfig.faulttest: the fault is an abort(), as a failed
+# assert makes (tests/e2e/fatal-emu.sh, MODE=abort).
+# VARIANT=faulttest-aborttest port/espidf/build.sh.
+CONFIG_FC_TEST_FAULT_ABORT=y

@@ -1,0 +1,4 @@
+# Test only: a fault 30 s after a power-on, for the test of what the status
+# says of a crash (customInfo.lastFatalError, tests/e2e/fatal-emu.sh).
+# VARIANT=faulttest port/espidf/build.sh.
+CONFIG_FC_TEST_FAULT_AFTER_S=30

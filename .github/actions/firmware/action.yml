@@ -62,3 +62,6 @@ runs:
           port/espidf/build-${{ inputs.target }}-secure*/ota_data_initial.bin
           port/espidf/build-${{ inputs.target }}-secure*/flasher_args.json
           port/espidf/build-${{ inputs.target }}-secure*/sdkconfig
+          # The ELF of each build: what a device's lastFatalError is decoded
+          # against (addr2line).
+          port/espidf/build-${{ inputs.target }}*/flightctl_mcu_fw.elf

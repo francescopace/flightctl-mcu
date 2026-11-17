@@ -1,0 +1,18 @@
+menu "flightctl-mcu tests"
+
+config FC_TEST_FAULT_AFTER_S
+    int "Test only: fault on purpose this many seconds after a boot that was not a crash (0: off)"
+    default 0
+    help
+        For the test of lastFatalError (sdkconfig.faulttest,
+        tests/e2e/fatal-emu.sh): a task named fc_fault writes to address 0,
+        once per power-on. Never in a release.
+
+config FC_TEST_FAULT_ABORT
+    bool "Test only: call abort() instead of writing to address 0"
+    depends on FC_TEST_FAULT_AFTER_S > 0
+    default n
+    help
+        sdkconfig.aborttest, with sdkconfig.faulttest.
+
+endmenu

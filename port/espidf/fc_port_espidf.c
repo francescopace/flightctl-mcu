@@ -161,6 +161,9 @@ static const char *reset_reason_name(void)
     return (unsigned)rr < sizeof(reasons) / sizeof(reasons[0]) && reasons[rr] ? reasons[rr] : "other";
 }
 
+void fc_espidf_fatal_boot(void);
+const char *fc_espidf_last_fatal(void);
+
 int fc_port_espidf_init(void)
 {
     static StaticSemaphore_t line_lock;
@@ -172,6 +175,7 @@ int fc_port_espidf_init(void)
         /* Its last lines are the previous boot's: journalctl -b -1. */
         fc_port_log(FC_LOG_WARN, "restarted after a reset: %s", reset_reason_name());
     }
+    fc_espidf_fatal_boot(); /* what the crash was, if it was one */
     esp_err_t err = store_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         /* The device key, its certificate and the apps are in there: after
@@ -353,6 +357,11 @@ void fc_port_custom_info(void *obj)
     cJSON_AddStringToObject(o, "flashEncryption", fe == ESP_FLASH_ENC_MODE_RELEASE       ? "release"
                                                    : fe == ESP_FLASH_ENC_MODE_DEVELOPMENT ? "development"
                                                                                           : "off");
+    /* What the last restart's crash was, as Zephyr's port says it. */
+    const char *fatal = fc_espidf_last_fatal();
+    if (fatal != NULL) {
+        cJSON_AddStringToObject(o, "lastFatalError", fatal);
+    }
 #if !SOC_TEMP_SENSOR_SUPPORTED
     cJSON_AddStringToObject(o, "temperatureSource", "simulated");
 #endif
