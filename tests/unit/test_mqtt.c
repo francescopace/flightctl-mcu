@@ -661,9 +661,8 @@ static void test_client(void)
     CHECK(wait_for(&f_connects, 4, 5000));
     f_accept(4);
     CHECK(wait_for(&f_links_down, 3, 3000));
-    usleep(100000);
+    CHECK(wait_for(&f_ends, 4, 5000)); /* a failed handshake is over too, its refusal logged before */
     CHECK(stub_log_has("mqtt: broker.test:1883 refused the connection: bad user name or password"));
-    CHECK_INT(locked(&f_ends), 4); /* a failed handshake is over too */
     fc_mqtt_stats(&st);
     CHECK_INT(st.connected, 0);
 

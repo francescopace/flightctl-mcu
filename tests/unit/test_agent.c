@@ -775,10 +775,16 @@ static void a_spec_waits_for_an_export(void)
 static void *handshake_ends_later(void *arg)
 {
     agent_t *a = arg;
-    usleep(50 * 1000);
-    pthread_mutex_lock(&a->lock);
-    CHECK_INT(a->applying, 1);
-    pthread_mutex_unlock(&a->lock);
+    /* Until the spec has begun, however slow the machine. */
+    int applying = 0, connecting = 0;
+    while (!applying) {
+        usleep(1000);
+        pthread_mutex_lock(&a->lock);
+        applying = a->applying;
+        connecting = a->mqtt_connecting;
+        pthread_mutex_unlock(&a->lock);
+    }
+    CHECK_INT(connecting, 1); /* the spec is waiting for it */
     CHECK_INT(idle_for_mqtt(1), 0); /* no second handshake while applying */
     mqtt_connected();
     return NULL;
@@ -805,8 +811,8 @@ static void a_spec_waits_for_the_brokers_handshake(void)
     pthread_create(&t, NULL, handshake_ends_later, &s_a);
     time_t t0 = time(NULL);
     apply_begin(&s_a);
-    CHECK_INT(s_a.mqtt_connecting, 0); /* it waited for mqtt_connected */
-    CHECK(time(NULL) - t0 < 5);
+    CHECK_INT(s_a.mqtt_connecting, 0); /* it waited for mqtt_connected, */
+    CHECK(time(NULL) - t0 < TURN_WAIT_S); /* not for its time to run out */
     pthread_join(t, NULL);
     apply_end(&s_a);
     CHECK_INT(idle_for_mqtt(1), 1); /* after the spec */
