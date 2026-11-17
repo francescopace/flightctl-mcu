@@ -168,33 +168,34 @@ ESP-IDF boards with an early build, unless the row says otherwise:
 |---|---|
 | From boot to enrollment request (WiFi, SNTP, TLS) | about 10 s |
 | Config change, from apply to device confirmation | 1–6 s |
-| Firmware rollout to 3 devices (canary, then the rest) | 50–80 s, of which about 20 s per device for download and reboot |
-| Rollback of a broken firmware | about 3.5 min (150 s confirmation window plus 2 reboots) |
-| WASM app update across the fleet (canary, then the rest) | about 50 s, almost all of it waiting for the rollout; on the device the swap is immediate |
+| Firmware rollout to 3 devices, canary first | 50–80 s, about 20 s per device for download and reboot |
+| Rollback of a broken firmware | about 3.5 min: the 150 s confirmation window and 2 reboots |
+| WASM app update across the fleet, canary first | about 50 s, nearly all of it the rollout; the swap on the device is immediate |
 | App state change, to Flight Control | about 2 s |
-| Memory rule added to the fleet, to `Warning` and Flight Control's `DeviceMemoryWarning` (end-to-end test) | 21 s; `DeviceMemoryNormal` once the rule is removed |
-| An app call's budget of 5 million instructions, used up by a counting loop (v3.14-rc1) | 0.66 s on the C5, 0.9 s on the S3, 1.06 s on the C3, 1.2 s on the classic ESP32, 1.3 s on the C6 ([APPS.md](APPS.md#size-and-limits)) |
+| Memory rule added to the fleet, to `Warning` and `DeviceMemoryWarning` (end-to-end test) | 21 s; `DeviceMemoryNormal` once the rule is removed |
+| An app call's budget of 5 million instructions, in a counting loop (v3.14-rc1) | 0.66 s on the C5, 0.9 s on the S3, 1.06 s on the C3, 1.2 s on the classic ESP32, 1.3 s on the C6 |
 | MQTT connected, from the spec that gives the broker (v3.14-rc6) | within 70 s |
-| Decommissioning, from the request to `Completed` | 2.4 to 3 s ([below](#the-registry-with-tls-and-decommissioning-on-boards)) |
+| Decommissioning, from the request to `Completed` | 2.4 to 3 s |
 
 ### Idle traffic
 
-Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on the wire, TLS included), with the agent's earlier HTTP/1.1 client: two connections kept open, a status at once when something changes and otherwise every 2 minutes, the server's long-poll lasting about 4 minutes. Not measured yet since HTTP/2 put both on one connection.
+Bytes on the wire, TLS included (`netTxBytes`, `netRxBytes`), with the earlier HTTP/1.1 client and its two kept connections; not measured yet over HTTP/2:
 
-| Device | Total |
+| | Traffic |
 |---|---|
-| Simulated device, no app (status every minute) | about 220 KB/hour: 87 KB sent, 130 KB received |
+| Simulated device, no app, a status every minute | about 220 KB/hour: 87 KB sent, 130 KB received |
 | ESP32-C3 with the `alarm` app | about 280 KB/hour |
+| A connection per request instead | 560 to 730 KB/hour, mostly the TLS 1.3 handshake with mTLS |
+| Exchanges | a status at once on a change, else every 2 minutes; the long-poll lasts about 4 minutes |
+| TLS handshakes | 2 after boot, none in the next 10 minutes |
+| A reconnection | a full handshake, about 1.5 KB received: the server issues session tickets but does not resume them |
+| After a server restart | both connections reopen; the next spec applies in 2 s |
 
-- The kept connections cost 2 TLS handshakes after boot and none in the next 10 minutes. After a server restart both reopen, and the next spec applies in 2 s.
-- A connection per request cost 560 to 730 KB/hour, most of it the TLS 1.3 handshake with mTLS.
-- What is left is the full status and the server's answer to it. Going lower needs differential status updates (limitation 6 below).
-- The server issued TLS session tickets but did not resume a session with them, so a reconnection costs a full handshake (about 1.5 KB received).
-- Changes reported by apps are grouped, one status every 15 s at most, so an app whose state flaps does not flood the network.
+What is left is the full status, and going lower needs differential updates (limitation 6). The apps' changes go out together, one status every 15 s at most.
 
 ### In Espressif's emulator
 
-[esp-emu](https://github.com/espressif/esp-emulator) 0.51 runs the real firmware for the C3, C5, S3 and C6 (not the classic ESP32). Its WiFi access point NATs to the host, so the emulated chip enrolls in the same Flight Control as the boards. With the server issuing 4-minute certificates:
+[esp-emu](https://github.com/espressif/esp-emulator) 0.51 runs the real firmware for the C3, C5, S3 and C6 against the same Flight Control, here with 4-minute certificates ([TESTING.md](TESTING.md)):
 
 | Chip | Signed OTA (reboot into the other slot) | Unsigned app | Certificate renewal | Heap free / minimum / largest block |
 |---|---|---|---|---|
@@ -202,9 +203,7 @@ Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on
 | ESP32-C5 | confirmed, 15 s | refused | renewed, still reporting after the first certificate expired | 61.7 / 42.2 / 40.9 KB |
 | ESP32-S3 | confirmed, 35 s | – | renewed | 121.3 / 102.1 / 73.7 KB |
 
-The C3 figures match the board's. `tests/e2e/e2e-emu.sh` runs the whole sequence on the images CI builds for the boards, and CI runs it for the C5, the S3 and the C6 ([TESTING.md](TESTING.md)). It updates the default build over the air to the release build, then tries a broken build that cannot reach the server, which is rolled back once its confirmation window ends.
-
-Before v3.14 the emulated C6 could stall in about one run in two: with an app running, the release build had 2.9 KB of internal heap left while it wrote the HTTP/2 preface, and the agent stayed silent. Since v3.14 the block the TLS handshake takes is given back before the preface, and 6 runs of 6 passed. The real C6 never showed it.
+The C3 figures match the board's.
 
 ### ESP-IDF 6.0.3 on a board (ESP32-S3)
 
@@ -218,11 +217,11 @@ An ESP32-S3-DevKitC with the debug build (mbedTLS 4.1.1, cryptography through PS
 | Firmware, as a delta | the release build (1000 KB) from a delta of 511 KB, rebuilt from the running image in 13 s, restarted, confirmed |
 | Memory (release build, app running) | 145 KB of heap free, 124 KB at the lowest |
 
-The delta is half of the image because it goes from the debug build to the release one, compiled differently; between two builds of the same kind it is 1 to 12% ([DELTA.md](DELTA.md)). The secure variant was not run on a board (it burns eFuses).
+The delta is half of the image because it goes from the debug build to the release one; between builds of the same kind it is 1 to 12% ([DELTA.md](DELTA.md)).
 
 ### The way back on the ESP32-S3, both ports
 
-An ESP32-S3 with each port in turn, against Flight Control 1.4.0. Each was given, through its fleet, a firmware built to reach Flight Control on a wrong port (9443) and to give itself 30 seconds instead of 150:
+Each port was given a firmware that reaches Flight Control on a wrong port (9443) and gives itself 30 seconds instead of 150:
 
 | | ESP-IDF 6.0.3 | Zephyr 4.5 with MCUboot |
 |---|---|---|
@@ -232,15 +231,15 @@ An ESP32-S3 with each port in turn, against Flight Control 1.4.0. Each was given
 | Back | the bootloader takes the previous slot | MCUboot swaps the slots back: 15 s |
 | Reported | 53 s after the fleet changed: "failed to start and was rolled back; not retried" | 1 min 53 s, the same message |
 
-Neither tried the image again. The ESP32-C6 (ESP-IDF) was back on the previous firmware, and reporting it, 50 s after it restarted into a broken one; with v3.13, in three more runs with two different builds, it was online again 3 to 5 s after the restart back.
+Neither tried the image again. The ESP32-C6 was back and reporting 50 s after it restarted into a broken firmware, and with v3.13 online again 3 to 5 s after the restart back.
 
 ### A crash in the status
 
-What `lastFatalError` gives after each kind of crash, chip by chip, is in [TESTING.md](TESTING.md#a-crash-in-the-status). The handler takes 799 bytes of IRAM on the ESP32, 907 on the S3 and 1,102 on the C3, C5 and C6; the record takes 140 bytes of RAM kept across restarts.
+What `lastFatalError` gives after each kind of crash is in [TESTING.md](TESTING.md#a-crash-in-the-status). The handler takes 799 bytes of IRAM on the ESP32, 907 on the S3 and 1,102 on the C3, C5 and C6; the record takes 140 bytes of RAM kept across restarts.
 
 ### The registry with TLS, and decommissioning, on boards
 
-Against Flight Control 1.4.0, with the registry behind TLS and a password ([REGISTRY.md](REGISTRY.md)). The CA and `auth.json` came from the fleet; decommissioning was sent with `flightctl decommission`.
+With the registry behind TLS and a password, its CA and `auth.json` from the fleet ([REGISTRY.md](REGISTRY.md)):
 
 | | ESP32-C3, ESP-IDF 6.0.3 | Pico W, Zephyr | ESP32-S3, Zephyr |
 |---|---|---|---|
@@ -249,7 +248,7 @@ Against Flight Control 1.4.0, with the registry behind TLS and a password ([REGI
 | Firmware over TLS, as a delta | not tried | not tried | 17 KB (`Applied`) |
 | Decommissioning, from request to Completed | 3 s | 2.5 s | 2.4 s |
 
-After decommissioning each board wiped its key and management certificate, restarted, showed as `Decommissioned`, and kept running its app without asking to enroll again. Erased, each enrolled again as a new device. Not measured: the heap used during a download over TLS (the reboot that follows a firmware download clears the low-water mark).
+After decommissioning each board wiped its key and certificate, showed as `Decommissioned` and kept running its app without enrolling again; erased, each enrolled again as a new device. The heap during a download over TLS is not measured yet.
 
 ## Label sync
 
