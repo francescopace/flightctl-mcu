@@ -36,7 +36,7 @@ What an app can do and hold:
   - DeltaBlue (objects allocated and freed at every step), which also helps decide whether apps get `malloc`;
   - CoreMark in AOT, against the interpreter. AOT needs `wamrc`, a module per architecture, executable memory, and another way to stop an app than the instruction count.
 - [ ] Two well-known apps as demos, from their published `.wasm` where the firmware can:
-  - the blink of [wasm3-arduino](https://github.com/wasm3/wasm3-arduino/tree/main/wasm_apps): an `arduino` import module (`pinMode`, `digitalWrite`, `delay`...) mapped to board-map names, and a `delay` longer than one wait may last (100 ms);
+  - the blink of wasm3-arduino, [as published](APPS.md#the-blink-of-wasm3-arduino), on a board (tested on the host and on `native_sim`);
   - the TinyML model from emlearn, [`tinyml`](APPS.md#tinyml-with-emlearn), on a board (tested on the host). A neural network also needs `expf`, `tanhf` and `logf`.
 - [ ] The app interface for 1.0 ([APPS.md](APPS.md)):
   - GPIO interrupts, and I2C, SPI, UART, ADC and PWM with devices wired to them, on a board; on Zephyr also a board that names its hardware in the devicetree, and RS-485;

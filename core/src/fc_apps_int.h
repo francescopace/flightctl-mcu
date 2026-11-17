@@ -173,3 +173,13 @@ void fc_appapi_kv_key(const char *app_name, char *out, size_t len);
 int fc_appapi_allowed(const app_t *a, const char *name);
 /* fc_mqtt_hooks_t.on_message: a message for the app's subscription. */
 int fc_appapi_mqtt_message(void *owner, int sub, fc_mqtt_msg_t *m);
+/* fc's GPIO, LED and close functions, with a name in the firmware's memory:
+ * for the module "arduino" (fc_arduino.c). */
+int32_t fc_appapi_gpio_open(wasm_exec_env_t env, const char *name, int32_t mode);
+int32_t fc_appapi_gpio_write(wasm_exec_env_t env, int32_t h, int32_t level);
+int32_t fc_appapi_led_open(wasm_exec_env_t env, const char *name);
+int32_t fc_appapi_led_rgb(wasm_exec_env_t env, int32_t h, int32_t r, int32_t g, int32_t b);
+int32_t fc_appapi_close(wasm_exec_env_t env, int32_t h);
+
+/* fc_arduino.c: the module "arduino", for wasm3-arduino's examples. */
+NativeSymbol *fc_arduino_natives(int *count);

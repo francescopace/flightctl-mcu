@@ -3,8 +3,9 @@
  * (core/src/fc_apps.c) with the real Zephyr port and C library, without the
  * agent or Flight Control. It runs the C library's tests of tests/unit
  * (t_libc, a pointer outside the app's memory, a loop in the library), the
- * example apps that use it (trend, hwcheck) and t_printf (%f at its deepest),
- * and reports the stack each app's thread has used. Built and run with
+ * example apps that use it (trend, hwcheck), t_printf (%f at its deepest) and
+ * the module "arduino" with wasm3-arduino's blink as published, and reports
+ * the stack each app's thread has used. Built and run with
  * tests/zephyr-apps.sh. Prints "PASS" or "FAIL n" last.
  */
 #include "../../../core/src/fc_apps.c"
@@ -14,6 +15,7 @@
 #include "fc_log.h"
 #include "fc_port_zephyr.h"
 #include "../../unit/wasm_vectors.h"
+#include "../../unit/arduino_vectors.h"
 #include "vectors.h"
 
 void fc_agent_notify_status(void) {}
@@ -31,7 +33,8 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
     } reg[] = {
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_state), V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5),
-        V(t_libcloop), V(app_trend), V(app_hwcheck), V(t_printf),
+        V(t_libcloop), V(app_trend), V(app_hwcheck), V(t_printf), V(t_arduino), V(arduino_rust), V(arduino_cpp),
+        V(arduino_assemblyscript), V(arduino_tinygo),
 #undef V
     };
     for (size_t i = 0; i < sizeof(reg) / sizeof(reg[0]); i++) {
@@ -60,6 +63,18 @@ static int fake_sensor(const char *name, int32_t *v)
         return -1;
     }
     *v = __atomic_add_fetch(&s_temp, 300, __ATOMIC_RELAXED);
+    return 0;
+}
+
+/* led0, counted: how often it was lit and turned off. */
+static int s_led_on, s_led_off;
+static int fake_led_open(const fc_hw_led_t *l)
+{
+    return 0;
+}
+static int fake_led_rgb(const fc_hw_led_t *l, uint8_t r, uint8_t g, uint8_t b)
+{
+    __atomic_add_fetch(r || g || b ? &s_led_on : &s_led_off, 1, __ATOMIC_RELAXED);
     return 0;
 }
 
@@ -174,6 +189,8 @@ int main(void)
     CHECK(fc_port_zephyr_init() == 0);
     fc_hw_zephyr_fill(&hw);
     hw.sensor_read = fake_sensor;
+    hw.led_open = fake_led_open;
+    hw.led_rgb = fake_led_rgb;
     fc_apps_set_hw(&hw);
     CHECK(fc_apps_init() == 0);
     apply_one(NULL, NULL, NULL); /* none left from a previous run in the flash */
@@ -248,6 +265,36 @@ int main(void)
     printk("t_libcloop: %s after %lld ms\n", st, (long long)(fc_apps_now_ms() - t0));
     CHECK(strstr(st, IS_ENABLED(CONFIG_ARCH_POSIX) ? "instruction limit" : "more than 1 s") != NULL);
     CHECK(apply_one(NULL, NULL, NULL) == 0);
+
+    /* The module "arduino": a delay past one of fc's waits, the greeting,
+     * print, getPinLED (pin 1, led0), a pin with no such name (pin 0). */
+    from = fc_log_end();
+    run("a", "reg/t_arduino", "{\"FC_ENTRY\": \"run\", \"FC_ALLOW\": \"nosuch led0\"}", "Completed run() returned 63");
+    CHECK(log_has(from, "app a: greeting: Hello from Flight Control"));
+    CHECK(apply_one(NULL, NULL, NULL) == 0);
+    /* wasm3-arduino's blink, its four builds as published: led0 on and off
+     * again, until the app is removed. */
+    static const char *const blinks[] = {"reg/arduino_rust", "reg/arduino_cpp", "reg/arduino_assemblyscript",
+                                         "reg/arduino_tinygo"};
+    for (size_t i = 0; i < sizeof(blinks) / sizeof(blinks[0]); i++) {
+        __atomic_store_n(&s_led_on, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&s_led_off, 0, __ATOMIC_RELAXED);
+        from = fc_log_end();
+        CHECK(apply_one("b", blinks[i], "{\"FC_ALLOW\": \"led0\"}") == 0);
+        for (int j = 0; j < 1500 && (__atomic_load_n(&s_led_on, __ATOMIC_RELAXED) < 2 ||
+                                     __atomic_load_n(&s_led_off, __ATOMIC_RELAXED) < 2); j++) {
+            k_msleep(20);
+        }
+        int on = __atomic_load_n(&s_led_on, __ATOMIC_RELAXED), off = __atomic_load_n(&s_led_off, __ATOMIC_RELAXED);
+        printk("%s: %s, led0 on %d off %d\n", blinks[i], state_of("b"), on, off);
+        CHECK(on >= 2 && off >= 2);
+        CHECK(strcmp(state_of("b"), "Running ") == 0);
+        show_log(from, "b");
+        t0 = fc_apps_now_ms();
+        CHECK(apply_one(NULL, NULL, NULL) == 0);
+        printk("%s: removed in %lld ms\n", blinks[i], (long long)(fc_apps_now_ms() - t0));
+        CHECK(fc_apps_now_ms() - t0 < 5000);
+    }
 
     if (s_fails == 0) {
         printk("PASS\n");

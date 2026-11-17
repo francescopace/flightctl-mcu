@@ -984,12 +984,12 @@ static int check_module(wasm_module_t m, const char *entry, char *err, size_t er
             }
             continue;
         }
-        if (strcmp(im.module_name, "fc") != 0) {
+        if (strcmp(im.module_name, "fc") != 0 && strcmp(im.module_name, "arduino") != 0) {
             snprintf(err, err_len, "imports from module \"%.30s\", which the device does not have", im.module_name);
             return -1;
         }
         if (im.kind == WASM_IMPORT_EXPORT_KIND_FUNC && !im.linked) {
-            snprintf(err, err_len, "imports fc.%.40s, which this firmware does not have", im.name);
+            snprintf(err, err_len, "imports %s.%.40s, which this firmware does not have", im.module_name, im.name);
             return -1;
         }
     }
@@ -1989,6 +1989,8 @@ int fc_apps_init(void)
     int n_fc = 0;
     NativeSymbol *fc = fc_appapi_natives(&n_fc);
     wasm_runtime_register_natives("fc", fc, (uint32_t)n_fc);
+    NativeSymbol *ard = fc_arduino_natives(&n_fc); /* wasm3-arduino's examples (fc_arduino.c) */
+    wasm_runtime_register_natives("arduino", ard, (uint32_t)n_fc);
     wasm_runtime_set_instantiation_hook(instantiation_hook);
     wasm_runtime_register_natives_raw("env", (NativeSymbol *)s_env_natives,
                                       sizeof(s_env_natives) / sizeof(s_env_natives[0]));

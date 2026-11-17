@@ -15,6 +15,7 @@ An app is a WebAssembly module that Flight Control deploys as a container applic
 | Metrics | `fc_metric` | `metrics` |
 | MQTT | `fc_mqtt_publish/subscribe/topic`, `fc_event_data` | `mqtt` |
 | C library | `string.h`, `stdio.h` (`snprintf`, `printf` to the log), `stdlib.h`, `ctype.h` from [wasm-apps/sdk/libc](../wasm-apps/sdk/libc/) | always |
+| Arduino | `pinMode`, `digitalWrite`, `delay`, `millis`, `getPinLED`, `print` (import module `arduino`), for [wasm3-arduino's examples](#the-blink-of-wasm3-arduino) | a name in `FC_ALLOW` |
 
 MQTT is in the firmware from v3.14 ([MQTT](#mqtt)); an older firmware returns `FC_ENOTSUP` once it is granted, so an app written for it loads and can tell. What each port has is under [Ports](#ports).
 
@@ -47,7 +48,7 @@ A module built for no device in particular, such as a benchmark, runs as it was 
 - on the app's thread, at the priority of the agent's threads, so they take turns on the CPU;
 - when it returns, the app is `Completed` and not run again until its image or env vars change, or the device restarts. What it returned is its state, in `customInfo["app.<name>"]`, such as `run() returned 12.500`; a float is given to the thousandth. A trap is an `Error`, and it is run again after a few seconds, as any app.
 
-Such a module may import `env.clock_ms`, as CoreMark does: the milliseconds since the app started, as an i32 or an i64. `env` is the module that clang's `wasm-ld --allow-undefined` and Emscripten import from by default; there the device has `clock_ms` and the functions of its [C library](#the-c-library), and refuses any other when the module is downloaded. It may also use tail calls (`return_call`). It may not yet import from `fc`: its call has none of an app's handles, events or limits on waits around it.
+Such a module may import `env.clock_ms`, as CoreMark does: the milliseconds since the app started, as an i32 or an i64. `env` is the module that clang's `wasm-ld --allow-undefined` and Emscripten import from by default; there the device has `clock_ms` and the functions of its [C library](#the-c-library), and refuses any other when the module is downloaded. It may also use tail calls (`return_call`). It may not yet import from `fc`: its call has none of an app's events or limits on waits around it. It may import from `arduino`, as [wasm3-arduino's blink](#the-blink-of-wasm3-arduino) does.
 
 [CoreMark](../wasm-apps/coremark/fetch.sh) runs that way, from either published build: wasm3's, 7.7 KB with 64 KB of memory, or wasm-coremark's, 12.5 KB with 128 KB. Neither exports `__heap_base`, so the device holds all their memory, in one block (see below): 64 KB takes 68 KB of ESP-IDF's heap, which rounds a block up to its size class. `run()` runs for at least 10 seconds and returns the score, in iterations per second (0 when the run was not valid); the scores measured are in [RESULTS.md](RESULTS.md#coremark), every run valid (its CRCs right, a timed part of 10 s or more), with the agent connected and metrics sent every 30 s or none:
 
@@ -256,3 +257,20 @@ The model is the C that emlearn writes ([model.h](../wasm-apps/tinyml/model.h)),
 `tests/unit/test_tinyml.c` checks on the host that the C features are those trained on, and that the C model gives the trees' majority vote on 200 test windows and around each threshold. `test_apps.c` runs the `.wasm` under WAMR.
 
 A neural network (emlearn's `eml_net.h`) also needs `expf`, `tanhf` and `logf`, which [the C library](#the-c-library) does not have. Built into the app from musl 1.2.5 they add 0.7, 0.7 and 0.9 KB of `.wasm`, 2.2 KB together, with no import.
+
+- [The blink of wasm3-arduino](../wasm-apps/arduino/fetch.sh), as published, not rebuilt ([below](#the-blink-of-wasm3-arduino)).
+
+### The blink of wasm3-arduino
+
+[wasm3-arduino](https://github.com/wasm3/wasm3-arduino) publishes its blink built four ways, each importing only from a module `arduino`: Rust (283 B), C++ (369 B), AssemblyScript (2.2 KB) and TinyGo (5.2 KB). The device has that module, so they run as published: `wasm-apps/arduino/fetch.sh` downloads them and checks their SHA-256, then `wasm-apps/push.sh arduino rust` pushes one. Give the app `FC_ALLOW: "led0"`.
+
+| Function | On the device |
+|---|---|
+| `pinMode(pin, mode)`, `digitalWrite(pin, value)` | pin n is the n-th name of `FC_ALLOW`, counted from 0: a GPIO opens as `fc_gpio_open` opens it, an LED lights white. One app holds a name at a time, and an output goes back to its safe level when the app stops |
+| `getPinLED()` | the pin of `led0` in `FC_ALLOW` |
+| `delay(ms)` | any length; removing or updating the app stops it within 10 ms |
+| `millis()` | milliseconds since the app started |
+| `print(s, len)` | the app's log, a line at a time, as `printf` |
+| `getGreeting(buf, len)` | `Hello from Flight Control` |
+
+They return nothing, as Arduino's: a pin with no name in `FC_ALLOW`, or written before `pinMode`, is logged once. Each build exports `_start()`, which never returns, so the device runs it once with no instruction budget ([Modules built for no device](#modules-built-for-no-device)): the app is `Running` until it is removed. In an app with `tick()` or `on_event()`, a `delay` counts against the call's second in the device's functions. The C++ and AssemblyScript builds do not export `__heap_base`, so they keep their whole 64 KB of memory; the Rust one shrinks it. Tested on the host and on Zephyr's `native_sim`.

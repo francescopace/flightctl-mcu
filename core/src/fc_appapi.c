@@ -1102,3 +1102,28 @@ NativeSymbol *fc_appapi_natives(int *count)
     *count = (int)(sizeof(s_natives) / sizeof(s_natives[0]));
     return (NativeSymbol *)s_natives;
 }
+
+int32_t fc_appapi_gpio_open(wasm_exec_env_t env, const char *name, int32_t mode)
+{
+    return fc_gpio_open(env, name, (int32_t)strlen(name), mode);
+}
+
+int32_t fc_appapi_gpio_write(wasm_exec_env_t env, int32_t h, int32_t level)
+{
+    return fc_gpio_write(env, h, level);
+}
+
+int32_t fc_appapi_led_open(wasm_exec_env_t env, const char *name)
+{
+    return fc_led_open(env, name, (int32_t)strlen(name));
+}
+
+int32_t fc_appapi_led_rgb(wasm_exec_env_t env, int32_t h, int32_t r, int32_t g, int32_t b)
+{
+    return fc_led_rgb(env, h, r, g, b);
+}
+
+int32_t fc_appapi_close(wasm_exec_env_t env, int32_t h)
+{
+    return fc_close(env, h);
+}

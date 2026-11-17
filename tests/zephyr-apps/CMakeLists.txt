@@ -54,6 +54,7 @@ target_sources(app PRIVATE
     ${PORT}/fc_net_zephyr.c
     ${ROOT}/core/src/fc_log.c
     ${ROOT}/core/src/fc_appapi.c
+    ${ROOT}/core/src/fc_arduino.c
     ${ROOT}/core/src/fc_board.c
     ${ROOT}/core/src/fc_metrics.c
     ${ROOT}/core/src/fc_http.c

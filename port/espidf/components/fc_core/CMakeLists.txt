@@ -11,6 +11,7 @@ idf_component_register(
          ${ROOT}/core/src/fc_oci.c
          ${ROOT}/core/src/fc_apps.c
          ${ROOT}/core/src/fc_appapi.c
+         ${ROOT}/core/src/fc_arduino.c
          ${ROOT}/core/src/fc_board.c
          ${ROOT}/core/src/fc_resources.c
          ${ROOT}/core/src/fc_delta.c

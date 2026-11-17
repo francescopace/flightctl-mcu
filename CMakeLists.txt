@@ -63,6 +63,7 @@ add_library(fc_core STATIC
     core/src/fc_oci.c
     core/src/fc_apps.c
     core/src/fc_appapi.c
+    core/src/fc_arduino.c
     core/src/fc_board.c
     core/src/fc_resources.c
     core/src/fc_prov.c
@@ -111,7 +112,7 @@ if(FC_FUZZ)
     fc_fuzzer(fuzz_oci port/host/fc_port_host.c core/src/fc_log.c ${CJSON} ${DELTA_SRCS})
     fc_fuzzer(fuzz_delta ${DELTA_SRCS})
     fc_fuzzer(fuzz_console port/host/fc_port_host.c core/src/fc_log.c ${CJSON})
-    fc_fuzzer(fuzz_agent core/src/fc_http.c core/src/fc_console.c core/src/fc_identity.c core/src/fc_apps.c core/src/fc_appapi.c core/src/fc_board.c core/src/fc_resources.c core/src/fc_log.c core/src/fc_metrics.c core/src/fc_mqtt.c port/host/fc_port_host.c ${CJSON})
+    fc_fuzzer(fuzz_agent core/src/fc_http.c core/src/fc_console.c core/src/fc_identity.c core/src/fc_apps.c core/src/fc_appapi.c core/src/fc_arduino.c core/src/fc_board.c core/src/fc_resources.c core/src/fc_log.c core/src/fc_metrics.c core/src/fc_mqtt.c port/host/fc_port_host.c ${CJSON})
     target_link_libraries(fuzz_agent PRIVATE vmlib)
 endif()
 
@@ -141,7 +142,7 @@ if(FC_UNIT)
     fc_unit(test_agent core/src/fc_identity.c core/src/fc_http.c core/src/fc_resources.c core/src/fc_metrics.c core/src/fc_mqtt.c third_party/cjson/cJSON.c)
     fc_unit(test_resources third_party/cjson/cJSON.c)
     fc_unit(test_console third_party/cjson/cJSON.c core/src/fc_log.c)
-    fc_unit(test_apps third_party/cjson/cJSON.c core/src/fc_appapi.c core/src/fc_board.c core/src/fc_metrics.c core/src/fc_http.c core/src/fc_mqtt.c)
+    fc_unit(test_apps third_party/cjson/cJSON.c core/src/fc_appapi.c core/src/fc_arduino.c core/src/fc_board.c core/src/fc_metrics.c core/src/fc_http.c core/src/fc_mqtt.c)
     target_link_libraries(test_apps PRIVATE vmlib)
     fc_unit(test_threads third_party/cjson/cJSON.c)
     fc_unit(test_metrics third_party/cjson/cJSON.c)

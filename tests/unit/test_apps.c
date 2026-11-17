@@ -21,6 +21,7 @@
 #include "port_stub.h"
 #include "test.h"
 #include "wasm_vectors.h"
+#include "arduino_vectors.h"
 
 /* An app that sets its state to "v1" (tests/unit/wasm/t_state.c); "v2" is the
  * same module with that string changed (make_v2). */
@@ -87,6 +88,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
         V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_ctorloop), V(t_ctorfc), V(t_mqtt),
+        V(t_arduino), V(t_arduinotick), V(arduino_rust), V(arduino_cpp), V(arduino_assemblyscript), V(arduino_tinygo),
 #undef V
     };
     f_fetches++;
@@ -134,7 +136,7 @@ static int apply(const char *image, char *err, size_t err_len, int *retry)
 static int f_level[64], f_mode[64], f_released[64];
 static void (*f_cb[64])(void *);
 static void *f_ctx[64];
-static int f_led_open, f_led_writes;
+static int f_led_open, f_led_writes, f_led_on_writes, f_led_off_writes;
 static uint8_t f_led[3];
 static int32_t f_temp = 41000;
 static int32_t f_temp_step; /* added to die_temp at each read */
@@ -200,6 +202,7 @@ static int f_led_rgb(const fc_hw_led_t *l, uint8_t r, uint8_t g, uint8_t b)
     f_led[1] = g;
     f_led[2] = b;
     f_led_writes++;
+    *(r || g || b ? &f_led_on_writes : &f_led_off_writes) += 1;
     pthread_mutex_unlock(&f_lock);
     return 0;
 }
@@ -714,6 +717,9 @@ static void test_native_tables_sorted(void)
     check_sorted("fc", fc, (size_t)n_fc);
     check_sorted("env (libc)", s_libc_natives, sizeof(s_libc_natives) / sizeof(s_libc_natives[0]));
     check_sorted("env (raw)", s_env_natives, sizeof(s_env_natives) / sizeof(s_env_natives[0]));
+    int n_ard = 0;
+    const NativeSymbol *ard = fc_arduino_natives(&n_ard);
+    check_sorted("arduino", ard, (size_t)n_ard);
     /* Every function of the allowed list is in the table. */
     for (size_t i = 0; i < sizeof(s_libc) / sizeof(s_libc[0]); i++) {
         int found = 0;
@@ -1501,6 +1507,91 @@ static void test_tinyml(void)
 }
 
 
+static int gpio_level(int pin)
+{
+    pthread_mutex_lock(&f_lock);
+    int v = f_level[pin];
+    pthread_mutex_unlock(&f_lock);
+    return v;
+}
+
+/* The module "arduino" (fc_arduino.c): pins are FC_ALLOW's names (relay1 is
+ * GPIO 5, led0 an LED), a delay longer than one of fc's waits, the greeting,
+ * print to the log, a pin not granted. */
+static void test_arduino(void)
+{
+    char err[160];
+    const char *env = "{\"FC_ENTRY\": \"run\", \"FC_ALLOW\": \"relay1 led0\"}";
+    CHECK_INT(apply_one("a", "reg/t_arduino", env, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("a", "Completed run() returned 63", 30000), "Completed run() returned 63");
+    CHECK(stub_log_has("app a: greeting: Hello from Flight Control"));
+    CHECK(stub_log_has("app a: arduino pin 7: no such name in FC_ALLOW (-3)"));
+    CHECK_INT(gpio_level(5), 0); /* closed when run() returned: relay1's safe level */
+    CHECK(!f_led_open);
+    remove_all();
+    /* Waiting in delay() with relay1 high: removing the app stops it there,
+     * and relay1 goes back to its safe level. */
+    env = "{\"FC_ENTRY\": \"hold\", \"FC_ALLOW\": \"relay1\"}";
+    CHECK_INT(apply_one("a", "reg/t_arduino", env, err, sizeof(err)), 0);
+    for (int i = 0; i < 3000 && gpio_level(5) != 1; i++) {
+        usleep(10 * 1000);
+    }
+    CHECK_INT(gpio_level(5), 1);
+    int64_t t0 = fc_apps_now_ms();
+    remove_all();
+    CHECK(fc_apps_now_ms() - t0 < STOP_MS);
+    CHECK_INT(gpio_level(5), 0);
+    /* In an app with tick(), a delay counts against the call's second in the
+     * device's functions: 150 ms is fine, 1500 stops the app. */
+    CHECK_INT(apply_one("a", "reg/t_arduinotick", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("a", "Running waited 3", 30000), "Running waited 3");
+    const char *want = "Error Exception: a call spent more than 1 s in the device's functions";
+    CHECK_STR(wait_state_of("a", want, 30000), want);
+    remove_all();
+}
+
+/* The blink of wasm3-arduino, its four builds as published: each lights led0
+ * and turns it off again and again, until it is removed. */
+static void test_arduino_blink(void)
+{
+    static const struct {
+        const char *image, *line;
+    } builds[] = {
+        {"reg/arduino_rust", "app b: Rust is running \xf0\x9f\x98\x8e"},
+        {"reg/arduino_cpp", "app b: Greeting: Hello from Flight Control"},
+        {"reg/arduino_assemblyscript", "app b: Greeting: Hello from Flight Control"},
+        {"reg/arduino_tinygo", "app b: Greeting: Hello from Flight Control"},
+    };
+    for (size_t i = 0; i < sizeof(builds) / sizeof(builds[0]); i++) {
+        char err[160];
+        pthread_mutex_lock(&f_lock);
+        f_led_on_writes = f_led_off_writes = 0;
+        pthread_mutex_unlock(&f_lock);
+        CHECK_INT(apply_one("b", builds[i].image, "{\"FC_ALLOW\": \"led0\"}", err, sizeof(err)), 0);
+        int on = 0, off = 0;
+        for (int j = 0; j < 3000 && (on < 2 || off < 2); j++) {
+            usleep(10 * 1000);
+            pthread_mutex_lock(&f_lock);
+            on = f_led_on_writes;
+            off = f_led_off_writes;
+            pthread_mutex_unlock(&f_lock);
+        }
+        if (on < 2 || off < 2) {
+            fprintf(stderr, "  %s: led0 on %d times, off %d (%s)\n", builds[i].image, on, off, state_of("b"));
+            t_failures++;
+        }
+        CHECK_STR(state_of("b"), "Running ");
+        if (!stub_log_has(builds[i].line)) {
+            fprintf(stderr, "  %s: no log line \"%s\"\n", builds[i].image, builds[i].line);
+            t_failures++;
+        }
+        int64_t t0 = fc_apps_now_ms();
+        remove_all();
+        CHECK(fc_apps_now_ms() - t0 < STOP_MS);
+        CHECK(!f_led_open);
+    }
+}
+
 /* A restart: a crash (1) or not (0). */
 static void restart(int crash)
 {
@@ -1918,6 +2009,8 @@ int main(void)
     RUN(test_board_dt);
     RUN(test_example_apps);
     RUN(test_tinyml);
+    RUN(test_arduino);
+    RUN(test_arduino_blink);
     power_cycle(); /* stops the threads; leaves nothing for the leak checker */
     wasm_runtime_destroy();
     return TEST_RESULT();
