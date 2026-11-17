@@ -15,6 +15,7 @@ Where each function was verified:
 | Enrollment | A P-256 key generated on the device, a CSR approved with `flightctl approve`, mTLS with TLS 1.3 | Boards, emulator, CI | [QUICKSTART.md](QUICKSTART.md#5-approve-it) |
 | Automatic approval | Approves devices from an allow list of names or MACs, with their labels | CI | [QUICKSTART.md](QUICKSTART.md#5-approve-it) |
 | Status | The agent API's full status: resources, `customInfo` (heap, RSSI, temperature, traffic); `Unknown` after 5 minutes offline | Boards, emulator, CI | [Label sync](#label-sync) |
+| HTTP/2 | The spec's long-poll and the status share one HTTP/2 connection; firmware and apps are pulled from the registry over HTTP/2 | Boards, emulator, CI. Downloads over HTTP/2: the classic ESP32, C5, C6 and S3 with ESP-IDF. Not yet on a board: a certificate renewal over HTTP/2, Zephyr's downloads over HTTP/2 | [REGISTRY.md](REGISTRY.md#memory), [idle traffic](#idle-traffic) |
 | Resource alerts | CPU, heap and storage checked against the fleet's `spec.resources` rules, as the Linux agent does: `Warning` or `Critical` per resource, `Degraded` or `Error` in the summary | ESP32-C3, CI | [Timings](#timings) |
 | Config | Inline `spec.config` applied without a reboot, after the app validates it (an invalid one is refused, the device OutOfDate with the error); a file the spec drops is removed | Boards, CI | [QUICKSTART.md](QUICKSTART.md#6-give-it-firmware-config-and-an-app), [timings](#timings) |
 | Firmware OTA | `spec.os.image` points to an OCI index with one firmware per chip, written to the other A/B slot and checked with sha256; staged rollouts | Boards, emulator | [QUICKSTART.md](QUICKSTART.md#6-give-it-firmware-config-and-an-app), [timings](#timings) |
@@ -22,7 +23,7 @@ Where each function was verified:
 | Automatic rollback | A new firmware is kept only once the server accepts a status from it; otherwise the device goes back, and the rollout stops at the canary | ESP32-S3 with both ports, C6, emulator | [The way back](#the-way-back-on-the-esp32-s3-both-ports) |
 | Mixed fleets | One fleet and one firmware reference for every chip, with per-device settings from labels | ESP-IDF boards | [DEVICES.md](DEVICES.md) |
 | WASM apps | `spec.applications` with a WASM OCI image, run by WAMR, updated without a reboot; one `.wasm` for Xtensa, RISC-V and Arm | Boards, emulator, CI | [APPS.md](APPS.md) |
-| App interface | Hardware by name (GPIO, I2C, SPI, UART, ADC, PWM, LED), grants, timers, events, config, storage, a small C library | Unit tests, Zephyr's emulated drivers; LED and temperature on the boards. Not yet on a board: GPIO interrupts, wired peripherals | [APPS.md](APPS.md#ports) |
+| App interface | Hardware by name (GPIO, I2C, SPI, UART, ADC, PWM, LED), grants, timers, events, config, storage, a small C library | Unit tests, Zephyr's emulated drivers; LED and temperature on the boards. With nothing wired, I2C, SPI, UART, ADC and PWM open and answer on the classic ESP32, C5, C6 and S3 and the emulated C3 (`hwcheck`). Not yet on a board: GPIO interrupts, wired devices | [APPS.md](APPS.md#ports) |
 | An app's limits | An instruction budget and 1 s in the device's functions per call; 32 KB of heap kept for the agent; a `.wasm` sized to the heap | ESP-IDF boards, emulated C3, unit tests. Not checked on Zephyr yet | [APPS.md](APPS.md#size-and-limits) |
 | Modules built for no device | A module published for any WebAssembly runtime runs unmodified, once | CoreMark on the ESP-IDF boards and the S3 with Zephyr | [APPS.md](APPS.md#modules-built-for-no-device), [CoreMark](#coremark) |
 | Apps that crash the device | An app whose start crashed the firmware twice is not started again; its status says `Error` | Unit tests, emulated C6 | [APPS.md](APPS.md#how-an-app-runs) |
@@ -84,7 +85,7 @@ Internal heap with the `alarm` app running. v3.12 holds one TLS connection at a 
 | ESP32-C3 | v3.13-rc6, an hour after boot | 70 to 75 KB | 2.8 KB, at start-up | 36.0 KB |
 | ESP32-S3, Zephyr | before the app interface | about 50 KB | – | – |
 
-On the C3 the lowest is reached in the first seconds after boot, before any app or export. v3.13 also holds the device's log (4 KB) and sends metrics every 30 s. The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot). The app interface takes about 4.5 KB of static RAM, its C library included: the tables of native functions are const, in flash. The C3 with the `alarm` app uses 1% of its CPU.
+On the C3 the lowest is reached in the first seconds after boot, before any app or export. v3.13 also holds the device's log (4 KB) and sends metrics every 30 s. The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot). The app interface takes about 4.5 KB of static RAM, its C library included. The C library takes 7.7 KB of flash on the C3; the tables of native functions are const, in flash, which took static RAM 1.5 KB down. The C3 with the `alarm` app uses 1% of its CPU.
 
 Internal heap with metrics (v3.13-rc6, an export every 30 s) and with MQTT (v3.14-rc6, the `alarm` app and `mqttdemo`, the broker on the LAN with TLS):
 
@@ -168,7 +169,7 @@ ESP-IDF boards with an early build, unless the row says otherwise:
 
 ### Idle traffic
 
-Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on the wire, TLS included), with the agent's earlier HTTP/1.1 client: two connections kept open, a status at once when something changes and otherwise every 2 minutes, the server's long-poll lasting about 4 minutes. Not measured since HTTP/2 put both on one connection.
+Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on the wire, TLS included), with the agent's earlier HTTP/1.1 client: two connections kept open, a status at once when something changes and otherwise every 2 minutes, the server's long-poll lasting about 4 minutes. Not measured yet since HTTP/2 put both on one connection.
 
 | Device | Total |
 |---|---|
