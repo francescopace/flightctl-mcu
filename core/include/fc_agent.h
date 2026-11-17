@@ -74,8 +74,9 @@ int fc_agent_apps_start(const fc_agent_config_t *cfg);
 void fc_agent_notify_status(void);
 
 /* 1 while the agent has work on hand: a status update due or being sent,
- * or a new spec being applied. An app run once starts when this has stayed
- * 0 for a while (fc_apps.c). 1 before the agent has started. */
+ * a new spec being applied, a metrics export or the handshake of the apps'
+ * broker. An app run once starts when this has stayed 0 for a while
+ * (fc_apps.c). 1 before the agent has started. */
 int fc_agent_busy(void);
 
 #ifdef __cplusplus

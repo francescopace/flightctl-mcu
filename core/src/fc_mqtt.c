@@ -1528,6 +1528,9 @@ static void *mqtt_thread(void *arg)
         pthread_mutex_unlock(&s_lock);
         long free_before = fc_port_heap_free();
         conn_t *c = conn_open(cfg);
+        if (s_hooks.connect_end != NULL) {
+            s_hooks.connect_end();
+        }
         note_stack();
         if (c == NULL) {
             next_try = now_ms() + jitter(backoff);

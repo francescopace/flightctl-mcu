@@ -78,6 +78,9 @@ typedef struct {
     /* 1: a TLS handshake may start now; 0: later (one at a time on a small
      * heap, none during a download). NULL: always. Asked again every second. */
     int (*may_connect)(void);
+    /* After a may_connect that said 1: the connection is up (CONNACK) or
+     * failed. Called on the client's thread with none of its locks held. */
+    void (*connect_end)(void);
 } fc_mqtt_hooks_t;
 
 /* Set before fc_mqtt_configure; the struct is copied. */

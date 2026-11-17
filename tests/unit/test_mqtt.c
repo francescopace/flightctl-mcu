@@ -289,7 +289,7 @@ static void test_tls_extra(void)
 /* ---- a fake broker ------------------------------------------------------------------------ */
 
 static pthread_mutex_t f_lock = PTHREAD_MUTEX_INITIALIZER;
-static int f_fd = -1, f_connects, f_links_up, f_links_down, f_refuse;
+static int f_fd = -1, f_connects, f_links_up, f_links_down, f_refuse, f_ends;
 typedef struct {
     void *owner;
     int sub;
@@ -349,6 +349,16 @@ static void f_on_link(int up)
     } else {
         f_links_down++;
     }
+    pthread_mutex_unlock(&f_lock);
+}
+
+/* The agent's part: a handshake may start; told when it is over. */
+static int f_may_connect(void) { return 1; }
+
+static void f_connect_end(void)
+{
+    pthread_mutex_lock(&f_lock);
+    f_ends++;
     pthread_mutex_unlock(&f_lock);
 }
 
@@ -462,7 +472,8 @@ static void test_client(void)
 {
     stub_reset();
     s_connect_hook = fake_connect;
-    fc_mqtt_hooks_t hooks = {.on_message = f_on_message, .on_link = f_on_link};
+    fc_mqtt_hooks_t hooks = {
+        .on_message = f_on_message, .on_link = f_on_link, .may_connect = f_may_connect, .connect_end = f_connect_end};
     fc_mqtt_set_hooks(&hooks);
     int a, b, c; /* the apps */
 
@@ -494,9 +505,11 @@ static void test_client(void)
                                               0, 1, 'u', 0, 1, 'p'};
     CHECK_INT(n, sizeof(want_conn));
     CHECK(n == sizeof(want_conn) && memcmp(pk, want_conn, n) == 0);
+    CHECK_INT(locked(&f_ends), 0); /* the handshake waits for the CONNACK */
     unsigned char connack[4] = {0x20, 2, 0, 0};
     f_send(connack, sizeof(connack));
     CHECK(wait_for(&f_links_up, 1, 3000));
+    CHECK_INT(locked(&f_ends), 1); /* over before the link is up */
     f_expect_sub(0, "flightctl/dev1/app1/in/#", 1);
     f_expect_sub(0, "flightctl/fleet/f1/app2/cmd", 0);
     fc_mqtt_stats_t st;
@@ -650,6 +663,7 @@ static void test_client(void)
     CHECK(wait_for(&f_links_down, 3, 3000));
     usleep(100000);
     CHECK(stub_log_has("mqtt: broker.test:1883 refused the connection: bad user name or password"));
+    CHECK_INT(locked(&f_ends), 4); /* a failed handshake is over too */
     fc_mqtt_stats(&st);
     CHECK_INT(st.connected, 0);
 

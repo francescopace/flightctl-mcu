@@ -2195,12 +2195,15 @@ void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
 #define FC_MQTT_CONN_COST (12 * 1024)
 #endif
 
-static int (*s_agent_idle)(void);
+static int (*s_agent_idle)(int claim);
+static void (*s_agent_connected)(void);
 static int64_t s_mqtt_heap_logged;
 
+/* The agent is asked twice: first whether it is idle, then, once the heap
+ * has room, to be held for the handshake (claim) until mqtt_connect_end. */
 static int mqtt_may_connect(void)
 {
-    if (s_agent_idle != NULL && !s_agent_idle()) {
+    if (s_agent_idle != NULL && !s_agent_idle(0)) {
         return 0;
     }
     long largest = fc_port_heap_largest(), free_now = fc_port_heap_free();
@@ -2213,7 +2216,14 @@ static int mqtt_may_connect(void)
                     "block of %d KB",
                     free_now, largest, FC_MQTT_CONN_COST / 1024, s_heap_floor / 1024, FC_MQTT_HEAP_MIN / 1024);
     }
-    return room;
+    return room && (s_agent_idle == NULL || s_agent_idle(1));
+}
+
+static void mqtt_connect_end(void)
+{
+    if (s_agent_connected != NULL) {
+        s_agent_connected();
+    }
 }
 
 /* The link came or went: FC_EV_NET to the apps that may use it. */
@@ -2227,9 +2237,13 @@ static void mqtt_on_link(int up)
     }
 }
 
-void fc_apps_mqtt_hooks(int (*agent_idle)(void))
+void fc_apps_mqtt_hooks(int (*agent_idle)(int claim), void (*agent_connected)(void))
 {
     s_agent_idle = agent_idle;
-    fc_mqtt_hooks_t h = {.on_message = fc_appapi_mqtt_message, .on_link = mqtt_on_link, .may_connect = mqtt_may_connect};
+    s_agent_connected = agent_connected;
+    fc_mqtt_hooks_t h = {.on_message = fc_appapi_mqtt_message,
+                         .on_link = mqtt_on_link,
+                         .may_connect = mqtt_may_connect,
+                         .connect_end = mqtt_connect_end};
     fc_mqtt_set_hooks(&h);
 }

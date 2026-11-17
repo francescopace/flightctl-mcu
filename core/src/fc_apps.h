@@ -39,7 +39,9 @@ long fc_apps_stack_unused(void);
 
 /* MQTT for the apps (fc_mqtt.h): sets the client's hooks, so that messages
  * reach the apps' event queues and FC_EV_NET the apps granted "mqtt". The
- * client connects only when agent_idle() says so (no download, no spec being
+ * client connects only when agent_idle(0) says so (no download, no spec being
  * applied, no metrics export) and the heap has room for a TLS handshake and
- * still leaves the agent its floor. Called once, before fc_mqtt_configure. */
-void fc_apps_mqtt_hooks(int (*agent_idle)(void));
+ * still leaves the agent its floor; then agent_idle(1) holds the agent for
+ * the handshake (1) or refuses (0), and agent_connected() releases it once
+ * the handshake is done or failed. Called once, before fc_mqtt_configure. */
+void fc_apps_mqtt_hooks(int (*agent_idle)(int claim), void (*agent_connected)(void));

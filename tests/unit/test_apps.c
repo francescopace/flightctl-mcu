@@ -1147,7 +1147,14 @@ static void b_publish(const char *topic, const char *payload, int qos)
     }
 }
 
-static int mqtt_idle(void) { return 1; }
+/* The agent: idle, and held from a claim to the end of the handshake. */
+static int s_mqtt_claims, s_mqtt_ends;
+static int mqtt_idle(int claim)
+{
+    s_mqtt_claims += claim;
+    return 1;
+}
+static void mqtt_connected(void) { s_mqtt_ends++; }
 
 static void test_fc_mqtt(void)
 {
@@ -1162,7 +1169,7 @@ static void test_fc_mqtt(void)
     snprintf(json, sizeof(json), "{\"broker\": \"mqtt://127.0.0.1:%d\", \"fleetPrefix\": \"fleet/f/{app}/\"}",
              ntohs(sa.sin_port));
     fc_port_write_file(FC_MQTT_CONFIG, json, strlen(json));
-    fc_apps_mqtt_hooks(mqtt_idle);
+    fc_apps_mqtt_hooks(mqtt_idle, mqtt_connected);
     CHECK_INT(fc_mqtt_configure("dev1"), 1);
     b_fd = accept(ls, NULL, NULL);
     CHECK(b_fd >= 0);
@@ -1179,6 +1186,8 @@ static void test_fc_mqtt(void)
         }
         usleep(10 * 1000);
     }
+    CHECK_INT(s_mqtt_claims, 1); /* the agent held for the handshake, */
+    CHECK_INT(s_mqtt_ends, 1);   /* and let go before the link was up */
 
     /* Not granted: FC_EPERM. */
     CHECK_INT(apply_one("n", "reg/t_mqtt", NULL, err, sizeof(err)), 0);

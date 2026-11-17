@@ -196,6 +196,7 @@ typedef struct {
     int mqtt_poke;    /* spec thread: the broker's config or CA changed (fc_mqtt.h) */
     int mqtt_retry;   /* spec thread: the client could not start for want of memory */
     int status_once;  /* under lock: a status was accepted since boot (the agent's TLS is up) */
+    int mqtt_connecting; /* under lock: the broker's handshake runs (claimed in idle_for_mqtt) */
     int console_quiet; /* spec thread: the sessions listed were all seen before */
 } agent_t;
 
@@ -680,8 +681,9 @@ static void request_status(agent_t *a)
 /* One TLS connection at a time (fc_tls_pool.h): a pull from a registry
  * (fc_oci_set_turn, on the spec thread, where no long-poll is running then)
  * takes the turn of the agent's connection. A status on its way, or already
- * asked for ("Downloading"), goes out first, and a metrics export ends; then the connection is closed,
- * and the status thread waits until the pull is over. Pulls nest in a hold
+ * asked for ("Downloading"), goes out first, and a metrics export or the
+ * broker's handshake ends; then the connection is closed, and the status
+ * thread waits until the pull is over. Pulls nest in a hold
  * (turn_hold): the connection opens again when the last of them ends. */
 static void turn_begin(void *ctx)
 {
@@ -693,7 +695,7 @@ static void turn_begin(void *ctx)
         return; /* closed already, for this hold */
     }
     struct timespec until = {.tv_sec = time(NULL) + TURN_WAIT_S};
-    while ((a->putting || a->status_urgent || a->exporting) && time(NULL) < until.tv_sec) {
+    while ((a->putting || a->status_urgent || a->exporting || a->mqtt_connecting) && time(NULL) < until.tv_sec) {
         pthread_cond_timedwait(&a->status_sent, &a->lock, &until);
     }
     a->downloading = 1;
@@ -728,16 +730,18 @@ static void turn_hold(agent_t *a)
     pthread_mutex_unlock(&a->lock);
 }
 
-/* A spec is about to be applied: no export starts from now on (metrics_tick
- * sees `applying`), and one under way ends first. Parsing a spec, writing
- * its files and starting its apps take the heap that an export's TLS
- * connection holds: on a C6, a spec that came during an export left 1 KB. */
+/* A spec is about to be applied: no export and no handshake for the apps'
+ * broker starts from now on (both see `applying`), and one under way ends
+ * first. Parsing a spec, writing its files and starting its apps take the
+ * heap that a TLS handshake holds: on a C6, a spec that came during an
+ * export left 1 KB; on a C3 with v3.14-rc6, the broker's handshake beside
+ * the spec after a reboot left 3 KB. */
 static void apply_begin(agent_t *a)
 {
     pthread_mutex_lock(&a->lock);
     a->applying = 1;
     struct timespec until = {.tv_sec = time(NULL) + TURN_WAIT_S};
-    while (a->exporting && time(NULL) < until.tv_sec) {
+    while ((a->exporting || a->mqtt_connecting) && time(NULL) < until.tv_sec) {
         pthread_cond_timedwait(&a->status_sent, &a->lock, &until);
     }
     pthread_mutex_unlock(&a->lock);
@@ -756,8 +760,10 @@ static agent_t *s_running;
  * broker before the agent's own connection is up (at boot the two together
  * left a C3 with 8 KB of heap), nor while a download has the turn, a spec is
  * applied, an export runs, a status is due or a new firmware is being
- * verified. */
-static int idle_for_mqtt(void)
+ * verified. With `claim`, an idle agent is held for the handshake in the
+ * same breath (mqtt_connecting, until mqtt_connected): a spec, a pull or an
+ * export that comes meanwhile waits for it, instead of starting beside it. */
+static int idle_for_mqtt(int claim)
 {
     agent_t *a = s_running;
     if (a == NULL) {
@@ -766,8 +772,24 @@ static int idle_for_mqtt(void)
     pthread_mutex_lock(&a->lock);
     int busy = !a->status_once || a->downloading || a->turn_depth > 0 || a->applying || a->exporting || a->status_urgent ||
                a->putting || a->verifying || a->decom != DECOM_NONE;
+    if (!busy && claim) {
+        a->mqtt_connecting = 1;
+    }
     pthread_mutex_unlock(&a->lock);
     return !busy;
+}
+
+/* The broker's handshake is over, done or failed: what waits for it goes on. */
+static void mqtt_connected(void)
+{
+    agent_t *a = s_running;
+    if (a == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&a->lock);
+    a->mqtt_connecting = 0;
+    pthread_cond_broadcast(&a->status_sent);
+    pthread_mutex_unlock(&a->lock);
 }
 
 int fc_agent_busy(void)
@@ -780,7 +802,7 @@ int fc_agent_busy(void)
         return 1;
     }
     pthread_mutex_lock(&a->lock);
-    int busy = a->status_urgent || a->status_dirty || a->putting || a->applying || a->exporting;
+    int busy = a->status_urgent || a->status_dirty || a->putting || a->applying || a->exporting || a->mqtt_connecting;
     pthread_mutex_unlock(&a->lock);
     return busy;
 }
@@ -1323,11 +1345,11 @@ static void metrics_tick(agent_t *a)
         return;
     }
     /* Nothing on the network beside a pull (which waits for an export, as
-     * for a status: turn_begin), a firmware being verified, a status due or
-     * a spec being applied. */
+     * for a status: turn_begin), a firmware being verified, a status due, a
+     * spec being applied or the broker's handshake. */
     pthread_mutex_lock(&a->lock);
     int busy = a->downloading || a->turn_depth > 0 || a->verifying || a->status_urgent || a->applying ||
-               a->decom != DECOM_NONE;
+               a->mqtt_connecting || a->decom != DECOM_NONE;
     a->exporting = !busy;
     pthread_mutex_unlock(&a->lock);
     if (!busy && otel_cert(a, now) != 0) {
@@ -2097,7 +2119,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     /* The apps' broker, if the fleet gave one: its thread and its pool
      * before the apps, whose heap check then counts them; it connects once
      * the agent is idle (idle_for_mqtt). */
-    fc_apps_mqtt_hooks(idle_for_mqtt);
+    fc_apps_mqtt_hooks(idle_for_mqtt, mqtt_connected);
     a.mqtt_retry = fc_mqtt_configure(a.id.name) == -2;
 
     /* The spec loop runs on the caller's thread (the main task), which would

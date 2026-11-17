@@ -97,7 +97,7 @@ int fc_apps_check_file(const char *path, const char *data, char *err, size_t err
     return 0;
 }
 
-void fc_apps_mqtt_hooks(int (*agent_idle)(void)) {}
+void fc_apps_mqtt_hooks(int (*agent_idle)(int claim), void (*agent_connected)(void)) {}
 
 static int on_config_file(const char *path, const char *data, size_t len, void *ctx)
 {
@@ -617,6 +617,52 @@ static void a_spec_waits_for_an_export(void)
     CHECK_INT(s_a.applying, 0);
 }
 
+/* The broker's handshake holds the agent from the moment it is allowed: a
+ * spec that comes meanwhile waits for its end, and none starts during a
+ * spec, nor an export during the handshake. */
+static void *handshake_ends_later(void *arg)
+{
+    agent_t *a = arg;
+    usleep(50 * 1000);
+    pthread_mutex_lock(&a->lock);
+    CHECK_INT(a->applying, 1);
+    pthread_mutex_unlock(&a->lock);
+    CHECK_INT(idle_for_mqtt(1), 0); /* no second handshake while applying */
+    mqtt_connected();
+    return NULL;
+}
+
+static void a_spec_waits_for_the_brokers_handshake(void)
+{
+    new_agent();
+    s_running = &s_a;
+    CHECK_INT(idle_for_mqtt(0), 0); /* no status accepted yet */
+    s_a.status_once = 1;
+    CHECK_INT(idle_for_mqtt(0), 1);
+    CHECK_INT(s_a.mqtt_connecting, 0); /* only asked */
+    CHECK_INT(fc_agent_busy(), 0);
+    CHECK_INT(idle_for_mqtt(1), 1);
+    CHECK_INT(s_a.mqtt_connecting, 1);
+    CHECK_INT(fc_agent_busy(), 1);
+    const char *j = "{\"endpoint\": \"telemetry.example.com:443\"}";
+    fc_port_write_file(METRICS_CONFIG, j, strlen(j));
+    metrics_tick(&s_a); /* due, but the handshake runs */
+    CHECK_INT(s_a.exporting, 0);
+    CHECK_STR(s_a.otel_csr_name, "");
+    pthread_t t;
+    pthread_create(&t, NULL, handshake_ends_later, &s_a);
+    time_t t0 = time(NULL);
+    apply_begin(&s_a);
+    CHECK_INT(s_a.mqtt_connecting, 0); /* it waited for mqtt_connected */
+    CHECK(time(NULL) - t0 < 5);
+    pthread_join(t, NULL);
+    apply_end(&s_a);
+    CHECK_INT(idle_for_mqtt(1), 1); /* after the spec */
+    mqtt_connected();
+    fc_port_remove_file(METRICS_CONFIG);
+    s_running = NULL;
+}
+
 static void a_download_takes_the_connections_turn(void)
 {
     new_agent();
@@ -961,6 +1007,7 @@ int main(void)
     RUN(status_requests_are_urgent_or_grouped);
     RUN(a_download_takes_the_connections_turn);
     RUN(a_spec_waits_for_an_export);
+    RUN(a_spec_waits_for_the_brokers_handshake);
     RUN(metrics_and_pulls_take_turns);
     RUN(a_console_alone_is_not_applied_again);
     RUN(counters_are_read_again_only_when_due);
