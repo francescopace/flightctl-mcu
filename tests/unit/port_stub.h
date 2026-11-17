@@ -6,6 +6,10 @@
 extern int stub_reboots;
 extern long stub_stack_unused; /* what fc_port_stack_unused returns; -1 after stub_reset */
 extern long stub_heap_largest; /* fc_port_heap_largest; -1: cannot tell */
+/* What the next stub_heap_largest_queued calls return, in order, before
+ * stub_heap_largest again. */
+extern long stub_heap_largest_next[4];
+extern int stub_heap_largest_queued;
 extern int stub_metrics_reads; /* fc_port_metrics calls; it reports the count as "reads" */
 extern int stub_verbose; /* 1: print the agent's log lines */
 /* OTA and the running image (off unless stub_ota_enabled). */

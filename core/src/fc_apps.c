@@ -55,6 +55,9 @@
 #else
 #define THREAD_STACK    (256 * 1024) /* a host: its threads cannot have less than 16 KB or so */
 #endif
+/* What pthread_create takes beside the stack (ESP-IDF: the task's control
+ * block, ~350 bytes), and the heap's headers. */
+#define THREAD_SLACK    1024
 #define RESTART_DELAY_S 5
 /* A module run once starts when the agent has had nothing on hand for
  * ENTRY_QUIET_MS, at most ENTRY_WAIT_MS after it was started (see
@@ -1393,6 +1396,26 @@ done:
     return NULL;
 }
 
+/* The heap's largest block held while the app's thread is made (app_start),
+ * so that its stack goes elsewhere and the block stays whole for the
+ * instance's memory: taken from it, it left an ESP32-C5 62 KB in one piece
+ * for a 64 KB memory. When no other block has room for the stack, the hold
+ * leaves it room at the block's end: held whole, pthread_create failed
+ * first on the C3, C5 and C6 (ESP-IDF logged "Failed to create task!") and
+ * the thread was only made at the second try, without the hold. NULL: none. */
+static void *hold_but_stack(void)
+{
+    void *hold = fc_heap_hold(0);
+    if (hold != NULL) {
+        long rest = fc_port_heap_largest(); /* the largest block but the one held */
+        if (rest >= 0 && rest < THREAD_STACK + THREAD_SLACK) {
+            free(hold);
+            hold = fc_heap_hold(THREAD_STACK + THREAD_SLACK);
+        }
+    }
+    return hold;
+}
+
 static void app_start(app_t *a)
 {
     if (a->module == NULL) {
@@ -1408,9 +1431,9 @@ static void app_start(app_t *a)
     __atomic_store_n(&a->made, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&a->go, 0, __ATOMIC_RELAXED);
     /* The thread's stack goes around the heap's largest block, kept whole
-     * for the instance's memory (fc_heap_hold.h): taken from it, it left an
-     * ESP32-C5 62 KB in one piece for a 64 KB memory. */
-    void *hold = fc_heap_hold(0);
+     * for the instance's memory (hold_but_stack, fc_heap_hold.h). Made
+     * again without the hold if it still did not fit. */
+    void *hold = hold_but_stack();
     int sized = pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK) == 0;
     a->thread_running = sized && pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
     if (sized && !a->thread_running && hold != NULL) {

@@ -144,6 +144,8 @@ int stub_metrics_reads;
 long stub_stack_unused = -1;
 
 long stub_heap_largest = -1;
+long stub_heap_largest_next[4];
+int stub_heap_largest_queued;
 
 long fc_port_heap_watch(int start)
 {
@@ -152,6 +154,12 @@ long fc_port_heap_watch(int start)
 
 long fc_port_heap_largest(void)
 {
+    if (stub_heap_largest_queued > 0) {
+        long v = stub_heap_largest_next[0];
+        memmove(stub_heap_largest_next, stub_heap_largest_next + 1, sizeof(stub_heap_largest_next) - sizeof(long));
+        stub_heap_largest_queued--;
+        return v;
+    }
     return stub_heap_largest;
 }
 

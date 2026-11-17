@@ -10,6 +10,13 @@
 #include "../../core/src/fc_apps.c"
 
 #include <stdlib.h>
+#ifdef __APPLE__
+#include <malloc/malloc.h>
+#define usable_size malloc_size
+#else
+#include <malloc.h>
+#define usable_size malloc_usable_size
+#endif
 
 #include "port_stub.h"
 #include "test.h"
@@ -1316,6 +1323,39 @@ static void test_load_with_the_largest_block_held(void)
     stub_heap_largest = -1;
 }
 
+/* The app's thread is made with the largest block held, its stack in
+ * another block; when no other block has room for it, the hold leaves it
+ * room at the block's end, so that the first pthread_create does not fail
+ * (ESP-IDF logged it as an error before the second try, without the hold). */
+static void test_hold_leaves_room_for_the_stack(void)
+{
+    const long big = THREAD_STACK + 256 * 1024; /* a host's thread has 256 KB */
+    /* Another block has room: the whole largest block is held. */
+    stub_heap_largest_next[0] = big;
+    stub_heap_largest_next[1] = THREAD_STACK + THREAD_SLACK;
+    stub_heap_largest_queued = 2;
+    void *hold = hold_but_stack();
+    CHECK(hold != NULL);
+    CHECK((long)usable_size(hold) >= big - 1024);
+    free(hold);
+    /* None has: the hold leaves room for the stack and what comes with it. */
+    stub_heap_largest_next[0] = big;
+    stub_heap_largest_next[1] = 4096;
+    stub_heap_largest_next[2] = big;
+    stub_heap_largest_queued = 3;
+    hold = hold_but_stack();
+    CHECK(hold != NULL);
+    CHECK((long)usable_size(hold) <= big - THREAD_STACK - THREAD_SLACK);
+    CHECK((long)usable_size(hold) >= big - THREAD_STACK - THREAD_SLACK - 1024);
+    free(hold);
+    CHECK_INT(stub_heap_largest_queued, 0);
+    /* No block worth holding, or a port that cannot tell: no hold. */
+    stub_heap_largest_next[0] = 16 * 1024;
+    stub_heap_largest_queued = 1;
+    CHECK(hold_but_stack() == NULL);
+    CHECK(hold_but_stack() == NULL); /* stub_heap_largest: -1 */
+}
+
 static void test_remove(void)
 {
     char err[160];
@@ -1360,6 +1400,7 @@ int main(void)
     RUN(test_libc_oob);
     RUN(test_libc_loop);
     RUN(test_libc_mixed);
+    RUN(test_hold_leaves_room_for_the_stack);
     RUN(test_fc_info);
     RUN(test_fc_timer);
     RUN(test_fc_config);
