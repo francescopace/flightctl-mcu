@@ -1,0 +1,2 @@
+# The firmware's options (port/zephyr/Kconfig), which its board files set.
+rsource "../../port/zephyr/Kconfig"

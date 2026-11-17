@@ -78,7 +78,7 @@ Internal heap with the `alarm` app running. v3.12 holds one TLS connection at a 
 
 On the C3 the lowest is reached in the first seconds after boot, before any app or export; v3.13 also holds the device's log (4 KB) and sends metrics every 30 s, with 19 to 20 KB of internal heap left during an export ([METRICS.md](METRICS.md)). The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot), the app interface about 4.5 KB of static RAM, its C library included (the tables of native functions are const, in flash).
 
-With Zephyr on the ESP32-S3, the current build (with the Xtensa backtrace for `lastFatalError`) leaves about 200 bytes of the 372 KB DRAM segment once its static data is linked. That is the margin at link time, not memory free while it runs: the heap is counted apart, above.
+With Zephyr on the ESP32-S3, the current build (with the Xtensa backtrace for `lastFatalError`) with MQTT and floating point in `printf` (5.4 KB of code, no RAM), leaves 4,112 bytes of the 372 KB DRAM segment once its static data is linked: 16 before the status thread's stack went from 16 KB to the core's 12 KB, taken from the kernel heap, which shrank by as much (on the board the thread had used 4.7 KB of its 16, the spec loop 5.4 of its 16 KB, the `alarm` app's thread 3 KB of its 8). That is the margin at link time, not memory free while it runs: the heap is counted apart, above.
 
 Stack used at most, of the stack each has (customInfo `stackMinFreeBytes`; here a KB is 1,024 bytes):
 

@@ -71,7 +71,7 @@ The names apps open are the devicetree's: the children of a node with compatible
 
 A GPIO's active level becomes the board map's `active_low`. The fleet's `/etc/fc/board.json` may give a node another name (`{"gpio": {"pump": {"dt": "relay1"}}}`); it may not name pins, and a node the devicetree lacks is refused. The console's UART is never offered, and RS-485 (`de-gpios`) is not there yet. Zephyr's I2C and SPI calls take no timeout, so a transfer lasts as long as the driver makes it; an SPI device waiting for another app's to let go of the bus gives up after 100 ms, as on ESP-IDF.
 
-None of the boards here names any yet: the ESP32-S3 build, at 99.6% of its data region, has no room for the drivers until something else gives way. [`tests/zephyr-hw`](../tests/zephyr-hw) runs it all on `native_sim`'s emulated drivers (GPIO, ADC, a fake PWM, I2C with an AT24 EEPROM, SPI with a loopback device, UART wired back to itself), in CI: `tests/zephyr-hw.sh`. Not yet on a board.
+None of the boards here names any yet: the ESP32-S3 build, with 4 KB of its data region free, has little room for the drivers until something else gives way. [`tests/zephyr-hw`](../tests/zephyr-hw) runs it all on `native_sim`'s emulated drivers (GPIO, ADC, a fake PWM, I2C with an AT24 EEPROM, SPI with a loopback device, UART wired back to itself), in CI: `tests/zephyr-hw.sh`. Not yet on a board.
 
 ## Zephyr 4.5
 
@@ -170,7 +170,7 @@ Tried on the board, against Flight Control 1.4.0:
 
 What it took, beyond the board's two files in `port/zephyr/boards/`:
 
-- **Memory by hand.** Zephyr gives the first core 372 KB for data. The kernel heap is the larger of what the application asks and what the drivers add: the WiFi driver's 51 KB are not added to a size that is set, and with 64 KB there were 28 KB left for thread stacks. It is 96 KB now, the C heap 119 KB (4 KB of it went to the PSRAM driver), the status thread's stack 16 KB, the main thread's, where the spec loop runs, 16 KB: 98% of the region.
+- **Memory by hand.** Zephyr gives the first core 372 KB for data. The kernel heap is the larger of what the application asks and what the drivers add: the WiFi driver's 51 KB are not added to a size that is set, and with 64 KB there were 28 KB left for thread stacks. It is 92 KB now, the C heap 114 KB (4 KB went to the PSRAM driver, 5 KB to the device's log), the status thread's stack 12 KB (it used 4.7 KB of 16 on the board), the main thread's, where the spec loop runs, 16 KB (5.4 KB used): 99% of the region, 4 KB left.
 - **PSRAM for apps.** The N8R8's 8 MB of octal PSRAM is a heap of its own (`CONFIG_ESP_SPIRAM`, `CONFIG_SPIRAM_MODE_OCT`, its size in the overlay); WASM apps' memories of 16 KB or more come from it, through WAMR's `set_exec_mem_alloc_func` (`port/zephyr/fc_heap_zephyr.c`), the rest of the firmware keeps internal RAM. Its driver takes 4 KB of that, from the C heap. CoreMark, which did not fit before, runs there ([RESULTS.md](RESULTS.md#coremark)).
 - **The WiFi driver joins after the request returns**, and chooses the access point itself (`CONFIG_ESP32_WIFI_STA_SCAN_ALL`: the strongest).
 - **A kept connection the server closed** is `ENOTCONN` to Zephyr's TCP, not a reset: the port took it for an error and warned at every request, before the core opened another connection as it should.

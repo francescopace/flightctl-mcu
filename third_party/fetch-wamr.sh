@@ -36,6 +36,12 @@
 #   there found no app). wasm_runtime_set_instantiation_hook() is called with
 #   that exec env before and after, so the firmware runs it as a call of the
 #   app. The interpreter only; this firmware builds no AOT.
+#   wamr-thumb-stack-align.patch: invokeNative for Cortex-M without a
+#   floating-point unit (mps2/an385 in QEMU) aligned the stack to 8 bytes,
+#   then took 4 more for a native function with arguments on the stack (five
+#   or more): the function ran with the stack 4 bytes off what C requires.
+#   An app's snprintf (five arguments) then gave a double to the C library's
+#   own snprintf from the wrong place, and %f printed nonsense.
 # None is in upstream as of WAMR 2.4.5 and main.
 set -euo pipefail
 WAMR_TAG="${WAMR_TAG:-WAMR-2.4.5}"

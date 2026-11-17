@@ -1,0 +1,14 @@
+diff --git a/core/iwasm/common/arch/invokeNative_thumb.s b/core/iwasm/common/arch/invokeNative_thumb.s
+index 3669fe7..8bec200 100644
+--- a/core/iwasm/common/arch/invokeNative_thumb.s
++++ b/core/iwasm/common/arch/invokeNative_thumb.s
+@@ -59,8 +59,7 @@ _invokeNative:
+         lsl     r6, r5, #2      /* r6 = argc * 4 */
+         mov     r7, #7
+         add     r6, r6, r7      /* r6 = (r6 + 7) & ~7 */
+-        bic     r6, r6, r7
+-        add     r6, r6, #4      /* +4 because odd(5) registers are in stack */
++        bic     r6, r6, r7      /* sp is 8 byte aligned already (above) */
+         mov     r7, sp
+         sub     r7, r7, r6      /* reserved stack space for left arguments */
+         mov     sp, r7

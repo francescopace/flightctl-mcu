@@ -143,6 +143,9 @@ jobs:
       # The port's hardware for apps on native_sim's emulated drivers.
       - name: app hardware (GPIO, ADC, PWM, I2C, SPI, UART)
         run: tests/zephyr-hw.sh
+      # The apps' C library with Zephyr's picolibc.
+      - name: apps' C library
+        run: tests/zephyr-apps.sh
       - uses: actions/upload-artifact@v7
         with:
           name: zephyr-native-sim
@@ -169,6 +172,12 @@ jobs:
       - run: ZEPHYR_SDK_TOOLCHAINS=arm-zephyr-eabi third_party/fetch-zephyr-sdk.sh
       - name: build
         run: BOARD=mps2/an385 port/zephyr/build.sh
+      # The apps' C library on the Cortex-M3, in QEMU: %f through WAMR's
+      # invokeNative for Thumb, and the stack of the app's 8 KB thread.
+      - name: apps' C library
+        run: |
+          apt-get update && apt-get install -y qemu-system-arm
+          BOARD=mps2/an385 tests/zephyr-apps.sh
       - uses: actions/upload-artifact@v7
         with:
           name: zephyr-mps2-an385
