@@ -120,7 +120,7 @@ Installing an app or downloading firmware takes about twice the stack of polling
 
 ### CoreMark
 
-[CoreMark](https://github.com/eembc/coremark) 1.0 from its two published WebAssembly builds, unmodified ([APPS.md](APPS.md#modules-built-for-no-device)), run by WAMR's fast interpreter with its instruction count on. ESP-IDF v3.13, with metrics sent every 30 s or none (v3.12 where marked): the firmware built for size (`-Os`), WAMR at `-O2`. Iterations per second; every run valid (CRCs right, a timed part of 10 s or more), with the agent connected. In brackets, the same with the firmware built for speed (`-O2`, v3.10):
+Iterations per second of [CoreMark](https://github.com/eembc/coremark) 1.0's two published WebAssembly builds, unmodified, on WAMR's fast interpreter ([APPS.md](APPS.md#modules-built-for-no-device)). ESP-IDF v3.13 built for size unless marked; in brackets, v3.10 built for speed (`-O2`):
 
 | Board | wasm3's build (64 KB of memory) | wasm-coremark's build (128 KB) | Native, one core (Espressif) |
 |---|---|---|---|
@@ -134,24 +134,31 @@ Installing an app or downloading firmware takes about twice the stack of polling
 | ESP32-S3 with Zephyr, no PSRAM | does not fit (z25): the C heap (123 KB) has no block for the module and 64 KB | – | |
 | ESP32-S3 N8R8 with Zephyr | 17.83–17.84, in PSRAM (z26) | 21.69–21.70, in PSRAM (z26); with z24 and z25 the 12.5 KB module did not load, the C heap out of memory | about 614 |
 
-The interpreter is about 30 times slower than native code; the instruction count, which lets any app be stopped, is part of that. WAMR's AOT mode should come to about 3 times slower than native, but an app would then be published once per architecture (Xtensa, RISC-V) instead of as one module for every device; not measured. At 240 MHz, CoreMark runs 2.2 times faster on the classic ESP32 than with ESP-IDF's debug default at 160 MHz.
+| | |
+|---|---|
+| Against native code | about 30 times slower, the instruction count included; WAMR's AOT mode should be about 3 times slower, with one module per architecture instead of one for every device; not measured |
+| Firmware built for size, WAMR still at `-O2` | about 5% slower on the S3, 7% on the classic ESP32; on v3.10 the C5 and C6 lost nothing (22.3 and 12.2 either way) |
+| Classic ESP32 at 240 MHz | 2.2 times faster than at ESP-IDF's debug default of 160 MHz |
+| Block needed for the memory | one free block of 68 KB for 64 KB, of 136 KB for 128 KB |
+| ESP32-S3 with PSRAM | an app's memory goes to PSRAM when no internal block is large enough: the `esp32s3` image for quad PSRAM or none, `esp32s3-r8` for octal ([DEVICES.md](DEVICES.md)) |
+| Zephyr on the S3 N8R8 | the octal PSRAM is a heap of its own for app memories of 16 KB or more; its driver takes 4 KB of internal RAM |
 
-Building the firmware for size, with WAMR still at `-O2`, costs CoreMark about 5% on the S3 and 7% on the classic ESP32. On v3.10 the C5 and C6 lost nothing (22.3 and 12.2 either way). Results move a little between releases and between runs of the same image:
+By release, wasm3's build:
 
 | Release | Classic ESP32 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-S3 N4R2 |
 |---|---|---|---|---|---|
-| v3.12 | 14.12–14.27 | | about 19.7 or about 22.3 from one run to the next, once 14.8 (not explained yet) | 11.45–11.98 | |
-| v3.13 | 14.19 | 14.46 | 19.46 (one run) | wasm3's build 11.81–11.98 (four runs), wasm-coremark's 13.24 and 13.71 | 17.63–18.08 |
-| v3.14-rc4, one run of wasm3's build | 14.22 | 14.27 | 19.65 | 11.75 | 17.56 |
+| v3.12 | 14.12–14.27 | | about 19.7 or about 22.3 from one run to the next, once 14.8, not explained yet | 11.45–11.98 | |
+| v3.13 | 14.19 | 14.46 | 19.46, one run | 11.81–11.98, four runs; wasm-coremark's build 13.24 and 13.71 | 17.63–18.08 |
+| v3.14-rc4, one run | 14.22 | 14.27 | 19.65 | 11.75 | 17.56 |
 
-The linear memory needs one free block of its size, rounded up by the heap: 64 KB takes a block of 68 KB, 128 KB one of 136 KB. Whether that block is there depends on how broken up the heap is:
+Whether the 68 KB block is there depends on how broken up the heap is:
 
-- **v3.12**, 3 installs (from the `alarm` app) and 4 swaps (CoreMark replaced by itself, without a restart) per board: one try failed on the classic ESP32 (a swap, largest free block 48 KB) and one on the C5 (an install, 64 KB). The C6 and the S3 passed every one, and again with v3.13.
-- **v3.13**: the 64 KB block was there once in two tries on the classic ESP32 (else 64 KB the largest of 138 KB free) and on the C5 (else 44 KB). On the C3 it was there once in five, right after a restart (else 48 to 50 KB the largest of 50 to 87 KB free, 22 KB after a swap). Without metrics (`metrics.json` with no endpoint, from a restart) the ESP32 and the C3 failed alike, so the exports do not break the heap up.
-- **v3.14-rc4**, with the 32 KB the agent keeps for itself ([APPS.md](APPS.md#size-and-limits)): CoreMark (a 7.7 KB `.wasm`, 64 KB of memory) was taken and run on the classic ESP32, C3, C5, C6 and S3. Its instance left 85 to 96 KB of internal heap (52 KB on the S3), and no TLS handshake failed. Right after a swap from another app the block was not there on the ESP32, the C3 and the C5 (largest free block 28 to 44 KB); after a restart CoreMark started on each.
-- **Low points**: on the C3, with CoreMark's memory taken, one of the agent's TLS handshakes failed for want of memory (`PSA_ERROR_INSUFFICIENT_MEMORY`), and after a swap that failed the heap's lowest since the restart was 108 bytes. On the classic ESP32 the 64 KB build runs from internal RAM, and the heap went down to 2.3 KB at the lowest while the agent kept reporting.
-
-The S3 puts an app's memory in PSRAM when no internal block is large enough, with two images: `esp32s3` for quad PSRAM (and boards with none) and `esp32s3-r8` for octal ([DEVICES.md](DEVICES.md)). With Zephyr the N8R8's octal PSRAM is a heap of its own, from which WASM apps' memories of 16 KB or more come (`port/zephyr/fc_heap_zephyr.c`); its driver takes 4 KB of internal RAM.
+| Release | The 64 KB build installed, or swapped for itself without a restart |
+|---|---|
+| v3.12 | 3 installs from the `alarm` app and 4 swaps per board: one swap failed on the classic ESP32 (largest free block 48 KB), one install on the C5 (64 KB); the C6 and the S3 passed every one, and again with v3.13 |
+| v3.13 | there once in two tries on the classic ESP32 (else 64 KB the largest of 138 KB free) and on the C5 (else 44 KB); once in five on the C3, right after a restart (else 48 to 50 KB of 50 to 87 KB free, 22 KB after a swap); the same without metrics |
+| v3.14-rc4, with the 32 KB kept for the agent | taken and run (a 7.7 KB `.wasm`) on the classic ESP32, C3, C5, C6 and S3, its instance leaving 85 to 96 KB of internal heap (52 KB on the S3), no TLS handshake failed; right after a swap from another app missing on the ESP32, C3 and C5 (largest 28 to 44 KB), there after a restart |
+| Lowest heap seen | 2.3 KB on the classic ESP32, the agent still reporting; 108 bytes on the C3 after a failed swap, where one TLS handshake failed (`PSA_ERROR_INSUFFICIENT_MEMORY`) |
 
 ### Timings
 
