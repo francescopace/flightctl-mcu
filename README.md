@@ -131,6 +131,7 @@ The requirements in full, the boards tried and how to add a chip, a board or an 
 | [METRICS.md](docs/METRICS.md) | Metrics to the Telemetry Gateway (OpenTelemetry) |
 | [TESTING.md](docs/TESTING.md) | Unit tests, fuzzing, end-to-end tests, what CI runs |
 | [RESULTS.md](docs/RESULTS.md) | What was verified and where, measurements, gaps in Flight Control |
+| [UPSTREAM.md](docs/UPSTREAM.md) | The gaps in Flight Control in detail, with proposals |
 | [ROADMAP.md](docs/ROADMAP.md) | What comes next |
 | [COMPARISON.md](docs/COMPARISON.md) | Against Golioth, Memfault, Mender, AWS, Azure, hawkBit and LwM2M |
 | [DEPENDENCIES.md](docs/DEPENDENCIES.md) | Versions, where each is set, licenses |
