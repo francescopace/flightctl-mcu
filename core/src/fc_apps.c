@@ -1292,6 +1292,47 @@ static int run_entry(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env, con
     return 1;
 }
 
+/* Code the module runs as it is instantiated (a start section,
+ * __wasm_call_ctors: C++ constructors, TinyGo), which WAMR runs in an exec
+ * env of its own before wasm_runtime_instantiate returns: run as a call of
+ * the app, with its context (an fc call is the app's), its instruction
+ * budget and its limit in the device's functions, and stopped by app_stop.
+ * Before, it had none of these: a loop there was never stopped, and the
+ * app could be neither updated nor removed (third_party/patches/
+ * wamr-instantiation-hook.patch). */
+static void instantiation_hook(wasm_exec_env_t env, bool begin)
+{
+    wasm_module_t m = wasm_runtime_get_module(wasm_runtime_get_module_inst(env));
+    app_t *a = NULL;
+    for (int i = 0; i < MAX_APPS && a == NULL; i++) {
+        a = s_apps[i].used && s_apps[i].module == m ? &s_apps[i] : NULL; /* each app has its own module */
+    }
+    if (a == NULL || !pthread_equal(pthread_self(), a->thread)) {
+        return;
+    }
+    if (begin) {
+        wasm_runtime_set_user_data(env, a);
+        fc_appapi_load_config(a);
+#if WASM_ENABLE_INSTRUCTION_METERING
+        int budget = s_call_budget;
+#else
+        int budget = -1;
+#endif
+        a->call_start_ms = fc_apps_now_ms();
+        a->native_us = 0;
+        a->unlimited = 0;
+        if (!arm_call(a, env, budget)) {
+#if WASM_ENABLE_INSTRUCTION_METERING
+            wasm_runtime_set_instruction_count_limit(env, 0); /* stopping: at once */
+#endif
+        }
+        return;
+    }
+    disarm_call(a);
+    out_flush(a);
+    fc_appapi_end_call(a);
+}
+
 /* The app's instance, or NULL with the reason in ebuf. One whose memory
  * would leave the agent less than s_heap_floor is not kept (*short_of_heap
  * set). */
@@ -1299,9 +1340,13 @@ static wasm_module_inst_t instantiate(app_t *a, char *ebuf, size_t elen, int *sh
 {
     *short_of_heap = 0;
     wasm_module_inst_t inst = wasm_runtime_instantiate(a->module, WASM_STACK, 0, ebuf, (uint32_t)elen);
+    if (inst == NULL) {
+        fc_appapi_close_all(a); /* what code run as it was instantiated opened */
+    }
     long left = inst != NULL ? fc_port_heap_free() : -1;
     if (left >= 0 && left < s_heap_floor) {
         wasm_runtime_deinstantiate(inst);
+        fc_appapi_close_all(a);
         snprintf(ebuf, elen, "its memory would leave the agent %ld KB of heap, less than the %ld KB it needs", left / 1024,
                  s_heap_floor / 1024);
         *short_of_heap = 1;
@@ -1659,6 +1704,7 @@ int fc_apps_init(void)
     int n_fc = 0;
     NativeSymbol *fc = fc_appapi_natives(&n_fc);
     wasm_runtime_register_natives("fc", fc, (uint32_t)n_fc);
+    wasm_runtime_set_instantiation_hook(instantiation_hook);
     wasm_runtime_register_natives_raw("env", (NativeSymbol *)s_env_natives,
                                       sizeof(s_env_natives) / sizeof(s_env_natives[0]));
     libc_init();

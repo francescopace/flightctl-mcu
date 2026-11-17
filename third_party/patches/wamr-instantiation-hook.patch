@@ -1,0 +1,92 @@
+diff --git a/core/iwasm/common/wasm_runtime_common.c b/core/iwasm/common/wasm_runtime_common.c
+index 943b46f..c399db3 100644
+--- a/core/iwasm/common/wasm_runtime_common.c
++++ b/core/iwasm/common/wasm_runtime_common.c
+@@ -2350,6 +2350,21 @@ wasm_runtime_set_instruction_count_limit(WASMExecEnv *exec_env,
+ }
+ #endif
+ 
++static wasm_instantiation_hook_t instantiation_hook;
++
++void
++wasm_runtime_set_instantiation_hook(wasm_instantiation_hook_t hook)
++{
++    instantiation_hook = hook;
++}
++
++void
++wasm_runtime_call_instantiation_hook(WASMExecEnv *exec_env, bool begin)
++{
++    if (instantiation_hook)
++        instantiation_hook(exec_env, begin);
++}
++
+ WASMFuncType *
+ wasm_runtime_get_function_type(const WASMFunctionInstanceCommon *function,
+                                uint32 module_type)
+diff --git a/core/iwasm/common/wasm_runtime_common.h b/core/iwasm/common/wasm_runtime_common.h
+index 324620b..2c25410 100644
+--- a/core/iwasm/common/wasm_runtime_common.h
++++ b/core/iwasm/common/wasm_runtime_common.h
+@@ -836,6 +836,14 @@ wasm_runtime_set_instruction_count_limit(WASMExecEnv *exec_env,
+                                          int instructions_to_execute);
+ #endif
+ 
++/* See wasm_export.h for description */
++WASM_RUNTIME_API_EXTERN void
++wasm_runtime_set_instantiation_hook(wasm_instantiation_hook_t hook);
++
++/* Calls the instantiation hook, if one is set. */
++void
++wasm_runtime_call_instantiation_hook(WASMExecEnv *exec_env, bool begin);
++
+ #if WASM_CONFIGURABLE_BOUNDS_CHECKS != 0
+ /* See wasm_export.h for description */
+ WASM_RUNTIME_API_EXTERN
+diff --git a/core/iwasm/include/wasm_export.h b/core/iwasm/include/wasm_export.h
+index 81efb8f..d468fdc 100644
+--- a/core/iwasm/include/wasm_export.h
++++ b/core/iwasm/include/wasm_export.h
+@@ -1876,6 +1876,21 @@ WASM_RUNTIME_API_EXTERN void
+ wasm_runtime_set_instruction_count_limit(wasm_exec_env_t exec_env,
+                                          int instruction_count);
+ 
++/**
++ * Called on the thread that instantiates a module, around the code the
++ * module runs as it is instantiated (its start function, __post_instantiate,
++ * __wasm_call_ctors), with the exec env that code runs in: begin is true
++ * before it runs and false after. The embedder can give that exec env its
++ * user data and an instruction count limit, as for a call of its own.
++ *
++ * @param hook the function, NULL for none
++ */
++typedef void (*wasm_instantiation_hook_t)(wasm_exec_env_t exec_env,
++                                          bool begin);
++
++WASM_RUNTIME_API_EXTERN void
++wasm_runtime_set_instantiation_hook(wasm_instantiation_hook_t hook);
++
+ /**
+  * Dump runtime memory consumption, including:
+  *     Exec env memory consumption
+diff --git a/core/iwasm/interpreter/wasm_runtime.c b/core/iwasm/interpreter/wasm_runtime.c
+index b4aa483..6031b40 100644
+--- a/core/iwasm/interpreter/wasm_runtime.c
++++ b/core/iwasm/interpreter/wasm_runtime.c
+@@ -1738,6 +1738,8 @@ execute_post_instantiate_functions(WASMModuleInstance *module_inst,
+         }
+     }
+ 
++    wasm_runtime_call_instantiation_hook(exec_env, true);
++
+     /* Execute start function for both main instance and sub instance */
+     if (start_func && !wasm_call_function(exec_env, start_func, 0, NULL)) {
+         goto fail;
+@@ -1765,6 +1767,7 @@ execute_post_instantiate_functions(WASMModuleInstance *module_inst,
+     ret = true;
+ 
+ fail:
++    wasm_runtime_call_instantiation_hook(exec_env, false);
+     if (is_sub_inst) {
+         /* Restore the parent exec_env's module inst */
+         wasm_exec_env_restore_module_inst(exec_env_main, module_inst_main);

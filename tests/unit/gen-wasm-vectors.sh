@@ -25,6 +25,8 @@ for src in "$ROOT"/tests/unit/wasm/*.c; do
         build "$name" "$src" "$SDK" -mtail-call
     elif [[ "$name" == t_libc || "$name" == t_libcloop || "$name" == t_libcmix ]]; then
         build "$name" "$src" "$SDK" -I"$SDK/libc" -Wl,--allow-undefined-file="$SDK/libc/libc.syms"
+    elif [[ "$name" == t_ctor* ]]; then
+        build "$name" "$src" "$SDK" -Wl,--export=__wasm_call_ctors
     elif [[ "$name" == t_libcoob ]]; then
         for c in 1 2 3 4 5; do
             build "${name}_$c" "$src" "$SDK" -I"$SDK/libc" -Wl,--allow-undefined-file="$SDK/libc/libc.syms" -DCASE=$c

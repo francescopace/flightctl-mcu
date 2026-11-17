@@ -27,6 +27,20 @@
 #define s_v1 w_t_state
 static unsigned char s_v2[sizeof(s_v1)];
 
+/* A module whose start section loops forever, and that exports tick(): clang
+ * does not write a start section, so by hand:
+ *   (module (type (func)) (func $s (loop (br 0))) (func $t)
+ *           (export "tick" (func $t)) (start $s)) */
+static const unsigned char s_startloop[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,                   /* magic, version */
+    0x01, 0x04, 0x01, 0x60, 0x00, 0x00,                               /* type: () -> () */
+    0x03, 0x03, 0x02, 0x00, 0x00,                                     /* two functions of it */
+    0x07, 0x08, 0x01, 0x04, 't', 'i', 'c', 'k', 0x00, 0x01,           /* export "tick": 1 */
+    0x08, 0x01, 0x00,                                                 /* start: 0 */
+    0x0a, 0x0c, 0x02, 0x07, 0x00, 0x03, 0x40, 0x0c, 0x00, 0x0b, 0x0b, /* code: loop br 0 */
+    0x02, 0x00, 0x0b,                                                 /*       and an empty one */
+};
+
 static void make_v2(void)
 {
     memcpy(s_v2, s_v1, sizeof(s_v1));
@@ -62,11 +76,12 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/app:v2", s_v2, sizeof(s_v2)},
         {"reg/app:bad", junk, sizeof(junk)},
         {"reg/app:loop", w_loop, sizeof(w_loop)},
+        {"reg/t_startloop", s_startloop, sizeof(s_startloop)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
-        V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix),
+        V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_ctorloop), V(t_ctorfc),
 #undef V
     };
     f_fetches++;
@@ -1385,6 +1400,37 @@ static void test_heap_floor(void)
     remove_all();
 }
 
+/* Code the module runs as it is instantiated, before any call of the app:
+ * a start section, or C constructors (__wasm_call_ctors). It runs within the
+ * instruction budget, so a loop there is stopped as one in tick() is, and
+ * the app can be removed; and in the app's context, so an fc call from there
+ * is the app's. */
+static void test_instantiation_code(void)
+{
+    static const char *const loops[] = {"reg/t_startloop", "reg/t_ctorloop"};
+    char err[160];
+    s_call_budget = 2000000;
+    for (size_t i = 0; i < sizeof(loops) / sizeof(loops[0]); i++) {
+        if (apply_one("c", loops[i], NULL, err, sizeof(err)) != 0) {
+            fprintf(stderr, "%s: %s\n", loops[i], err);
+            CHECK(0);
+        }
+        const char *want = "Error WASM module instantiate failed: Exception: instruction limit exceeded";
+        if (strcmp(wait_state_of("c", want, 5000), want) != 0) {
+            fprintf(stderr, "%s: %s\n", loops[i], state_of("c"));
+        }
+        CHECK_STR(state_of("c"), want);
+        int64_t t0 = fc_apps_now_ms();
+        remove_all(); /* while it restarts, or loops again */
+        CHECK(fc_apps_now_ms() - t0 < 3000);
+        CHECK_STR(state_of("c"), "none");
+    }
+    s_call_budget = FC_APP_CALL_BUDGET;
+    CHECK_INT(apply_one("c", "reg/t_ctorfc", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("c", "Running from ctor", 3000), "Running from ctor");
+    remove_all();
+}
+
 static void test_remove(void)
 {
     char err[160];
@@ -1431,6 +1477,7 @@ int main(void)
     RUN(test_libc_mixed);
     RUN(test_hold_leaves_room_for_the_stack);
     RUN(test_heap_floor);
+    RUN(test_instantiation_code);
     RUN(test_fc_info);
     RUN(test_fc_timer);
     RUN(test_fc_config);

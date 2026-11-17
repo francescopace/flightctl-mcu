@@ -28,6 +28,14 @@
 #   this firmware does not build): where the image found no PSRAM, no app
 #   could start. Now only with AOT; the interpreter's memory comes from
 #   internal RAM first, PSRAM when no internal block is large enough.
+#   wamr-instantiation-hook.patch: the code a module runs as it is
+#   instantiated (its start function, __post_instantiate, __wasm_call_ctors)
+#   ran in an exec env WAMR made for it, which the embedder never saw: with
+#   no instruction limit (a loop there was never stopped, and the app could
+#   be neither updated nor removed) and no user data (a native called from
+#   there found no app). wasm_runtime_set_instantiation_hook() is called with
+#   that exec env before and after, so the firmware runs it as a call of the
+#   app. The interpreter only; this firmware builds no AOT.
 # None is in upstream as of WAMR 2.4.5 and main.
 set -euo pipefail
 WAMR_TAG="${WAMR_TAG:-WAMR-2.4.5}"
