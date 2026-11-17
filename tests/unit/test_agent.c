@@ -97,6 +97,8 @@ int fc_apps_check_file(const char *path, const char *data, char *err, size_t err
     return 0;
 }
 
+void fc_apps_mqtt_hooks(int (*agent_idle)(void)) {}
+
 static int on_config_file(const char *path, const char *data, size_t len, void *ctx)
 {
     return len > 0 && data[0] == '!' ? -1 : 0; /* "!..." means invalid */

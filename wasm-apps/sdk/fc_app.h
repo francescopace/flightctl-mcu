@@ -3,8 +3,8 @@
  *
  * docs/APPS.md says how to write an app and what each port has. Until the
  * v1.0.0 tag this interface can still change; from then on, functions are
- * only added within version 1. MQTT is not in the firmware yet: it returns
- * FC_ENOTSUP once granted. The buses, ADC
+ * only added within version 1. MQTT is in the firmware from v3.14 (an
+ * older one returns FC_ENOTSUP once it is granted). The buses, ADC
  * and PWM are on ESP-IDF, on Zephyr from the devicetree, and simulated on the
  * host.
  *
@@ -307,9 +307,15 @@ FC_IMPORT("metric") int32_t fc_metric(const char *name, int32_t nlen, int32_t ki
  * FC_MQTT_MAX_TOPIC characters and payloads FC_MQTT_MAX_PAYLOAD bytes, both
  * ways: a longer message received is dropped and counted in the device log.
  * Publishing while disconnected returns FC_EAGAIN; FC_EV_NET says when the link
- * comes and goes. fc_mqtt_subscribe returns a handle, closed with fc_close. A
+ * comes and goes, and comes once as the app starts if the link is up already.
+ * Publishing returns once the message is written (QoS 1 is not sent again if
+ * the link drops before the broker acknowledges it). fc_mqtt_subscribe returns
+ * a handle, closed with fc_close; it is taken while disconnected too. A
  * message on a subscription raises FC_EV_MQTT with that handle; during that
- * call, fc_event_data gives the payload and fc_mqtt_topic the relative topic. */
+ * call, fc_event_data gives the payload and fc_mqtt_topic the relative topic,
+ * both FC_ENOSPC with nothing written if cap is too small, FC_ENOENT outside
+ * an FC_EV_MQTT. A message that does not fit the device's shared buffer for
+ * received messages, or a full event queue, is dropped. */
 #define FC_MQTT_DEVICE      0
 #define FC_MQTT_FLEET       1
 #define FC_MQTT_MAX_TOPIC   64

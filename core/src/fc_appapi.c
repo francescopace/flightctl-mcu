@@ -1,9 +1,6 @@
 /*
  * The functions apps call, module "fc": the app interface of
- * wasm-apps/sdk/fc_app.h. Each runs on the calling app's thread. What the
- * firmware does not have yet (MQTT) is there too,
- * returning FC_ENOTSUP, so that an app written against the whole header
- * loads and can tell.
+ * wasm-apps/sdk/fc_app.h. Each runs on the calling app's thread.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +40,11 @@ static int allowed(const app_t *a, const char *name, size_t nlen)
         p = e;
     }
     return 0;
+}
+
+int fc_appapi_allowed(const app_t *a, const char *name)
+{
+    return allowed(a, name, strlen(name));
 }
 
 /* The board entry an app may open: FC_HW_ENOENT, FC_HW_EPERM, or 0. */
@@ -427,6 +429,11 @@ static int logical(const fc_board_entry_t *e, int level)
     return (level != 0) ^ (e->active_low != 0);
 }
 
+static int not_of_handle(const app_event_t *e, int i)
+{
+    return !((e->type == EV_GPIO || e->type == EV_TIMER || e->type == EV_UART || e->type == EV_MQTT) && e->handle == i);
+}
+
 static void close_handle(app_t *a, int i)
 {
     app_handle_t *h = &a->h[i];
@@ -462,21 +469,15 @@ static void close_handle(app_t *a, int i)
             hw->pwm_close(h->port); /* low, as an app's PWM is when it stops */
         }
         fc_board_release(h->res);
+    } else if (h->kind == H_MQTT) {
+        fc_mqtt_unsubscribe(a, h->port); /* no message for it from now on */
     }
     /* Events of this handle still queued are dropped with it. */
     pthread_mutex_lock(a->ev_lock);
     uint32_t serial = h->serial;
     memset(h, 0, sizeof(*h));
     h->serial = serial;
-    int kept = 0;
-    for (int k = 0; k < a->ev_count; k++) {
-        app_event_t e = a->ev[(a->ev_head + k) % APP_EVENTS];
-        if (!((e.type == EV_GPIO || e.type == EV_TIMER || e.type == EV_UART) && e.handle == i)) {
-            a->ev[(a->ev_head + kept) % APP_EVENTS] = e;
-            kept++;
-        }
-    }
-    a->ev_count = kept;
+    fc_apps_drop_events(a, not_of_handle, i);
     pthread_mutex_unlock(a->ev_lock);
 }
 
@@ -487,6 +488,7 @@ void fc_appapi_close_all(app_t *a)
             close_handle(a, i);
         }
     }
+    fc_mqtt_drop_owner(a);
     cJSON_Delete(a->config);
     a->config = NULL;
 }
@@ -951,10 +953,6 @@ static int32_t fc_uart_read(wasm_exec_env_t env, int32_t h, void *b, int32_t cap
     return rc;
 }
 
-static int32_t grant_then_notsup(wasm_exec_env_t env, const char *grant)
-{
-    return allowed(app_of(env), grant, strlen(grant)) ? FC_HW_ENOTSUP : FC_HW_EPERM;
-}
 /* A value for the Telemetry Gateway, kept until the next export (fc_metrics.h). */
 static int32_t fc_metric(wasm_exec_env_t env, const char *n, int32_t l, int32_t kind, double v)
 {
@@ -964,17 +962,94 @@ static int32_t fc_metric(wasm_exec_env_t env, const char *n, int32_t l, int32_t 
     }
     return l < 0 ? FC_HW_EINVAL : fc_metrics_app_set(a->name, n, (size_t)l, kind, v);
 }
-static int32_t fc_mqtt_publish(wasm_exec_env_t env, const char *t, int32_t tl, const void *p, int32_t pl, int32_t qos,
-                               int32_t retain)
+
+/* ---- MQTT (fc_mqtt.c: one connection for all the apps) ------------------------------------------ */
+
+/* Names its function so that the table below can take the client's name. */
+static int32_t app_mqtt_publish(wasm_exec_env_t env, const char *t, int32_t tl, const void *p, int32_t pl,
+                                int32_t qos, int32_t retain)
 {
-    return grant_then_notsup(env, "mqtt");
+    app_t *a = app_of(env);
+    if (!allowed(a, "mqtt", 4)) {
+        return FC_HW_EPERM;
+    }
+    if (tl < 0 || pl < 0) {
+        return FC_HW_EINVAL;
+    }
+    int64_t t0 = fc_apps_now_us();
+    int rc = fc_mqtt_publish(a->name, t, (size_t)tl, p, (size_t)pl, qos, retain);
+    fc_apps_native_time(env, a, t0); /* a write held by a full TCP window counts */
+    return rc;
 }
-static int32_t fc_mqtt_subscribe(wasm_exec_env_t env, int32_t scope, const char *t, int32_t tl, int32_t qos)
+
+static int32_t app_mqtt_subscribe(wasm_exec_env_t env, int32_t scope, const char *t, int32_t tl, int32_t qos)
 {
-    return grant_then_notsup(env, "mqtt");
+    app_t *a = app_of(env);
+    if (!allowed(a, "mqtt", 4)) {
+        return FC_HW_EPERM;
+    }
+    if (tl < 0) {
+        return FC_HW_EINVAL;
+    }
+    int h = new_handle(a, H_MQTT);
+    if (h < 0) {
+        return h;
+    }
+    int64_t t0 = fc_apps_now_us();
+    int sub = fc_mqtt_subscribe(a, a->name, scope, t, (size_t)tl, qos);
+    fc_apps_native_time(env, a, t0);
+    if (sub < 0) {
+        pthread_mutex_lock(a->ev_lock);
+        a->h[h].kind = H_FREE;
+        pthread_mutex_unlock(a->ev_lock);
+        return sub;
+    }
+    pthread_mutex_lock(a->ev_lock);
+    a->h[h].port = sub; /* fc_appapi_mqtt_message looks for it under this lock */
+    pthread_mutex_unlock(a->ev_lock);
+    return h;
 }
-static int32_t fc_mqtt_topic(wasm_exec_env_t env, char *b, int32_t cap) { return FC_HW_EAGAIN; }
-static int32_t fc_event_data(wasm_exec_env_t env, void *b, int32_t cap) { return 0; }
+
+int fc_appapi_mqtt_message(void *owner, int sub, fc_mqtt_msg_t *m)
+{
+    app_t *a = owner;
+    size_t plen;
+    fc_mqtt_msg_payload(m, &plen);
+    int rc = -1;
+    pthread_mutex_lock(a->ev_lock);
+    for (int i = 0; i < APP_HANDLES; i++) {
+        if (a->h[i].kind == H_MQTT && a->h[i].port == sub) {
+            rc = fc_apps_post_locked(a, EV_MQTT, i, (int32_t)plen, m);
+            break;
+        }
+    }
+    pthread_mutex_unlock(a->ev_lock);
+    return rc;
+}
+
+/* The message being handled: FC_HW_ENOENT outside an FC_EV_MQTT, FC_HW_ENOSPC
+ * (nothing written) for a buffer too small. */
+static int32_t app_mqtt_topic(wasm_exec_env_t env, char *b, int32_t cap)
+{
+    app_t *a = app_of(env);
+    if (a->msg == NULL) {
+        return FC_HW_ENOENT;
+    }
+    size_t n;
+    const char *t = fc_mqtt_msg_topic(a->msg, &n);
+    return copy_out(b, cap, t, n);
+}
+
+static int32_t fc_event_data(wasm_exec_env_t env, void *b, int32_t cap)
+{
+    app_t *a = app_of(env);
+    if (a->msg == NULL) {
+        return FC_HW_ENOENT;
+    }
+    size_t n;
+    const char *p = fc_mqtt_msg_payload(a->msg, &n);
+    return copy_out(b, cap, p, n);
+}
 
 /* ---- the table ----------------------------------------------------------------------------------- */
 
@@ -1003,9 +1078,9 @@ static const NativeSymbol s_natives[] = {
     {"led_rgb", (void *)fc_led_rgb, "(iiii)i", NULL},
     {"log", (void *)fc_log, "(i*~)", NULL},
     {"metric", (void *)fc_metric, "(*~iF)i", NULL},
-    {"mqtt_publish", (void *)fc_mqtt_publish, "(*~*~ii)i", NULL},
-    {"mqtt_subscribe", (void *)fc_mqtt_subscribe, "(i*~i)i", NULL},
-    {"mqtt_topic", (void *)fc_mqtt_topic, "(*~)i", NULL},
+    {"mqtt_publish", (void *)app_mqtt_publish, "(*~*~ii)i", NULL},
+    {"mqtt_subscribe", (void *)app_mqtt_subscribe, "(i*~i)i", NULL},
+    {"mqtt_topic", (void *)app_mqtt_topic, "(*~)i", NULL},
     {"pwm_duty", (void *)fc_pwm_duty, "(ii)i", NULL},
     {"pwm_open", (void *)fc_pwm_open, "(*~i)i", NULL},
     {"random", (void *)fc_random, "(*~)i", NULL},

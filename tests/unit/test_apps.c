@@ -79,9 +79,9 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/t_startloop", s_startloop, sizeof(s_startloop)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
-        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(t_env),
+        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
-        V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_ctorloop), V(t_ctorfc),
+        V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_ctorloop), V(t_ctorfc), V(t_mqtt),
 #undef V
     };
     f_fetches++;
@@ -1042,6 +1042,200 @@ static void test_fc_events(void)
     CHECK_INT(a->ev_count, 0);
 }
 
+/* ---- MQTT: an app against a fake broker on a local TCP port ----------------------- */
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+static int b_fd = -1;
+
+static int b_read(unsigned char *b, size_t n)
+{
+    while (n > 0) {
+        fd_set rf;
+        FD_ZERO(&rf);
+        FD_SET(b_fd, &rf);
+        struct timeval tv = {.tv_sec = 3};
+        if (select(b_fd + 1, &rf, NULL, NULL, &tv) != 1) {
+            return -1;
+        }
+        ssize_t r = read(b_fd, b, n);
+        if (r <= 0) {
+            return -1;
+        }
+        b += r;
+        n -= (size_t)r;
+    }
+    return 0;
+}
+
+/* One packet from the device: its first byte (-1 none in 3 s), its body in b. */
+static int b_packet(unsigned char *b, size_t cap, size_t *len)
+{
+    unsigned char first, x;
+    size_t rem = 0, mult = 1;
+    if (b_read(&first, 1) != 0) {
+        return -1;
+    }
+    do {
+        if (b_read(&x, 1) != 0) {
+            return -1;
+        }
+        rem += (x & 0x7fu) * mult;
+        mult *= 128;
+    } while (x & 0x80);
+    if (rem > cap || b_read(b, rem) != 0) {
+        return -1;
+    }
+    *len = rem;
+    return first;
+}
+
+/* Expects a packet of type `first` whose topic or filter (after a packet id
+ * for (UN)SUBSCRIBE) is `topic`; for a PUBLISH, its payload is `payload`. */
+static void b_expect(int first, const char *topic, const char *payload)
+{
+    unsigned char b[512];
+    size_t n = 0;
+    int t = b_packet(b, sizeof(b), &n);
+    CHECK_INT(t, first);
+    if (t != first) {
+        return;
+    }
+    size_t at = (first >> 4) == 3 ? 0 : 2;
+    size_t tl = (size_t)b[at] << 8 | b[at + 1];
+    CHECK(tl == strlen(topic) && memcmp(b + at + 2, topic, tl) == 0);
+    if (tl != strlen(topic)) {
+        fprintf(stderr, "  topic \"%.*s\"\n", (int)tl, b + at + 2);
+    }
+    if ((first >> 4) == 8) {
+        unsigned char ack[5] = {0x90, 3, b[0], b[1], b[at + 2 + tl]};
+        CHECK_INT(write(b_fd, ack, sizeof(ack)), 5);
+    }
+    if (payload != NULL) {
+        size_t off = at + 2 + tl + ((first & 0x06) ? 2 : 0);
+        CHECK(n - off == strlen(payload) && memcmp(b + off, payload, n - off) == 0);
+        if ((first & 0x06) != 0) {
+            unsigned char ack[4] = {0x40, 2, b[at + 2 + tl], b[at + 3 + tl]};
+            CHECK_INT(write(b_fd, ack, sizeof(ack)), 4);
+        }
+    }
+}
+
+static void b_publish(const char *topic, const char *payload, int qos)
+{
+    unsigned char b[300];
+    size_t tl = strlen(topic), pl = strlen(payload), n = 0;
+    b[n++] = (unsigned char)(0x30 | qos << 1);
+    b[n++] = (unsigned char)(2 + tl + (qos ? 2 : 0) + pl);
+    b[n++] = 0;
+    b[n++] = (unsigned char)tl;
+    memcpy(b + n, topic, tl);
+    n += tl;
+    if (qos) {
+        b[n++] = 0;
+        b[n++] = 9;
+    }
+    memcpy(b + n, payload, pl);
+    n += pl;
+    CHECK_INT(write(b_fd, b, n), (long)n);
+    if (qos) {
+        unsigned char ack[4];
+        size_t len;
+        CHECK_INT(b_packet(ack, sizeof(ack), &len), 0x40);
+    }
+}
+
+static int mqtt_idle(void) { return 1; }
+
+static void test_fc_mqtt(void)
+{
+    char err[160];
+    /* The broker: a local port. */
+    int ls = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in sa = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    socklen_t sl = sizeof(sa);
+    CHECK(ls >= 0 && bind(ls, (struct sockaddr *)&sa, sizeof(sa)) == 0 && listen(ls, 2) == 0 &&
+          getsockname(ls, (struct sockaddr *)&sa, &sl) == 0);
+    char json[200];
+    snprintf(json, sizeof(json), "{\"broker\": \"mqtt://127.0.0.1:%d\", \"fleetPrefix\": \"fleet/f/{app}/\"}",
+             ntohs(sa.sin_port));
+    fc_port_write_file(FC_MQTT_CONFIG, json, strlen(json));
+    fc_apps_mqtt_hooks(mqtt_idle);
+    CHECK_INT(fc_mqtt_configure("dev1"), 1);
+    b_fd = accept(ls, NULL, NULL);
+    CHECK(b_fd >= 0);
+    unsigned char pk[512];
+    size_t n;
+    CHECK_INT(b_packet(pk, sizeof(pk), &n), 0x10); /* CONNECT */
+    unsigned char connack[4] = {0x20, 2, 0, 0};
+    CHECK_INT(write(b_fd, connack, sizeof(connack)), 4);
+    for (int i = 0; i < 300; i++) {
+        fc_mqtt_stats_t st;
+        fc_mqtt_stats(&st);
+        if (st.connected) {
+            break;
+        }
+        usleep(10 * 1000);
+    }
+
+    /* Not granted: FC_EPERM. */
+    CHECK_INT(apply_one("n", "reg/t_mqtt", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("n", "Running nosub -3", 3000), "Running nosub -3");
+    remove_all();
+
+    /* Granted: its subscriptions on the wire, FC_EV_NET at once (the link is
+     * up), and its first message. */
+    CHECK_INT(apply_one("m", "reg/t_mqtt", "{\"FC_ALLOW\": \"mqtt\"}", err, sizeof(err)), 0);
+    b_expect(0x82, "flightctl/dev1/m/in/#", NULL);
+    b_expect(0x82, "fleet/f/m/cmd", NULL);
+    b_expect(0x30, "flightctl/dev1/m/up", "hi");
+    CHECK_STR(wait_state_of("m", "Running net 1 0", 3000), "Running net 1 0");
+
+    /* A message: its topic relative, its payload, its length; a buffer too
+     * small is FC_ENOSPC; the app's answer. */
+    b_publish("flightctl/dev1/m/in/x", "hello", 1);
+    b_expect(0x32, "flightctl/dev1/m/ack", "in/x hello");
+    CHECK_STR(wait_state_of("m", "Running msg in/x hello 5 -7", 3000), "Running msg in/x hello 5 -7");
+    /* On the fleet's prefix: "close" ends its first subscription. */
+    b_publish("fleet/f/m/cmd", "close", 0);
+    b_expect(0xa2, "flightctl/dev1/m/in/#", NULL);
+    b_expect(0x32, "flightctl/dev1/m/ack", "cmd close");
+    CHECK_STR(wait_state_of("m", "Running msg cmd close 5 -7", 3000), "Running msg cmd close 5 -7");
+    b_publish("flightctl/dev1/m/in/y", "gone", 0); /* no subscription now: not delivered */
+    usleep(100 * 1000);
+    CHECK_STR(state_of("m"), "Running msg cmd close 5 -7");
+
+    fc_mqtt_stats_t st;
+    fc_mqtt_stats(&st);
+    CHECK_INT(st.pool_used, 0); /* each message back in the pool once handled */
+
+    /* The link lost: FC_EV_NET 0. */
+    close(b_fd);
+    CHECK_STR(wait_state_of("m", "Running net 0", 5000), "Running net 0");
+    /* Back: subscribed again, told again. */
+    b_fd = accept(ls, NULL, NULL);
+    CHECK_INT(b_packet(pk, sizeof(pk), &n), 0x10);
+    CHECK_INT(write(b_fd, connack, sizeof(connack)), 4);
+    b_expect(0x82, "fleet/f/m/cmd", NULL);
+    b_expect(0x30, "flightctl/dev1/m/up", "hi");
+    CHECK_STR(wait_state_of("m", "Running net 1 0", 3000), "Running net 1 0");
+
+    /* Removed: its subscription goes with it. */
+    b_publish("fleet/f/m/cmd", "x", 0);
+    b_expect(0x32, "flightctl/dev1/m/ack", "cmd x");
+    remove_all();
+    b_expect(0xa2, "fleet/f/m/cmd", NULL);
+    fc_mqtt_stats(&st);
+    CHECK_INT(st.pool_used, 0);
+
+    fc_port_remove_file(FC_MQTT_CONFIG);
+    CHECK_INT(fc_mqtt_configure("dev1"), 0);
+    close(b_fd);
+    close(ls);
+}
+
 static void test_board_map(void)
 {
     char err[160];
@@ -1214,6 +1408,13 @@ static void test_example_apps(void)
               0);
     const char *hw = "Running i2c 1 spi -2 uart -2 adc -2 pwm -2";
     CHECK_STR(wait_state_of("hw", hw, 3000), hw);
+    remove_all();
+    /* mqttdemo, with no broker configured: offline until one comes. */
+    CHECK_INT(apply_one("md", "reg/app_mqttdemo", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("md", "Running needs mqtt in FC_ALLOW", 3000), "Running needs mqtt in FC_ALLOW");
+    remove_all();
+    CHECK_INT(apply_one("md", "reg/app_mqttdemo", "{\"FC_ALLOW\": \"mqtt led0\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("md", "Running offline", 3000), "Running offline");
     remove_all();
 }
 
@@ -1554,6 +1755,7 @@ int main(void)
     RUN(test_fc_grants);
     RUN(test_fc_limits);
     RUN(test_fc_events);
+    RUN(test_fc_mqtt);
     RUN(test_board_map);
     RUN(test_board_dt);
     RUN(test_example_apps);

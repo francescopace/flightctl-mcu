@@ -200,31 +200,55 @@ void fc_apps_set_state_native(wasm_exec_env_t env, const char *s, int32_t len)
 
 /* ---- events ------------------------------------------------------------------ */
 
-void fc_apps_post(app_t *a, int32_t type, int32_t handle, int32_t value)
+int fc_apps_post_locked(app_t *a, int32_t type, int32_t handle, int32_t value, fc_mqtt_msg_t *msg)
 {
-    pthread_mutex_lock(a->ev_lock);
     if (!a->accepting) {
-        pthread_mutex_unlock(a->ev_lock);
-        return;
+        return -1;
     }
     /* An edge replaces the one still queued for the same GPIO. */
     for (int k = 0; type == EV_GPIO && k < a->ev_count; k++) {
         app_event_t *e = &a->ev[(a->ev_head + k) % APP_EVENTS];
         if (e->type == EV_GPIO && e->handle == handle) {
             e->value = value;
-            pthread_mutex_unlock(a->ev_lock);
-            return;
+            return 0;
         }
     }
     if (a->ev_count == APP_EVENTS) {
+        fc_mqtt_msg_free(a->ev[a->ev_head].msg); /* back to the shared pool */
         a->ev_head = (a->ev_head + 1) % APP_EVENTS;
         a->ev_count--;
         a->ev_lost++;
     }
-    a->ev[(a->ev_head + a->ev_count) % APP_EVENTS] = (app_event_t){type, handle, value};
+    a->ev[(a->ev_head + a->ev_count) % APP_EVENTS] = (app_event_t){type, handle, value, msg};
     a->ev_count++;
     pthread_cond_signal(a->ev_cond);
+    return 0;
+}
+
+void fc_apps_post(app_t *a, int32_t type, int32_t handle, int32_t value)
+{
+    pthread_mutex_lock(a->ev_lock);
+    fc_apps_post_locked(a, type, handle, value, NULL);
     pthread_mutex_unlock(a->ev_lock);
+}
+
+void fc_apps_drop_events(app_t *a, int (*keep)(const app_event_t *e, int arg), int arg)
+{
+    int kept = 0;
+    for (int k = 0; k < a->ev_count; k++) {
+        app_event_t e = a->ev[(a->ev_head + k) % APP_EVENTS];
+        if (keep != NULL && keep(&e, arg)) {
+            a->ev[(a->ev_head + kept) % APP_EVENTS] = e;
+            kept++;
+        } else {
+            fc_mqtt_msg_free(e.msg);
+        }
+    }
+    a->ev_count = kept;
+    if (keep == NULL) {
+        a->ev_head = 0;
+        a->ev_lost = 0;
+    }
 }
 
 /* The next event: FC_EV_OVERFLOW first when some were dropped. */
@@ -233,7 +257,7 @@ static int next_event(app_t *a, app_event_t *e)
     int got = 1;
     pthread_mutex_lock(a->ev_lock);
     if (a->ev_lost > 0) {
-        *e = (app_event_t){EV_OVERFLOW, -1, a->ev_lost};
+        *e = (app_event_t){EV_OVERFLOW, -1, a->ev_lost, NULL};
         a->ev_lost = 0;
     } else if (a->ev_count > 0) {
         *e = a->ev[a->ev_head];
@@ -1157,11 +1181,17 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
     wasm_function_inst_t on_event = wasm_runtime_lookup_function(inst, "on_event");
     a->inst = inst;
     pthread_mutex_lock(a->ev_lock);
-    a->ev_head = a->ev_count = 0;
-    a->ev_lost = 0;
+    fc_apps_drop_events(a, NULL, 0);
     a->accepting = 1;
     pthread_mutex_unlock(a->ev_lock);
     fc_appapi_load_config(a);
+    /* An app that starts with the broker there hears it, as one that was
+     * running when it came. */
+    fc_mqtt_stats_t mq;
+    fc_mqtt_stats(&mq);
+    if (mq.connected && fc_appapi_allowed(a, "mqtt")) {
+        fc_apps_post(a, EV_NET, -1, 1);
+    }
 
     int ok = 1;
     if (init != NULL) {
@@ -1224,8 +1254,11 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
             }
             if (on_event != NULL) {
                 uint32_t argv[3] = {(uint32_t)e.type, (uint32_t)e.handle, (uint32_t)e.value};
+                a->msg = e.msg; /* fc_event_data, fc_mqtt_topic */
                 ok = call_fc(a, env, on_event, 3, argv, "on_event") == 0;
+                a->msg = NULL;
             }
+            fc_mqtt_msg_free(e.msg);
         }
         if (tick != NULL && next_tick < until) {
             until = next_tick;
@@ -1239,8 +1272,7 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
     }
     pthread_mutex_lock(a->ev_lock);
     a->accepting = 0;
-    a->ev_head = a->ev_count = 0;
-    a->ev_lost = 0;
+    fc_apps_drop_events(a, NULL, 0);
     pthread_mutex_unlock(a->ev_lock);
     fc_appapi_close_all(a);
     a->inst = NULL;
@@ -2147,4 +2179,49 @@ void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
     if (n == 0) {
         cJSON_AddStringToObject(summary, "info", "No applications");
     }
+}
+
+/* ---- MQTT (fc_mqtt.h) --------------------------------------------------------------- */
+
+/* A TLS handshake for the broker needs a block as large as the metrics
+ * export's (fc_agent.c), and must leave the agent its floor afterwards. */
+#ifndef FC_MQTT_HEAP_MIN
+#define FC_MQTT_HEAP_MIN (24 * 1024)
+#endif
+
+static int (*s_agent_idle)(void);
+static int64_t s_mqtt_heap_logged;
+
+static int mqtt_may_connect(void)
+{
+    if (s_agent_idle != NULL && !s_agent_idle()) {
+        return 0;
+    }
+    long largest = fc_port_heap_largest(), free_now = fc_port_heap_free();
+    int room = (largest < 0 || largest >= FC_MQTT_HEAP_MIN) && (free_now < 0 || free_now >= s_heap_floor + FC_MQTT_HEAP_MIN);
+    int64_t now = fc_apps_now_ms();
+    if (!room && (s_mqtt_heap_logged == 0 || now - s_mqtt_heap_logged >= 60000)) {
+        s_mqtt_heap_logged = now;
+        fc_port_log(FC_LOG_WARN, "mqtt: %ld bytes free (largest block %ld): waiting for %d KB more than the agent's %ld KB",
+                    free_now, largest, FC_MQTT_HEAP_MIN / 1024, s_heap_floor / 1024);
+    }
+    return room;
+}
+
+/* The link came or went: FC_EV_NET to the apps that may use it. */
+static void mqtt_on_link(int up)
+{
+    for (int i = 0; i < MAX_APPS; i++) {
+        app_t *a = &s_apps[i];
+        if (a->used && fc_appapi_allowed(a, "mqtt")) {
+            fc_apps_post(a, EV_NET, -1, up ? 1 : 0);
+        }
+    }
+}
+
+void fc_apps_mqtt_hooks(int (*agent_idle)(void))
+{
+    s_agent_idle = agent_idle;
+    fc_mqtt_hooks_t h = {.on_message = fc_appapi_mqtt_message, .on_link = mqtt_on_link, .may_connect = mqtt_may_connect};
+    fc_mqtt_set_hooks(&h);
 }

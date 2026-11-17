@@ -20,6 +20,7 @@
 #include "fc_http.h"
 #include "fc_identity.h"
 #include "fc_metrics.h"
+#include "fc_mqtt.h"
 #include "fc_oci.h"
 #include "fc_port.h"
 #include "fc_resources.h"
@@ -192,6 +193,7 @@ typedef struct {
     long export_low; /* the heap's low during the last export (fc_port_heap_watch), -1 unknown */
     int exporting; /* under lock: an export runs (fc_agent_busy) */
     int metrics_poke; /* under lock: METRICS_CONFIG changed, export now */
+    int mqtt_poke;    /* spec thread: the broker's config or CA changed (fc_mqtt.h) */
     int console_quiet; /* spec thread: the sessions listed were all seen before */
 } agent_t;
 
@@ -747,6 +749,22 @@ static void apply_end(agent_t *a)
 }
 
 static agent_t *s_running;
+
+/* fc_mqtt's may_connect, through fc_apps_mqtt_hooks: no handshake for the
+ * broker while a download has the turn, a spec is applied, an export runs,
+ * a status is due or a new firmware is being verified. */
+static int idle_for_mqtt(void)
+{
+    agent_t *a = s_running;
+    if (a == NULL) {
+        return 0;
+    }
+    pthread_mutex_lock(&a->lock);
+    int busy = a->downloading || a->turn_depth > 0 || a->applying || a->exporting || a->status_urgent ||
+               a->putting || a->verifying || a->decom != DECOM_NONE;
+    pthread_mutex_unlock(&a->lock);
+    return !busy;
+}
 
 int fc_agent_busy(void)
 {
@@ -1552,6 +1570,9 @@ static int apply_inline_file(agent_t *a, const cJSON *file, char *err, size_t er
         snprintf(err, err_len, "%s: write failed", path);
     } else if (!same) {
         fc_apps_file_changed(path);
+        if (strcmp(path, FC_MQTT_CONFIG) == 0 || strcmp(path, FC_MQTT_CA_FILE) == 0) {
+            a->mqtt_poke = 1;
+        }
         if (strcmp(path, METRICS_CONFIG) == 0) {
             /* A new gateway, or a corrected one: tried now, not after the
              * backoff the old one earned. */
@@ -1597,6 +1618,9 @@ static void remove_dropped_files(agent_t *a, const char *now)
                 if (fc_port_remove_file(l) == 0) {
                     fc_port_log(FC_LOG_INFO, "config: removed %s", l);
                     fc_apps_file_changed(l);
+                    if (strcmp(l, FC_MQTT_CONFIG) == 0 || strcmp(l, FC_MQTT_CA_FILE) == 0) {
+                        a->mqtt_poke = 1;
+                    }
                     if (strcmp(l, METRICS_CONFIG) == 0) {
                         pthread_mutex_lock(&a->lock);
                         a->metrics_poke = 1;
@@ -1715,6 +1739,11 @@ static void apply_rendered(agent_t *a, const char *json)
         remove_dropped_files(a, paths);
     }
     free(paths);
+    if (a->mqtt_poke) {
+        /* A new broker, a new CA, or none: once both files are written. */
+        a->mqtt_poke = 0;
+        fc_mqtt_configure(a->id.name);
+    }
 
     /* Downloads below take the connection's turn: the agent's is closed
      * while the registry's is open (turn_begin, fc_tls_pool.h). */
@@ -2055,6 +2084,11 @@ int fc_agent_run(const fc_agent_config_t *cfg)
         fc_port_log(FC_LOG_WARN, "cannot read the management certificate: it will not be renewed");
     }
     fc_port_log(FC_LOG_INFO, "enrolled, starting management loop");
+    /* The apps' broker, if the fleet gave one: its thread and its pool
+     * before the apps, whose heap check then counts them; it connects once
+     * the agent is idle (idle_for_mqtt). */
+    fc_apps_mqtt_hooks(idle_for_mqtt);
+    fc_mqtt_configure(a.id.name);
 
     /* The spec loop runs on the caller's thread (the main task), which would
      * otherwise only wait: one stack less. Its stack has seen enrollment too. */

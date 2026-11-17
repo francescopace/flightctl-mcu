@@ -16,7 +16,7 @@ An app is a WebAssembly module that Flight Control deploys as a container applic
 | MQTT | `fc_mqtt_publish/subscribe/topic`, `fc_event_data` | `mqtt` |
 | C library | `string.h`, `stdio.h` (`snprintf`, `printf` to the log), `stdlib.h`, `ctype.h` from [wasm-apps/sdk/libc](../wasm-apps/sdk/libc/) | always |
 
-MQTT is not in the firmware yet: it returns `FC_ENOTSUP` once granted, so an app written for it loads and can tell. The client it will use is in the core already ([MQTT](#mqtt)). What each port has is under [Ports](#ports).
+MQTT is in the firmware from v3.14 ([MQTT](#mqtt)); an older firmware returns `FC_ENOTSUP` once it is granted, so an app written for it loads and can tell. What each port has is under [Ports](#ports).
 
 ![The app on a device's page](img/app-on-device.png)
 *An app on its device's page: `Running`, with its image in the registry. Flight Control shows a WASM app as a container application (`Single Container`).*
@@ -124,13 +124,13 @@ Today an app reports its **state** (`fc_set_state`): a short text in Flight Cont
 
 **Metrics** (`fc_metric`, granted by `metrics`): numbers for Flight Control's Telemetry Gateway, which adds the device's ID and exports them to Prometheus as `app_<app>_<name>`. A gauge is set, a counter added to; the device sends the last value of each with its own metrics, in one batch per interval, once the fleet gives the gateway's address ([METRICS.md](METRICS.md)). At most 8 per app; they go when the app is removed or updated.
 
-One more way is part of the interface, for when the firmware has it ([ROADMAP.md](ROADMAP.md)):
+And their own way out:
 
 - **MQTT** (`fc_mqtt_*`): the application's own data and commands, with a broker the fleet gives. The device keeps one connection for all the apps. Each app publishes and subscribes under its own prefix, by default `flightctl/<device>/<app>/`, and can subscribe under the fleet's, to receive a command sent once to every device. QoS is 0 or 1; topics are at most 64 characters and payloads 512 bytes.
 
 ### MQTT
 
-The core's client is written and tested on the host, against mosquitto with and without TLS; the apps' calls are not wired to it yet. The fleet gives the broker in `/etc/fc/mqtt.json` and its CA in `/etc/fc/mqtt-ca.crt`, two config files:
+Tested on the host, against mosquitto with and without TLS and with apps against a fake broker; not yet on a board. The fleet gives the broker in `/etc/fc/mqtt.json` and its CA in `/etc/fc/mqtt-ca.crt`, two config files:
 
 ```yaml
 spec:
@@ -160,6 +160,8 @@ spec:
 `{device}` and `{app}` are the device's and the app's names; a prefix ends with `/` (added if missing) and has no wildcard. An app's topics are relative to them: `fc_mqtt_publish("temp")` from app `pump` on device `abc` is `flightctl/abc/pump/temp`, and a subscription takes MQTT's wildcards (`+`, `#`) within the prefix. A message for two apps reaches each with its own topic.
 
 The device reconnects by itself, 1 to 2 s after a lost link, then waiting longer after each failure, up to 2 minutes, and subscribes again; a session is not kept on the broker. QoS 1 is sent once: a message published while the link drops, before the broker's acknowledgment, is not sent again. A message received waits for its app in a pool of 4 KB shared by all the apps, of which one app holds at most half; a message larger than 512 bytes, with a topic longer than 64 characters under its prefix, or for which there is no room is dropped, counted, logged once a minute at most, and still acknowledged. At most 16 subscriptions for all the apps together.
+
+The device starts the client after enrolling, before the apps, so an app's heap check counts it, and again when the fleet changes either file. It connects only while the agent has nothing else on the network (no download, no spec being applied, no metrics export, no status due, no firmware being verified), with a free block of 24 KB for the TLS handshake and 24 KB more than the 32 KB the agent keeps for itself; until then it logs why, once a minute. Once connected, it stays connected through downloads. An app granted `mqtt` hears `FC_EV_NET` 1 when the link comes, or as it starts if the link is up, and 0 when it goes.
 
 What it costs: 12.9 KB of flash on the C3 (12.7 KB on the S3 with Zephyr) and 150 bytes of static RAM; about 1 KB at the first subscription; once a broker is configured, the pool (4 KB), the client's thread (12 KB of stack, not yet measured on a board), 1 KB of packet buffers, and the TLS connection: with ESP-IDF, mbedTLS's buffers sized to each record, small for MQTT; on Zephyr, where the receive buffer is the full record, a second 17 KB block reserved for it, since this connection stays open while a download takes the agent's block.
 
@@ -233,6 +235,6 @@ On a chip without a temperature sensor both set their state to say so and stay i
 
 - [hwcheck](../wasm-apps/hwcheck/hwcheck.c): a board's buses and channels, checked. Granted `i2c0 spi0 uart0 adc0 pwm0` (names the fleet's `board.json` gives), it says every 2 s what each answers: the I2C devices that acknowledge, an SPI transfer, the UART's bytes written and read back, the ADC's millivolts, the PWM set to half. About 1.3 KB.
 
-- [mqttdemo](../wasm-apps/mqttdemo/mqttdemo.c): MQTT both ways, for when the firmware has it ([MQTT](#mqtt)). Granted `mqtt` (and `led0`), it publishes the temperature on `temp` every `period_ms`, takes commands on `cmd/#` and on the fleet's `cmd`, answers each on `ack`, and turns `led0` on and off for `led on` and `led off`. On a firmware without MQTT its state says so and it stays idle. About 1.9 KB.
+- [mqttdemo](../wasm-apps/mqttdemo/mqttdemo.c): MQTT both ways ([MQTT](#mqtt)). Granted `mqtt` (and `led0`), it publishes the temperature on `temp` every `period_ms`, takes commands on `cmd/#` and on the fleet's `cmd`, answers each on `ack`, and turns `led0` on and off for `led on` and `led off`. On a firmware without MQTT its state says so and it stays idle. About 1.9 KB.
 
 - [CoreMark](../wasm-apps/coremark/fetch.sh), as published, not rebuilt: `wasm-apps/coremark/fetch.sh` downloads both builds and checks them against their SHA-256, then `wasm-apps/push.sh coremark wasm3` pushes one. See [Modules built for no device](#modules-built-for-no-device).

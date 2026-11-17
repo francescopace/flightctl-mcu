@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "fc_board.h"
 #include "fc_hw.h"
+#include "fc_mqtt.h"
 #include "wasm_export.h"
 
 #define MAX_APPS      2
@@ -24,7 +25,7 @@
 /* Events, as FC_EV_* in fc_app.h. */
 enum { EV_GPIO = 1, EV_TIMER = 2, EV_UART = 3, EV_MQTT = 4, EV_CONFIG = 5, EV_NET = 6, EV_OVERFLOW = 7 };
 
-enum { H_FREE = 0, H_TIMER, H_GPIO, H_LED, H_I2C, H_ADC, H_PWM, H_SPI, H_UART };
+enum { H_FREE = 0, H_TIMER, H_GPIO, H_LED, H_I2C, H_ADC, H_PWM, H_SPI, H_UART, H_MQTT };
 
 struct app;
 
@@ -55,6 +56,7 @@ typedef struct {
 
 typedef struct {
     int32_t type, handle, value;
+    fc_mqtt_msg_t *msg; /* FC_EV_MQTT: the message, the queue's until it is handled */
 } app_event_t;
 
 typedef struct app {
@@ -113,6 +115,7 @@ typedef struct app {
     app_event_t ev[APP_EVENTS];
     int ev_head, ev_count;
     int32_t ev_lost;
+    fc_mqtt_msg_t *msg; /* runner: the message of the FC_EV_MQTT being handled */
 } app_t;
 
 extern const fc_hw_t *g_fc_hw;
@@ -132,6 +135,13 @@ void fc_apps_set_state_native(wasm_exec_env_t env, const char *s, int32_t len);
 /* Queues an event for the app's on_event; drops it when the instance is not
  * running. Any thread. */
 void fc_apps_post(app_t *a, int32_t type, int32_t handle, int32_t value);
+/* The same with a message (FC_EV_MQTT), under a->ev_lock already: 0 queued
+ * (the queue owns msg; when full, the oldest event is dropped), -1 not
+ * running (msg is still the caller's). */
+int fc_apps_post_locked(app_t *a, int32_t type, int32_t handle, int32_t value, fc_mqtt_msg_t *msg);
+/* Drops the queued events for which keep() is 0, freeing their messages;
+ * under a->ev_lock. keep NULL: all of them. */
+void fc_apps_drop_events(app_t *a, int (*keep)(const app_event_t *e, int arg), int arg);
 
 /* fc_appapi.c */
 NativeSymbol *fc_appapi_natives(int *count);
@@ -145,3 +155,7 @@ void fc_appapi_close_all(app_t *a);
 void fc_appapi_end_call(app_t *a);
 /* The app's key/value record, removed with the app. */
 void fc_appapi_kv_key(const char *app_name, char *out, size_t len);
+/* Whether FC_ALLOW grants `name`. */
+int fc_appapi_allowed(const app_t *a, const char *name);
+/* fc_mqtt_hooks_t.on_message: a message for the app's subscription. */
+int fc_appapi_mqtt_message(void *owner, int sub, fc_mqtt_msg_t *m);
