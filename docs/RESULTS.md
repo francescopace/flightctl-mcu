@@ -226,23 +226,7 @@ Neither tried the image again. The ESP32-C6 (ESP-IDF) was back on the previous f
 
 ### A crash in the status
 
-After a crash, the status gives `lastFatalError`: the fault, the task or thread, the uptime, the `pc` and the callers, for `addr2line` against the ELF of the firmware that crashed. `tools/fw-push.py` keeps each release's ELF in the registry, and `tools/fw-elf.py` gets it back. With ESP-IDF the panic handler records a fault, an `abort()`, the interrupt watchdog, and the task watchdog when it is set to panic (by default it only logs). On Xtensa the record has the backtrace; on RISC-V, which has no frame pointers, `ra` and the firmware's code addresses found on the stack. Zephyr gives the same text with the `pc` and `lr` on Arm, and the `pc` and Zephyr's own backtrace on the ESP32-S3.
-
-In the emulator against Flight Control (`tests/e2e/fatal-emu.sh`), with test builds that crash from a task 30 s after power-on:
-
-| Chip | Crash | `lastFatalError` |
-|---|---|---|
-| ESP32-C5 | write to address 0 | `Store access fault (7) in thread "fc_fault", 30112 ms after boot, pc 0x4200d96a ra 0x4200d994` |
-| ESP32-C3 | write to address 0 | `… (7) …, pc 0x4200cb7e ra 0x4200cba8` |
-| ESP32-S3 | write to address 0 | `StoreProhibited (29) …, pc 0x420c2d5c backtrace 0x4200ecda` |
-| ESP32-C5 | `abort()`, as a failed assert makes (also run on the C3, C6 and S3) | `abort() (2) …, pc 0x4200d973 ra 0x4080c926, stack 0x4080b76e 0x4200d976 0x4200d9a2`: the `pc` is abort()'s caller; the log has the assert, the function and the task |
-| ESP32-C5 | interrupt watchdog (a loop with interrupts off) | `Interrupt wdt timeout on CPU0 (24) …, pc 0x4200d97a ra 0x4200d978, stack 0x4200d9b0`, `resetReason` `int_wdt` |
-| ESP32-S3 | interrupt watchdog | `… (5) …, pc 0x420c2d5e backtrace 0x4200ecda` |
-| ESP32-C5, S3 | task watchdog set to panic (a loop that starves the idle task) | `task watchdog (0) …`, the `pc` in the loop, `resetReason` `task_wdt` |
-
-In every run the `pc` decodes to the function that crashed, and its caller, the task's function, is among the addresses. The device crashed once and went on. The previous boot's log (`journalctl -b -1`, through the console) ends with `fatal: ` and the same text. A release's ELF, pushed with four platforms (ESP-IDF and Zephyr), came back byte for byte and left the release's index unchanged. The unit tests check that the record is valid before it is believed, and its text.
-
-The handler takes 799 bytes of IRAM on the ESP32, 907 on the S3 and 1,102 on the C3, C5 and C6; the record takes 140 bytes of RAM kept across restarts. Zephyr builds for the ESP32-S3 (its backtrace linked in), `mps2/an385` and `native_sim`; on the S3 a crash leaves Zephyr's report of the fault in the previous boot's log ([CONSOLE.md](CONSOLE.md#the-log)), but `lastFatalError` itself has not been checked there yet.
+What `lastFatalError` gives after each kind of crash, chip by chip, is in [TESTING.md](TESTING.md#a-crash-in-the-status). The handler takes 799 bytes of IRAM on the ESP32, 907 on the S3 and 1,102 on the C3, C5 and C6; the record takes 140 bytes of RAM kept across restarts.
 
 ### The registry with TLS, and decommissioning, on boards
 
