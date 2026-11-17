@@ -182,7 +182,7 @@ On Zephyr the board map's names come from the devicetree, not from pins: the chi
 | SPI | master, up to 4 devices on one bus (two buses on the ESP32 and S3), chip select driven by the firmware; transfers in pieces of 64 bytes, without DMA | the devicetree's devices, chip select driven by the firmware; a transfer lasts as long as the driver makes it | MISO wired to MOSI: what is sent comes back |
 | UART | UART1, and UART2 on the ESP32 and S3 (UART0 is the console's); RS-485 half duplex with `de`; 512 bytes received ahead | interrupt-driven, 512 bytes received ahead; never the console's; no RS-485 yet (`FC_ENOTSUP` for a node with `de-gpios`) | RX wired to TX: what is written comes back, with `FC_EV_UART` |
 
-On the boards, the `alarm` app opened `led0` with its pin from the firmware on the C3, on the C6 (its WS2812 LED) and on the ESP32-S3 with Zephyr (LED and temperature simulated), and a new threshold took it from alarm to ok without restarting it; on the C6 it came back from flash after a restart. It also runs on the classic ESP32. GPIO interrupts and wired peripherals are not yet tried on a board.
+On the boards, the `alarm` app opened `led0` with its pin from the firmware on the C3, on the C6 (its WS2812 LED) and on the ESP32-S3 with Zephyr (LED and temperature simulated), and a new threshold took it from alarm to ok without restarting it; on the C6 it came back from flash after a restart. It also runs on the classic ESP32. With nothing wired, I2C (a bus scan, a transfer), SPI, a UART write, ADC (a floating pin) and PWM open and answer on the classic ESP32, C5, C6 and S3 and on the emulated C3 (`hwcheck`). GPIO interrupts and wired devices are not yet tried on a board.
 
 ## Size and limits
 

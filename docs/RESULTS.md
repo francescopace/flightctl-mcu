@@ -1,49 +1,43 @@
 # Results
 
-What works, where it was verified, and the measurements. The devices are microcontrollers with no Linux, managed by an unmodified **Flight Control 1.4.0** (the upstream of Red Hat Edge Manager). The server ran on [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker) on a Mac. The figures come from development builds before 1.0; where a later change moved one, the text says so.
+What works, where it was verified, and the measurements. The devices are microcontrollers with no Linux, managed by an unmodified **Flight Control 1.4.0** (the upstream of Red Hat Edge Manager) on [kind](https://kind.sigs.k8s.io/). The figures come from development builds before 1.0.
 
 ## What works
 
-Where each function was verified:
+**Boards**: the classic ESP32, ESP32-C3, C5, C6 and S3 with ESP-IDF, and the ESP32-S3 with Zephyr. **Emulator**: the real firmware in Espressif's emulator ([below](#in-espressifs-emulator)). **Tests**: the end-to-end tests in CI with the simulated device and Zephyr's emulated builds, unit tests and host tests ([TESTING.md](TESTING.md)). ✓ verified, ◐ in part (what is missing is in [current limitations](#current-limitations) or the linked page), – not tried.
 
-- **Boards**: real boards, the classic ESP32, ESP32-C3, C5, C6 and S3 with ESP-IDF, and the ESP32-S3 with Zephyr.
-- **Emulator**: the real firmware in Espressif's emulator, against the same Flight Control ([below](#in-espressifs-emulator)).
-- **CI**: the end-to-end tests, with the simulated device and the Zephyr builds for `native_sim` and an emulated Cortex-M3 ([TESTING.md](TESTING.md)).
+| Function | What it does | Boards | Emulator | Tests | More |
+|---|---|---|---|---|---|
+| Enrollment | Device key, CSR, mTLS | ✓ | ✓ | ✓ | [QUICKSTART](QUICKSTART.md#5-approve-it) |
+| Automatic approval | From an allow list | – | – | ✓ | [QUICKSTART](QUICKSTART.md#5-approve-it) |
+| Status | Full agent API status, `Unknown` when offline | ✓ | ✓ | ✓ | [Label sync](#label-sync) |
+| HTTP/2 | Spec, status and downloads on one connection | ◐ | ✓ | ✓ | [REGISTRY](REGISTRY.md#memory) |
+| Resource alerts | CPU, heap, storage against the fleet's rules | ◐ | – | ✓ | [Timings](#timings) |
+| Config | Files from the spec, no reboot | ✓ | – | ✓ | [QUICKSTART](QUICKSTART.md#6-give-it-firmware-config-and-an-app) |
+| Firmware OTA | A/B slots, staged rollouts | ✓ | ✓ | – | [Timings](#timings) |
+| Firmware deltas | A patch from the running release | ✓ | ✓ | ✓ | [DELTA](DELTA.md) |
+| Automatic rollback | Back to the previous firmware if the new one fails | ✓ | ✓ | – | [The way back](#the-way-back-on-the-esp32-s3-both-ports) |
+| Mixed fleets | One fleet for every chip | ✓ | – | – | [DEVICES](DEVICES.md) |
+| WASM apps | Installed and updated without a reboot | ✓ | ✓ | ✓ | [APPS](APPS.md) |
+| App interface | Hardware by name, timers, events, storage, C library | ◐ | – | ✓ | [APPS](APPS.md#ports) |
+| An app's limits | CPU budget per call, heap kept for the agent | ◐ | ✓ | ✓ | [APPS](APPS.md#size-and-limits) |
+| Modules built for no device | Any WebAssembly module, run once | ✓ | – | ✓ | [APPS](APPS.md#modules-built-for-no-device) |
+| Apps that crash the device | Not started again | – | ✓ | ✓ | [APPS](APPS.md#how-an-app-runs) |
+| Crash reports | `lastFatalError` in the status | ◐ | ✓ | ✓ | [TESTING](TESTING.md#a-crash-in-the-status) |
+| Certificate renewal | Same key, new certificate | – | ✓ | ✓ | [TESTING](TESTING.md) |
+| Signed images | Cosign signatures checked on the device | ✓ | ✓ | ✓ | [SECURITY](SECURITY.md#two-signing-keys) |
+| Registry with TLS and a password | CA and `auth.json` from the fleet | ✓ | ✓ | ✓ | [REGISTRY](REGISTRY.md) |
+| Registry tokens | Bearer tokens, as Quay and Harbor use | – | – | ✓ | [TESTING](TESTING.md#registry-tokens) |
+| Decommissioning | Key and certificate wiped | ✓ | ✓ | ✓ | [QUICKSTART](QUICKSTART.md#7-take-it-out) |
+| Remote console | `flightctl console` and the UI's terminal | ✓ | – | ✓ | [CONSOLE](CONSOLE.md) |
+| Device log | The UI's Logs tab, previous boot included | ✓ | – | ✓ | [CONSOLE](CONSOLE.md#the-log) |
+| Metrics | OTLP to the Telemetry Gateway | ✓ | – | ✓ | [METRICS](METRICS.md) |
+| MQTT for the apps | One broker connection for all apps, TLS | ◐ | – | ✓ | [APPS](APPS.md#mqtt) |
+| Known vulnerabilities | SBOM per release, CVEs through Trustify | ✓ | – | – | [SBOM](SBOM.md) |
+| Field provisioning | WiFi over the device's access point | ◐ | ✓ | ✓ | [PROVISIONING](PROVISIONING.md) |
+| Secure Boot, flash encryption, anti-rollback | The `secure` variant | – | ✓ | – | [SECURITY](SECURITY.md) |
 
-| Function | What it does | Verified | More |
-|---|---|---|---|
-| Enrollment | A P-256 key generated on the device, a CSR approved with `flightctl approve`, mTLS with TLS 1.3 | Boards, emulator, CI | [QUICKSTART.md](QUICKSTART.md#5-approve-it) |
-| Automatic approval | Approves devices from an allow list of names or MACs, with their labels | CI | [QUICKSTART.md](QUICKSTART.md#5-approve-it) |
-| Status | The agent API's full status: resources, `customInfo` (heap, RSSI, temperature, traffic); `Unknown` after 5 minutes offline | Boards, emulator, CI | [Label sync](#label-sync) |
-| HTTP/2 | The spec's long-poll and the status share one HTTP/2 connection; firmware and apps are pulled from the registry over HTTP/2 | Boards, emulator, CI. Downloads over HTTP/2: the classic ESP32, C5, C6 and S3 with ESP-IDF. Not yet on a board: a certificate renewal over HTTP/2, Zephyr's downloads over HTTP/2 | [REGISTRY.md](REGISTRY.md#memory), [idle traffic](#idle-traffic) |
-| Resource alerts | CPU, heap and storage checked against the fleet's `spec.resources` rules, as the Linux agent does: `Warning` or `Critical` per resource, `Degraded` or `Error` in the summary | ESP32-C3, CI | [Timings](#timings) |
-| Config | Inline `spec.config` applied without a reboot, after the app validates it (an invalid one is refused, the device OutOfDate with the error); a file the spec drops is removed | Boards, CI | [QUICKSTART.md](QUICKSTART.md#6-give-it-firmware-config-and-an-app), [timings](#timings) |
-| Firmware OTA | `spec.os.image` points to an OCI index with one firmware per chip, written to the other A/B slot and checked with sha256; staged rollouts | Boards, emulator | [QUICKSTART.md](QUICKSTART.md#6-give-it-firmware-config-and-an-app), [timings](#timings) |
-| Firmware deltas | The device downloads a patch from the release it runs and rebuilds the image: 1 to 15% of the image | ESP32, C5, C6, S3, the S3 with Zephyr, emulator | [DELTA.md](DELTA.md) |
-| Automatic rollback | A new firmware is kept only once the server accepts a status from it; otherwise the device goes back, and the rollout stops at the canary | ESP32-S3 with both ports, C6, emulator | [The way back](#the-way-back-on-the-esp32-s3-both-ports) |
-| Mixed fleets | One fleet and one firmware reference for every chip, with per-device settings from labels | ESP-IDF boards | [DEVICES.md](DEVICES.md) |
-| WASM apps | `spec.applications` with a WASM OCI image, run by WAMR, updated without a reboot; one `.wasm` for Xtensa, RISC-V and Arm | Boards, emulator, CI | [APPS.md](APPS.md) |
-| App interface | Hardware by name (GPIO, I2C, SPI, UART, ADC, PWM, LED), grants, timers, events, config, storage, a small C library | Unit tests, Zephyr's emulated drivers; LED and temperature on the boards. With nothing wired, I2C, SPI, UART, ADC and PWM open and answer on the classic ESP32, C5, C6 and S3 and the emulated C3 (`hwcheck`). Not yet on a board: GPIO interrupts, wired devices | [APPS.md](APPS.md#ports) |
-| An app's limits | An instruction budget and 1 s in the device's functions per call; 32 KB of heap kept for the agent; a `.wasm` sized to the heap | ESP-IDF boards, emulated C3, unit tests. Not checked on Zephyr yet | [APPS.md](APPS.md#size-and-limits) |
-| Modules built for no device | A module published for any WebAssembly runtime runs unmodified, once | CoreMark on the ESP-IDF boards and the S3 with Zephyr | [APPS.md](APPS.md#modules-built-for-no-device), [CoreMark](#coremark) |
-| Apps that crash the device | An app whose start crashed the firmware twice is not started again; its status says `Error` | Unit tests, emulated C6 | [APPS.md](APPS.md#how-an-app-runs) |
-| Crash reports | After a crash, `lastFatalError` in the status: the fault, the task, the `pc` and the callers, decoded against the release's ELF | Emulator (C3, C5, C6, S3), CI. Zephyr: the fault's report in the log on the S3; `lastFatalError` not yet checked on a board | [A crash in the status](#a-crash-in-the-status) |
-| Certificate renewal | The device renews its management certificate for the same key | Emulator, CI, with 2-minute certificates. Not on a board, where a certificate lasts a year | [TESTING.md](TESTING.md) |
-| Signed images | Firmware and apps signed in cosign's format, checked on the device; an unsigned image or one signed with another key is refused, the running one kept, the device OutOfDate with the reason | Boards, emulator, CI | [SECURITY.md](SECURITY.md#two-signing-keys) |
-| Registry with TLS and a password | The registry's CA and `auth.json` come from the fleet | ESP32-C3, the S3 with Zephyr, emulator, CI | [REGISTRY.md](REGISTRY.md), [on boards](#the-registry-with-tls-and-decommissioning-on-boards) |
-| Registry tokens (Bearer) | A token from the registry's realm, with the `auth.json` credentials or none, renewed when it runs out | The device's client on a host, against Quay 3.17 and docker_auth. Not on a board, not with Harbor | [TESTING.md](TESTING.md#registry-tokens) |
-| Decommissioning | Key and certificate wiped; no new enrollment until the flash is erased | ESP32-C3, the S3 with Zephyr, emulator, CI | [QUICKSTART.md](QUICKSTART.md#7-take-it-out) |
-| Remote console | `flightctl console` and the UI's terminal, with a closed set of commands | Boards, CI | [CONSOLE.md](CONSOLE.md) |
-| Device log | The agent's, the apps' and the system's lines, in RAM kept across a restart, shown by the console and the UI's Logs tab | Boards, CI | [CONSOLE.md](CONSOLE.md#the-log) |
-| Metrics | The device's and the apps' metrics to Flight Control's Telemetry Gateway, in OTLP | Boards, CI | [METRICS.md](METRICS.md) |
-| MQTT for the apps | One broker connection for all the apps, MQTT 3.1.1, QoS 0 and 1, over TLS | ESP-IDF boards, against mosquitto. Zephyr: built, not run on a board | [APPS.md](APPS.md#mqtt) |
-| Known vulnerabilities | An SBOM per release; Flight Control shows the CVEs found by Trustify | Boards, with Trustify 0.4.12 | [SBOM.md](SBOM.md) |
-| Provisioning in the field | The WiFi network set over the device's own access point | Emulated C5, S3 and C6 in CI; the S3 with Zephyr from an iPhone | [PROVISIONING.md](PROVISIONING.md) |
-| Secure Boot, flash encryption, anti-rollback | The `secure` variant | Emulator only: no real chip has been burned. Zephyr: anti-rollback by MCUboot, on the Pico W | [SECURITY.md](SECURITY.md) |
-
-Flashing a firmware does not touch the key storage: a board keeps its identity unless its whole flash is erased, and then enrolls again as a new device.
-
-The ESP32-S2 and the Raspberry Pi Pico W were dropped for their RAM ([support levels](DEVICES.md#support-levels)). Before that, the S2 ran enrollment, apps, the registry with TLS, decommissioning and CoreMark in a mixed fleet. The Pico W ran enrollment, apps, deltas, rollback, MCUboot's anti-rollback, the registry with TLS, decommissioning, and kept the record of a crash across the restart.
+A board keeps its identity across firmware updates; only a full flash erase makes it enroll again as a new device. The ESP32-S2 and the Raspberry Pi Pico W were dropped for their RAM ([support levels](DEVICES.md#support-levels)); before that, both ran enrollment, apps, the registry with TLS and decommissioning, the S2 also CoreMark, and the Pico W deltas, rollback and MCUboot's anti-rollback.
 
 ## Measurements
 
@@ -290,7 +284,7 @@ Each in short; the source references, how it was found and the workarounds are i
 - **App format**: WASM OCI artifacts only (`application/vnd.wasm.content.layer.v1+wasm`), not a `.wasm` inside a container image.
 - **Firmware and an app that needs it, in one spec**: the firmware goes first and the apps after its restart; checked in unit tests, not yet end to end.
 - **JSON depth**: at most 32 levels; real documents use fewer than 10.
-- **Not yet on a board**: the `secure` variant, certificate renewal, registry tokens, GPIO interrupts, wired peripherals; with Zephyr, MQTT and `lastFatalError`.
+- **Not yet on a board**: the `secure` variant, certificate renewal, registry tokens, GPIO interrupts, wired peripherals; with Zephyr, MQTT, `lastFatalError` and downloads over HTTP/2.
 - **Zephyr**: an app's heap floor and the `.wasm` size limit are not checked yet.
 - **Memory for apps**: CoreMark's 64 KB fits on every ESP-IDF board and, in PSRAM, on the Zephyr S3 N8R8; 128 KB only on the C6 and the S3 with PSRAM. On the classic ESP32, C3 and C5 the 68 KB block can be missing right after another app ([CoreMark](#coremark)).
 
