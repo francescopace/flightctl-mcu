@@ -33,9 +33,9 @@ TRUSTIFY_URL=http://127.0.0.1:8095 tools/fw-push.py ...
 Every 15 minutes it takes the image digests the devices report, finds in Trustify the package URL that holds each one and the SBOM that holds that package URL, and stores the advisories Trustify matches against the SBOM's components. The devices need nothing more: they report the digest already.
 
 ![The vulnerabilities panel of a device](img/vulnerabilities-device.png)
-![The organization's security overview](img/vulnerabilities-overview.png)
+<img src="img/vulnerabilities-overview.png" alt="The organization's security overview" width="420">
 
-*What Flight Control shows from the SBOMs: the vulnerabilities of the firmware a device runs, on its page, and the summary for the organization. None here: the advisories matched by version do not apply to these releases ([below](#from-nvd-toolsadvisoriespy)).*
+*Where Flight Control shows them: on each device's page, for the firmware it runs, and in the organization's summary on the Overview page, by severity. None is listed here.*
 
 Which advisories Trustify matches depends on what it has imported (CVE, OSV, CSAF feeds) and on how those name the components: by package URL or by CPE. For C libraries the CPE (`cpe:2.3:a:arm:mbed_tls:...`, `cpe:2.3:o:zephyrproject:zephyr:...`) is often the only name an advisory gives.
 
