@@ -26,7 +26,7 @@ Where each function was verified:
 | An app's limits | An instruction budget and 1 s in the device's functions per call; 32 KB of heap kept for the agent; a `.wasm` sized to the heap | ESP-IDF boards, emulated C3, unit tests. Not checked on Zephyr yet | [APPS.md](APPS.md#size-and-limits) |
 | Modules built for no device | A module published for any WebAssembly runtime runs unmodified, once | CoreMark on the ESP-IDF boards and the S3 with Zephyr | [APPS.md](APPS.md#modules-built-for-no-device), [CoreMark](#coremark) |
 | Apps that crash the device | An app whose start crashed the firmware twice is not started again; its status says `Error` | Unit tests, emulated C6 | [APPS.md](APPS.md#how-an-app-runs) |
-| Crash reports | After a crash, `lastFatalError` in the status: the fault, the task, the `pc` and the callers, decoded against the release's ELF | Emulator (C3, C5, C6, S3), CI. Zephyr: built, no crash caused on a board yet | [A crash in the status](#a-crash-in-the-status) |
+| Crash reports | After a crash, `lastFatalError` in the status: the fault, the task, the `pc` and the callers, decoded against the release's ELF | Emulator (C3, C5, C6, S3), CI. Zephyr: the fault's report in the log on the S3; `lastFatalError` not yet checked on a board | [A crash in the status](#a-crash-in-the-status) |
 | Certificate renewal | The device renews its management certificate for the same key | Emulator, CI, with 2-minute certificates. Not on a board, where a certificate lasts a year | [TESTING.md](TESTING.md) |
 | Signed images | Firmware and apps signed in cosign's format, checked on the device before anything is installed | Boards, emulator, CI | [SECURITY.md](SECURITY.md#two-signing-keys) |
 | Registry with TLS and a password | The registry's CA and `auth.json` come from the fleet | ESP32-C3, the S3 with Zephyr, emulator, CI | [REGISTRY.md](REGISTRY.md), [on boards](#the-registry-with-tls-and-decommissioning-on-boards) |
@@ -98,7 +98,7 @@ Internal heap with metrics (v3.13-rc6, an export every 30 s) and with MQTT (v3.1
 
 No export was skipped for want of memory, and none took a device's heap below what its boot had reached ([METRICS.md](METRICS.md)). The MQTT client's thread used 3.2 to 4.2 KB of its 8 KB stack ([APPS.md](APPS.md#mqtt)). On the C3 after a restart, MQTT connected 4 s after the agent's own connection. The connection keeps 9 KB of heap (49 KB free before, 40 KB after), and the heap's lowest in the first 23 s was 3 KB, against 9 KB without MQTT. With Zephyr on the ESP32-S3 (z26), the metrics connection takes its 17 KB receive buffer from the C heap: 55 KB of it free, 8.3 KB at the lowest, steady over the exports.
 
-With Zephyr on the ESP32-S3, the current build (with the Xtensa backtrace for `lastFatalError`) with MQTT and floating point in `printf` (5.4 KB of code, no RAM), leaves 4,112 bytes of the 372 KB DRAM segment once its static data is linked, with the status thread's stack at 12 KB and a 92 KB kernel heap. That is the margin at link time, not memory free while it runs: the heap is counted apart, above.
+With Zephyr on the ESP32-S3, the current build leaves 4,112 bytes of the 372 KB DRAM segment once its static data is linked. That build has the Xtensa backtrace for `lastFatalError`, MQTT, floating point in `printf` (5.4 KB of code, no RAM), a 12 KB stack for the status thread and a 92 KB kernel heap. This is the margin at link time, not memory free while it runs: the heap is counted apart, above.
 
 Stack used at most, of the stack each has (customInfo `stackMinFreeBytes`; here a KB is 1,024 bytes):
 
@@ -174,7 +174,11 @@ Measured on the device with the `netTxBytes` and `netRxBytes` counters (bytes on
 | Simulated device, no app (status every minute) | about 220 KB/hour: 87 KB sent, 130 KB received |
 | ESP32-C3 with the `alarm` app | about 280 KB/hour |
 
-The kept connections cost 2 TLS handshakes after boot and none in the next 10 minutes; after a server restart both reopen and the next spec applies in 2 s. A connection per request cost 560 to 730 KB/hour, most of it the TLS 1.3 handshake with mTLS. What is left is the full status and the server's answer to it; going lower needs differential status updates (limitation 6 below). The server issued TLS session tickets but did not resume a session with them, so a reconnection costs a full handshake (about 1.5 KB received). Changes reported by apps are grouped, one status every 15 s at most, so an app whose state flaps does not flood the network.
+- The kept connections cost 2 TLS handshakes after boot and none in the next 10 minutes. After a server restart both reopen, and the next spec applies in 2 s.
+- A connection per request cost 560 to 730 KB/hour, most of it the TLS 1.3 handshake with mTLS.
+- What is left is the full status and the server's answer to it. Going lower needs differential status updates (limitation 6 below).
+- The server issued TLS session tickets but did not resume a session with them, so a reconnection costs a full handshake (about 1.5 KB received).
+- Changes reported by apps are grouped, one status every 15 s at most, so an app whose state flaps does not flood the network.
 
 ### In Espressif's emulator
 
@@ -186,7 +190,9 @@ The kept connections cost 2 TLS handshakes after boot and none in the next 10 mi
 | ESP32-C5 | confirmed, 15 s | refused | renewed, still reporting after the first certificate expired | 61.7 / 42.2 / 40.9 KB |
 | ESP32-S3 | confirmed, 35 s | – | renewed | 121.3 / 102.1 / 73.7 KB |
 
-The C3 figures match the board's. `tests/e2e/e2e-emu.sh` runs the whole sequence on the images CI builds for the boards; CI runs it for the C5, the S3 and the C6 ([TESTING.md](TESTING.md)). It updates the default build over the air to the release build, and tries a broken build that cannot reach the server, which is rolled back once its confirmation window ends. On the emulated C6 that step found a stall, in about one run in two: the release build, with an app running, had 2.9 KB of internal heap left while it wrote the HTTP/2 preface, the server's acknowledgment never got in, and the write, holding the connection, kept the agent silent. The block the TLS handshake takes is now given back before the preface (v3.14); 6 runs of 6 passed with it, and the real C6 never showed it.
+The C3 figures match the board's. `tests/e2e/e2e-emu.sh` runs the whole sequence on the images CI builds for the boards, and CI runs it for the C5, the S3 and the C6 ([TESTING.md](TESTING.md)). It updates the default build over the air to the release build, then tries a broken build that cannot reach the server, which is rolled back once its confirmation window ends.
+
+Up to v3.13 the emulated C6 could stall in about one run in two: with an app running, the release build had 2.9 KB of internal heap left while it wrote the HTTP/2 preface, and the agent stayed silent. Since v3.14 the block the TLS handshake takes is given back before the preface, and 6 runs of 6 passed. The real C6 never showed it.
 
 ### ESP-IDF 6.0.3 on a board (ESP32-S3)
 
@@ -234,7 +240,7 @@ In the emulator against Flight Control (`tests/e2e/fatal-emu.sh`), with test bui
 
 In every run the `pc` decodes to the function that crashed, and its caller, the task's function, is among the addresses. The device crashed once and went on. The previous boot's log (`journalctl -b -1`, through the console) ends with `fatal: ` and the same text. A release's ELF, pushed with four platforms (ESP-IDF and Zephyr), came back byte for byte and left the release's index unchanged. The unit tests check that the record is valid before it is believed, and its text.
 
-The handler takes 799 bytes of IRAM on the ESP32, 907 on the S3 and 1,102 on the C3, C5 and C6; the record takes 140 bytes of RAM kept across restarts. Zephyr builds for the ESP32-S3 (its backtrace linked in), `mps2/an385` and `native_sim`; on the S3 it runs on the board (z27), but no crash has been caused there yet.
+The handler takes 799 bytes of IRAM on the ESP32, 907 on the S3 and 1,102 on the C3, C5 and C6; the record takes 140 bytes of RAM kept across restarts. Zephyr builds for the ESP32-S3 (its backtrace linked in), `mps2/an385` and `native_sim`; on the S3 a crash leaves Zephyr's report of the fault in the previous boot's log ([CONSOLE.md](CONSOLE.md#the-log)), but `lastFatalError` itself has not been checked there yet.
 
 ### The registry with TLS, and decommissioning, on boards
 
@@ -321,7 +327,7 @@ The new labels also let a fleet select on what a device says it is, `custominfo.
    - Proposal: replace a digest's findings with what the scan returns for it.
 15. **A console session whose user left before the device came stays listed.**
    - A session is listed in the device's annotation (`device-controller/console`) when it starts, and taken out only when the user's websocket closes after the device joined (`internal/console/console.go`: `CloseSession`). If the user leaves first (`flightctl console` gives up after 60 s, the UI's Logs tab after 50 s), nothing takes it out. While any session is listed the rendered spec is served at once, with no long-poll (`internal/store/model/device.go`), so the device asks for its spec every few seconds, for good.
-   - Found on the lab boards: sessions asked for while a board was restarting stayed listed. This agent remembers the last 16 sessions it saw (it never opens one twice), ends a session nobody joins within a minute, and polls every 15 s instead of 5 once only sessions it has seen are listed.
+   - Seen on boards: sessions asked for while a board was restarting stayed listed. This agent remembers the last 16 sessions it saw (it never opens one twice), ends a session nobody joins within a minute, and polls every 15 s instead of 5 once only sessions it has seen are listed.
    - Proposal: take a session out when its user leaves, joined or not, and give listed sessions a lifetime.
 
 All of these were read again in the source of 1.4.0 and of Flight Control's main branch of 12 November 2026: they hold in both, except limitation 8, fixed on main. Limitation 15 was read in main's source and seen with 1.4.0.
@@ -337,7 +343,8 @@ All of these were read again in the source of 1.4.0 and of Flight Control's main
 - **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
 - **Firmware and apps that need it, in one spec**: the device applies a spec's apps before its firmware, and an app it cannot load holds the firmware back. So a spec that brings a new firmware together with an app that needs it (a function only the new firmware has, such as the C library's `snprintf` before v3.14) is refused by the old firmware (`not a loadable WASM module: imports env.snprintf, which this firmware does not have`), and a canary rollout is suspended. For now such a release goes out in two steps: the firmware first, then the app once the fleet is up to date. The fix proposed: when the spec also changes the firmware, an app that the running firmware cannot load because of a missing import is left for after the restart, the firmware is installed, and the new one loads the app.
 - **JSON depth**: the device refuses JSON nested more than 32 levels (spec, manifests, config files), and reports the error; real documents use fewer than 10.
-- **Hardware coverage**: the latest builds were tried on the classic ESP32, the C3, the C5, the C6 and the S3 (ESP-IDF and Zephyr).
+- **Hardware coverage**: the latest builds were tried on the classic ESP32, the C3, the C5, the C6 and the S3 with ESP-IDF, and on the S3 with Zephyr. Not yet tried on a board: the `secure` variant, certificate renewal, registry tokens, GPIO interrupts and wired peripherals.
+- **Zephyr**: an app's heap floor and the `.wasm` size limit are not checked yet. MQTT is built but not yet run on a board, and `lastFatalError` not yet checked on one.
 - **Memory for apps**: CoreMark's 64 KB fits on the classic ESP32, the C3, the C5, the C6 and the S3, and with Zephyr on the ESP32-S3 N8R8, in PSRAM; wasm-coremark's 128 KB on the C6 and the S3 with PSRAM. On the classic ESP32, the C3 and the C5 an install or a swap can still fail for want of one free block of 68 KB, most of all right after another app ([CoreMark](#coremark)).
 
 What comes next is in the [roadmap](ROADMAP.md).
