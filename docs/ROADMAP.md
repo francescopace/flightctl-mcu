@@ -50,10 +50,7 @@ What an app can do and hold:
 
 The documentation:
 
-- [ ] Screenshots of Flight Control's UI, of real boards on Flight Control 1.4, in `docs/img/`: README, QUICKSTART, DEVICES, ZEPHYR, APPS (with the software catalog), DELTA, CONSOLE, METRICS (in Prometheus: the UI of 1.4 has no view of metrics), SBOM and REGISTRY have theirs. Left:
-  - PROVISIONING: an enrollment request waiting for approval, with its labels (a board enrolling).
-
-  None for COMPARISON, DEPENDENCIES, RESULTS, SECURITY and TESTING: what they show is not in the UI.
+- [x] Screenshots of Flight Control's UI, of real boards on Flight Control 1.4 (the simulated device for PROVISIONING), in `docs/img/`: README, QUICKSTART, PROVISIONING, DEVICES, ZEPHYR, APPS (with the software catalog), DELTA, CONSOLE, METRICS (in Prometheus: the UI of 1.4 has no view of metrics), SBOM and REGISTRY. None for COMPARISON, DEPENDENCIES, RESULTS, SECURITY and TESTING: what they show is not in the UI.
 
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):
 

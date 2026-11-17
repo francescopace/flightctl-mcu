@@ -20,6 +20,11 @@ BATCH=2026-11-a EXPIRATION=30d tools/enrollment.sh .secrets/batch-2026-11-a
 
 A leaked enrollment certificate lets anyone create enrollment requests until it expires: Flight Control 1.4.0 cannot revoke one (it checks only the signer and the expiry; its main branch also checks that the certificate's request was not revoked, not yet in a release). A certificate per batch with a short lifetime limits that; approving devices from an allow list (`tools/auto-approve`) decides who actually gets in. The lifetime must cover the factory window and the longest a device may stay offline before it enrolls, or enrolls again after its management certificate expired.
 
+![An enrollment request in Flight Control's UI, waiting for approval](img/enrollment-pending.png)
+<img src="img/enrollment-approve.png" alt="Approving the request, with the device's labels" width="420">
+
+*On its first boot a device asks to enroll: the request waits under Devices pending approval, and approving it shows the labels the device asked for, which can be changed there. Here the simulated device of [QUICKSTART.md](QUICKSTART.md#without-a-board); the host's name is hidden.*
+
 ## In the field: the WiFi network
 
 When the site's network is not known at the factory, provision the device with a proof of possession instead of a network (`--pop`, 8 to 63 characters, printed on the device's label or its box). With no network, the device opens an access point named `FC-xxxxxx` (the end of its MAC) and waits for an installer:
