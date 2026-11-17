@@ -116,6 +116,9 @@ tools/fleet/apply.sh
 
 The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest.
 
+![The fleet idf-lab in Flight Control's UI](img/fleet.png)
+*The fleet once applied: the firmware release as its system image, the four config sources, and every device up to date.*
+
 The pushes go through the plain door, the devices pull the same images through the one with TLS: they speak nothing else. A fleet that still names the plain door has to move first; see [REGISTRY.md](REGISTRY.md#moving-a-fleet-to-the-tls-door). To keep the fleet in Git instead, see [REGISTRY.md](REGISTRY.md#fleets-kept-in-git).
 
 ## 7. Take it out

@@ -18,6 +18,12 @@ An app is a WebAssembly module that Flight Control deploys as a container applic
 
 MQTT is not in the firmware yet: it returns `FC_ENOTSUP` once granted, so an app written for it loads and can tell. What each port has is under [Ports](#ports).
 
+![The app on a device's page](img/app-on-device.png)
+*An app on its device's page: `Running`, with its image in the registry. Flight Control shows a WASM app as a container application (`Single Container`).*
+
+![The app in the software catalog](img/app-in-catalog.png)
+*The same app as an item of Flight Control's software catalog, ready to deploy to a fleet or a device.*
+
 ## How an app runs
 
 The app exports `fc_abi_version` (with `FC_APP_ABI()`), and then any of these:

@@ -43,6 +43,10 @@ Another chip Espressif or Zephyr supports, with 384 KB of SRAM or more, should w
 
 ## Boards tried
 
+<p><img src="img/device-info.png" alt="Device information of an ESP32-C6" width="49%"> <img src="img/device-custom-data.png" alt="Custom data of an ESP32-C6" width="49%"></p>
+
+*An ESP32-C6 as Flight Control shows it: the system (`esp-idf` on `riscv32-esp32c6`), the firmware it runs and its config sources; then what the device reports of itself: heap, stack margins, traffic, temperature, WiFi signal (the MAC is hidden here).*
+
 With ESP-IDF 6.0.3 and mbedTLS 4, every board. The free heap is the last one measured, with the `alarm` app running and the agent connected ([RESULTS.md](RESULTS.md#ram)):
 
 | Chip | Core | Status | Free heap with an app running |

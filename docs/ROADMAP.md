@@ -50,6 +50,15 @@ What an app can do and hold:
 - [ ] A size limit for an app that the chip can hold. The device accepts a `.wasm` up to 64 KB, which no chip can run: in RAM an app costs about 3 times its `.wasm` once loaded, plus its linear memory, about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)). The limit should follow the heap, and the thread stack, the largest part of what a small app costs, can shrink.
 - [ ] A new firmware and an app that needs it, in one spec. The device checks a spec's apps before it installs the firmware, so the running firmware refuses an app that imports a function only the new one has (`env.snprintf`, before v3.14), and the firmware is held back with it ([RESULTS.md](RESULTS.md#current-limitations)); today such a release takes two steps. The fix is in the device: when the spec also changes the firmware, install the firmware first and check the apps with the new one, or leave an app that fails on a missing import for after the restart.
 
+The documentation:
+
+- [ ] Screenshots of Flight Control's UI, of real boards on Flight Control 1.4, in `docs/img/`: README, QUICKSTART, DEVICES, ZEPHYR, APPS (with the software catalog), DELTA, CONSOLE, SBOM and REGISTRY have theirs. Left:
+  - PROVISIONING: an enrollment request waiting for approval, with its labels (a board enrolling);
+  - METRICS: the device's and an app's metrics in Prometheus. The UI of 1.4 has no view of metrics, and the kind setup runs no Prometheus, only the gateway's exporter; `alarm` sends no metric of its own (`trend` does);
+  - SBOM: a device with a vulnerability listed (a test advisory in Trustify); today the panels show none.
+
+  None for COMPARISON, DEPENDENCIES, RESULTS, SECURITY and TESTING: what they show is not in the UI.
+
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):
 
 - [ ] Battery-powered devices: deep sleep, status only on wake-up, no long-poll. Needs limitation 3 lifted.

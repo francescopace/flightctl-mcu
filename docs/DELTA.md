@@ -46,6 +46,12 @@ If anything goes wrong on the way (the delta does not decode, the result has ano
 
 The device reports how its last firmware came in `status.os.lastDelta`, the field Flight Control 1.4 has for it: `outcome: Applied` for a delta, `NotUsed` for a whole image when the release has no delta from the running one, and `Fallback` with a `fallbackReason` when a delta did not work and the image came whole. The sizes are in the device's log. Flight Control also makes deltas of its own, for the bootc images of Linux devices: another mechanism, which these devices do not use.
 
+![status.os.lastDelta in a device's YAML](img/delta-applied.png)
+*In the device's YAML in the UI: the release it runs and `lastDelta: Applied`, the firmware taken as a delta.*
+
+![A firmware that failed to start, rolled back](img/rollback-events.png)
+*The device's events when a release does not start: the device reboots into it, goes back to the one it ran, and Flight Control reports the update failed.*
+
 With Secure Boot and flash encryption nothing changes: the device reads its image in clear through the flash encryption, the delta is between the signed images, and what it rebuilds is the signed image, byte for byte.
 
 ## A delta is not trusted until the end

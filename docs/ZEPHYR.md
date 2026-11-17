@@ -134,6 +134,9 @@ The Raspberry Pi Pico W (RP2040) ran the port. It was removed for its RAM, below
 
 An ESP32-S3-DevKitC (Xtensa LX7, 512 KB of RAM, 8 MB of flash, WiFi in the chip): the board the ESP-IDF firmware runs on, here with Zephyr's own WiFi driver, MCUboot and TF-PSA-Crypto instead of Espressif's.
 
+![The ESP32-S3 with Zephyr in Flight Control's UI](img/zephyr-device.png)
+*The ESP32-S3 with Zephyr in Flight Control: operating system `zephyr`, architecture `xtensa`, the firmware `z26` from its fleet, and the WASM app `alarm` running.*
+
 ```bash
 third_party/fetch-zephyr.sh
 ```

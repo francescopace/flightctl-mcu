@@ -21,6 +21,9 @@ A session can also read its commands on stdin, as `bash -s` would (`flightctl co
 
 Or a prompt, in a terminal (`--tty`, and the UI's terminal), with the line edited on the device: Backspace, Ctrl-C to drop the line, Ctrl-U; arrow keys are ignored. An unknown command answers so and, as a session's one command, exits with status 127.
 
+![status in the UI's terminal](img/console-status.png)
+*`status` in the UI's terminal, on an ESP32-C6 (the MAC is hidden here).*
+
 ## The log
 
 The device keeps its last log lines in RAM, as the serial port shows them, in a ring of 4 KB reserved at build time (about 40 to 80 lines; the oldest go first):
@@ -50,6 +53,9 @@ The time is UTC; before the device has set its clock, a line shows its uptime in
 | Current boot (`-b 0`), previous boot (`-b -1`), the last hour, day, week, a range of dates | as asked; without a boot, both; an older boot is empty |
 | Live | the lines kept, then the new ones as they are written, until the tab stops |
 | File path (under `/var/log`) | not found: the device has no files to show |
+
+![The Logs tab](img/console-logs.png)
+*The Logs tab on the ESP32-S3 with Zephyr: the agent's lines of the current boot, here the app `alarm` changing state.*
 
 For this, the console takes the little of a shell's that the tab sends: quotes, `;`, `&&`, `||`, a pipe to `tail -n`, `sudo`, `bash -c`, `printf`, `echo`, `[[ ]]` and `journalctl`'s options. It is not a shell: nothing else runs, and a command it does not know answers so (exit status 127). If the UI changes the commands it sends, the tab may stop working with these devices; the commands are the same in the UI of Flight Control 1.4.0 and on its main branch of 16 November 2026.
 

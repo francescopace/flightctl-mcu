@@ -96,6 +96,11 @@ spec:
   path: /fleets
 ```
 
+Or, in the UI, Import fleets asks for the same two:
+
+![Import fleets in Flight Control's UI](img/import-fleets.png)
+*Import fleets: after the repository, a resource sync with its revision and path.*
+
 A fleet that a `ResourceSync` owns is changed through Git only: delete one applied with `apply.sh` before the first sync. The secrets are in the `flightctl` namespace by default (`FLEET_SECRETS_NAMESPACE`). The end-to-end test runs this against a repository served by `git daemon`.
 
 ## Moving a fleet to the TLS door

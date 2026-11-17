@@ -18,6 +18,12 @@ A sensor node or a small controller on a production line is a microcontroller wi
 
 Here the microcontroller speaks the Flight Control agent API itself. That API is a small HTTP+JSON protocol over mutual TLS: enroll, long-poll the device spec, report status. The agent's own code, with its HTTP/2 client, the OCI client, signatures and apps, takes about 62 KB of flash on the ESP32-C3; 79 KB with cJSON, WiFi provisioning, the delta decoder and its port. Flight Control then treats the board as a regular device, with the same fleets, label selectors, rollouts, RBAC and UI.
 
+![Flight Control's device list: five ESP32 boards with ESP-IDF in one fleet and an ESP32-S3 with Zephyr in another](docs/img/devices.png)
+*Flight Control 1.4's device list: the ESP32, C3, C5, C6 and S3 with ESP-IDF, and an ESP32-S3 with Zephyr, online and up to date.*
+
+![An ESP32-C6's page in Flight Control](docs/img/device.png)
+*An ESP32-C6's page: its status, its labels, and the WASM app `alarm` running.*
+
 ## What maps to what
 
 | Flight Control | On the microcontroller |
