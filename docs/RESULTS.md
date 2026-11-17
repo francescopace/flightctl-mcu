@@ -294,8 +294,9 @@ Each in short; the source references, how it was found and the workarounds are i
 - **Server unreachable**: without an accepted status for 10 minutes the device restarts, its apps with it, and again every 10 minutes; a write gives up after 30 s.
 - **App format**: WASM OCI artifacts only (`application/vnd.wasm.content.layer.v1+wasm`), not a `.wasm` inside a container image.
 - **JSON depth**: at most 32 levels; real documents use fewer than 10.
-- **Not yet on a board**: the `secure` variant, certificate renewal, registry tokens, GPIO interrupts, wired peripherals; with Zephyr, MQTT, `lastFatalError` and downloads over HTTP/2.
+- **Not yet on a board**: the `secure` variant, certificate renewal, registry tokens, GPIO interrupts, wired peripherals; with Zephyr, `lastFatalError`.
 - **Zephyr**: an app's heap floor and the `.wasm` size limit are not checked yet.
+- **MQTT with Zephyr**: beside a metrics export every 30 s it used up the ESP32-S3's C heap (z28), and the device restarted itself after 10 minutes without a status; z29 makes both wait for heap, not yet tried on the board ([APPS.md](APPS.md#mqtt)).
 - **Memory for apps**: CoreMark's 64 KB fits on every ESP-IDF board and, in PSRAM, on the Zephyr S3 N8R8; 128 KB only on the C6 and the S3 with PSRAM. On the classic ESP32, C3 and C5 the 68 KB block can be missing right after another app ([CoreMark](#coremark)).
 
 What comes next is in the [roadmap](ROADMAP.md).

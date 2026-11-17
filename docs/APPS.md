@@ -131,7 +131,7 @@ And their own way out:
 
 ### MQTT
 
-Tested on the host, against mosquitto with and without TLS and with apps against a fake broker, and on the boards with v3.14-rc6: the classic ESP32, C3, C5, C6 and S3, with the `alarm` app and `mqttdemo` and a broker with TLS on the LAN, connected within 70 s of the spec, published the temperature every 5 s with none missing over 8 minutes, and received and answered a command on the device's prefix (QoS 1) and one on the fleet's (memory: [RESULTS.md](RESULTS.md#ram)). With Zephyr it is built and linked for the ESP32-S3, not yet run on a board. The fleet gives the broker in `/etc/fc/mqtt.json` and its CA in `/etc/fc/mqtt-ca.crt`, two config files:
+Tested on the host, against mosquitto with and without TLS and with apps against a fake broker, and on the boards with v3.14-rc6: the classic ESP32, C3, C5, C6 and S3, with the `alarm` app and `mqttdemo` and a broker with TLS on the LAN, connected within 70 s of the spec, published the temperature every 5 s with none missing over 8 minutes, and received and answered a command on the device's prefix (QoS 1) and one on the fleet's (memory: [RESULTS.md](RESULTS.md#ram)). With Zephyr, on the ESP32-S3 (z28): connected 13 s after the spec, published every 10 s with none missing over 45 minutes, and answered a command on each prefix within a second; beside a metrics export every 30 s it used up the C heap, the spec no longer parsed, and the device restarted itself after 10 minutes without a status (z29 makes the broker's connection and the export wait for heap there too; not yet tried). The fleet gives the broker in `/etc/fc/mqtt.json` and its CA in `/etc/fc/mqtt-ca.crt`, two config files:
 
 ```yaml
 spec:

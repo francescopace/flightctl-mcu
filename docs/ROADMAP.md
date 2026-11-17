@@ -20,7 +20,6 @@ Checks not made yet:
 
 - [ ] The rest of HTTP/2 on the boards ([REGISTRY.md](REGISTRY.md)):
   - a certificate renewal over it;
-  - Zephyr's downloads from the registry over HTTP/2;
   - the traffic it saves or costs ([RESULTS.md](RESULTS.md#idle-traffic) has HTTP/1.1's only).
 - [ ] The core's own WiFi provisioning on an ESP-IDF board: it passes in the emulator only ([PROVISIONING.md](PROVISIONING.md)).
 - [ ] `lastFatalError` after a real crash on the ESP32-S3 with Zephyr: the code is on the board but has never run on Xtensa ([RESULTS.md](RESULTS.md#a-crash-in-the-status)). That build has 4 KB of DRAM left at link time, so a larger static buffer must take its room from something else.
@@ -30,7 +29,7 @@ What an app can do and hold:
 - [ ] A large app's memory on the classic ESP32, the C5 and the C3, every time: CoreMark takes about 105 KB of heap in all, and with the agent connected these chips have 103 to 117 KB free with no app, 20 to 34 KB short of it and the 32 KB kept for the agent, a few KB less with the agent's connection closed, as when an app starts ([RESULTS.md](RESULTS.md#coremark)). Left: that much less heap for the agent at rest, or a lower floor. Done on main, not yet on the boards: an app starts once the spec is freed, and one that did not fit is started again when the heap has room.
 - [ ] What the agent takes of the heap, measured, so that the 32 KB it keeps from the apps is a figure and not a guess ([APPS.md](APPS.md#size-and-limits)). The lowest the device logs today also counts the block held while a TLS connection opens. With Zephyr the 32 KB are not checked yet.
 - [ ] CoreMark slower and less even on the C5 and C6 since v3.12 than with the same `-Os` firmware before it. Not explained yet ([RESULTS.md](RESULTS.md#coremark)).
-- [ ] CoreMark with Zephyr on an ESP32-S3 without PSRAM: it runs only on the N8R8, from its PSRAM ([RESULTS.md](RESULTS.md#coremark)).
+- [ ] CoreMark with Zephyr on an ESP32-S3 without PSRAM: it runs only on the N8R8, from its PSRAM. Without PSRAM it needs about 85 KB of the C heap (a 68 KB block for its memory, the module, the instance), and the agent alone leaves about 65 KB of the 114 KB, with 4 KB of the data region left at link: some 20 KB more would have to come from the kernel heap or the WiFi driver's buffers ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] Apps against [Toit](https://toit.io) and against WAMR's AOT mode, on the same ESP32-C6 ([COMPARISON.md](COMPARISON.md#tied-to-one-chip-vendor)). Toit publishes no figures against native code or WebAssembly. Three benchmarks:
   - Richards (method calls and pointers between objects), in Toit and in C built to `.wasm`;
   - DeltaBlue (objects allocated and freed at every step), which also helps decide whether apps get `malloc`;
@@ -45,7 +44,7 @@ What an app can do and hold:
   - whether apps get `malloc` and the math functions.
 - [ ] MQTT for the apps ([APPS.md](APPS.md#mqtt)):
   - on the C3 with an app using MQTT, the first metrics exports after a restart fail for want of memory, the heap down to 6 to 10 KB ([RESULTS.md](RESULTS.md#ram));
-  - on the boards: the connection kept through a download, and MQTT with Zephyr (built for the ESP32-S3, not run);
+  - on the boards: the connection kept through a download, and MQTT with Zephyr beside a metrics export: on the ESP32-S3 the two used up the C heap; the wait for heap that came after it is not yet tried there ([APPS.md](APPS.md#mqtt));
   - not planned for 1.0: the device's certificate for the broker, a QoS 1 message sent again after a lost link, QoS 2, a will message, a persistent session.
 
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):

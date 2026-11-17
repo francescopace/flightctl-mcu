@@ -165,7 +165,9 @@ Tried on the board, against Flight Control 1.4.0:
 | Firmware, as a delta | 19 KB (2.2%) rebuilt the 885 KB image in 8 s; confirmed |
 | A firmware that cannot reach Flight Control | downloaded whole in 14 s; given up after its 30 s; MCUboot put the previous firmware back (a 15 s swap), which reported the failure 1 min 53 s after the fleet changed, and did not try the image again |
 | Reflashed over USB | same device: its key is in the storage partition |
-| Memory | 49 KB of the 128 KB C heap free with the app and both connections up (before HTTP/2), 40 KB at the lowest. With z26 (the C heap 115 KB, 4 KB having gone to the device's log) and metrics sent every 30 s on a second connection: 55 KB free, 8.3 KB at the lowest; the first core's data region is 99.9% full. z27 (MQTT linked in, the C heap 114 KB, the kernel heap 92 KB): a 1,038 KB signed image, the data region 98.9% full (4 KB free) |
+| Memory | 49 KB of the 128 KB C heap free with the app and both connections up (before HTTP/2), 40 KB at the lowest. With z26 (the C heap 115 KB, 4 KB having gone to the device's log) and metrics sent every 30 s on a second connection: 55 KB free, 8.3 KB at the lowest; the first core's data region is 99.9% full. z27 (MQTT linked in, the C heap 114 KB, the kernel heap 92 KB): a 1,038 KB signed image, the data region 98.9% full (4 KB free); z29: 99.0% (3.6 KB free) |
+| Downloads over HTTP/2 | z28 as a 54 KB delta and the `mqttdemo` app: manifests, signatures and blobs, every request HTTP/2 in the registry's log |
+| MQTT | `mqttdemo` against a broker with TLS: published every 10 s for 45 minutes, a command on each prefix answered within a second; beside a metrics export it used up the C heap ([APPS.md](APPS.md#mqtt)) |
 | The UI's Logs tab, metrics | the tab's commands answered (every filter, live mode); the device's metrics at the Telemetry Gateway ([CONSOLE.md](CONSOLE.md), [METRICS.md](METRICS.md)) |
 
 What it took, beyond the board's two files in `port/zephyr/boards/`:
