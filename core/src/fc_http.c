@@ -1116,7 +1116,16 @@ static int conn_tls_open(conn_t *c, const fc_http_target_t *t)
 /* Opens a connection for t; the tests put their own transport here. */
 static conn_t *(*s_open_hook)(const fc_http_target_t *t);
 
-static conn_t *conn_open_once(const fc_http_target_t *t)
+/* *hold (fc_heap_hold.h), when there is one, is given back once the TLS
+ * handshake is over: what the connection keeps is allocated by then, and the
+ * rest of the heap is everyone's again. Held while the HTTP/2 preface went out,
+ * it left an emulated ESP32-C6 (release build, an app running) with 2.9 KB of
+ * internal heap, too little for lwIP and the WiFi driver to take the ACK: the
+ * preface's segment was sent again and again, and its write, under the
+ * session's lock, kept the agent's two threads silent for minutes. When the
+ * preface's TLS buffer (4.4 KB) did not fit, the write failed instead and the
+ * whole connection was opened a second time. */
+static conn_t *conn_open_once(const fc_http_target_t *t, void **hold)
 {
     conn_t *c = s_open_hook ? s_open_hook(t) : conn_new(&TLS, NULL);
     if (c == NULL) {
@@ -1127,6 +1136,8 @@ static conn_t *conn_open_once(const fc_http_target_t *t)
         conn_free(c);
         return NULL;
     }
+    free(*hold);
+    *hold = NULL;
     snprintf(c->host, sizeof(c->host), "%s", t->host);
     c->port = t->port;
     c->cert_id = cert_id(t->cert_pem);
@@ -1146,11 +1157,12 @@ static conn_t *conn_open(const fc_http_target_t *t)
      * the block are left to it (all of it held, an ESP32-C5 failed its first
      * connection after boot, with 15 KB outside). */
     void *hold = fc_heap_hold(24 * 1024);
-    conn_t *c = conn_open_once(t);
+    conn_t *c = conn_open_once(t, &hold);
     if (c == NULL && hold != NULL) {
+        /* The TLS connection did not open with the block held. */
         free(hold);
         hold = NULL;
-        c = conn_open_once(t);
+        c = conn_open_once(t, &hold);
     }
     free(hold);
     return c;
