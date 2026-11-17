@@ -78,7 +78,19 @@ Internal heap with the `alarm` app running. v3.12 holds one TLS connection at a 
 | ESP32-C3 | v3.13-rc6, an hour after boot | 70 to 75 KB | 2.8 KB, at start-up | 36.0 KB |
 | ESP32-S3, Zephyr | before the app interface | about 50 KB | – | – |
 
-On the C3 the lowest is reached in the first seconds after boot, before any app or export; v3.13 also holds the device's log (4 KB) and sends metrics every 30 s, with 19 to 20 KB of internal heap left during an export ([METRICS.md](METRICS.md)). The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot), the app interface about 4.5 KB of static RAM, its C library included (the tables of native functions are const, in flash).
+On the C3 the lowest is reached in the first seconds after boot, before any app or export. v3.13 also holds the device's log (4 KB) and sends metrics every 30 s. The resource alerts take about 4 KB (65.6 KB free on the C3 five minutes after boot). The app interface takes about 4.5 KB of static RAM, its C library included: the tables of native functions are const, in flash. The C3 with the `alarm` app uses 1% of its CPU.
+
+Internal heap with metrics (v3.13-rc6, an export every 30 s) and with MQTT (v3.14-rc6, the `alarm` app and `mqttdemo`, the broker on the LAN with TLS):
+
+| Board | Lowest during a metrics export | Free once MQTT is connected |
+|---|---|---|
+| Classic ESP32 | 79 to 100 KB | 91 KB |
+| ESP32-S3 | 93 to 108 KB | 96 KB |
+| ESP32-C5 | 26 to 49 KB | 44 KB |
+| ESP32-C6 | 25 to 44 KB (WiFi buffers at ESP-IDF's defaults) | 141 KB |
+| ESP32-C3 | 19 to 20 KB; 13 KB right after it took a whole firmware | 39 KB |
+
+No export was skipped for want of memory, and none took a device's heap below what its boot had reached ([METRICS.md](METRICS.md)). The MQTT client's thread used 3.2 to 4.2 KB of its 8 KB stack ([APPS.md](APPS.md#mqtt)). On the C3 after a restart, MQTT connected 4 s after the agent's own connection. The connection keeps 9 KB of heap (49 KB free before, 40 KB after), and the heap's lowest in the first 23 s was 3 KB, against 9 KB without MQTT. With Zephyr on the ESP32-S3 (z26), the metrics connection takes its 17 KB receive buffer from the C heap: 55 KB of it free, 8.3 KB at the lowest, steady over the exports.
 
 With Zephyr on the ESP32-S3, the current build (with the Xtensa backtrace for `lastFatalError`) with MQTT and floating point in `printf` (5.4 KB of code, no RAM), leaves 4,112 bytes of the 372 KB DRAM segment once its static data is linked, with the status thread's stack at 12 KB and a 92 KB kernel heap. That is the margin at link time, not memory free while it runs: the heap is counted apart, above.
 
@@ -114,13 +126,26 @@ What a WASM app costs, on the C3 (debug build): 17.7 KB of heap for the `trend` 
 
 The interpreter is about 30 times slower than native code; the instruction count, which lets any app be stopped, is part of that. WAMR's AOT mode should come to about 3 times slower than native, but an app would then be published once per architecture (Xtensa, RISC-V) instead of as one module for every device; not measured. At 240 MHz, CoreMark runs 2.2 times faster on the classic ESP32 than with ESP-IDF's debug default at 160 MHz.
 
-Building the firmware for size, with WAMR still at `-O2`, costs CoreMark about 5% on the S3 and 7% on the classic ESP32; on the same release (v3.10) the C5 and C6 lost nothing (22.3 and 12.2 either way). v3.12 also ran lower and less evenly on the C6 (11.45–11.98) and on the C5, which gave about 19.7 or about 22.3 from one run to the next of the same image, once 14.8: not explained yet. With v3.13 on the C6, four runs of wasm3's build (11.81 to 11.98) and two of wasm-coremark's (13.24 and 13.71); on the C5 one run, 19.46. With v3.14-rc4, one run of wasm3's build on each board: 14.22 on the classic ESP32, 14.27 on the C3, 19.65 on the C5, 11.75 on the C6 (below the v3.13 runs) and 17.56 on the S3 N4R2.
+Building the firmware for size, with WAMR still at `-O2`, costs CoreMark about 5% on the S3 and 7% on the classic ESP32. On v3.10 the C5 and C6 lost nothing (22.3 and 12.2 either way). Results move a little between releases and between runs of the same image:
 
-The linear memory needs one free block of its size, rounded up by the heap: 64 KB takes a block of 68 KB, 128 KB one of 136 KB. Over 3 installs (from the `alarm` app) and 4 swaps (CoreMark replaced by itself, without a restart) per board, one try failed on the classic ESP32 (a swap, largest free block 48 KB) and one on the C5 (an install, 64 KB); the C6 and the S3 passed every one, and again with v3.13 (installs and swaps of each build). With v3.13 the 64 KB block was there once in two tries on the classic ESP32 (else 64 KB the largest of 138 KB free) and on the C5 (else 44 KB), and once in five on the C3, right after a restart (else 48 to 50 KB the largest of 50 to 87 KB free, 22 KB after a swap). Without metrics (`metrics.json` with no endpoint, from a restart) the ESP32 and the C3 failed alike, so the exports are not what breaks the heap up. With v3.14-rc4, right after a swap from another app the block was not there on the ESP32, the C3 and the C5 (largest free block 28 to 44 KB); after a restart CoreMark started on each. On the C3, with CoreMark's memory taken, one of the agent's TLS handshakes failed for want of memory (`PSA_ERROR_INSUFFICIENT_MEMORY`), and after a swap that failed the heap's lowest since the restart was 108 bytes. On the classic ESP32 the 64 KB build runs from internal RAM, and over the runs the heap went down to 2.3 KB at the lowest while the agent kept reporting. The S3 puts an app's memory in PSRAM when no internal block is large enough, with two images: `esp32s3` for quad PSRAM (and boards with none) and `esp32s3-r8` for octal ([DEVICES.md](DEVICES.md)). With Zephyr the N8R8's octal PSRAM is a heap of its own, from which WASM apps' memories of 16 KB or more come (`port/zephyr/fc_heap_zephyr.c`); its driver takes 4 KB of internal RAM.
+| Release | Classic ESP32 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-S3 N4R2 |
+|---|---|---|---|---|---|
+| v3.12 | 14.12–14.27 | | about 19.7 or about 22.3 from one run to the next, once 14.8 (not explained yet) | 11.45–11.98 | |
+| v3.13 | 14.19 | 14.46 | 19.46 (one run) | wasm3's build 11.81–11.98 (four runs), wasm-coremark's 13.24 and 13.71 | |
+| v3.14-rc4, one run of wasm3's build | 14.22 | 14.27 | 19.65 | 11.75 | 17.56 |
+
+The linear memory needs one free block of its size, rounded up by the heap: 64 KB takes a block of 68 KB, 128 KB one of 136 KB. Whether that block is there depends on how broken up the heap is:
+
+- **v3.12**, 3 installs (from the `alarm` app) and 4 swaps (CoreMark replaced by itself, without a restart) per board: one try failed on the classic ESP32 (a swap, largest free block 48 KB) and one on the C5 (an install, 64 KB). The C6 and the S3 passed every one, and again with v3.13.
+- **v3.13**: the 64 KB block was there once in two tries on the classic ESP32 (else 64 KB the largest of 138 KB free) and on the C5 (else 44 KB). On the C3 it was there once in five, right after a restart (else 48 to 50 KB the largest of 50 to 87 KB free, 22 KB after a swap). Without metrics (`metrics.json` with no endpoint, from a restart) the ESP32 and the C3 failed alike, so the exports do not break the heap up.
+- **v3.14-rc4**, with the 32 KB the agent keeps for itself ([APPS.md](APPS.md#size-and-limits)): CoreMark (a 7.7 KB `.wasm`, 64 KB of memory) was taken and run on the classic ESP32, C3, C5, C6 and S3. Its instance left 85 to 96 KB of internal heap (52 KB on the S3), and no TLS handshake failed. Right after a swap from another app the block was not there on the ESP32, the C3 and the C5 (largest free block 28 to 44 KB); after a restart CoreMark started on each.
+- **Low points**: on the C3, with CoreMark's memory taken, one of the agent's TLS handshakes failed for want of memory (`PSA_ERROR_INSUFFICIENT_MEMORY`), and after a swap that failed the heap's lowest since the restart was 108 bytes. On the classic ESP32 the 64 KB build runs from internal RAM, and the heap went down to 2.3 KB at the lowest while the agent kept reporting.
+
+The S3 puts an app's memory in PSRAM when no internal block is large enough, with two images: `esp32s3` for quad PSRAM (and boards with none) and `esp32s3-r8` for octal ([DEVICES.md](DEVICES.md)). With Zephyr the N8R8's octal PSRAM is a heap of its own, from which WASM apps' memories of 16 KB or more come (`port/zephyr/fc_heap_zephyr.c`); its driver takes 4 KB of internal RAM.
 
 ### Timings
 
-ESP-IDF boards, an early build:
+ESP-IDF boards with an early build, unless the row says otherwise:
 
 | Operation | Time |
 |---|---|
@@ -130,6 +155,9 @@ ESP-IDF boards, an early build:
 | Rollback of a broken firmware | about 3.5 min (150 s confirmation window plus 2 reboots) |
 | WASM app update across the fleet (canary, then the rest) | about 50 s, almost all of it waiting for the rollout; on the device the swap is immediate |
 | App state change, to Flight Control | about 2 s |
+| Memory rule added to the fleet, to `Warning` and Flight Control's `DeviceMemoryWarning` (end-to-end test) | 21 s; `DeviceMemoryNormal` once the rule is removed |
+| MQTT connected, from the spec that gives the broker (v3.14-rc6) | within 70 s |
+| Decommissioning, from the request to `Completed` | 2.4 to 3 s ([below](#the-registry-with-tls-and-decommissioning-on-boards)) |
 
 ### Idle traffic
 
@@ -180,7 +208,27 @@ An ESP32-S3 with each port in turn, against Flight Control 1.4.0. Each was given
 | Back | the bootloader takes the previous slot | MCUboot swaps the slots back: 15 s |
 | Reported | 53 s after the fleet changed: "failed to start and was rolled back; not retried" | 1 min 53 s, the same message |
 
-Neither tried the image again.
+Neither tried the image again. The ESP32-C6 (ESP-IDF) was back on the previous firmware, and reporting it, 50 s after it restarted into a broken one; with v3.13, in three more runs with the default and the release build, it was online again 3 to 5 s after the restart back.
+
+### A crash in the status
+
+After a crash, the status gives `lastFatalError`: the fault, the task or thread, the uptime, the `pc` and the callers, for `addr2line` against the ELF of the firmware that crashed. `tools/fw-push.py` keeps each release's ELF in the registry, and `tools/fw-elf.py` gets it back. With ESP-IDF the panic handler records a fault, an `abort()`, the interrupt watchdog, and the task watchdog when it is set to panic (by default it only logs). On Xtensa the record has the backtrace; on RISC-V, which has no frame pointers, `ra` and the firmware's code addresses found on the stack. Zephyr gives the same text with the `pc` and `lr` on Arm, and the `pc` and Zephyr's own backtrace on the ESP32-S3.
+
+In the emulator against Flight Control (`tests/e2e/fatal-emu.sh`), with test builds that crash from a task 30 s after power-on:
+
+| Chip | Crash | `lastFatalError` |
+|---|---|---|
+| ESP32-C5 | write to address 0 | `Store access fault (7) in thread "fc_fault", 30112 ms after boot, pc 0x4200d96a ra 0x4200d994` |
+| ESP32-C3 | write to address 0 | `… (7) …, pc 0x4200cb7e ra 0x4200cba8` |
+| ESP32-S3 | write to address 0 | `StoreProhibited (29) …, pc 0x420c2d5c backtrace 0x4200ecda` |
+| ESP32-C5 | `abort()`, as a failed assert makes (also run on the C3, C6 and S3) | `abort() (2) …, pc 0x4200d973 ra 0x4080c926, stack 0x4080b76e 0x4200d976 0x4200d9a2`: the `pc` is abort()'s caller; the log has the assert, the function and the task |
+| ESP32-C5 | interrupt watchdog (a loop with interrupts off) | `Interrupt wdt timeout on CPU0 (24) …, pc 0x4200d97a ra 0x4200d978, stack 0x4200d9b0`, `resetReason` `int_wdt` |
+| ESP32-S3 | interrupt watchdog | `… (5) …, pc 0x420c2d5e backtrace 0x4200ecda` |
+| ESP32-C5, S3 | task watchdog set to panic (a loop that starves the idle task) | `task watchdog (0) …`, the `pc` in the loop, `resetReason` `task_wdt` |
+
+In every run the `pc` decodes to the function that crashed, and its caller, the task's function, is among the addresses. The device crashed once and went on. The previous boot's log (`journalctl -b -1`, through the console) ends with `fatal: ` and the same text. A release's ELF, pushed with four platforms (ESP-IDF and Zephyr), came back byte for byte and left the release's index unchanged. The unit tests check that the record is valid before it is believed, and its text.
+
+The handler takes 799 bytes of IRAM on the ESP32, 907 on the S3 and 1,102 on the C3, C5 and C6; the record takes 140 bytes of RAM kept across restarts. Zephyr builds for the ESP32-S3 (its backtrace linked in), `mps2/an385` and `native_sim`; on the S3 it runs on the board (z27), but no crash has been caused there yet.
 
 ### The registry with TLS, and decommissioning, on boards
 
