@@ -16,7 +16,7 @@
 #define APP_HANDLES   12
 #define APP_TIMERS    4  /* FC_MAX_TIMERS */
 #define APP_EVENTS    16 /* FC_EVENT_QUEUE */
-#define APP_CALL_MS   1000 /* FC_CALL_LIMIT_MS: what a call may spend waiting in host functions */
+#define APP_CALL_MS   1000 /* FC_CALL_LIMIT_MS: what a call may spend in the device's functions (waits, the C library) */
 #define APP_WAIT_MS   100  /* FC_WAIT_MAX_MS */
 #define APP_KV_QUOTA  4096
 #define APP_KV_KEY    31
@@ -96,6 +96,7 @@ typedef struct app {
      * and the event queue are also touched by GPIO callbacks: under ev_lock. */
     wasm_module_inst_t inst;
     int64_t call_start_ms;
+    int64_t native_us; /* what the call has spent in the device's functions (fc_apps_native_time) */
     int unlimited; /* the call has no limits: a module run once (FC_ENTRY, _start) */
     char out[96]; /* printf/puts/putchar: the line not yet logged (fc_apps.c) */
     int out_len;
@@ -113,6 +114,11 @@ typedef struct app {
 extern const fc_hw_t *g_fc_hw;
 
 int64_t fc_apps_now_ms(void);
+int64_t fc_apps_now_us(void);
+/* Counts the time since t0 (fc_apps_now_us) against the call's APP_CALL_MS in
+ * the device's functions; past it, sets the exception (the app traps on
+ * return) and returns 1. A module run once has no limit. */
+int fc_apps_native_time(wasm_exec_env_t env, app_t *a, int64_t t0);
 int fc_apps_stopping(const app_t *a);
 const char *fc_apps_device_name(void);
 

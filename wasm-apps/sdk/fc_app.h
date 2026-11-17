@@ -36,9 +36,9 @@
  *
  *   All of them run on the app's own thread, one at a time: the app needs no
  *   locks. A call may run a budget of instructions, about a second of work
- *   on the slowest chip, and spend at most FC_CALL_LIMIT_MS waiting in the
- *   device's functions (fc_sleep_ms...); past either, the app is stopped as
- *   if it had trapped. Events wait in a queue of FC_EVENT_QUEUE
+ *   on the slowest chip, and spend at most FC_CALL_LIMIT_MS in the device's
+ *   functions (fc_sleep_ms..., the C library), which the budget does not
+ *   count; past either, the app is stopped as if it had trapped. Events wait in a queue of FC_EVENT_QUEUE
  *   entries. A GPIO edge replaces the one still queued for the same GPIO; for
  *   the others, when the queue is full, the oldest are dropped and the next
  *   event is FC_EV_OVERFLOW with the number lost.
@@ -98,7 +98,7 @@ FC_EXPORT("init") int32_t init(void);
 FC_EXPORT("tick") void tick(void);
 FC_EXPORT("on_event") void on_event(int32_t type, int32_t handle, int32_t value);
 
-#define FC_CALL_LIMIT_MS 1000 /* longest wait of one init, tick or on_event */
+#define FC_CALL_LIMIT_MS 1000 /* longest time one init, tick or on_event spends in the device's functions */
 
 /* ---- Errors ------------------------------------------------------------------ */
 

@@ -59,7 +59,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
-        V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop),
+        V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix),
 #undef V
     };
     f_fetches++;
@@ -590,19 +590,47 @@ static void test_libc_oob(void)
     remove_all();
 }
 
-/* A loop of the C library's native calls is stopped after a second, though
- * it runs few of the app's instructions. */
+/* A loop of the C library's native calls is stopped after a second spent in
+ * them, though it runs few of the app's instructions. */
 static void test_libc_loop(void)
 {
     char err[160];
     s_call_budget = 1000000000; /* on a chip 5 million take a second; the host is faster */
     int64_t t0 = fc_apps_now_ms();
     CHECK_INT(apply_one("p", "reg/t_libcloop", NULL, err, sizeof(err)), 0);
-    const char *want = "Error Exception: a call took more than 1 s";
+    const char *want = "Error Exception: a call spent more than 1 s in the device's functions";
     CHECK_STR(wait_state_of("p", want, 5000), want);
     CHECK(fc_apps_now_ms() - t0 < 3000);
     remove_all();
     s_call_budget = FC_APP_CALL_BUDGET;
+}
+
+/* Only the time spent in the C library counts against its limit: a call of
+ * the app's own instructions with a C library call now and then runs past
+ * that limit in time and is stopped by its instruction budget. Before, the
+ * whole call's time counted, and on the slower chips such a loop was stopped
+ * after a second, before its budget. */
+static void test_libc_mixed(void)
+{
+    char err[160];
+    s_native_limit_us = 50 * 1000;
+    s_call_budget = 30000000;
+    CHECK_INT(apply_one("m", "reg/t_libcmix", NULL, err, sizeof(err)), 0);
+    const char *want = "Error Exception: instruction limit exceeded";
+    for (int i = 0; i < 1000 && strncmp(state_of("m"), "Error", 5) != 0; i++) {
+        usleep(1000);
+    }
+    pthread_mutex_lock(&s_lock);
+    int64_t ms = fc_apps_now_ms() - find("m")->call_start_ms; /* how long the call ran, within a millisecond or so */
+    pthread_mutex_unlock(&s_lock);
+    CHECK_STR(state_of("m"), want);
+    if (ms <= 100) {
+        fprintf(stderr, "the budget ran out in %ld ms: the test proves nothing\n", (long)ms);
+    }
+    CHECK(ms > 100);
+    remove_all();
+    s_call_budget = FC_APP_CALL_BUDGET;
+    s_native_limit_us = (int64_t)APP_CALL_MS * 1000;
 }
 
 static void test_fc_info(void)
@@ -951,8 +979,8 @@ static void test_fc_limits(void)
 {
     char err[160];
     CHECK_INT(apply_one("s", "reg/t_sleep", NULL, err, sizeof(err)), 0);
-    CHECK_STR(wait_state_of("s", "Error Exception: a call took more than 1 s", 3000),
-              "Error Exception: a call took more than 1 s");
+    CHECK_STR(wait_state_of("s", "Error Exception: a call spent more than 1 s in the device's functions", 3000),
+              "Error Exception: a call spent more than 1 s in the device's functions");
     CHECK_INT(apply_one("s", "reg/t_oob", NULL, err, sizeof(err)), 0);
     const char *st = wait_state_of("s", "", 0);
     for (int i = 0; i < 300 && strncmp(st, "Error", 5) != 0; i++) {
@@ -1331,6 +1359,7 @@ int main(void)
     RUN(test_libc);
     RUN(test_libc_oob);
     RUN(test_libc_loop);
+    RUN(test_libc_mixed);
     RUN(test_fc_info);
     RUN(test_fc_timer);
     RUN(test_fc_config);

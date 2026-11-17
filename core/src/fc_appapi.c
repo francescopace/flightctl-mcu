@@ -141,19 +141,10 @@ static int64_t fc_time_unix_ms(wasm_exec_env_t env)
     return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
-/* Stops the call when it has spent more than APP_CALL_MS: 1 if so. */
-static int over_time(wasm_exec_env_t env, app_t *a)
-{
-    if (fc_apps_now_ms() - a->call_start_ms > APP_CALL_MS) {
-        wasm_runtime_set_exception(wasm_runtime_get_module_inst(env), "a call took more than 1 s");
-        return 1;
-    }
-    return 0;
-}
-
 static int32_t fc_sleep_ms(wasm_exec_env_t env, int32_t ms)
 {
     app_t *a = app_of(env);
+    int64_t t0 = fc_apps_now_us();
     if (ms < 0) {
         return FC_HW_EINVAL;
     }
@@ -167,7 +158,7 @@ static int32_t fc_sleep_ms(wasm_exec_env_t env, int32_t ms)
         wasm_runtime_set_exception(wasm_runtime_get_module_inst(env), "stopped");
         return 0;
     }
-    over_time(env, a);
+    fc_apps_native_time(env, a, t0); /* past APP_CALL_MS: the app traps */
     return 0;
 }
 
@@ -755,8 +746,9 @@ static int32_t i2c_do(wasm_exec_env_t env, int32_t h, int32_t addr, const void *
         wl + rl == 0) {
         return FC_HW_EINVAL;
     }
+    int64_t t0 = fc_apps_now_us();
     int rc = g_fc_hw->i2c_transfer(b->port, addr, w, (size_t)wl, r, (size_t)rl, APP_WAIT_MS);
-    over_time(env, a);
+    fc_apps_native_time(env, a, t0); /* past APP_CALL_MS: the app traps */
     return rc;
 }
 
@@ -848,9 +840,10 @@ static int32_t fc_spi_transfer(wasm_exec_env_t env, int32_t h, int32_t tx, int32
         return 0;
     }
     int keep = flags & 1;
+    int64_t t0 = fc_apps_now_us();
     int rc = g_fc_hw->spi_transfer(d->port, t, r, (size_t)len, keep, APP_WAIT_MS);
     d->kept = rc == 0 && keep;
-    over_time(env, a);
+    fc_apps_native_time(env, a, t0); /* past APP_CALL_MS: the app traps */
     return rc;
 }
 
@@ -932,8 +925,9 @@ static int32_t fc_uart_write(wasm_exec_env_t env, int32_t h, const void *d, int3
     if (len == 0) {
         return 0;
     }
+    int64_t t0 = fc_apps_now_us();
     int rc = g_fc_hw->uart_write(u->port, d, (size_t)len, APP_WAIT_MS);
-    over_time(env, a);
+    fc_apps_native_time(env, a, t0); /* past APP_CALL_MS: the app traps */
     return rc;
 }
 
@@ -951,8 +945,9 @@ static int32_t fc_uart_read(wasm_exec_env_t env, int32_t h, void *b, int32_t cap
     if (cap == 0) {
         return 0;
     }
+    int64_t t0 = fc_apps_now_us();
     int rc = g_fc_hw->uart_read(u->port, b, (size_t)cap, timeout > APP_WAIT_MS ? APP_WAIT_MS : timeout);
-    over_time(env, a);
+    fc_apps_native_time(env, a, t0); /* past APP_CALL_MS: the app traps */
     return rc;
 }
 

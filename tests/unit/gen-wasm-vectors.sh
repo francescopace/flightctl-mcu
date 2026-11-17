@@ -23,7 +23,7 @@ for src in "$ROOT"/tests/unit/wasm/*.c; do
     name="$(basename "$src" .c)"
     if [[ "$name" == t_tail ]]; then
         build "$name" "$src" "$SDK" -mtail-call
-    elif [[ "$name" == t_libc || "$name" == t_libcloop ]]; then
+    elif [[ "$name" == t_libc || "$name" == t_libcloop || "$name" == t_libcmix ]]; then
         build "$name" "$src" "$SDK" -I"$SDK/libc" -Wl,--allow-undefined-file="$SDK/libc/libc.syms"
     elif [[ "$name" == t_libcoob ]]; then
         for c in 1 2 3 4 5; do
