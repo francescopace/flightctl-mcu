@@ -17,7 +17,8 @@ GitHub Actions runs two workflows. On every push that touches code, [ci.yml](../
   - an unsigned app, which it must refuse;
   - an update while the registry is down, which must complete once it is back (the TLS door stopped);
   - the app's removal, then the second example app;
-  - the remote console: `flightctl console device/<name> -- status` answers, and an unknown command fails;
+  - metrics: with the fleet's `metrics.json`, the device asks for the Telemetry Gateway's certificate, and its own metrics and the app's reach the gateway's Prometheus exporter ([METRICS.md](METRICS.md));
+  - the remote console: `flightctl console device/<name> -- status` answers, and an unknown command fails; the command the UI's Logs tab sends on `bash -s` gets the log and the end marker the tab waits for;
   - a memory alert from the fleet's `spec.resources`: `Warning` and the summary `Degraded`, then `Healthy` again with the default monitors;
   - the renewal of its management certificate (the server issues 2-minute certificates for the test), and a status accepted after the first one expired;
   - a server restart, after which it must reconnect and take a new spec;
