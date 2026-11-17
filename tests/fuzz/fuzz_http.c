@@ -70,6 +70,10 @@ long fc_port_heap_largest(void)
 {
     return -1;
 }
+long fc_port_heap_free_now(void)
+{
+    return -1;
+}
 long fc_port_heap_watch(int start)
 {
     return -1;

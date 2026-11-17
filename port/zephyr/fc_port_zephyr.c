@@ -395,12 +395,20 @@ long fc_port_heap_free(void)
      * CONFIG_FC_APP_HEAP_CHECK: the floor and the .wasm limit (fc_apps.c)
      * have not been measured with Zephyr on a board. */
 #ifdef CONFIG_FC_APP_HEAP_CHECK
-    size_t total, free_now, free_min;
-    fc_heap_stats(&total, &free_now, &free_min);
-    return total > 0 ? (long)free_now : -1;
+    return fc_port_heap_free_now();
 #else
     return -1;
 #endif
+}
+
+long fc_port_heap_free_now(void)
+{
+    /* Always: without it the broker's connection and the metrics export
+     * started with any heap left, and on the ESP32-S3 the two together
+     * left the agent none for its spec and status (z28). */
+    size_t total, free_now, free_min;
+    fc_heap_stats(&total, &free_now, &free_min);
+    return total > 0 ? (long)free_now : -1;
 }
 
 

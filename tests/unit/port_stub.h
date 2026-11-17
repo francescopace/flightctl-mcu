@@ -7,6 +7,7 @@ extern int stub_reboots;
 extern long stub_stack_unused; /* what fc_port_stack_unused returns; -1 after stub_reset */
 extern long stub_heap_largest; /* fc_port_heap_largest; -1: cannot tell */
 extern long stub_heap_free;    /* fc_port_heap_free; -1: cannot tell */
+extern long stub_heap_free_now; /* fc_port_heap_free_now; -2: what fc_port_heap_free gives */
 extern long stub_heap_watch_low; /* what fc_port_heap_watch(0) returns; -1: it cannot watch */
 extern long stub_heap_free_next[4]; /* what the next stub_heap_free_queued calls return first */
 extern int stub_heap_free_queued;

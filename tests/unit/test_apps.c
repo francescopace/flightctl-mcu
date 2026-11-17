@@ -1196,6 +1196,28 @@ static int mqtt_idle(int claim)
 }
 static void mqtt_connected(void) { s_mqtt_ends++; }
 
+/* The broker's handshake waits for room above the agent's floor, read with
+ * fc_port_heap_free_now: also where the port keeps the apps' own heap
+ * checks off (fc_port_heap_free -1), as Zephyr does. */
+static void test_mqtt_waits_for_heap(void)
+{
+    fc_apps_mqtt_hooks(mqtt_idle, mqtt_connected);
+    int claims = s_mqtt_claims;
+    stub_heap_free = -1;
+    stub_heap_free_now = s_heap_floor + FC_MQTT_CONN_COST - 1;
+    CHECK_INT(mqtt_may_connect(), 0);
+    CHECK_INT(s_mqtt_claims, claims); /* the agent not held */
+    stub_heap_free_now = s_heap_floor + FC_MQTT_CONN_COST;
+    CHECK_INT(mqtt_may_connect(), 1);
+    CHECK_INT(s_mqtt_claims, claims + 1);
+    mqtt_connect_end();
+    stub_heap_free_now = -1; /* a port that cannot tell: not held back */
+    CHECK_INT(mqtt_may_connect(), 1);
+    mqtt_connect_end();
+    stub_heap_free_now = -2;
+    s_mqtt_claims = s_mqtt_ends = 0; /* test_fc_mqtt counts its own */
+}
+
 static void test_fc_mqtt(void)
 {
     char err[160];
@@ -2004,6 +2026,7 @@ int main(void)
     RUN(test_fc_grants);
     RUN(test_fc_limits);
     RUN(test_fc_events);
+    RUN(test_mqtt_waits_for_heap);
     RUN(test_fc_mqtt);
     RUN(test_board_map);
     RUN(test_board_dt);

@@ -164,6 +164,11 @@ long fc_port_heap_free(void)
     }
     return stub_heap_free;
 }
+long stub_heap_free_now = -2;
+long fc_port_heap_free_now(void)
+{
+    return stub_heap_free_now != -2 ? stub_heap_free_now : fc_port_heap_free();
+}
 long stub_heap_largest_next[4];
 int stub_heap_largest_queued;
 

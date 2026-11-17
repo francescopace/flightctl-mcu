@@ -2410,7 +2410,7 @@ static int mqtt_may_connect(void)
     if (s_agent_idle != NULL && !s_agent_idle(0)) {
         return 0;
     }
-    long largest = fc_port_heap_largest(), free_now = fc_port_heap_free();
+    long largest = fc_port_heap_largest(), free_now = fc_port_heap_free_now();
     int room = (largest < 0 || largest >= FC_MQTT_HEAP_MIN) && (free_now < 0 || free_now >= s_heap_floor + FC_MQTT_CONN_COST);
     int64_t now = fc_apps_now_ms();
     if (!room && (s_mqtt_heap_logged == 0 || now - s_mqtt_heap_logged >= 60000)) {

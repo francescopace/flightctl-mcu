@@ -74,6 +74,12 @@ long fc_port_heap_largest(void);
  * follows it (fc_apps.c). */
 long fc_port_heap_free(void);
 
+/* Bytes free now in that heap, for the gates that keep a TLS connection
+ * from starting without room (the apps' broker, the metrics export), or -1
+ * when the port cannot tell. Unlike fc_port_heap_free it is given where the
+ * apps' own checks are off (Zephyr without CONFIG_FC_APP_HEAP_CHECK). */
+long fc_port_heap_free_now(void);
+
 /* The heap's low-water mark over a stretch of work: fc_port_heap_watch(1)
  * starts watching (0), fc_port_heap_watch(0) stops and returns the fewest
  * bytes of internal RAM free in between; -1 when the port cannot tell. One

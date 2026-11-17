@@ -201,6 +201,11 @@ long fc_port_heap_free(void)
     return -1;
 }
 
+long fc_port_heap_free_now(void)
+{
+    return -1;
+}
+
 long fc_port_heap_low(void)
 {
     return -1;

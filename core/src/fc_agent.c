@@ -1380,7 +1380,7 @@ static void metrics_tick(agent_t *a)
     }
     /* And with room above the agent's floor: an app's memory (CoreMark's
      * 64 KB on a C3) may leave the agent its floor and no more. */
-    long free_now = fc_port_heap_free();
+    long free_now = fc_port_heap_free_now();
     long room = fc_apps_heap_floor() + FC_METRICS_HEAP_ROOM;
     if (!busy && free_now >= 0 && free_now < room) {
         if (a->metrics_skipped % 10 == 0) {

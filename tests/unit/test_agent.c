@@ -787,6 +787,26 @@ static void an_export_waits_for_room_above_the_floor(void)
     s_a.otel_cert_pem = NULL;
 }
 
+/* The same where the port keeps the apps' heap checks off (Zephyr without
+ * CONFIG_FC_APP_HEAP_CHECK): the export's gate reads the heap all the same. */
+static void an_export_waits_for_room_with_the_apps_checks_off(void)
+{
+    new_agent();
+    s_a.otel_cert_pem = strdup("otel");
+    s_a.otel_renew_at = time(NULL) + 3600;
+    s_a.otel_not_after = time(NULL) + 7200;
+    const char *j = "{\"endpoint\": \"telemetry.example.com:443\"}";
+    fc_port_write_file(METRICS_CONFIG, j, strlen(j));
+    stub_heap_free = -1;
+    stub_heap_free_now = fc_apps_heap_floor() + FC_METRICS_HEAP_ROOM - 1;
+    metrics_tick(&s_a);
+    CHECK_INT(s_a.metrics_skipped, 1);
+    CHECK_INT(s_a.exporting, 0);
+    stub_heap_free_now = -2;
+    free(s_a.otel_cert_pem);
+    s_a.otel_cert_pem = NULL;
+}
+
 /* A spec waits for an export under way, and no export starts while it is
  * applied: both take the heap. */
 static void *export_ends_later(void *arg)
@@ -1244,6 +1264,7 @@ int main(void)
     RUN(a_spec_waits_for_the_brokers_handshake);
     RUN(metrics_and_pulls_take_turns);
     RUN(an_export_waits_for_room_above_the_floor);
+    RUN(an_export_waits_for_room_with_the_apps_checks_off);
     RUN(a_console_alone_is_not_applied_again);
     RUN(counters_are_read_again_only_when_due);
     RUN(stack_headroom_is_reported_per_thread);

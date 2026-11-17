@@ -1526,7 +1526,7 @@ static void *mqtt_thread(void *arg)
         pthread_mutex_lock(&s_lock);
         const cfg_t *cfg = s_st->cfg; /* replaced only while this thread is stopped */
         pthread_mutex_unlock(&s_lock);
-        long free_before = fc_port_heap_free(), low_before = fc_port_heap_low();
+        long free_before = fc_port_heap_free_now(), low_before = fc_port_heap_low();
         conn_t *c = conn_open(cfg);
         if (s_hooks.connect_end != NULL) {
             s_hooks.connect_end();
@@ -1545,7 +1545,7 @@ static void *mqtt_thread(void *arg)
             continue;
         }
         backoff = BACKOFF_MIN_MS;
-        long free_after = fc_port_heap_free();
+        long free_after = fc_port_heap_free_now();
         if (free_before >= 0 && free_after >= 0) {
             fc_port_log(FC_LOG_INFO, "mqtt: connected to %s:%d%s; heap %ld KB free before, %ld KB after", cfg->host,
                         cfg->port, cfg->tls ? "" : " (no TLS)", free_before / 1024, free_after / 1024);
