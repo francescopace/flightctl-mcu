@@ -204,9 +204,26 @@ int main(void)
     CHECK(log_has(from, "app f: d -1 -2147483647 4000000000 beef 000000ff str z"));
     CHECK(apply_one(NULL, NULL, NULL) == 0);
 
-    /* The example apps. */
+    /* The example apps. The heap the agent keeps (CONFIG_FC_APP_HEAP_CHECK):
+     * what the instance left, and the lowest after it, are logged. */
+    from = fc_log_end();
     run("trend", "reg/app_trend", NULL, "Running rising");
+    CHECK(log_has(from, "app trend: instance made"));
+    for (int i = 0; i < 100 && !log_has(from, "app trend (install): "); i++) {
+        k_msleep(50);
+    }
+    CHECK(log_has(from, "app trend (install): "));
+    char heap[96];
+    CHECK(fc_apps_heap_agent(heap, sizeof(heap)) == 1);
+    printk("heapAgentBytes %s\n", heap);
     CHECK(apply_one(NULL, NULL, NULL) == 0);
+    /* With less heap than the floor, the app is refused. */
+    long floor = s_heap_floor;
+    s_heap_floor = fc_port_heap_free() + 1024;
+    CHECK(apply_one("trend", "reg/app_trend", NULL) != 0 || strncmp(wait_state("trend", "Error", 3000), "Error", 5) == 0);
+    printk("floor above the heap: %s\n", state_of("trend"));
+    s_heap_floor = floor;
+    apply_one(NULL, NULL, NULL);
     run("hw", "reg/app_hwcheck", "{\"FC_ALLOW\": \"i2c0 spi0 uart0 adc0 pwm0\", \"TICK_MS\": \"100\"}", "Running i2c");
     CHECK(apply_one(NULL, NULL, NULL) == 0);
 

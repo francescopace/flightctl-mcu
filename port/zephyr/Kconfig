@@ -11,6 +11,18 @@ config FC_HEAP_SIZE
 	  Everything the agent allocates: TLS sessions, JSON documents, WASM
 	  modules and their memory. The device reports how much of it is free.
 
+config FC_APP_HEAP_CHECK
+	bool "Refuse an app whose memory leaves the agent too little of the C heap"
+	depends on !COMMON_LIBC_MALLOC
+	help
+	  The floor of heap for the agent (docs/APPS.md, Size and limits): an
+	  app whose instance leaves less than 32 KB of the C heap is refused,
+	  and the largest .wasm follows what is free. With it the device also
+	  logs, and puts in customInfo heapAgentBytes, what the agent took of
+	  the heap after an app's instance. Off until the floor is measured
+	  on a board with Zephyr: there TLS's receive buffers are reserved
+	  apart, and the agent's needs differ from ESP-IDF's.
+
 config FC_AGENT_STACK_SIZE
 	int "Stack of the agent's status thread, in bytes (0: the core's default)"
 	default 0

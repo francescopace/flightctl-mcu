@@ -79,15 +79,35 @@ void free(void *ptr)
     sys_mutex_unlock(&s_lock);
 }
 
+/* The most allocated at once before sys_heap's own count was last started
+ * again (fc_heap_watch): the low since boot is the lower of the two. */
+static size_t s_max_before;
+
 void fc_heap_stats(size_t *total, size_t *free_now, size_t *free_min)
 {
     struct sys_memory_stats st = {0};
     sys_mutex_lock(&s_lock, K_FOREVER);
     sys_heap_runtime_stats_get(&s_heap, &st);
+    size_t max = st.max_allocated_bytes > s_max_before ? st.max_allocated_bytes : s_max_before;
     sys_mutex_unlock(&s_lock);
     *total = st.free_bytes + st.allocated_bytes;
     *free_now = st.free_bytes;
-    *free_min = *total - st.max_allocated_bytes;
+    *free_min = *total - max;
+}
+
+long fc_heap_watch(int start)
+{
+    struct sys_memory_stats st = {0};
+    sys_mutex_lock(&s_lock, K_FOREVER);
+    sys_heap_runtime_stats_get(&s_heap, &st);
+    if (start) {
+        if (st.max_allocated_bytes > s_max_before) {
+            s_max_before = st.max_allocated_bytes;
+        }
+        sys_heap_runtime_stats_reset_max(&s_heap);
+    }
+    sys_mutex_unlock(&s_lock);
+    return start ? 0 : (long)(st.free_bytes + st.allocated_bytes - st.max_allocated_bytes);
 }
 
 #if defined(CONFIG_SHARED_MULTI_HEAP)

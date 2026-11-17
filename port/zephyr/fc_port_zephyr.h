@@ -14,6 +14,8 @@ int fc_zephyr_restart_was_crash(void);
 /* The C heap (fc_heap_zephyr.c): its size, what is free, and the least that
  * has been free since boot. */
 void fc_heap_stats(size_t *total, size_t *free_now, size_t *free_min);
+/* The C heap's low over a stretch, as fc_port_heap_watch (fc_heap_zephyr.c). */
+long fc_heap_watch(int start);
 /* The kernel heap, which thread stacks come from. */
 void fc_kernel_heap_stats(size_t *total, size_t *free_now);
 

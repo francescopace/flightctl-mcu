@@ -371,7 +371,11 @@ void fc_port_custom_info(void *obj)
 
 long fc_port_heap_watch(int start)
 {
+#ifdef CONFIG_FC_APP_HEAP_CHECK
+    return fc_heap_watch(start);
+#else
     return -1;
+#endif
 }
 
 long fc_port_heap_largest(void)
@@ -386,11 +390,17 @@ long fc_port_heap_low(void)
 
 long fc_port_heap_free(void)
 {
-    /* Not yet: the C heap (fc_heap_stats) is where TLS and cJSON allocate,
-     * but an app's memory and the module's pieces are split between it and
-     * the PSRAM heap, and the floor and the .wasm limit (fc_apps.c) have not
-     * been measured with Zephyr. */
+    /* The C heap, where TLS, cJSON and the modules allocate; an app's memory
+     * too, unless it is in PSRAM (fc_heap_zephyr.c). Only with
+     * CONFIG_FC_APP_HEAP_CHECK: the floor and the .wasm limit (fc_apps.c)
+     * have not been measured with Zephyr on a board. */
+#ifdef CONFIG_FC_APP_HEAP_CHECK
+    size_t total, free_now, free_min;
+    fc_heap_stats(&total, &free_now, &free_min);
+    return total > 0 ? (long)free_now : -1;
+#else
     return -1;
+#endif
 }
 
 
