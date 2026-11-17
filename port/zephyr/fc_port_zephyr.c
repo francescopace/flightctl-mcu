@@ -231,6 +231,11 @@ void fc_port_custom_info(void *obj)
 #endif
 }
 
+long fc_port_heap_watch(int start)
+{
+    return -1;
+}
+
 long fc_port_heap_largest(void)
 {
     return -1; /* sys_heap does not tell */

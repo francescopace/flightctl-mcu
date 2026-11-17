@@ -19,6 +19,7 @@ typedef struct {
     const char *authorization; /* Authorization header's value; NULL: none */
     int timeout_s;        /* no frame for the request for this long: it fails, with its connection */
     fc_http_session_t *session; /* NULL: a connection for this request alone */
+    int connect_timeout_s; /* >0: the TCP connect gives up after this long; 0: the system's (a minute or more) */
 } fc_http_target_t;
 
 typedef struct {
@@ -64,7 +65,8 @@ int fc_http_get_stream(const fc_http_target_t *t, const char *path, fc_http_data
 
 /* A bidirectional stream (gRPC) on the session's connection, never on a
  * new one: NULL if t->session has no connection open, or it cannot be
- * opened. POST path with content_type and the extra headers, {name, value,
+ * opened. Without t->session, on a connection of its own, opened now and
+ * closed with the stream. POST path with content_type and the extra headers, {name, value,
  * ..., NULL} (names lower case); the response headers are not waited for.
  * The stream ends when the session lets go of its connection
  * (fc_http_session_close: a download's turn, a new certificate). */

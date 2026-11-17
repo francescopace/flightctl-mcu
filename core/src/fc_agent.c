@@ -19,6 +19,7 @@
 #include "fc_crypto.h"
 #include "fc_http.h"
 #include "fc_identity.h"
+#include "fc_metrics.h"
 #include "fc_oci.h"
 #include "fc_port.h"
 #include "fc_resources.h"
@@ -38,6 +39,10 @@
 /* Decommissioned: the target asked for. Kept when everything else is wiped,
  * so the device does not enroll again on its own at the next boot. */
 #define KV_DECOMMISSIONED    "decommission"
+/* The Telemetry Gateway's certificate: for the device key, signed by
+ * flightctl.io/device-svc-client. Never the management certificate's key in
+ * storage. */
+#define KV_OTEL_CERT         "otel.crt"
 #define KV_RESOURCES         "resources"      /* spec.resources last applied */
 
 #define API "/api/v1"
@@ -93,6 +98,21 @@
  * no traffic yet, the heap still whole. The second comes this long after. */
 #define METRICS_SECOND_READ_S 300
 #define CLOCK_SET_AFTER 1735689600 /* 2025-01-01: before that, the clock is not set */
+/* Metrics for the Telemetry Gateway (fc_metrics.h), when the fleet gives its
+ * address in METRICS_CONFIG: {"endpoint": "host:port", "intervalSeconds": N}.
+ * Each export is a TLS connection of its own, beside the agent's, opened only
+ * when the heap has the block a connection needs; otherwise it is skipped
+ * (counted) and tried again soon. */
+#define METRICS_CONFIG       "/etc/fc/metrics.json"
+#define OTEL_SIGNER          "flightctl.io/device-svc-client"
+#define METRICS_DEFAULT_S    60
+#define METRICS_MIN_S        30   /* each export is a TLS handshake */
+#define METRICS_LOOK_S       60   /* without the config, looked for again this often */
+#define METRICS_TIMEOUT_S    15   /* the whole export, well under TURN_WAIT_S */
+#define METRICS_BACKOFF_MAX_S 3600
+#ifndef FC_METRICS_HEAP_MIN
+#define FC_METRICS_HEAP_MIN (24 * 1024) /* the largest free block, for a second TLS connection */
+#endif
 
 /* Decommissioning, as the Linux agent does it: the DeviceDecommissioning
  * condition Started, then Completed, and then the device key and the
@@ -157,6 +177,18 @@ typedef struct {
      * -1 unknown): spec (the caller's thread, from boot) under lock, status
      * in add_metrics. */
     long stack_spec, stack_status;
+    /* Metrics (status thread): the gateway's certificate and its request,
+     * and when the next export is due. */
+    char *otel_cert_pem;
+    time_t otel_renew_at, otel_not_after, otel_next_try;
+    int otel_backoff_s;
+    char otel_csr_name[96];
+    time_t metrics_next;
+    int metrics_backoff_s;
+    unsigned long metrics_skipped;
+    long export_low; /* the heap's low during the last export (fc_port_heap_watch), -1 unknown */
+    int exporting; /* under lock: an export runs (fc_agent_busy) */
+    int metrics_poke; /* under lock: METRICS_CONFIG changed, export now */
     int console_quiet; /* spec thread: the sessions listed were all seen before */
 } agent_t;
 
@@ -297,6 +329,8 @@ static void add_stacks(agent_t *a, cJSON *m)
     }
 }
 
+static cJSON *read_counters(agent_t *a, const fc_sysinfo_t *si);
+
 /* The counters, read again when they are due and kept as text (a few hundred
  * bytes, not a cJSON tree): they go into customInfo as they were until then. */
 static void add_metrics(agent_t *a, cJSON *custom, const fc_sysinfo_t *si)
@@ -308,26 +342,8 @@ static void add_metrics(agent_t *a, cJSON *custom, const fc_sysinfo_t *si)
     time_t now = time(NULL);
     /* A clock set after the first status moves `now` by years: read them again. */
     if (a->metrics == NULL || now - a->metrics_at >= interval || now < a->metrics_at) {
-        cJSON *m = cJSON_CreateObject();
-        char num[32];
-        snprintf(num, sizeof(num), "%llu", (unsigned long long)si->mem_free);
-        cJSON_AddStringToObject(m, "memFreeBytes", num);
-        unsigned long long tx, rx;
-        fc_http_traffic(&tx, &rx);
-        snprintf(num, sizeof(num), "%llu", tx);
-        cJSON_AddStringToObject(m, "netTxBytes", num);
-        snprintf(num, sizeof(num), "%llu", rx);
-        cJSON_AddStringToObject(m, "netRxBytes", num);
-        snprintf(num, sizeof(num), "%lu", fc_http_handshakes());
-        cJSON_AddStringToObject(m, "tlsHandshakes", num);
-        int cpu = fc_res_cpu_percent();
-        if (cpu >= 0) {
-            snprintf(num, sizeof(num), "%d", cpu);
-            cJSON_AddStringToObject(m, "cpuPercent", num);
-        }
-        fc_port_metrics(m);
-        add_stacks(a, m);
-        char *text = cJSON_PrintUnformatted(m);
+        cJSON *m = read_counters(a, si);
+        char *text = m != NULL ? cJSON_PrintUnformatted(m) : NULL;
         cJSON_Delete(m);
         if (text != NULL) {
             free(a->metrics);
@@ -345,6 +361,35 @@ static void add_metrics(agent_t *a, cJSON *custom, const fc_sysinfo_t *si)
         cJSON_AddItemToObject(custom, item->string, item);
     }
     cJSON_Delete(m);
+}
+
+/* The counters, as strings in a JSON object: the heap, traffic, handshakes,
+ * CPU, the port's (fc_port_metrics) and the threads' stacks. */
+static cJSON *read_counters(agent_t *a, const fc_sysinfo_t *si)
+{
+    cJSON *m = cJSON_CreateObject();
+    if (m == NULL) {
+        return NULL;
+    }
+    char num[32];
+    snprintf(num, sizeof(num), "%llu", (unsigned long long)si->mem_free);
+    cJSON_AddStringToObject(m, "memFreeBytes", num);
+    unsigned long long tx, rx;
+    fc_http_traffic(&tx, &rx);
+    snprintf(num, sizeof(num), "%llu", tx);
+    cJSON_AddStringToObject(m, "netTxBytes", num);
+    snprintf(num, sizeof(num), "%llu", rx);
+    cJSON_AddStringToObject(m, "netRxBytes", num);
+    snprintf(num, sizeof(num), "%lu", fc_http_handshakes());
+    cJSON_AddStringToObject(m, "tlsHandshakes", num);
+    int cpu = fc_res_cpu_percent();
+    if (cpu >= 0) {
+        snprintf(num, sizeof(num), "%d", cpu);
+        cJSON_AddStringToObject(m, "cpuPercent", num);
+    }
+    fc_port_metrics(m);
+    add_stacks(a, m);
+    return m;
 }
 
 static cJSON *build_status(agent_t *a)
@@ -483,6 +528,7 @@ static void request_status(agent_t *a);
 static void decommission_wipe(void)
 {
     fc_port_kv_del(KV_MGMT_CERT);
+    fc_port_kv_del(KV_OTEL_CERT);
     fc_port_kv_del(KV_RENDERED);
     fc_port_kv_del(KV_PREV_RENDERED);
     fc_port_kv_del(KV_OS_PENDING);
@@ -627,7 +673,7 @@ static void request_status(agent_t *a)
 /* One TLS connection at a time (fc_tls_pool.h): a pull from a registry
  * (fc_oci_set_turn, on the spec thread, where no long-poll is running then)
  * takes the turn of the agent's connection. A status on its way, or already
- * asked for ("Downloading"), goes out first; then the connection is closed,
+ * asked for ("Downloading"), goes out first, and a metrics export ends; then the connection is closed,
  * and the status thread waits until the pull is over. Pulls nest in a hold
  * (turn_hold): the connection opens again when the last of them ends. */
 static void turn_begin(void *ctx)
@@ -640,7 +686,7 @@ static void turn_begin(void *ctx)
         return; /* closed already, for this hold */
     }
     struct timespec until = {.tv_sec = time(NULL) + TURN_WAIT_S};
-    while ((a->putting || a->status_urgent) && time(NULL) < until.tv_sec) {
+    while ((a->putting || a->status_urgent || a->exporting) && time(NULL) < until.tv_sec) {
         pthread_cond_timedwait(&a->status_sent, &a->lock, &until);
     }
     a->downloading = 1;
@@ -687,7 +733,7 @@ int fc_agent_busy(void)
         return 1;
     }
     pthread_mutex_lock(&a->lock);
-    int busy = a->status_urgent || a->status_dirty || a->putting || a->applying;
+    int busy = a->status_urgent || a->status_dirty || a->putting || a->applying || a->exporting;
     pthread_mutex_unlock(&a->lock);
     return busy;
 }
@@ -881,6 +927,7 @@ static void reenroll_if_expired(agent_t *a)
     strftime(exp, sizeof(exp), "%Y-%m-%dT%H:%M:%SZ", &tm);
     fc_port_log(FC_LOG_ERROR, "management certificate expired on %s: enrolling again as a new device", exp);
     fc_port_kv_del(KV_MGMT_CERT);
+    fc_port_kv_del(KV_OTEL_CERT);
     fc_port_kv_del(KV_RENDERED);
     fc_port_kv_del(KV_PREV_RENDERED);
     fc_identity_forget();
@@ -907,6 +954,400 @@ static void renew_cert_if_due(agent_t *a)
     } else {
         a->cert_backoff_s = 0;
         a->cert_next_try = 0;
+    }
+}
+
+/* ---- metrics for the Telemetry Gateway (fc_metrics.h) ---------------------- */
+
+typedef struct {
+    char host[128];
+    int port;
+    int interval_s;
+} metrics_cfg_t;
+
+/* METRICS_CONFIG, as the fleet wrote it: 0, or -1 when there is none (or
+ * it is not usable: said once per change). */
+static int metrics_config(metrics_cfg_t *c)
+{
+    static char s_bad[96];
+    char *text = NULL;
+    size_t len = 0;
+    if (fc_port_read_file(METRICS_CONFIG, &text, &len) != 0) {
+        s_bad[0] = '\0';
+        return -1;
+    }
+    cJSON *j = cJSON_Parse(text);
+    free(text);
+    const char *ep = cJSON_GetStringValue(cJSON_GetObjectItem(j, "endpoint"));
+    const cJSON *iv = cJSON_GetObjectItem(j, "intervalSeconds");
+    int rc = -1;
+    if (ep != NULL) {
+        const char *h = strstr(ep, "://");
+        h = h ? h + 3 : ep;
+        const char *colon = strrchr(h, ':');
+        size_t hl = colon ? (size_t)(colon - h) : strlen(h);
+        c->port = colon ? atoi(colon + 1) : 443;
+        if (hl > 0 && hl < sizeof(c->host) && c->port > 0 && c->port < 65536) {
+            snprintf(c->host, sizeof(c->host), "%.*s", (int)hl, h);
+            c->interval_s = cJSON_IsNumber(iv) ? (int)iv->valuedouble : METRICS_DEFAULT_S;
+            c->interval_s = c->interval_s < METRICS_MIN_S ? METRICS_MIN_S : c->interval_s;
+            rc = 0;
+        }
+    }
+    if (rc != 0 && strcmp(s_bad, ep ? ep : "-") != 0) {
+        snprintf(s_bad, sizeof(s_bad), "%s", ep ? ep : "-");
+        fc_port_log(FC_LOG_WARN, "metrics: %s has no usable endpoint (\"host:port\"): nothing is sent", METRICS_CONFIG);
+    }
+    cJSON_Delete(j);
+    return rc;
+}
+
+/* The gateway's certificate: for this device's key, with the CN the gateway
+ * takes the device's ID from. 0 when it is, and sets when it is renewed. */
+static int otel_cert_ok(agent_t *a, const char *pem, time_t *renew_at, time_t *not_after)
+{
+    if (cert_info(a, pem, renew_at, not_after) != 0) {
+        return -1;
+    }
+    char cn[80];
+    snprintf(cn, sizeof(cn), "CN=otel-%s", a->id.name);
+    mbedtls_x509_crt crt;
+    mbedtls_x509_crt_init(&crt);
+    char subject[128] = "";
+    if (mbedtls_x509_crt_parse(&crt, (const unsigned char *)pem, strlen(pem) + 1) == 0) {
+        mbedtls_x509_dn_gets(subject, sizeof(subject), &crt.subject);
+    }
+    mbedtls_x509_crt_free(&crt);
+    return strcmp(subject, cn) == 0 ? 0 : -1;
+}
+
+/* The gateway's CertificateSigningRequest as the server answers it: 1 once
+ * its certificate is stored (under KV_OTEL_CERT only), 0 while pending, -1
+ * when it failed or the certificate is not this device's for the gateway. */
+static int handle_otel_csr(agent_t *a, const char *json)
+{
+    cJSON *csr = cJSON_Parse(json);
+    const cJSON *status = cJSON_GetObjectItem(csr, "status"), *cond;
+    int result = 0;
+    cJSON_ArrayForEach(cond, cJSON_GetObjectItem(status, "conditions")) {
+        const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(cond, "type"));
+        const char *st = cJSON_GetStringValue(cJSON_GetObjectItem(cond, "status"));
+        if (type && st && strcmp(st, "True") == 0 && (strcmp(type, "Denied") == 0 || strcmp(type, "Failed") == 0)) {
+            fc_port_log(FC_LOG_WARN, "metrics: certificate request %s %s: %s", a->otel_csr_name, type,
+                        cJSON_GetStringValue(cJSON_GetObjectItem(cond, "message")));
+            result = -1;
+        }
+    }
+    const char *b64 = cJSON_GetStringValue(cJSON_GetObjectItem(status, "certificate"));
+    if (result == 0 && b64 != NULL && b64[0]) {
+        size_t len = strlen(b64), olen = 0;
+        unsigned char *pem = malloc(len + 1);
+        time_t renew_at, not_after;
+        if (pem == NULL || mbedtls_base64_decode(pem, len, &olen, (const unsigned char *)b64, len) != 0) {
+            result = -1;
+        } else {
+            pem[olen] = '\0';
+            if (otel_cert_ok(a, (char *)pem, &renew_at, &not_after) != 0) {
+                fc_port_log(FC_LOG_WARN, "metrics: the certificate is not this device's for the gateway");
+                result = -1;
+            } else {
+                fc_port_kv_set(KV_OTEL_CERT, (char *)pem, olen);
+                free(a->otel_cert_pem);
+                a->otel_cert_pem = (char *)pem;
+                pem = NULL;
+                a->otel_renew_at = renew_at;
+                a->otel_not_after = not_after;
+                log_cert("Telemetry Gateway certificate", renew_at, not_after);
+                result = 1;
+            }
+        }
+        free(pem);
+    }
+    cJSON_Delete(csr);
+    return result;
+}
+
+/* Asks for the gateway's certificate, or polls the request: 1 once it is
+ * stored, 0 while pending, -1 when it failed. Its own request, its own key in
+ * storage: the management certificate is never touched. */
+static int request_otel_cert(agent_t *a)
+{
+    fc_http_response_t r;
+    if (a->otel_csr_name[0] == '\0') {
+        char cn[80], *csr_pem = NULL;
+        snprintf(cn, sizeof(cn), "otel-%s", a->id.name);
+        if (fc_identity_csr(&a->id, cn, &csr_pem) != 0) {
+            fc_port_log(FC_LOG_WARN, "metrics: no certificate request with the device key");
+            return -1;
+        }
+        unsigned char rnd[4];
+        fc_random(rnd, sizeof(rnd));
+        snprintf(a->otel_csr_name, sizeof(a->otel_csr_name), "%s-%02x%02x%02x%02x", cn, rnd[0], rnd[1], rnd[2], rnd[3]);
+        size_t plen = strlen(csr_pem), blen = 0;
+        mbedtls_base64_encode(NULL, 0, &blen, (const unsigned char *)csr_pem, plen);
+        char *b64 = malloc(blen);
+        cJSON *csr = cJSON_CreateObject();
+        char *body = NULL;
+        if (b64 != NULL && csr != NULL &&
+            mbedtls_base64_encode((unsigned char *)b64, blen, &blen, (const unsigned char *)csr_pem, plen) == 0) {
+            cJSON_AddStringToObject(csr, "apiVersion", "v1beta1");
+            cJSON_AddStringToObject(csr, "kind", "CertificateSigningRequest");
+            cJSON_AddStringToObject(cJSON_AddObjectToObject(csr, "metadata"), "name", a->otel_csr_name);
+            cJSON *spec = cJSON_AddObjectToObject(csr, "spec");
+            cJSON_AddStringToObject(spec, "request", b64);
+            cJSON_AddStringToObject(spec, "signerName", OTEL_SIGNER);
+            cJSON *usages = cJSON_AddArrayToObject(spec, "usages");
+            cJSON_AddItemToArray(usages, cJSON_CreateString("clientAuth"));
+            cJSON_AddItemToArray(usages, cJSON_CreateString("CA:false"));
+            body = cJSON_PrintUnformatted(csr);
+        }
+        cJSON_Delete(csr);
+        free(b64);
+        free(csr_pem);
+        if (body == NULL) {
+            a->otel_csr_name[0] = '\0';
+            return -1;
+        }
+        fc_port_log(FC_LOG_INFO, "metrics: asking for the Telemetry Gateway's certificate (%s)", a->otel_csr_name);
+        int rc = mgmt_request(a, a->sess, 60, "POST", API "/certificatesigningrequests", "application/json", body,
+                              strlen(body), &r);
+        free(body);
+        if (rc != 0 || (r.status != 200 && r.status != 201)) {
+            if (rc == 0) {
+                fc_port_log(FC_LOG_WARN, "metrics: certificate request: HTTP %d %s", r.status, r.body);
+                fc_http_free(&r);
+            }
+            a->otel_csr_name[0] = '\0';
+            return -1;
+        }
+    } else {
+        char path[200];
+        snprintf(path, sizeof(path), API "/certificatesigningrequests/%s", a->otel_csr_name);
+        if (mgmt_request(a, a->sess, 60, "GET", path, NULL, NULL, 0, &r) != 0) {
+            return 0;
+        }
+        if (r.status != 200) {
+            fc_port_log(FC_LOG_WARN, "metrics: certificate request %s: HTTP %d", a->otel_csr_name, r.status);
+            fc_http_free(&r);
+            a->otel_csr_name[0] = '\0';
+            return -1;
+        }
+    }
+    int result = handle_otel_csr(a, r.body);
+    fc_http_free(&r);
+    if (result != 0) {
+        a->otel_csr_name[0] = '\0';
+    }
+    return result;
+}
+
+/* The certificate, from storage or asked for: 0 when there is one to use. */
+static int otel_cert(agent_t *a, time_t now)
+{
+    if (a->otel_cert_pem == NULL) {
+        char *pem = NULL;
+        size_t len = 0;
+        if (fc_port_kv_get(KV_OTEL_CERT, &pem, &len) == 0 && pem != NULL) {
+            if (otel_cert_ok(a, pem, &a->otel_renew_at, &a->otel_not_after) == 0) {
+                a->otel_cert_pem = pem;
+            } else {
+                free(pem); /* an older key's: asked for again */
+            }
+        }
+    }
+    int due = a->otel_cert_pem == NULL || now >= a->otel_renew_at;
+    if (due && now >= a->otel_next_try) {
+        int rc = request_otel_cert(a);
+        if (rc == 0) {
+            a->otel_next_try = now + RETRY_DELAY_S;
+        } else if (rc < 0) {
+            a->otel_backoff_s = a->otel_backoff_s ? a->otel_backoff_s * 2 : CERT_RETRY_MIN_S;
+            a->otel_backoff_s = a->otel_backoff_s > CERT_RETRY_MAX_S ? CERT_RETRY_MAX_S : a->otel_backoff_s;
+            a->otel_next_try = now + a->otel_backoff_s;
+        } else {
+            a->otel_backoff_s = 0;
+            a->otel_next_try = 0;
+        }
+    }
+    return a->otel_cert_pem != NULL && now < a->otel_not_after ? 0 : -1;
+}
+
+/* What the counters (read_counters) are as OpenTelemetry metrics. */
+static const struct {
+    const char *key, *name, *unit;
+    int sum;
+    const char *attr_key, *attr_val;
+} s_device_metrics[] = {
+    {"memFreeBytes", "device.memory.free", "By", 0, NULL, NULL},
+    {"memMinFreeBytes", "device.memory.min_free", "By", 0, NULL, NULL},
+    {"memInternalFreeBytes", "device.memory.internal.free", "By", 0, NULL, NULL},
+    {"memInternalLargestBlock", "device.memory.internal.largest_block", "By", 0, NULL, NULL},
+    {"memKernelFreeBytes", "device.memory.kernel.free", "By", 0, NULL, NULL},
+    {"memKernelMinFreeBytes", "device.memory.kernel.min_free", "By", 0, NULL, NULL},
+    {"netTxBytes", "device.network.io", "By", 1, "direction", "transmit"},
+    {"netRxBytes", "device.network.io", "By", 1, "direction", "receive"},
+    {"tlsHandshakes", "device.tls.handshakes", "{handshake}", 1, NULL, NULL},
+    {"cpuPercent", "device.cpu.utilization", "%", 0, NULL, NULL},
+    {"uptimeSeconds", "device.uptime", "s", 0, NULL, NULL},
+    {"wifiRssi", "device.wifi.rssi", "dBm", 0, NULL, NULL},
+    {"temperatureC", "device.temperature", "Cel", 0, NULL, NULL},
+};
+#define DEVICE_POINTS (sizeof(s_device_metrics) / sizeof(s_device_metrics[0]) + 2)
+
+/* The device's points, from the counters: how many. */
+static int device_points(agent_t *a, fc_metric_point_t *pts, uint64_t boot_ns)
+{
+    fc_sysinfo_t si = {0};
+    fc_port_sysinfo(&si);
+    cJSON *m = read_counters(a, &si);
+    int n = 0;
+    for (size_t i = 0; m != NULL && i < sizeof(s_device_metrics) / sizeof(s_device_metrics[0]); i++) {
+        const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(m, s_device_metrics[i].key));
+        char *end = NULL;
+        if (v == NULL || v[0] == '\0') {
+            continue;
+        }
+        double d = strtod(v, &end);
+        if (end == v || *end != '\0') {
+            continue;
+        }
+        fc_metric_point_t *p = &pts[n++];
+        memset(p, 0, sizeof(*p));
+        snprintf(p->name, sizeof(p->name), "%s", s_device_metrics[i].name);
+        p->unit = s_device_metrics[i].unit;
+        p->sum = s_device_metrics[i].sum;
+        p->is_int = strchr(v, '.') == NULL && strchr(v, 'e') == NULL;
+        p->i = strtoll(v, NULL, 10);
+        p->d = d;
+        p->attr_key = s_device_metrics[i].attr_key;
+        p->attr_val = s_device_metrics[i].attr_val;
+        p->start_ns = boot_ns;
+    }
+    cJSON_Delete(m);
+    /* The internal heap's low during the last export, where the port tells. */
+    if (a->export_low >= 0) {
+        fc_metric_point_t *q = &pts[n++];
+        memset(q, 0, sizeof(*q));
+        snprintf(q->name, sizeof(q->name), "device.metrics.export_min_free");
+        q->unit = "By";
+        q->is_int = 1;
+        q->i = a->export_low;
+    }
+    /* The exports skipped for want of memory, or while the agent was busy. */
+    fc_metric_point_t *p = &pts[n++];
+    memset(p, 0, sizeof(*p));
+    snprintf(p->name, sizeof(p->name), "device.metrics.skipped");
+    p->unit = "{export}";
+    p->sum = 1;
+    p->is_int = 1;
+    p->i = (long long)a->metrics_skipped;
+    p->start_ns = boot_ns;
+    return n;
+}
+
+/* The tag of the firmware's image ("v3.13"), or "". */
+static const char *fw_version(const agent_t *a)
+{
+    const char *slash = strrchr(a->os_image, '/');
+    const char *colon = strrchr(slash ? slash : a->os_image, ':');
+    return colon ? colon + 1 : "";
+}
+
+/* The export is over: a pull waiting for it (turn_begin) goes on. */
+static void metrics_done(agent_t *a)
+{
+    pthread_mutex_lock(&a->lock);
+    a->exporting = 0;
+    pthread_cond_broadcast(&a->status_sent);
+    pthread_mutex_unlock(&a->lock);
+}
+
+/* Status thread: an export when one is due. Sets metrics_next. */
+static void metrics_tick(agent_t *a)
+{
+    time_t now = time(NULL);
+    metrics_cfg_t mc;
+    if (metrics_config(&mc) != 0) {
+        a->metrics_next = now + METRICS_LOOK_S;
+        return;
+    }
+    if (now < CLOCK_SET_AFTER) {
+        a->metrics_next = now + RETRY_DELAY_S;
+        return;
+    }
+    /* Nothing on the network beside a pull (which waits for an export, as
+     * for a status: turn_begin), a firmware being verified, a status due or
+     * a spec being applied. */
+    pthread_mutex_lock(&a->lock);
+    int busy = a->downloading || a->turn_depth > 0 || a->verifying || a->status_urgent || a->applying ||
+               a->decom != DECOM_NONE;
+    a->exporting = !busy;
+    pthread_mutex_unlock(&a->lock);
+    if (!busy && otel_cert(a, now) != 0) {
+        metrics_done(a);
+        a->metrics_next = a->otel_next_try > now ? a->otel_next_try : now + RETRY_DELAY_S;
+        return;
+    }
+    /* And only with the block a TLS connection takes. */
+    long largest = fc_port_heap_largest();
+    if (!busy && largest >= 0 && largest < FC_METRICS_HEAP_MIN) {
+        if (a->metrics_skipped % 10 == 0) {
+            fc_port_log(FC_LOG_WARN, "metrics: largest free block %ld bytes, under %d: export skipped", largest,
+                        FC_METRICS_HEAP_MIN);
+        }
+        busy = 1;
+    }
+    if (busy) {
+        metrics_done(a);
+        a->metrics_skipped++;
+        a->metrics_next = now + RETRY_DELAY_S;
+        return;
+    }
+    struct timespec mono;
+    clock_gettime(CLOCK_MONOTONIC, &mono);
+    uint64_t now_ns = (uint64_t)now * 1000000000ull, boot_ns = (uint64_t)(now - mono.tv_sec) * 1000000000ull;
+    int max = (int)DEVICE_POINTS + FC_METRICS_APPS_MAX;
+    fc_metric_point_t *pts = malloc((size_t)max * sizeof(*pts));
+    uint8_t *msg = NULL;
+    long len = -1;
+    if (pts != NULL) {
+        int n = device_points(a, pts, boot_ns);
+        n += fc_metrics_app_points(pts + n, max - n);
+        size_t cap = 512 + (size_t)n * 160;
+        msg = malloc(cap);
+        len = msg != NULL ? fc_metrics_encode(msg, cap, fw_version(a), now_ns, pts, n) : -1;
+    }
+    free(pts);
+    int rc = -1;
+    if (len > 0) {
+        int watching = fc_port_heap_watch(1) == 0;
+        fc_http_target_t t = {
+            .host = mc.host,
+            .port = mc.port,
+            .ca_pem = a->cfg->ca_pem,
+            .cert_pem = a->otel_cert_pem,
+            .key_pem = a->id.key_pem,
+            .hw_key = a->id.hw_key,
+            .timeout_s = METRICS_TIMEOUT_S,
+            .connect_timeout_s = METRICS_TIMEOUT_S,
+        };
+        rc = fc_metrics_send(&t, msg, (size_t)len);
+        long low = watching ? fc_port_heap_watch(0) : -1;
+        if (low >= 0 && (a->export_low < 0 || low < a->export_low - 1024)) {
+            fc_port_log(FC_LOG_INFO, "metrics: %s; internal heap at its lowest %ld bytes during the export",
+                        rc == 0 ? "sent" : "not sent", low);
+        }
+        a->export_low = low;
+    }
+    free(msg);
+    metrics_done(a);
+    if (rc == 0) {
+        a->metrics_backoff_s = 0;
+        a->metrics_next = time(NULL) + mc.interval_s;
+    } else {
+        a->metrics_backoff_s = a->metrics_backoff_s ? a->metrics_backoff_s * 2 : mc.interval_s;
+        a->metrics_backoff_s = a->metrics_backoff_s > METRICS_BACKOFF_MAX_S ? METRICS_BACKOFF_MAX_S : a->metrics_backoff_s;
+        a->metrics_next = time(NULL) + a->metrics_backoff_s;
     }
 }
 
@@ -939,6 +1380,17 @@ static void *status_thread(void *arg)
             }
             /* Resource samples come on their own interval, between statuses;
              * an alert that starts or clears is reported with the next. */
+            if (a->metrics_poke) {
+                a->metrics_poke = 0;
+                a->metrics_next = 0;
+                a->metrics_backoff_s = 0;
+            }
+            if (time(NULL) >= a->metrics_next) {
+                pthread_mutex_unlock(&a->lock);
+                metrics_tick(a);
+                pthread_mutex_lock(&a->lock);
+                continue;
+            }
             long long sample = fc_res_next_sample(), mono = fc_res_now();
             if (sample >= 0 && sample <= mono) {
                 pthread_mutex_unlock(&a->lock);
@@ -954,6 +1406,9 @@ static void *status_thread(void *arg)
                 break;
             }
             struct timespec until = {.tv_sec = sample >= 0 && now + (sample - mono) < due ? now + (sample - mono) : due};
+            if (a->metrics_next < until.tv_sec) {
+                until.tv_sec = a->metrics_next;
+            }
             pthread_cond_timedwait(&a->status_wake, &a->lock, &until);
         }
         /* A download has the connection's turn: the status goes out once
@@ -1072,6 +1527,14 @@ static int apply_inline_file(agent_t *a, const cJSON *file, char *err, size_t er
         snprintf(err, err_len, "%s: write failed", path);
     } else if (!same) {
         fc_apps_file_changed(path);
+        if (strcmp(path, METRICS_CONFIG) == 0) {
+            /* A new gateway, or a corrected one: tried now, not after the
+             * backoff the old one earned. */
+            pthread_mutex_lock(&a->lock);
+            a->metrics_poke = 1;
+            pthread_cond_signal(&a->status_wake);
+            pthread_mutex_unlock(&a->lock);
+        }
     }
     free(buf);
     return rc;
@@ -1447,6 +1910,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     static agent_t a;
     memset(&a, 0, sizeof(a));
     a.stack_spec = a.stack_status = -1;
+    a.export_low = -1;
     a.cfg = cfg;
     pthread_mutex_init(&a.lock, NULL);
     pthread_cond_init(&a.status_wake, NULL);

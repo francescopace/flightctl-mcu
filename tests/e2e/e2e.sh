@@ -127,6 +127,10 @@ spec:
           inline:
             - path: /etc/fc-app/alarm.json
               content: '{"threshold_c": $threshold}'
+        - name: metrics
+          inline:
+            - path: /etc/fc/metrics.json
+              content: '{"endpoint": "telemetry.$IP.nip.io:8443", "intervalSeconds": 30}'
 EOF
     [[ -n "$RESOURCES" ]] && printf '%s\n' "$RESOURCES"
     if [[ -n "$app" ]]; then
@@ -136,7 +140,7 @@ EOF
           appType: container
           image: $REGISTRY/flightctl-mcu/$image:$app
           envVars:
-            FC_ALLOW: "led0"
+            FC_ALLOW: "led0 metrics"
 EOF
     fi
   }
@@ -308,6 +312,22 @@ wait_for 180 "app removed" "not apps and st['applicationsSummary']['status'] == 
 log "second example app (trend)"
 apply_fleet 35 "v1.$TAG" trend
 wait_for 120 "trend app reporting" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').split(' ')[0] in ('rising', 'falling', 'steady')"
+
+log "metrics (the Telemetry Gateway)"
+# The fleet's /etc/fc/metrics.json: the device asks for the gateway's
+# certificate and sends its own metrics and the app's (trend, with "metrics"
+# granted) every 30 s; the gateway exports them to Prometheus with its ID.
+kubectl -n flightctl port-forward svc/flightctl-telemetry-gateway 19464:9464 >/dev/null 2>&1 &
+PF_PID=$!
+metric() { curl -s localhost:19464/metrics | grep "^$1{.*device_id=\"$DEVICE\"" ; }
+for i in $(seq 1 60); do
+  metric device_memory_free_bytes >/dev/null && metric app_alarm_temp_c >/dev/null && break
+  (( i == 60 )) && { kill $PF_PID; fail "no metrics from the device at the gateway"; }
+  sleep 3
+done
+metric device_network_io_bytes_total | grep -q 'direction="transmit"' || { kill $PF_PID; fail "no traffic metric"; }
+kill $PF_PID
+echo "ok: the device's and the app's metrics at the gateway"
 apply_fleet 35 ""
 wait_for 120 "trend app removed" "not apps"
 

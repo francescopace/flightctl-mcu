@@ -914,6 +914,54 @@ static void a_grpc_stream_talks_both_ways(void)
     CHECK_INT((int)s_req.body_len, 4);
 }
 
+/* Without a session, a stream has a connection of its own, opened for it
+ * and closed with it (the Telemetry Gateway's export). */
+static void script_grpc_alone(int fd)
+{
+    req_t g;
+    if (srv_hello(fd) != 0 || srv_stream_headers(fd, &g) != 0) {
+        return;
+    }
+    srv_headers(fd, g.sid, 200, NULL, NULL, 0);
+    for (;;) {
+        frame_t f;
+        if (srv_frame(fd, &f) != 0) {
+            return;
+        }
+        int data = f.type == F_DATA && f.sid == g.sid, end = data && (f.flags & FL_END_STREAM);
+        if (data) {
+            memcpy(g.body + g.body_len, f.payload, f.len);
+            g.body_len += f.len;
+        }
+        free(f.payload);
+        if (end) {
+            break;
+        }
+    }
+    s_req = g;
+    srv_trailers(fd, g.sid, "0");
+    srv_drain(fd); /* until the client closes it */
+}
+
+static void a_stream_without_a_session_has_its_own_connection(void)
+{
+    serve(script_grpc_alone);
+    fc_http_target_t t = target(NULL);
+    fc_http_stream_t *st = fc_http_stream_open(&t, GRPC_PATH, "application/grpc", NULL);
+    CHECK(st != NULL);
+    CHECK_INT(fc_http_stream_write(st, "\0\0\0\0\2hi", 7, 1, 1000), 0);
+    char b[16];
+    CHECK_INT(fc_http_stream_read(st, b, sizeof(b), 2000), -1);
+    int http, grpc;
+    fc_http_stream_status(st, &http, &grpc);
+    CHECK_INT(http, 200);
+    CHECK_INT(grpc, 0);
+    fc_http_stream_close(st);
+    join_servers(); /* returns once the connection is closed */
+    CHECK_INT(s_opens, 1);
+    CHECK_INT((int)s_req.body_len, 7);
+}
+
 /* An idle stream outlasts timeout_s without killing the connection, which
  * carries a request meanwhile; then a trailers-only error ends it. */
 static void script_grpc_idle(int fd)
@@ -1090,6 +1138,7 @@ int main(void)
     RUN(an_oversized_frame_is_refused);
     RUN(a_new_certificate_opens_a_new_connection);
     RUN(a_grpc_stream_talks_both_ways);
+    RUN(a_stream_without_a_session_has_its_own_connection);
     RUN(an_idle_grpc_stream_leaves_the_connection_alone);
     RUN(a_flooded_or_let_go_stream_ends);
     RUN(the_pool_serves_receive_buffers_only);

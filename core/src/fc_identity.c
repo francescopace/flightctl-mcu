@@ -140,6 +140,34 @@ static int write_csr(mbedtls_pk_context *pk, const char *name, char **out)
     return rc;
 }
 
+int fc_identity_csr(const fc_identity_t *id, const char *cn, char **out)
+{
+    *out = NULL;
+    if (fc_crypto_init() != 0) {
+        return -1;
+    }
+    mbedtls_pk_context pk;
+    mbedtls_pk_init(&pk);
+    int rc = -1;
+    if (!id->hw_key) {
+        if (id->key_pem != NULL &&
+            mbedtls_pk_parse_key(&pk, (const unsigned char *)id->key_pem, strlen(id->key_pem) + 1, NULL, 0) == 0) {
+            rc = write_csr(&pk, cn, out);
+        }
+    } else if (id->csr_pem != NULL) {
+        /* The hardware signs; the public key is the stored CSR's. */
+        mbedtls_x509_csr csr;
+        mbedtls_x509_csr_init(&csr);
+        if (mbedtls_x509_csr_parse(&csr, (const unsigned char *)id->csr_pem, strlen(id->csr_pem) + 1) == 0 &&
+            fc_port_hwkey_pk(&pk, &csr.pk) == 0) {
+            rc = write_csr(&pk, cn, out);
+        }
+        mbedtls_x509_csr_free(&csr);
+    }
+    mbedtls_pk_free(&pk);
+    return rc;
+}
+
 /* A device key in hardware: its CSR is stored, the key is the port's. */
 static int load_hw(fc_identity_t *id)
 {

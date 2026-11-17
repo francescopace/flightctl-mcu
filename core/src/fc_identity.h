@@ -16,6 +16,12 @@ typedef struct {
 int fc_identity_load(fc_identity_t *id);
 void fc_identity_free(fc_identity_t *id);
 
+/* A CSR for the device key under another CN (a certificate for another of
+ * Flight Control's services, such as the Telemetry Gateway's "otel-<name>"),
+ * signed with the key where it is, storage or hardware: PEM in *out, which
+ * the caller frees. 0, or -1. */
+int fc_identity_csr(const fc_identity_t *id, const char *cn, char **out);
+
 /* Deletes the stored device key: the next fc_identity_load makes a new one,
  * hence a new device name. */
 void fc_identity_forget(void);

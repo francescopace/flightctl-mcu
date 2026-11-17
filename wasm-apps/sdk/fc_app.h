@@ -3,8 +3,8 @@
  *
  * docs/APPS.md says how to write an app and what each port has. Until the
  * v1.0.0 tag this interface can still change; from then on, functions are
- * only added within version 1. Metrics and MQTT are not in the firmware yet:
- * they return FC_ENOTSUP once the name exists and is granted. The buses, ADC
+ * only added within version 1. MQTT is not in the firmware yet: it returns
+ * FC_ENOTSUP once granted. The buses, ADC
  * and PWM are on ESP-IDF, on Zephyr from the devicetree, and simulated on the
  * host.
  *
@@ -280,9 +280,12 @@ FC_IMPORT("sensor_read") int32_t fc_sensor_read(const char *name, int32_t nlen, 
 /* ---- Metrics (granted by "metrics") ----------------------------------------------------------
  * A number for Flight Control's Telemetry Gateway (OpenTelemetry), which adds
  * the device's ID and exports it to Prometheus. The metric's name is
- * app.<app name>.<name> (a proposal: the exporter decides how it looks in
- * Prometheus). The device sends the last value of each metric every
- * metrics interval, in one batch. At most FC_MAX_METRICS per app. */
+ * app.<app name>.<name> (app_<app name>_<name> in Prometheus); the name is
+ * letters, digits, '_', '.' and '-', at most 32. The device sends the last
+ * value of each metric every metrics interval, in one batch, once the fleet
+ * gives the gateway (docs/METRICS.md). At most FC_MAX_METRICS per app
+ * (FC_ENOSPC); a metric keeps its kind (FC_EINVAL); a counter takes no
+ * negative value. The values go when the app is removed or updated. */
 #define FC_MAX_METRICS 8
 #define FC_METRIC_GAUGE   0 /* the value as it is */
 #define FC_METRIC_COUNTER 1 /* fc_metric adds to it */

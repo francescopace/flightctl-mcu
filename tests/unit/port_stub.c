@@ -144,6 +144,11 @@ long stub_stack_unused = -1;
 
 long stub_heap_largest = -1;
 
+long fc_port_heap_watch(int start)
+{
+    return -1;
+}
+
 long fc_port_heap_largest(void)
 {
     return stub_heap_largest;

@@ -1,7 +1,7 @@
 /*
  * The functions apps call, module "fc": the app interface of
  * wasm-apps/sdk/fc_app.h. Each runs on the calling app's thread. What the
- * firmware does not have yet (MQTT, metrics) is there too,
+ * firmware does not have yet (MQTT) is there too,
  * returning FC_ENOTSUP, so that an app written against the whole header
  * loads and can tell.
  */
@@ -14,6 +14,7 @@
 
 #include "fc_agent.h"
 #include "fc_apps_int.h"
+#include "fc_metrics.h"
 #include "fc_port.h"
 #include "psa/crypto.h"
 
@@ -959,9 +960,14 @@ static int32_t grant_then_notsup(wasm_exec_env_t env, const char *grant)
 {
     return allowed(app_of(env), grant, strlen(grant)) ? FC_HW_ENOTSUP : FC_HW_EPERM;
 }
+/* A value for the Telemetry Gateway, kept until the next export (fc_metrics.h). */
 static int32_t fc_metric(wasm_exec_env_t env, const char *n, int32_t l, int32_t kind, double v)
 {
-    return grant_then_notsup(env, "metrics");
+    app_t *a = app_of(env);
+    if (!allowed(a, "metrics", 7)) {
+        return FC_HW_EPERM;
+    }
+    return l < 0 ? FC_HW_EINVAL : fc_metrics_app_set(a->name, n, (size_t)l, kind, v);
 }
 static int32_t fc_mqtt_publish(wasm_exec_env_t env, const char *t, int32_t tl, const void *p, int32_t pl, int32_t qos,
                                int32_t retain)

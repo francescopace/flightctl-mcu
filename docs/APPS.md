@@ -15,7 +15,7 @@ An app is a WebAssembly module that Flight Control deploys as a container applic
 | Metrics | `fc_metric` | `metrics` |
 | MQTT | `fc_mqtt_publish/subscribe/topic`, `fc_event_data` | `mqtt` |
 
-Metrics and MQTT are not in the firmware yet: they return `FC_ENOTSUP` once the name exists and is granted, so an app written for them loads and can tell. What each port has is under [Ports](#ports).
+MQTT is not in the firmware yet: it returns `FC_ENOTSUP` once granted, so an app written for it loads and can tell. What each port has is under [Ports](#ports).
 
 ## How an app runs
 
@@ -115,9 +115,10 @@ The app's `envVars` are for the device (`FC_ALLOW`, `TICK_MS`). The app's own se
 
 Today an app reports its **state** (`fc_set_state`): a short text in Flight Control, `customInfo["app.<name>"]`, such as `ok`, `alarm` or `calibrating`. Flight Control records each change as an event, so it is for what changes seldom.
 
-Two more ways are part of the interface, for when the firmware has them ([ROADMAP.md](ROADMAP.md)):
+**Metrics** (`fc_metric`, granted by `metrics`): numbers for Flight Control's Telemetry Gateway, which adds the device's ID and exports them to Prometheus as `app_<app>_<name>`. A gauge is set, a counter added to; the device sends the last value of each with its own metrics, in one batch per interval, once the fleet gives the gateway's address ([METRICS.md](METRICS.md)). At most 8 per app; they go when the app is removed or updated.
 
-- **Metrics** (`fc_metric`): numbers for Flight Control's Telemetry Gateway, which adds the device's ID and exports them to Prometheus, sent in one batch per interval over TLS with the device's management certificate.
+One more way is part of the interface, for when the firmware has it ([ROADMAP.md](ROADMAP.md)):
+
 - **MQTT** (`fc_mqtt_*`): the application's own data and commands, with a broker the fleet gives in `/etc/fc/mqtt.json` (address, user, topic prefixes) and its CA. The device keeps one connection for all the apps. Each app publishes and subscribes under its own prefix, by default `flightctl/<device>/<app>/`, and can subscribe under the fleet's, to receive a command sent once to every device. QoS is 0 or 1; topics are at most 64 characters and payloads 512 bytes.
 
 ## Ports
@@ -163,7 +164,7 @@ There is no libc: `fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `
 Neither has a `tick`: timers wake them, and they sleep in between.
 
 - [alarm](../wasm-apps/alarm/alarm.c): the line temperature alarm. It reads `die_temp`, takes `threshold_c`, `hysteresis_c` and `sample_ms` from `/etc/fc-app/alarm.json`, and applies a new file without restarting. It drives `led0` when the fleet grants it (`FC_ALLOW: "led0"`); without the grant it reports only its state. The same source builds two images, to show an app updated without a reboot: `alarm:v1` lights the LED solid blue above the threshold, and `alarm:v2` adds a pre-alarm (dim blue, 2 °C below) and blinks with a second timer. Blue only, so boards with a single-colour LED look the same as RGB ones. About 2 KB of `.wasm`.
-- [trend](../wasm-apps/trend/trend.c): no grants needed. It reports whether the temperature is rising or falling, and how fast. With `metrics` granted it will also send the temperature and the rate as metrics. About 2 KB.
+- [trend](../wasm-apps/trend/trend.c): no grants needed. It reports whether the temperature is rising or falling, and how fast. With `metrics` granted it also sends the temperature and the rate as metrics (`app_<name>_temp_c`, `app_<name>_rate_c_per_min`). About 2 KB.
 
 On a chip without a temperature sensor both set their state to say so and stay idle, with no timer running.
 

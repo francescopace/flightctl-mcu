@@ -113,6 +113,7 @@ static void new_agent(void)
     fc_identity_free(&s_a.id);
     memset(&s_a, 0, sizeof(s_a));
     s_a.stack_spec = s_a.stack_status = -1;
+    s_a.export_low = -1;
     s_apps_stack = -1;
     s_a.cfg = &s_cfg;
     pthread_mutex_init(&s_a.lock, NULL);
@@ -300,7 +301,13 @@ static void a_refused_firmware_is_not_downloaded_again(void)
 /* ---- certificates ----------------------------------------------------------- */
 
 /* A certificate for `subject_key_pem` issued by a throwaway CA, as PEM. */
+static char *issue_cert_cn(const char *subject_key_pem, const char *subject, const char *from, const char *to);
 static char *issue_cert(const char *subject_key_pem, const char *from, const char *to)
+{
+    return issue_cert_cn(subject_key_pem, "CN=device", from, to);
+}
+
+static char *issue_cert_cn(const char *subject_key_pem, const char *subject, const char *from, const char *to)
 {
     mbedtls_pk_context ca, subj;
     stub_ec_key(&ca);
@@ -311,7 +318,7 @@ static char *issue_cert(const char *subject_key_pem, const char *from, const cha
     mbedtls_x509write_crt_set_md_alg(&w, MBEDTLS_MD_SHA256);
     mbedtls_x509write_crt_set_subject_key(&w, &subj);
     mbedtls_x509write_crt_set_issuer_key(&w, &ca);
-    mbedtls_x509write_crt_set_subject_name(&w, "CN=device");
+    mbedtls_x509write_crt_set_subject_name(&w, subject);
     mbedtls_x509write_crt_set_issuer_name(&w, "CN=test-ca");
     unsigned char serial[] = {1};
     mbedtls_x509write_crt_set_serial_raw(&w, serial, sizeof(serial));
@@ -364,6 +371,92 @@ static void a_certificate_for_another_key_is_refused(void)
     CHECK_STR(s_a.mgmt_cert_pem, "old");
     free(pem);
     fc_identity_free(&other);
+}
+
+/* The Telemetry Gateway's certificate: its own key in storage, never the
+ * management certificate's, and only with the CN the gateway reads. */
+static void the_gateways_certificate_never_replaces_the_management_one(void)
+{
+    new_agent();
+    s_a.mgmt_cert_pem = strdup("mgmt");
+    char cn[96], json[4096], b64[3000];
+    snprintf(cn, sizeof(cn), "CN=otel-%s", s_a.id.name);
+    char *otel = issue_cert_cn(s_a.id.key_pem, cn, "20260101000000", "20270101000000");
+    size_t n = 0;
+    mbedtls_base64_encode((unsigned char *)b64, sizeof(b64), &n, (const unsigned char *)otel, strlen(otel));
+    b64[n] = '\0';
+    snprintf(json, sizeof(json), "{\"status\":{\"conditions\":[{\"type\":\"Approved\",\"status\":\"True\"}],"
+             "\"certificate\":\"%s\"}}", b64);
+    CHECK_INT(handle_otel_csr(&s_a, json), 1);
+    CHECK_STR(s_a.otel_cert_pem, otel);
+    CHECK_STR(stub_kv("otel.crt"), otel);
+    CHECK_STR(s_a.mgmt_cert_pem, "mgmt");
+    CHECK(stub_kv("mgmt.crt") == NULL);
+    /* The device's key but another CN (a management certificate): refused. */
+    char *mgmt = issue_cert(s_a.id.key_pem, "20260101000000", "20270101000000");
+    mbedtls_base64_encode((unsigned char *)b64, sizeof(b64), &n, (const unsigned char *)mgmt, strlen(mgmt));
+    b64[n] = '\0';
+    snprintf(json, sizeof(json), "{\"status\":{\"certificate\":\"%s\"}}", b64);
+    CHECK_INT(handle_otel_csr(&s_a, json), -1);
+    CHECK_STR(s_a.otel_cert_pem, otel);
+    CHECK_INT(handle_otel_csr(&s_a, "{\"status\":{\"conditions\":[{\"type\":\"Denied\",\"status\":\"True\"}]}}"), -1);
+    CHECK_INT(handle_otel_csr(&s_a, "{\"status\":{}}"), 0); /* pending */
+    /* Stored and read back at the next start; one of an older key is not. */
+    free(s_a.otel_cert_pem);
+    s_a.otel_cert_pem = NULL;
+    s_a.otel_next_try = time(NULL) + 3600; /* nothing asked for meanwhile */
+    CHECK_INT(otel_cert(&s_a, 1780000000), 0);
+    CHECK_STR(s_a.otel_cert_pem, otel);
+    free(mgmt);
+    free(otel);
+    free(s_a.otel_cert_pem);
+    s_a.otel_cert_pem = NULL;
+}
+
+static void the_metrics_config_gives_the_gateway(void)
+{
+    new_agent();
+    metrics_cfg_t c;
+    CHECK_INT(metrics_config(&c), -1); /* none: nothing sent */
+    const char *j = "{\"endpoint\": \"https://telemetry.example.com:4317\"}";
+    fc_port_write_file(METRICS_CONFIG, j, strlen(j));
+    CHECK_INT(metrics_config(&c), 0);
+    CHECK_STR(c.host, "telemetry.example.com");
+    CHECK_INT(c.port, 4317);
+    CHECK_INT(c.interval_s, METRICS_DEFAULT_S);
+    j = "{\"endpoint\": \"telemetry.example.com\", \"intervalSeconds\": 5}";
+    fc_port_write_file(METRICS_CONFIG, j, strlen(j));
+    CHECK_INT(metrics_config(&c), 0);
+    CHECK_INT(c.port, 443);
+    CHECK_INT(c.interval_s, METRICS_MIN_S);
+    j = "{\"endpoint\": \":99999\"}";
+    fc_port_write_file(METRICS_CONFIG, j, strlen(j));
+    CHECK_INT(metrics_config(&c), -1);
+    /* From the fleet: a new one is tried at once, whatever the backoff. */
+    s_a.metrics_backoff_s = 3600;
+    apply("4", "{\"config\":[{\"name\":\"m\",\"inline\":["
+               "{\"path\":\"/etc/fc/metrics.json\",\"content\":\"{\\\"endpoint\\\":\\\"t.example:443\\\"}\"}]}]}");
+    CHECK_INT(s_a.metrics_poke, 1);
+    s_a.metrics_poke = 0;
+    apply("5", "{\"config\":[{\"name\":\"m\",\"inline\":["
+               "{\"path\":\"/etc/fc/metrics.json\",\"content\":\"{\\\"endpoint\\\":\\\"t.example:443\\\"}\"}]}]}");
+    CHECK_INT(s_a.metrics_poke, 0); /* the same again: nothing */
+}
+
+static void the_device_counters_become_points(void)
+{
+    new_agent();
+    fc_metric_point_t p[DEVICE_POINTS];
+    int n = device_points(&s_a, p, 7);
+    int io = 0, skipped = 0;
+    for (int i = 0; i < n; i++) {
+        io += strcmp(p[i].name, "device.network.io") == 0 && p[i].sum && p[i].start_ns == 7 && p[i].attr_key != NULL;
+        skipped += strcmp(p[i].name, "device.metrics.skipped") == 0;
+        CHECK(strncmp(p[i].name, "device.", 7) == 0);
+    }
+    CHECK_INT(io, 2);
+    CHECK_INT(skipped, 1);
+    CHECK(n <= (int)DEVICE_POINTS);
 }
 
 static void a_denied_request_is_a_failure(void)
@@ -422,6 +515,41 @@ static void *status_goes_out(void *arg)
 
 /* One TLS connection at a time: a download takes the agent's turn once the
  * status asked for ("Downloading") is out, and a status reports after it. */
+static void *export_ends(void *arg)
+{
+    agent_t *a = arg;
+    usleep(50 * 1000);
+    pthread_mutex_lock(&a->lock);
+    CHECK_INT(a->downloading, 0); /* the download waits for it */
+    pthread_mutex_unlock(&a->lock);
+    metrics_done(a);
+    return NULL;
+}
+
+/* A metrics export and a pull never share the time: the pull waits for the
+ * export, and nothing of an export (not even its certificate) goes out
+ * while a pull has the turn. */
+static void metrics_and_pulls_take_turns(void)
+{
+    new_agent();
+    s_a.exporting = 1;
+    pthread_t t;
+    pthread_create(&t, NULL, export_ends, &s_a);
+    turn_begin(&s_a);
+    CHECK_INT(s_a.downloading, 1);
+    CHECK_INT(s_a.exporting, 0);
+    pthread_join(t, NULL);
+    const char *j = "{\"endpoint\": \"telemetry.example.com:443\"}";
+    fc_port_write_file(METRICS_CONFIG, j, strlen(j));
+    metrics_tick(&s_a); /* due, with no certificate yet */
+    CHECK_INT(s_a.metrics_skipped, 1);
+    CHECK_STR(s_a.otel_csr_name, ""); /* not asked for */
+    CHECK_INT(s_a.exporting, 0);
+    CHECK(s_a.metrics_next > time(NULL));
+    turn_end(&s_a);
+    CHECK_INT(fc_agent_busy(), 1); /* not started: busy anyway */
+}
+
 static void a_download_takes_the_connections_turn(void)
 {
     new_agent();
@@ -758,9 +886,13 @@ int main(void)
     RUN(a_renewed_certificate_for_our_key_is_installed);
     RUN(a_certificate_for_another_key_is_refused);
     RUN(a_denied_request_is_a_failure);
+    RUN(the_gateways_certificate_never_replaces_the_management_one);
+    RUN(the_metrics_config_gives_the_gateway);
+    RUN(the_device_counters_become_points);
     RUN(an_expired_certificate_starts_over_as_a_new_device);
     RUN(status_requests_are_urgent_or_grouped);
     RUN(a_download_takes_the_connections_turn);
+    RUN(metrics_and_pulls_take_turns);
     RUN(a_console_alone_is_not_applied_again);
     RUN(counters_are_read_again_only_when_due);
     RUN(stack_headroom_is_reported_per_thread);

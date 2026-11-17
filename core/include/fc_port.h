@@ -68,6 +68,12 @@ long fc_port_stack_unused(void);
  * cannot tell. An app whose memory does not fit says it in its error. */
 long fc_port_heap_largest(void);
 
+/* The heap's low-water mark over a stretch of work: fc_port_heap_watch(1)
+ * starts watching (0), fc_port_heap_watch(0) stops and returns the fewest
+ * bytes of internal RAM free in between; -1 when the port cannot tell. One
+ * stretch at a time (the metrics export, fc_agent.c). */
+long fc_port_heap_watch(int start);
+
 /* Writes a config file delivered through spec.config. `path` is the absolute
  * path from the device spec; the port maps it onto its own storage. */
 int fc_port_write_file(const char *path, const void *data, size_t len);

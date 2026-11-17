@@ -37,6 +37,7 @@
 
 #include "fc_agent.h"
 #include "fc_apps_int.h"
+#include "fc_metrics.h"
 #include "fc_heap_hold.h"
 #include "fc_oci.h"
 #include "fc_port.h"
@@ -1073,6 +1074,7 @@ static void app_stop(app_t *a)
 static void app_release(app_t *a)
 {
     app_stop(a);
+    fc_metrics_app_drop(a->name);
     if (a->module != NULL) {
         wasm_runtime_unload(a->module);
         a->module = NULL;

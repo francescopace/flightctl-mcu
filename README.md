@@ -32,6 +32,7 @@ Here the microcontroller speaks the Flight Control agent API itself. That API is
 | `spec.resources` | CPU, heap and storage sampled against the fleet's alert rules, as the Linux agent does. Without rules, CPU and storage take the Linux defaults; the heap warns under 10% free, since the network stack holds most of it. |
 | `status` | `resources` from those rules, heap, CPU use, firmware version, RSSI, temperature, app state |
 | `flightctl console` and the UI's terminal | A closed set of commands (`status`, `apps`, `log`, `reboot`...) over a gRPC stream on the agent's connection ([CONSOLE.md](docs/CONSOLE.md)) |
+| Telemetry Gateway (OpenTelemetry) | The device's metrics (heap, traffic, CPU, WiFi, temperature) and the apps' (`fc_metric`) in OTLP over gRPC, with a certificate the device asks for on its own, to Prometheus ([METRICS.md](docs/METRICS.md)) |
 | The UI's Logs tab | The device's log kept in RAM, answered to the `journalctl` the tab runs through the console: level, unit (the agent, or an app), time range, live ([CONSOLE.md](docs/CONSOLE.md#the-log)) |
 | Fleet rollout | Works unchanged |
 
@@ -121,6 +122,7 @@ The requirements in full, the boards tried and how to add a chip, a board or an 
 | [SBOM.md](docs/SBOM.md) | Each release's SBOM, and its known vulnerabilities in Flight Control through Trustify |
 | [REGISTRY.md](docs/REGISTRY.md) | The registry: TLS, credentials, the local one |
 | [CONSOLE.md](docs/CONSOLE.md) | The remote console and the UI's Logs tab |
+| [METRICS.md](docs/METRICS.md) | Metrics to the Telemetry Gateway (OpenTelemetry) |
 | [TESTING.md](docs/TESTING.md) | Unit tests, fuzzing, end-to-end tests, what CI runs |
 | [RESULTS.md](docs/RESULTS.md) | What was verified and where, measurements, gaps in Flight Control |
 | [ROADMAP.md](docs/ROADMAP.md) | What comes next |

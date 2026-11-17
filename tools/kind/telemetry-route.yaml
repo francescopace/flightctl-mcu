@@ -1,0 +1,22 @@
+# The Telemetry Gateway (OTLP over gRPC, port 4317) at telemetry.<base domain>,
+# through the gateway's TLS listener, passed through as the agent's API is:
+# devices send their metrics there with a certificate of their own. The chart
+# makes this route only on OpenShift (a Route); BASE_DOMAIN is set by up.sh.
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: flightctl-telemetry-route
+  namespace: flightctl
+spec:
+  hostnames:
+  - telemetry.BASE_DOMAIN
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: flightctl-gateway
+    sectionName: api
+  rules:
+  - backendRefs:
+    - kind: Service
+      name: flightctl-telemetry-gateway
+      port: 4317

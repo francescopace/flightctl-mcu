@@ -789,6 +789,21 @@ static void test_fc_gpio(void)
     CHECK(!f_led_open);
 }
 
+/* "metrics" granted: fc_metric keeps the value for the gateway, until the
+ * app goes. */
+static void test_fc_metric(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("m", "reg/t_perm", "{\"FC_ALLOW\": \"i2c0 metrics\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("m", "Running -3 -2 0 0 -3", 3000), "Running -3 -2 0 0 -3");
+    fc_metric_point_t p[FC_METRICS_APPS_MAX];
+    CHECK_INT(fc_metrics_app_points(p, FC_METRICS_APPS_MAX), 1);
+    CHECK_STR(p[0].name, "app.m.x");
+    CHECK(p[0].d == 1.0 && !p[0].sum);
+    remove_all();
+    CHECK_INT(fc_metrics_app_points(p, FC_METRICS_APPS_MAX), 0);
+}
+
 /* I2C, ADC and PWM through the port; closed with the app, the PWM low. */
 static void test_fc_bus(void)
 {
@@ -1222,6 +1237,7 @@ int main(void)
     RUN(test_fc_config);
     RUN(test_fc_kv);
     RUN(test_fc_gpio);
+    RUN(test_fc_metric);
     RUN(test_fc_bus);
     RUN(test_fc_serial);
     RUN(test_fc_grants);

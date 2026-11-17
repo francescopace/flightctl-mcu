@@ -38,7 +38,7 @@ spec:
     spec:
       # Multi-chip OCI index (tools/fw-push.py): each device picks its chip.
       os:
-        image: ${REGISTRY}/flightctl-mcu/fw:v3.12
+        image: ${REGISTRY}/flightctl-mcu/fw:v3.13-rc6
       # The alarm as a WASM app (wasm-apps/alarm): replaced without reboot.
       applications:
         - name: alarm
@@ -55,3 +55,8 @@ spec:
           inline:
             - path: /etc/fc-app/alarm.json
               content: '{"threshold_c": 40, "hysteresis_c": 1, "sample_ms": 2000}'
+        # The device's and the apps' metrics to the Telemetry Gateway (docs/METRICS.md).
+        - name: metrics
+          inline:
+            - path: /etc/fc/metrics.json
+              content: '{"endpoint": "${TELEMETRY}", "intervalSeconds": 30}'

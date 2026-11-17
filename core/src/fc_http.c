@@ -27,6 +27,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(__ZEPHYR__)
+#include <netdb.h>
+#endif
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -944,6 +947,58 @@ static void tls_debug(void *ctx, int level, const char *file, int line, const ch
 }
 #endif
 
+/* mbedtls_net_connect, given up after timeout_s: a host that drops the
+ * packets would otherwise hold the caller for the system's TCP timeout. On
+ * Zephyr the port's mbedtls_net_connect (fc_net_zephyr.c) is bounded already,
+ * by CONFIG_NET_SOCKETS_CONNECT_TIMEOUT. */
+#if defined(__ZEPHYR__)
+static int connect_within(mbedtls_net_context *ctx, const char *host, const char *port, int timeout_s)
+{
+    return mbedtls_net_connect(ctx, host, port, MBEDTLS_NET_PROTO_TCP);
+}
+#else
+static int connect_within(mbedtls_net_context *ctx, const char *host, const char *port, int timeout_s)
+{
+    struct addrinfo hints, *list = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    if (getaddrinfo(host, port, &hints, &list) != 0 || list == NULL) {
+        return MBEDTLS_ERR_NET_UNKNOWN_HOST;
+    }
+    int ret = MBEDTLS_ERR_NET_CONNECT_FAILED;
+    for (struct addrinfo *a = list; a != NULL && ret != 0; a = a->ai_next) {
+        ctx->fd = (int)socket(a->ai_family, a->ai_socktype, a->ai_protocol);
+        if (ctx->fd < 0) {
+            ret = MBEDTLS_ERR_NET_SOCKET_FAILED;
+            continue;
+        }
+        int ok = mbedtls_net_set_nonblock(ctx) == 0;
+        if (ok && connect(ctx->fd, a->ai_addr, a->ai_addrlen) != 0) {
+            ok = errno == EINPROGRESS;
+            if (ok) {
+                fd_set w;
+                FD_ZERO(&w);
+                FD_SET(ctx->fd, &w);
+                struct timeval tv = {.tv_sec = timeout_s};
+                int err = 0;
+                socklen_t len = sizeof(err);
+                ok = select(ctx->fd + 1, NULL, &w, NULL, &tv) == 1 &&
+                     getsockopt(ctx->fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0;
+            }
+        }
+        if (ok && mbedtls_net_set_block(ctx) == 0) {
+            ret = 0;
+        } else {
+            mbedtls_net_free(ctx);
+        }
+    }
+    freeaddrinfo(list);
+    return ret;
+}
+#endif
+
 static int conn_tls_open(conn_t *c, const fc_http_target_t *t)
 {
     mbedtls_net_init(&c->net);
@@ -1014,7 +1069,9 @@ static int conn_tls_open(conn_t *c, const fc_http_target_t *t)
         log_mbedtls("ssl_set_hostname", rc);
         return -1;
     }
-    if ((rc = mbedtls_net_connect(&c->net, t->host, port, MBEDTLS_NET_PROTO_TCP)) != 0) {
+    rc = t->connect_timeout_s > 0 ? connect_within(&c->net, t->host, port, t->connect_timeout_s)
+                                  : mbedtls_net_connect(&c->net, t->host, port, MBEDTLS_NET_PROTO_TCP);
+    if (rc != 0) {
         log_mbedtls("connect", rc);
         return -1;
     }
@@ -2032,7 +2089,9 @@ fc_http_stream_t *fc_http_stream_open(const fc_http_target_t *t, const char *pat
                                       const char *const *headers)
 {
     int fresh;
-    conn_t *c = get_conn_mode(t, &fresh, 1);
+    /* A session's connection only, never a new one for it; without a
+     * session, a connection for this stream alone. */
+    conn_t *c = get_conn_mode(t, &fresh, t->session != NULL);
     if (c == NULL) {
         return NULL;
     }

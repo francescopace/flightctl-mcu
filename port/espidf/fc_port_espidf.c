@@ -268,6 +268,15 @@ void fc_port_custom_info(void *obj)
     (void)buf;
 }
 
+long fc_port_heap_watch(int start)
+{
+    if (start) {
+        return heap_caps_monitor_local_minimum_free_size_start() == ESP_OK ? 0 : -1;
+    }
+    long low = (long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    return heap_caps_monitor_local_minimum_free_size_stop() == ESP_OK ? low : -1;
+}
+
 long fc_port_heap_largest(void)
 {
     return (long)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
