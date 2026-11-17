@@ -547,30 +547,29 @@ static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t s_io = PTHREAD_MUTEX_INITIALIZER;
 
-/* The subscriptions and the prefixes: allocated at the first subscription or
- * broker, kept (on the ESP32-S3 with Zephyr there is no static RAM to spare). */
+/* The client's state, allocated at the first subscription or broker and
+ * kept: on the ESP32-S3 with Zephyr there is no static RAM to spare. */
 typedef struct {
     char dev_prefix[FC_MQTT_MAX_PREFIX + 1];   /* "" unconfigured */
     char fleet_prefix[FC_MQTT_MAX_PREFIX + 1]; /* "" none */
     sub_t subs[FC_MQTT_MAX_SUBS];
+    cfg_t *cfg;      /* the running config, the thread reads it */
+    int up;          /* CONNACK accepted, not lost since */
+    int stop;
+    int running;     /* the thread exists (agent's thread only) */
+    int extra_block; /* the TLS pool's second block is ours (agent's thread) */
+    pthread_t thread;
+    pthread_attr_t attr;
+    uint16_t next_pid; /* under s_io */
+    unsigned long connects, published, received, dropped, dropped_logged;
+    long long drop_log_at;
+    unsigned long long tx, rx; /* bytes on the wire */
 } state_t;
 
 static fc_mqtt_hooks_t s_hooks;           /* set before the thread */
-static cfg_t *s_cfg;                      /* under s_lock: the running config, the thread reads it */
-static state_t *s_st;                     /* under s_lock, NULL until needed */
-static int s_up;                          /* under s_lock: CONNACK accepted, not lost since */
-static int s_stop;                        /* under s_lock */
-static int s_running;                     /* the thread exists (agent's thread only) */
-static pthread_t s_thread;
-static pthread_attr_t s_attr;
+static state_t *s_st;                     /* under s_lock but where said, NULL until needed */
 static conn_t *s_conn;                    /* under s_io: the connection, once up */
-static uint16_t s_next_pid;               /* under s_io */
-static int s_extra_block;                 /* the TLS pool's second block is ours (agent's thread) */
 
-static unsigned long s_connects, s_published, s_received, s_dropped; /* under s_lock */
-static unsigned long s_dropped_logged;
-static long long s_drop_log_at;
-static unsigned long long s_tx, s_rx; /* under s_lock */
 
 /* Tests: a TCP connection of their own (fills net->fd), 0 or -1. */
 static int (*s_connect_hook)(mbedtls_net_context *net, const char *host, int port);
@@ -588,12 +587,12 @@ static void count_drop(const char *why)
 {
     long long now = now_ms();
     pthread_mutex_lock(&s_lock);
-    s_dropped++;
-    unsigned long n = s_dropped - s_dropped_logged;
-    int log = s_drop_log_at == 0 || now - s_drop_log_at >= DROP_LOG_MS;
+    s_st->dropped++;
+    unsigned long n = s_st->dropped - s_st->dropped_logged;
+    int log = s_st->drop_log_at == 0 || now - s_st->drop_log_at >= DROP_LOG_MS;
     if (log) {
-        s_drop_log_at = now;
-        s_dropped_logged = s_dropped;
+        s_st->drop_log_at = now;
+        s_st->dropped_logged = s_st->dropped;
     }
     pthread_mutex_unlock(&s_lock);
     if (log) {
@@ -606,14 +605,14 @@ static void count_drop(const char *why)
 static int bio_send(void *ctx, const unsigned char *buf, size_t len)
 {
     int rc = mbedtls_net_send(ctx, buf, len);
-    count_wire(&s_tx, rc);
+    count_wire(&s_st->tx, rc);
     return rc;
 }
 
 static int bio_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_t timeout)
 {
     int rc = mbedtls_net_recv_timeout(ctx, buf, len, timeout);
-    count_wire(&s_rx, rc);
+    count_wire(&s_st->rx, rc);
     return rc;
 }
 
@@ -901,10 +900,10 @@ static size_t enc_subscribe(unsigned char *out, int unsub, uint16_t pid, const c
 
 static uint16_t next_pid(void)
 {
-    if (++s_next_pid == 0) {
-        s_next_pid = 1;
+    if (++s_st->next_pid == 0) {
+        s_st->next_pid = 1;
     }
-    return s_next_pid;
+    return s_st->next_pid;
 }
 
 /* (UN)SUBSCRIBE for one filter, if connected; returns its packet id, 0 if not sent. */
@@ -1028,7 +1027,7 @@ int fc_mqtt_subscribe(void *owner, const char *app, int scope, const char *topic
                 break;
             }
             rc = sub_handle(i);
-            if (s_up && s->filter != NULL) {
+            if (s_st->up && s->filter != NULL) {
                 send = strdup(s->filter);
                 send_qos = filter_qos(s->filter);
             }
@@ -1060,7 +1059,7 @@ static char *sub_close(int i)
     char *filter = s->filter;
     s->filter = NULL;
     sub_clear(s);
-    if (filter != NULL && (!s_up || filter_qos(filter) >= 0)) {
+    if (filter != NULL && (!s_st->up || filter_qos(filter) >= 0)) {
         free(filter);
         filter = NULL;
     }
@@ -1146,7 +1145,7 @@ int fc_mqtt_publish(const char *app, const char *topic, size_t tlen, const void 
     }
     char prefix[FC_MQTT_MAX_PREFIX + 1];
     pthread_mutex_lock(&s_lock);
-    int up = s_up;
+    int up = s_st != NULL && s_st->up;
     int pl = s_st != NULL && s_st->dev_prefix[0] != '\0' ? replace(s_st->dev_prefix, "{app}", app, prefix, sizeof(prefix)) : -1;
     pthread_mutex_unlock(&s_lock);
     if (!up) {
@@ -1166,7 +1165,7 @@ int fc_mqtt_publish(const char *app, const char *topic, size_t tlen, const void 
     pthread_mutex_unlock(&s_io);
     if (rc == 0) {
         pthread_mutex_lock(&s_lock);
-        s_published++;
+        s_st->published++;
         pthread_mutex_unlock(&s_lock);
     }
     return rc;
@@ -1349,7 +1348,7 @@ out:
             count_drop("the app's queue full");
         } else {
             pthread_mutex_lock(&s_lock);
-            s_received++;
+            s_st->received++;
             pthread_mutex_unlock(&s_lock);
         }
     }
@@ -1361,7 +1360,7 @@ out:
 static int stopping(void)
 {
     pthread_mutex_lock(&s_lock);
-    int s = s_stop;
+    int s = s_st->stop;
     pthread_mutex_unlock(&s_lock);
     return s;
 }
@@ -1378,7 +1377,7 @@ static void pause_ms(long long ms)
         ts.tv_nsec -= 1000000000;
     }
     pthread_mutex_lock(&s_lock);
-    if (!s_stop) {
+    if (!s_st->stop) {
         pthread_cond_timedwait(&s_cond, &s_lock, &ts);
     }
     pthread_mutex_unlock(&s_lock);
@@ -1502,7 +1501,7 @@ static void *mqtt_thread(void *arg)
             continue;
         }
         pthread_mutex_lock(&s_lock);
-        const cfg_t *cfg = s_cfg; /* replaced only while this thread is stopped */
+        const cfg_t *cfg = s_st->cfg; /* replaced only while this thread is stopped */
         pthread_mutex_unlock(&s_lock);
         conn_t *c = conn_open(cfg);
         if (c == NULL) {
@@ -1516,8 +1515,8 @@ static void *mqtt_thread(void *arg)
         s_conn = c;
         pthread_mutex_unlock(&s_io);
         pthread_mutex_lock(&s_lock);
-        s_up = 1;
-        s_connects++;
+        s_st->up = 1;
+        s_st->connects++;
         pthread_mutex_unlock(&s_lock);
         if (s_hooks.on_link != NULL) {
             s_hooks.on_link(1);
@@ -1526,7 +1525,7 @@ static void *mqtt_thread(void *arg)
         run(c, cfg->keepalive_s);
         int bye = stopping();
         pthread_mutex_lock(&s_lock);
-        s_up = 0;
+        s_st->up = 0;
         pthread_mutex_unlock(&s_lock);
         pthread_mutex_lock(&s_io);
         s_conn = NULL;
@@ -1556,18 +1555,18 @@ void fc_mqtt_set_hooks(const fc_mqtt_hooks_t *h)
 
 void fc_mqtt_stop(void)
 {
-    if (!s_running) {
+    if (s_st == NULL || !s_st->running) {
         return;
     }
     pthread_mutex_lock(&s_lock);
-    s_stop = 1;
+    s_st->stop = 1;
     pthread_cond_broadcast(&s_cond);
     pthread_mutex_unlock(&s_lock);
-    pthread_join(s_thread, NULL);
-    pthread_attr_destroy(&s_attr);
-    s_running = 0;
+    pthread_join(s_st->thread, NULL);
+    pthread_attr_destroy(&s_st->attr);
+    s_st->running = 0;
     pthread_mutex_lock(&s_lock);
-    s_stop = 0;
+    s_st->stop = 0;
     pthread_mutex_unlock(&s_lock);
 }
 
@@ -1589,16 +1588,19 @@ static void set_prefixes(const char *dev, const char *fleet)
 
 static void unconfigure(void)
 {
+    if (s_st == NULL) {
+        return; /* never configured */
+    }
     fc_mqtt_stop();
     pthread_mutex_lock(&s_lock);
-    cfg_t *old = s_cfg;
-    s_cfg = NULL;
+    cfg_t *old = s_st->cfg;
+    s_st->cfg = NULL;
     set_prefixes("", "");
     pthread_mutex_unlock(&s_lock);
     cfg_free(old);
-    if (s_extra_block) {
+    if (s_st->extra_block) {
         fc_tls_pool_extra(0);
-        s_extra_block = 0;
+        s_st->extra_block = 0;
     }
 }
 
@@ -1627,44 +1629,42 @@ int fc_mqtt_configure(const char *device)
         return -1;
     }
     pthread_mutex_lock(&s_lock);
-    int same = s_running && cfg_same(cfg, s_cfg);
+    int have_state = state() != NULL;
+    int same = have_state && s_st->running && cfg_same(cfg, s_st->cfg);
     pthread_mutex_unlock(&s_lock);
     if (same) {
         cfg_free(cfg);
         return 1;
     }
     fc_mqtt_stop();
-    pthread_mutex_lock(&s_lock);
-    int have_state = state() != NULL;
-    pthread_mutex_unlock(&s_lock);
     if (!have_state || pool_init() != 0) {
         fc_port_log(FC_LOG_WARN, "mqtt: no memory for the receive pool (%d bytes)", FC_MQTT_POOL_SIZE);
         cfg_free(cfg);
         unconfigure();
         return -1;
     }
-    if (cfg->tls && NEEDS_TLS_BLOCK && !s_extra_block) {
+    if (cfg->tls && NEEDS_TLS_BLOCK && !s_st->extra_block) {
         fc_tls_pool_extra(1);
-        s_extra_block = 1;
-    } else if (!cfg->tls && s_extra_block) {
+        s_st->extra_block = 1;
+    } else if (!cfg->tls && s_st->extra_block) {
         fc_tls_pool_extra(0);
-        s_extra_block = 0;
+        s_st->extra_block = 0;
     }
     pthread_mutex_lock(&s_lock);
-    cfg_t *old = s_cfg;
-    s_cfg = cfg;
+    cfg_t *old = s_st->cfg;
+    s_st->cfg = cfg;
     set_prefixes(cfg->dev_prefix, cfg->fleet_prefix);
     pthread_mutex_unlock(&s_lock);
     cfg_free(old);
-    pthread_attr_init(&s_attr);
-    if (pthread_attr_setstacksize(&s_attr, FC_MQTT_STACK_SIZE) != 0 ||
-        pthread_create(&s_thread, &s_attr, mqtt_thread, NULL) != 0) {
-        pthread_attr_destroy(&s_attr);
+    pthread_attr_init(&s_st->attr);
+    if (pthread_attr_setstacksize(&s_st->attr, FC_MQTT_STACK_SIZE) != 0 ||
+        pthread_create(&s_st->thread, &s_st->attr, mqtt_thread, NULL) != 0) {
+        pthread_attr_destroy(&s_st->attr);
         fc_port_log(FC_LOG_ERROR, "mqtt: cannot start the client's thread (a stack of %u KB)",
                     (unsigned)(FC_MQTT_STACK_SIZE / 1024));
         return -1;
     }
-    s_running = 1;
+    s_st->running = 1;
     if (!cfg->tls) {
         fc_port_log(FC_LOG_WARN, "mqtt: %s:%d without TLS, as the fleet asks", cfg->host, cfg->port);
     }
@@ -1675,14 +1675,16 @@ void fc_mqtt_stats(fc_mqtt_stats_t *st)
 {
     memset(st, 0, sizeof(*st));
     pthread_mutex_lock(&s_lock);
-    st->configured = s_cfg != NULL;
-    st->connected = s_up;
-    st->connects = s_connects;
-    st->published = s_published;
-    st->received = s_received;
-    st->dropped = s_dropped;
-    st->tx = s_tx;
-    st->rx = s_rx;
+    if (s_st != NULL) {
+        st->configured = s_st->cfg != NULL;
+        st->connected = s_st->up;
+        st->connects = s_st->connects;
+        st->published = s_st->published;
+        st->received = s_st->received;
+        st->dropped = s_st->dropped;
+        st->tx = s_st->tx;
+        st->rx = s_st->rx;
+    }
     pthread_mutex_unlock(&s_lock);
     pthread_mutex_lock(&s_pool_lock);
     st->pool_used = s_pool_used;
