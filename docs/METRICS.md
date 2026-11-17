@@ -51,6 +51,9 @@ Counters start at boot (or, for an app's, when the app first adds to it). A devi
 ![Prometheus, the temperature of four boards](img/metrics-prometheus.png)
 *In Prometheus, the temperature four ESP-IDF boards send, one series per `device_id`, the label the gateway adds.*
 
+![Prometheus, an app's metric next to the device's](img/metrics-app.png)
+*An app's metric next to the device's: `trend`'s smoothed temperature (`app_trend_temp_c`, from its `fc_metric`) and the chip's own reading (`device_temperature_celsius`), on an ESP32-S3.*
+
 ## Memory
 
 The export opens a TLS connection of its own beside the agent's, for a few seconds, and closes it. It is made only when the heap's largest free block is at least 24 KB, and never during a download, a firmware being verified, or a spec being applied; otherwise it is skipped, counted in `device.metrics.skipped`, and tried again 10 seconds later. A download, or a spec to apply, waits for an export under way, as a download does for a status. A gateway that does not answer is given up after 15 seconds and tried again later and later, up to an hour; a new `metrics.json` from the fleet is tried at once.
