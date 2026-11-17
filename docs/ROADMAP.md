@@ -34,8 +34,7 @@ What the Zephyr port does not have, and the ESP-IDF firmware has:
 
 What Flight Control offers and the agent does not answer yet:
 
-- [ ] The remote console on a board with Zephyr ([CONSOLE.md](CONSOLE.md)). With ESP-IDF it answers on the ESP32, C5, C6 and S3, one command or at a prompt; with Zephyr in the end-to-end test only (native_sim, the emulated Cortex-M3).
-- [ ] The device's log in the UI's Logs tab, looked at in the UI itself, and with Zephyr on a board (with ESP-IDF it answers the tab's commands on the ESP32, C5, C6 and S3). The device answers the tab's commands through the console ([CONSOLE.md](CONSOLE.md#the-log)), checked with Flight Control 1.4.0 through `flightctl console`; the answer holds as long as the UI sends the same commands (they are the same in 1.4.0 and on the UI's main branch of 16 November 2026). Also: the lines of ESP-IDF and Zephyr themselves (WiFi, TLS), which go to the serial port only, and the log of the boot before a crash.
+- [ ] The device's log in the UI's Logs tab, looked at in the UI itself (it answers the tab's commands on every board, ESP-IDF and Zephyr). The device answers the tab's commands through the console ([CONSOLE.md](CONSOLE.md#the-log)), checked with Flight Control 1.4.0 through `flightctl console`; the answer holds as long as the UI sends the same commands (they are the same in 1.4.0 and on the UI's main branch of 16 November 2026). Also: the lines of ESP-IDF and Zephyr themselves (WiFi, TLS), which go to the serial port only, and the log of the boot before a crash.
 
 What an app can do and hold:
 
@@ -55,7 +54,6 @@ What an app can do and hold:
   - CoreMark's WASI build would need, beyond the above, reference types and 8 functions of `wasi_snapshot_preview1`: the two for arguments, the clock, `fd_write` (to the log), `proc_exit` and 3 file calls.
 - [ ] The app interface for 1.0 ([APPS.md](APPS.md)). An app has its state, log, config, a key/value store, timers and events, and GPIO with interrupts and LEDs under the names of a board map that the fleet extends; a call that does not return is stopped. To come:
   - I2C, SPI, UART (with RS-485), ADC and PWM with devices wired to them. With ESP-IDF they open and answer on the ESP32, C5, C6 and S3 with nothing wired (an I2C bus scanned, a transfer, a UART write, a floating ADC pin, a PWM), and in the emulator on the C3 too; on Zephyr, where they come from the devicetree, they pass on `native_sim`'s emulated drivers: a board that names its hardware, and RS-485;
-  - metrics on the C3 and with Zephyr on a board: on the ESP32, C5, C6 and S3 the export's TLS connection beside the agent's leaves 25 KB or more of internal heap ([RESULTS.md](RESULTS.md)). To measure on the C3 with an app: the heap's low during an export (`device_metrics_export_min_free_bytes`), and how often one is skipped. If the C3 skips them all, it would take the agent's connection's turn instead, as downloads do;
   - the instruction budget of a call. Today's, 20 million of WAMR's operations, lasts 2.2 s on the C5, 3.4 s on the C6, 3.8 s on the ESP32 and 4.0 s on the S3 (a counting loop until the budget stops it): about 5 million would give a second on the slowest;
   - whether apps get WAMR's small libc (`memcpy`, `snprintf`...), a few KB of firmware, since building a payload by hand is the biggest burden on a real app.
 - [ ] MQTT for the apps. The calls are in the SDK (`fc_mqtt_publish`, `fc_mqtt_subscribe`, granted by `"mqtt"`); the firmware answers them with `FC_ENOTSUP`. To come:

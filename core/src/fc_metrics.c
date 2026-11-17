@@ -25,7 +25,9 @@ typedef struct {
 } app_metric_t;
 
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
-static app_metric_t s_apps[FC_METRICS_APPS_MAX];
+/* Taken on the heap by the first app that sends a metric: a device whose apps
+ * send none keeps the RAM. */
+static app_metric_t *s_apps;
 
 static uint64_t now_ns(void)
 {
@@ -48,6 +50,10 @@ int fc_metrics_app_set(const char *app, const char *name, size_t nlen, int kind,
         }
     }
     pthread_mutex_lock(&s_lock);
+    if (s_apps == NULL && (s_apps = calloc(FC_METRICS_APPS_MAX, sizeof(*s_apps))) == NULL) {
+        pthread_mutex_unlock(&s_lock);
+        return FC_HW_ENOSPC;
+    }
     app_metric_t *m = NULL, *free_slot = NULL;
     int of_app = 0;
     for (int i = 0; i < FC_METRICS_APPS_MAX; i++) {
@@ -87,7 +93,7 @@ int fc_metrics_app_set(const char *app, const char *name, size_t nlen, int kind,
 void fc_metrics_app_drop(const char *app)
 {
     pthread_mutex_lock(&s_lock);
-    for (int i = 0; i < FC_METRICS_APPS_MAX; i++) {
+    for (int i = 0; s_apps != NULL && i < FC_METRICS_APPS_MAX; i++) {
         if (strcmp(s_apps[i].app, app) == 0) {
             memset(&s_apps[i], 0, sizeof(s_apps[i]));
         }
@@ -99,7 +105,7 @@ int fc_metrics_app_points(fc_metric_point_t *out, int max)
 {
     int n = 0;
     pthread_mutex_lock(&s_lock);
-    for (int i = 0; i < FC_METRICS_APPS_MAX && n < max; i++) {
+    for (int i = 0; s_apps != NULL && i < FC_METRICS_APPS_MAX && n < max; i++) {
         const app_metric_t *m = &s_apps[i];
         if (m->app[0] == '\0') {
             continue;

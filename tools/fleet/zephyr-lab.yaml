@@ -21,7 +21,7 @@ spec:
       # One OCI index with an image per board (tools/fw-push.py
       # PLATFORM=zephyr.signed.bin ...): each device takes its own.
       os:
-        image: ${REGISTRY}/flightctl-mcu/fw:z25
+        image: ${REGISTRY}/flightctl-mcu/fw:z26
       # The same WASM app as on the ESP-IDF boards; here its temperature and
       # its LED are simulated (port/zephyr/src/main.c).
       applications:
@@ -35,3 +35,8 @@ spec:
           inline:
             - path: /etc/fc-app/alarm.json
               content: '{"threshold_c": 40}'
+        # The device's and the apps' metrics to the Telemetry Gateway (docs/METRICS.md).
+        - name: metrics
+          inline:
+            - path: /etc/fc/metrics.json
+              content: '{"endpoint": "${TELEMETRY}", "intervalSeconds": 30}'

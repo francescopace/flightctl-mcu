@@ -59,4 +59,4 @@ While a session is listed, the server answers the spec's long-poll at once with 
 - **RAM**: the log's ring, 4 KB, always; while a session lasts, its thread's stack (8 KB, of which the Logs tab's commands used 5.2 KB at most on the ESP32, C5, C6 and S3), the session with its 2 KB input buffer, the stream's buffer, a 1 KB output buffer while a command writes, and 2 KB more for a session reading stdin; none otherwise.
 - **Access** is Flight Control's: whoever may open a console on the device may also restart it.
 
-Tried against Flight Control 1.4.0 on the classic ESP32, C5, C6 and S3 (ESP-IDF), and in the end-to-end test on the simulated device and the Zephyr builds for native_sim and the emulated Cortex-M3. Not yet on a board with Zephyr.
+Tried against Flight Control 1.4.0 on the classic ESP32, C3, C5, C6 and S3 (ESP-IDF), on the ESP32-S3 with Zephyr, and in the end-to-end test on the simulated device and the Zephyr builds for native_sim and the emulated Cortex-M3. Not yet on a board with Zephyr.
