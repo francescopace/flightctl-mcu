@@ -260,7 +260,7 @@ The new labels also let a fleet select on what a device says it is, `custominfo.
    - Proposal: let an enrollment certificate re-enroll a known device, with the same approval as a new one.
 14. **A withdrawn advisory stays on the devices.**
    - The vulnerability sync only inserts and updates findings (`internal/store/vulnerabilityfinding/store.go`: `UpsertFindings`); nothing removes one that Trustify no longer returns.
-   - Found with a test advisory deleted from Trustify ([SBOM.md](SBOM.md#what-was-verified-with-a-test-advisory)): two syncs later Flight Control still counted it.
+   - Found with a test advisory deleted from Trustify ([SBOM.md](SBOM.md#what-was-verified-with-a-test-advisory)): two syncs later Flight Control still counted it. It went away once the device moved to another release: the device's, fleet's and organization's lists count only the images the devices run.
    - Proposal: replace a digest's findings with what the scan returns for it.
 15. **A console session whose user left before the device came stays listed.**
    - A session is listed in the device's annotation (`device-controller/console`) when it starts, and taken out only when the user's websocket closes after the device joined (`internal/console/console.go`: `CloseSession`). If the user leaves first (`flightctl console` gives up after 60 s, the UI's Logs tab after 50 s), nothing takes it out. While any session is listed the rendered spec is served at once, with no long-poll (`internal/store/model/device.go`), so the device asks for its spec every few seconds, for good.
