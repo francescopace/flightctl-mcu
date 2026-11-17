@@ -71,6 +71,7 @@ static long s_heap_floor = FC_APP_HEAP_FLOOR;
  * block, ~350 bytes), and the heap's headers. */
 #define THREAD_SLACK    1024
 #define RESTART_DELAY_S 5
+#define MEM_RETRY_MS    (30 * 1000) /* fc_apps_poll: how often an app short of heap looks again */
 /* A module run once starts when the agent has had nothing on hand for
  * ENTRY_QUIET_MS, at most ENTRY_WAIT_MS after it was started (see
  * wait_quiet). */
@@ -535,6 +536,15 @@ static const char *export_sig(wasm_module_t m, const char *name, char *buf, size
     }
     return NULL;
 }
+
+/* The block of heap the linear memory that did not fit asked for, 0 unknown:
+ * ESP-IDF's os_mmap wrap keeps it (port/espidf/fc_wasm_mem.c). */
+#ifdef ESP_PLATFORM
+long fc_wasm_mem_failed(void);
+#define mem_failed_block() fc_wasm_mem_failed()
+#else
+#define mem_failed_block() 0L
+#endif
 
 /* "env": the module wasm-ld and Emscripten import from by default. The device
  * has its C library there (below), and clock_ms, as CoreMark's builds import it, with an i32 or an i64
@@ -1490,6 +1500,7 @@ static wasm_module_inst_t instantiate(app_t *a, char *ebuf, size_t elen, int *sh
 {
     *short_of_heap = 0;
     a->heap_after = -1;
+    long before = fc_port_heap_free();
     wasm_module_inst_t inst = wasm_runtime_instantiate(a->module, WASM_STACK, 0, ebuf, (uint32_t)elen);
     if (inst == NULL) {
         fc_appapi_close_all(a); /* what code run as it was instantiated opened */
@@ -1501,6 +1512,7 @@ static wasm_module_inst_t instantiate(app_t *a, char *ebuf, size_t elen, int *sh
         snprintf(ebuf, elen, "its memory would leave the agent %ld KB of heap, less than the %ld KB it needs", left / 1024,
                  s_heap_floor / 1024);
         *short_of_heap = 1;
+        a->mem_cost = before > left ? before - left : 0;
         return NULL;
     }
     if (inst != NULL && left >= 0) {
@@ -1554,17 +1566,30 @@ static void *runner(void *arg)
              * module asks for (its memory comes in one block). */
             long largest = fc_port_heap_largest();
             char wbuf[sizeof(ebuf) + 48];
+            int no_block = inst == NULL && !short_of_heap && strstr(why, "allocate linear memory") != NULL;
             if (largest >= 0 && (strstr(why, "allocate") != NULL || strstr(why, "out of memory") != NULL)) {
                 snprintf(wbuf, sizeof(wbuf), "%s (largest free block %ld KB)", why, largest / 1024);
                 why = wbuf;
             }
             fc_port_log(FC_LOG_WARN, "app %s: %s", a->name, why);
             set_status(a, "Error", why);
-            if (short_of_heap && !stopping(a)) {
-                /* Twice, the second time with the agent idle: not started
-                 * again, which would take the agent's heap every few
-                 * seconds, until its image, its env vars or the firmware
-                 * change, or the device restarts. */
+            if ((short_of_heap || no_block) && !stopping(a)) {
+                /* Twice, the second time with the agent idle. Not started
+                 * again every few seconds: its module and its thread's stack
+                 * stay where they are, so it found the same largest block
+                 * each time (on an ESP32-C3, C5 and classic ESP32, 44, 42
+                 * and 56 KB for CoreMark's 68), and a refused one would take
+                 * the agent's heap each time. fc_apps_poll starts it again
+                 * once the heap has room for it, as do a new image, new env
+                 * vars, new firmware or a restart. */
+                a->mem_wait = 1;
+                a->mem_block = no_block ? mem_failed_block() : 0;
+                if (!short_of_heap) {
+                    a->mem_cost = 0;
+                }
+                a->mem_largest = largest;
+                a->mem_next_ms = fc_apps_now_ms() + MEM_RETRY_MS;
+                fc_port_log(FC_LOG_INFO, "app %s: started again when the heap has room for it", a->name);
                 completed = 1;
             }
         } else {
@@ -1635,6 +1660,7 @@ static void *runner(void *arg)
     }
 done:
     wasm_runtime_destroy_thread_env();
+    __atomic_store_n(&a->runner_done, 1, __ATOMIC_RELEASE);
     return NULL;
 }
 
@@ -1665,6 +1691,9 @@ static void app_start(app_t *a, const char *why)
     }
     set_stop(a, 0);
     a->start_why = why;
+    a->start_pending = NULL;
+    a->mem_wait = 0;
+    __atomic_store_n(&a->runner_done, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&a->stack_unused, -1L, __ATOMIC_RELAXED);
     a->stack_at_ms = 0;
     a->settle_at_ms = fc_apps_now_ms() + s_settle_ms;
@@ -1701,6 +1730,7 @@ static void app_start(app_t *a, const char *why)
 
 static void app_stop(app_t *a)
 {
+    a->start_pending = NULL;
     if (a->thread_running) {
         set_stop(a, 1);
         pthread_mutex_lock(&s_lock);
@@ -1716,8 +1746,91 @@ static void app_stop(app_t *a)
         pthread_attr_destroy(&a->thread_attr);
         a->thread_running = 0;
     }
+    a->mem_wait = 0; /* after the join: its runner may set it until it ends */
     run_low_end(a);
     set_status(a, "Stopped", NULL);
+}
+
+/* Starts made by fc_apps_apply wait for fc_apps_start_pending (the agent):
+ * see fc_apps.h. */
+static int s_defer_starts;
+
+void fc_apps_defer_starts(int on)
+{
+    s_defer_starts = on;
+}
+
+static void start_or_defer(app_t *a, const char *why)
+{
+    if (!s_defer_starts) {
+        app_start(a, why);
+        return;
+    }
+    a->start_pending = why;
+    set_status(a, "Preparing", NULL);
+}
+
+int fc_apps_start_pending(void)
+{
+    int n = 0;
+    for (int i = 0; i < MAX_APPS; i++) {
+        app_t *a = &s_apps[i];
+        if (a->used && a->start_pending != NULL) {
+            app_start(a, a->start_pending);
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Whether the heap now has room for an app whose instance did not fit.
+ * Refused by the floor: what its instance took, its thread's stack and the
+ * floor. No block for its memory: that block (or, not known, a larger one
+ * than when it failed), and beside it the stack and the floor. */
+static int mem_room(const app_t *a)
+{
+    long largest = fc_port_heap_largest(), free_now = fc_port_heap_free();
+    long stack = THREAD_STACK + THREAD_SLACK;
+    if (a->mem_cost > 0) {
+        return free_now < 0 || free_now >= a->mem_cost + stack + s_heap_floor;
+    }
+    long block = a->mem_block > 0 ? a->mem_block : a->mem_largest >= 0 ? a->mem_largest + 4096 : 0;
+    if (largest >= 0 && largest < block) {
+        return 0;
+    }
+    return free_now < 0 || free_now >= block + stack + s_heap_floor;
+}
+
+void fc_apps_poll(void)
+{
+    int64_t now = fc_apps_now_ms();
+    for (int i = 0; i < MAX_APPS; i++) {
+        app_t *a = &s_apps[i];
+        if (!a->used || !a->mem_wait || a->module == NULL || now < a->mem_next_ms) {
+            continue;
+        }
+        if (a->thread_running && __atomic_load_n(&a->runner_done, __ATOMIC_ACQUIRE)) {
+            /* Its thread's stack back in the heap before the heap is read. */
+            pthread_join(a->thread, NULL);
+            pthread_attr_destroy(&a->thread_attr);
+            a->thread_running = 0;
+        }
+        if (a->thread_running) {
+            continue;
+        }
+        if (!mem_room(a)) {
+            a->mem_next_ms = now + MEM_RETRY_MS;
+            continue;
+        }
+        long largest = fc_port_heap_largest();
+        if (largest >= 0) {
+            fc_port_log(FC_LOG_INFO, "app %s: the heap has room for it again (largest free block %ld KB), starting it",
+                        a->name, largest / 1024);
+        } else {
+            fc_port_log(FC_LOG_INFO, "app %s: the heap has room for it again, starting it", a->name);
+        }
+        app_start(a, "memory");
+    }
 }
 
 /* Stops the app and unloads its module (after the runner is joined). */
@@ -2072,7 +2185,7 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
                 set_env(a, env);
                 a->tick_ms = tick;
                 guard_begin(a->name, a->image, a->env_json, 0);
-                app_start(a, "new env vars");
+                start_or_defer(a, "new env vars");
                 changed = 1;
             }
             free(env);
@@ -2161,7 +2274,7 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
         a->tick_ms = tick;
         set_env(a, env);
         free(env);
-        app_start(a, "install");
+        start_or_defer(a, "install");
         changed = 1;
     }
     if (changed) {

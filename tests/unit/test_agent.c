@@ -78,6 +78,27 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
     return rc;
 }
 
+static int s_apps_started, s_apps_started_depth = -1;
+
+/* What fc_apps starts once the spec is freed: with the connection held. */
+int fc_apps_start_pending(void)
+{
+    s_apps_started++;
+    pthread_mutex_lock(&s_a.lock);
+    s_apps_started_depth = s_a.turn_depth;
+    pthread_mutex_unlock(&s_a.lock);
+    return 0;
+}
+
+void fc_apps_defer_starts(int on)
+{
+    (void)on;
+}
+
+void fc_apps_poll(void)
+{
+}
+
 void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
 {
     cJSON_AddStringToObject(summary, "status", "NoApplications");
@@ -194,6 +215,7 @@ static void apply(const char *version, const char *spec)
     snprintf(json, sizeof(json), "{\"metadata\":{\"annotations\":{\"device-controller/renderedVersion\":\"%s\"}},"
              "\"spec\":%s}", version, spec);
     apply_rendered(&s_a, json);
+    start_apps(&s_a);
 }
 
 /* Every file comes again with each rendered version; an app restarted or
@@ -865,6 +887,23 @@ static void a_download_takes_the_connections_turn(void)
     turn_hold(&s_a);
     turn_end(&s_a);
     CHECK_INT(s_a.turn_depth, 0);
+
+    /* A spec's apps start after the spec is applied and freed, the
+     * connection still held closed; then it opens again. */
+    s_apps_started = 0;
+    s_apps_started_depth = -1;
+    char json[512];
+    snprintf(json, sizeof(json), "{\"metadata\":{\"annotations\":{\"device-controller/renderedVersion\":\"7\"}},"
+             "\"spec\":{\"applications\":[]}}");
+    CHECK_INT(apply_rendered(&s_a, json), 0);
+    CHECK_INT(s_apps_started, 0);
+    CHECK_INT(s_a.turn_depth, 1);
+    start_apps(&s_a);
+    CHECK_INT(s_apps_started, 1);
+    CHECK_INT(s_apps_started_depth, 1);
+    CHECK_INT(s_a.turn_depth, 0);
+    start_apps(&s_a); /* once per spec */
+    CHECK_INT(s_apps_started, 1);
 }
 
 /* The server answers at once while a console session is listed, with the

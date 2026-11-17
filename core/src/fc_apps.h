@@ -16,6 +16,22 @@ int fc_apps_init(void);
  * `err` is set; *retry is 1 when the failure may be transient (download). */
 int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *retry);
 
+/* With `on`, the apps fc_apps_apply installs, updates or restarts for new env
+ * vars are only made ready ("Preparing"), and fc_apps_start_pending starts
+ * them: the agent calls it once the spec is freed, its connection still
+ * closed, so that an app's memory, which comes in one block, is taken from a
+ * heap where neither the spec nor the connection is in the way. Returns how
+ * many it started. */
+void fc_apps_defer_starts(int on);
+int fc_apps_start_pending(void);
+
+/* Between specs (the agent's spec thread, at each of its polls: a few
+ * minutes apart at most, while nothing changes): an app whose instance did
+ * not fit in the heap (no block for its memory, or the agent's floor) is
+ * started again once the heap has room for it, looked at no more than every
+ * 30 s. */
+void fc_apps_poll(void);
+
 /* The hardware the port gives to apps (may be NULL).
  * Set before fc_apps_init. */
 void fc_apps_set_hw(const fc_hw_t *hw);

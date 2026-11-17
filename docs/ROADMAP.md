@@ -27,7 +27,7 @@ Checks not made yet:
 
 What an app can do and hold:
 
-- [ ] A large app's memory on the classic ESP32, the C5 and the C3, every time: CoreMark's 64 KB needs one free block of 68 KB, often missing right after another app ([RESULTS.md](RESULTS.md#coremark)). To find: what stays in the middle of the heap from one app to the next, and whether an app refused for want of memory is tried again on its own.
+- [ ] A large app's memory on the classic ESP32, the C5 and the C3, every time: CoreMark takes about 105 KB of heap in all, and with the agent connected these chips have 103 to 117 KB free with no app, 20 to 34 KB short of it and the 32 KB kept for the agent, a few KB less with the agent's connection closed, as when an app starts ([RESULTS.md](RESULTS.md#coremark)). Left: that much less heap for the agent at rest, or a lower floor. Done on main, not yet on the boards: an app starts once the spec is freed, and one that did not fit is started again when the heap has room.
 - [ ] What the agent takes of the heap, measured, so that the 32 KB it keeps from the apps is a figure and not a guess ([APPS.md](APPS.md#size-and-limits)). The lowest the device logs today also counts the block held while a TLS connection opens. With Zephyr the 32 KB are not checked yet.
 - [ ] CoreMark slower and less even on the C5 and C6 since v3.12 than with the same `-Os` firmware before it. Not explained yet ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] CoreMark with Zephyr on an ESP32-S3 without PSRAM: it runs only on the N8R8, from its PSRAM ([RESULTS.md](RESULTS.md#coremark)).

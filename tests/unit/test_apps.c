@@ -1673,9 +1673,53 @@ static void test_heap_floor(void)
     pthread_mutex_lock(&s_lock);
     CHECK_INT(find("h")->restarts, 0);
     pthread_mutex_unlock(&s_lock);
-    /* New env vars start it again. */
+    /* Started again once the heap has room for it (fc_apps_poll), but not
+     * before its next look. */
+    app_t *h = find("h");
+    while (!__atomic_load_n(&h->runner_done, __ATOMIC_ACQUIRE)) {
+        usleep(1000); /* its runner has ended (mem_wait is set before) */
+    }
+    CHECK_INT(h->mem_wait, 1);
+    fc_apps_poll();
+    CHECK_STR(state_of("h"), want);
+    h->mem_next_ms = 0;
+    stub_heap_free = 8 * 1024; /* still no room */
+    fc_apps_poll();
+    CHECK_STR(state_of("h"), want);
+    CHECK(h->mem_next_ms > fc_apps_now_ms());
+    h->mem_next_ms = 0;
+    stub_heap_free = -1;
+    fc_apps_poll();
+    CHECK(stub_log_has("app h: the heap has room for it again, starting it"));
+    CHECK_STR(wait_state_of("h", "Running v1", 3000), "Running v1");
+    CHECK_INT(h->mem_wait, 0);
+    remove_all();
+
+    /* Refused again: new env vars start it again too. */
+    stub_heap_free = 8 * 1024;
+    stub_heap_free_next[0] = 1024 * 1024;
+    stub_heap_free_queued = 1;
+    CHECK_INT(apply_one("h", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("h", want, 3000), want);
+    stub_heap_free = -1;
     CHECK_INT(apply_one("h", "reg/app:v1", "{\"TICK_MS\": \"200\"}", err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("h", "Running v1", 3000), "Running v1");
+    remove_all();
+}
+
+/* With starts deferred (the agent), an app applied waits, Preparing, until
+ * fc_apps_start_pending: the agent calls it once the spec is freed. */
+static void test_deferred_start(void)
+{
+    char err[160];
+    fc_apps_defer_starts(1);
+    CHECK_INT(apply_one("d", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    usleep(200 * 1000);
+    CHECK_STR(state_of("d"), "Preparing ");
+    CHECK_INT(fc_apps_start_pending(), 1);
+    CHECK_STR(wait_state_of("d", "Running v1", 3000), "Running v1");
+    CHECK_INT(fc_apps_start_pending(), 0);
+    fc_apps_defer_starts(0);
     remove_all();
 }
 
@@ -1808,6 +1852,7 @@ int main(void)
     RUN(test_hold_leaves_room_for_the_stack);
     RUN(test_heap_low_holds);
     RUN(test_heap_floor);
+    RUN(test_deferred_start);
     RUN(test_instantiation_code);
     RUN(test_wasm_limit);
     RUN(test_fc_info);

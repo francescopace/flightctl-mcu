@@ -93,6 +93,16 @@ typedef struct app {
     int heap_watch;          /* runner: watching the heap after it (fc_apps.c, heap_note_*) */
     int64_t heap_watch_ms, heap_quiet_ms;
     int live;                /* under s_lock: an instance exists (the runner) */
+    const char *start_pending; /* spec thread: to be started by fc_apps_start_pending, and why */
+    /* The instance did not fit in the heap (no block for its memory, or the
+     * agent's floor): its runner ended, and fc_apps_poll starts it again once
+     * the heap has room (fc_apps.c, mem_room). */
+    int mem_wait;
+    long mem_block;      /* the block its memory asked for, 0 unknown */
+    long mem_cost;       /* refused by the floor: the heap its instance took, else 0 */
+    long mem_largest;    /* the heap's largest free block when it failed, -1 unknown */
+    int64_t mem_next_ms; /* fc_apps_poll: when to look again */
+    int runner_done;     /* atomic: the runner has returned */
 
     /* reported (under s_lock in fc_apps.c) */
     char status[12]; /* Preparing, Running, Completed, Error, Stopped */

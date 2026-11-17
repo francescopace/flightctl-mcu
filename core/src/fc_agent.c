@@ -196,6 +196,7 @@ typedef struct {
     int metrics_poke; /* under lock: METRICS_CONFIG changed, export now */
     int mqtt_poke;    /* spec thread: the broker's config or CA changed (fc_mqtt.h) */
     int mqtt_retry;   /* spec thread: the client could not start for want of memory */
+    int apps_held;    /* spec thread: apps applied, waiting to start, the connection held closed (start_apps) */
     int status_once;  /* under lock: a status was accepted since boot (the agent's TLS is up) */
     int mqtt_connecting; /* under lock: the broker's handshake runs (claimed in idle_for_mqtt) */
     int console_quiet; /* spec thread: the sessions listed were all seen before */
@@ -1707,12 +1708,13 @@ static void load_resources(void)
     }
 }
 
-static void apply_rendered(agent_t *a, const char *json)
+/* Returns 1 when the spec is to be tried again (after a while). */
+static int apply_rendered(agent_t *a, const char *json)
 {
     cJSON *dev = cJSON_Parse(json);
     if (dev == NULL) {
         fc_port_log(FC_LOG_WARN, "rendered device: invalid JSON");
-        return;
+        return 0;
     }
     const cJSON *ann = cJSON_GetObjectItem(cJSON_GetObjectItem(dev, "metadata"), "annotations");
     const char *version = cJSON_GetStringValue(cJSON_GetObjectItem(ann, RENDERED_ANNOTATION));
@@ -1723,7 +1725,7 @@ static void apply_rendered(agent_t *a, const char *json)
     if (cJSON_IsObject(decom)) {
         request_decommission(a, decom);
         cJSON_Delete(dev);
-        return;
+        return 0;
     }
 
     apply_resources(cJSON_GetObjectItem(spec, "resources"), err, sizeof(err));
@@ -1834,7 +1836,7 @@ static void apply_rendered(agent_t *a, const char *json)
         if (fc_apps_apply(cJSON_GetObjectItem(spec, "applications"), aerr, sizeof(aerr), &retry) != 0 && !err[0]) {
             snprintf(err, sizeof(err), "%s", aerr);
         }
-        turn_end(a);
+        a->apps_held = 1; /* the hold ends once they are started (start_apps) */
     }
 
     pthread_mutex_lock(&a->lock);
@@ -1872,7 +1874,7 @@ static void apply_rendered(agent_t *a, const char *json)
         sleep(3); /* let the status update go out */
         cJSON_Delete(dev);
         fc_port_reboot();
-        return;
+        return 0;
     }
     if (err[0]) {
         fc_port_log(FC_LOG_WARN, "spec %s applied with errors: %s", version ? version : "?", err);
@@ -1880,8 +1882,21 @@ static void apply_rendered(agent_t *a, const char *json)
         fc_port_log(FC_LOG_INFO, "spec %s applied", version ? version : "?");
     }
     cJSON_Delete(dev);
-    if (retry) {
-        sleep(3 * RETRY_DELAY_S);
+    return retry;
+}
+
+/* The apps the spec installed or changed are started here, once the spec,
+ * parsed and as text, is freed, with the connection still closed
+ * (fc_apps_defer_starts): their memory, which comes in one block, finds the
+ * heap with neither in the way. A spec held 16 KB on an ESP32-C5 and left
+ * its largest block 34 KB for CoreMark's 68. Then the connection opens
+ * again. */
+static void start_apps(agent_t *a)
+{
+    if (a->apps_held) {
+        a->apps_held = 0;
+        fc_apps_start_pending();
+        turn_end(a);
     }
 }
 
@@ -1908,6 +1923,7 @@ static void *spec_thread(void *arg)
         if (a->mqtt_retry) {
             a->mqtt_retry = fc_mqtt_configure(a->id.name) == -2;
         }
+        fc_apps_poll(); /* an app short of heap, when the heap has room again */
         char known[32];
         long stack = fc_port_stack_unused();
         pthread_mutex_lock(&a->lock);
@@ -1942,7 +1958,9 @@ static void *spec_thread(void *arg)
         if (r.status == 200) {
             wait_confirmed(a);
             apply_begin(a);
-            apply_rendered(a, r.body);
+            int again = apply_rendered(a, r.body);
+            fc_http_free(&r);
+            start_apps(a);
             request_status(a);
             apply_end(a);
             pthread_mutex_lock(&a->lock);
@@ -1950,8 +1968,10 @@ static void *spec_thread(void *arg)
             pthread_mutex_unlock(&a->lock);
             if (decommissioning) {
                 /* No spec matters any more: the status thread finishes. */
-                fc_http_free(&r);
                 return NULL;
+            }
+            if (again) {
+                sleep(3 * RETRY_DELAY_S);
             }
         } else if (r.status == 204) {
             fc_port_log(FC_LOG_DEBUG, "spec unchanged (%s)", known);
@@ -2154,6 +2174,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
      * before the apps, whose heap check then counts them; it connects once
      * the agent is idle (idle_for_mqtt). */
     fc_apps_mqtt_hooks(idle_for_mqtt, mqtt_connected);
+    fc_apps_defer_starts(1); /* started by start_apps, once the spec is freed */
     a.mqtt_retry = fc_mqtt_configure(a.id.name) == -2;
 
     /* The spec loop runs on the caller's thread (the main task), which would
