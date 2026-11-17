@@ -138,6 +138,7 @@ static int f_led_open, f_led_writes;
 static uint8_t f_led[3];
 static int32_t f_temp = 41000;
 static int32_t f_temp_step; /* added to die_temp at each read */
+static int32_t f_temp_reads = -1; /* reads of die_temp left before they fail, or -1 */
 static pthread_mutex_t f_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static char *f_defaults(void)
@@ -211,6 +212,12 @@ static int f_sensor(const char *name, int32_t *v)
 {
     if (strcmp(name, "die_temp") != 0) {
         return FC_HW_ENOENT;
+    }
+    if (__atomic_load_n(&f_temp_reads, __ATOMIC_ACQUIRE) == 0) {
+        return FC_HW_EIO;
+    }
+    if (__atomic_load_n(&f_temp_reads, __ATOMIC_ACQUIRE) > 0) {
+        __atomic_fetch_sub(&f_temp_reads, 1, __ATOMIC_ACQ_REL);
     }
     *v = __atomic_fetch_add(&f_temp, __atomic_load_n(&f_temp_step, __ATOMIC_ACQUIRE), __ATOMIC_ACQ_REL);
     return 0;
@@ -1477,6 +1484,16 @@ static void test_tinyml(void)
 {
     const char *cfg = "{\"sample_ms\": 20}";
     fc_port_write_file("/etc/fc-app/ml.json", cfg, strlen(cfg));
+    /* The window fills, one sample at a time, with the same temperature:
+     * the reads fail after the sixth (init's two, then four samples), so
+     * the state stays at 5 of 12. */
+    char err[160];
+    __atomic_store_n(&f_temp, 41000, __ATOMIC_RELEASE);
+    __atomic_store_n(&f_temp_reads, 6, __ATOMIC_RELEASE);
+    CHECK_INT(apply_one("ml", "reg/app_tinyml", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("ml", "Running sampling 5/12 (41.0 C)", 30000), "Running sampling 5/12 (41.0 C)");
+    remove_all();
+    __atomic_store_n(&f_temp_reads, -1, __ATOMIC_RELEASE);
     tinyml_with_step(0, "Running steady (41.0 C)");
     tinyml_with_step(500, "Running warming (");
     tinyml_with_step(-500, "Running cooling (");

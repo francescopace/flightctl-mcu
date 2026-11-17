@@ -22,7 +22,8 @@ Needs the versions in requirements.txt (setuptools: emlearn imports distutils,
 which Python 3.12 and later no longer have):
   python3 -m venv /tmp/tinyml && /tmp/tinyml/bin/pip install -r wasm-apps/tinyml/requirements.txt
   /tmp/tinyml/bin/python wasm-apps/tinyml/train.py
-With the same versions it writes the same files, byte for byte.
+With these versions, on Python 3.14 on macOS arm64, it wrote the committed files
+byte for byte; another platform may round the synthetic data otherwise.
 """
 import os
 import sys

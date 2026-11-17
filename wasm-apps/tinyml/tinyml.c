@@ -23,16 +23,20 @@
 FC_APP_ABI()
 
 static const char *const names[] = {"steady", "warming", "cooling", "unstable"};
-static int32_t window[WINDOW], count, sampler = -1, last_key = -1;
+static int32_t window[WINDOW], count, sampler = -1;
+static int32_t shown_cls = -2, shown_count, shown_tenths; /* what the state says */
 
+/* The state, sent only when it changes: the class (-1 while the window
+ * fills, with how full it is) and the temperature to a tenth. */
 static void show(int32_t cls, int32_t mc)
 {
     int32_t tenths = (mc + (mc < 0 ? -50 : 50)) / 100;
-    int32_t key = cls * 100000 + tenths;
-    if (key == last_key) {
+    if (cls == shown_cls && (cls >= 0 || count == shown_count) && tenths == shown_tenths) {
         return;
     }
-    last_key = key;
+    shown_cls = cls;
+    shown_count = count;
+    shown_tenths = tenths;
     char s[48];
     int32_t n = 0;
     if (cls < 0) {
@@ -96,7 +100,7 @@ static void configure(void)
     }
     sampler = fc_timer_start(ms, 1);
     count = 0; /* a new period: a new window */
-    last_key = -1;
+    shown_cls = -2;
 }
 
 int32_t init(void)
