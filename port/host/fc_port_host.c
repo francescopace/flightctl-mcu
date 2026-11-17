@@ -228,6 +228,13 @@ int fc_port_read_file(const char *path, char **out, size_t *len)
     return fc_port_kv_get(key, out, len);
 }
 
+int fc_port_remove_file(const char *path)
+{
+    char key[300];
+    file_key(path, key);
+    return fc_port_kv_del(key);
+}
+
 /* OTA on the host: the image lands in <data_dir>/ota-next.bin and "reboot"
  * exits the process (the supervisor restarts it). FC_FW_PLATFORM selects the
  * chip to fetch from a multi-chip index, to test downloads without hardware. */

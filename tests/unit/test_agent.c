@@ -176,6 +176,37 @@ static void inline_config_is_written_and_the_version_kept(void)
     CHECK_STR(s_a.update_error, "");
 }
 
+/* A file the spec no longer gives is removed, as by the Linux agent, and the
+ * apps hear of it; a metrics.json removed stops the exports. */
+static void files_dropped_from_the_spec_are_removed(void)
+{
+    new_agent();
+    /* Written before the device kept the list: not known, not removed. */
+    fc_port_write_file("/etc/old", "x", 1);
+    apply("3", "{\"config\":[{\"name\":\"a\",\"inline\":["
+               "{\"path\":\"/etc/a.json\",\"content\":\"{}\"},"
+               "{\"path\":\"/etc/fc/metrics.json\",\"content\":\"{}\"}]},"
+               "{\"name\":\"b\",\"inline\":[{\"path\":\"/etc/b.txt\",\"content\":\"b\"}]}]}");
+    CHECK_STR(stub_file("/etc/b.txt"), "b");
+    CHECK_STR(stub_file("/etc/old"), "x");
+    s_files_changed = 0;
+    s_a.metrics_poke = 0;
+    apply("4", "{\"config\":[{\"name\":\"a\",\"inline\":[{\"path\":\"/etc/a.json\",\"content\":\"{}\"}]}]}");
+    CHECK(stub_file("/etc/b.txt") == NULL);
+    CHECK(stub_file("/etc/fc/metrics.json") == NULL);
+    CHECK_STR(stub_file("/etc/a.json"), "{}");
+    CHECK_STR(stub_file("/etc/old"), "x");
+    CHECK_INT(s_files_changed, 2);
+    CHECK_INT(s_a.metrics_poke, 1);
+    CHECK_STR(s_a.rendered_version, "4");
+    /* A provider that is not inline: its files are not known, nothing goes. */
+    apply("5", "{\"config\":[{\"name\":\"g\",\"gitRef\":{}}]}");
+    CHECK_STR(stub_file("/etc/a.json"), "{}");
+    apply("6", "{}");
+    CHECK(stub_file("/etc/a.json") == NULL);
+    CHECK_STR(stub_kv("cfg.files"), "");
+}
+
 /* Flight Control 1.4.0 serves base64 content percent-encoded: "aGk=" as
  * "aGk%3D". */
 static void percent_encoded_base64_is_decoded(void)
@@ -195,6 +226,7 @@ static void a_rejected_config_keeps_the_old_version(void)
     apply("3", "{\"config\":[{\"name\":\"a\",\"inline\":[{\"path\":\"/etc/a.json\",\"content\":\"{}\"}]}]}");
     apply("4", "{\"config\":[{\"name\":\"a\",\"inline\":[{\"path\":\"/etc/a.json\",\"content\":\"!bad\"}]}]}");
     CHECK_STR(s_a.rendered_version, "3");   /* reported: still the old one */
+    CHECK_STR(stub_file("/etc/a.json"), "{}"); /* still in the spec: kept */
     CHECK_STR(s_a.attempted_version, "4");  /* not retried until a newer one */
     CHECK_CONTAINS(s_a.update_error, "/etc/a.json");
     cJSON *st = build_status(&s_a);
@@ -876,6 +908,7 @@ int main(void)
     RUN(x509_dates_convert_to_epoch);
     RUN(inline_config_is_written_and_the_version_kept);
     RUN(a_rejected_config_keeps_the_old_version);
+    RUN(files_dropped_from_the_spec_are_removed);
     RUN(apps_hear_only_of_files_that_changed);
     RUN(percent_encoded_base64_is_decoded);
     RUN(only_inline_config_is_supported);

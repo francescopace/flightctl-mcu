@@ -185,6 +185,16 @@ int fc_port_read_file(const char *path, char **out, size_t *len)
     return 0;
 }
 
+int fc_port_remove_file(const char *path)
+{
+    entry_t *e = find(s_files, path, 0);
+    if (e != NULL) {
+        free(e->data);
+        e->data = NULL;
+    }
+    return 0;
+}
+
 const char *fc_port_fw_platform(void)
 {
     return "test";

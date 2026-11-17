@@ -328,6 +328,13 @@ int fc_port_read_file(const char *path, char **out, size_t *len)
     return fc_port_kv_get(key, out, len);
 }
 
+int fc_port_remove_file(const char *path)
+{
+    char key[300];
+    snprintf(key, sizeof(key), "file:%s", path);
+    return fc_port_kv_del(key);
+}
+
 /* The platform a release's index names this firmware's image by: the chip,
  * and for an S3 built for octal PSRAM (VARIANT=r8) a platform of its own,
  * as its image would not find quad PSRAM. */

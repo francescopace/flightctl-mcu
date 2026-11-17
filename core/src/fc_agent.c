@@ -43,6 +43,9 @@
  * flightctl.io/device-svc-client. Never the management certificate's key in
  * storage. */
 #define KV_OTEL_CERT         "otel.crt"
+/* The paths of the config files the last spec gave, one per line: those the
+ * next spec no longer has are removed, as the Linux agent does. */
+#define KV_CONFIG_FILES      "cfg.files"
 #define KV_RESOURCES         "resources"      /* spec.resources last applied */
 
 #define API "/api/v1"
@@ -1540,6 +1543,57 @@ static int apply_inline_file(agent_t *a, const cJSON *file, char *err, size_t er
     return rc;
 }
 
+/* 1 if `path` is a line of `list` (paths, one per line). */
+static int path_listed(const char *list, const char *path)
+{
+    size_t n = strlen(path);
+    for (const char *l = list; l != NULL && *l;) {
+        const char *end = strchr(l, '\n');
+        size_t len = end ? (size_t)(end - l) : strlen(l);
+        if (len == n && memcmp(l, path, n) == 0) {
+            return 1;
+        }
+        l = end ? end + 1 : NULL;
+    }
+    return 0;
+}
+
+/* Removes the config files the previous spec gave and this one (`now`, its
+ * paths one per line) does not, then remembers `now`. A device that never
+ * kept the list (before v3.14) removes nothing the first time. */
+static void remove_dropped_files(agent_t *a, const char *now)
+{
+    char *before = NULL;
+    size_t len = 0;
+    if (fc_port_kv_get(KV_CONFIG_FILES, &before, &len) == 0) {
+        for (char *l = before; l != NULL && *l;) {
+            char *end = strchr(l, '\n');
+            if (end != NULL) {
+                *end = '\0';
+            }
+            if (*l && !path_listed(now, l)) {
+                if (fc_port_remove_file(l) == 0) {
+                    fc_port_log(FC_LOG_INFO, "config: removed %s", l);
+                    fc_apps_file_changed(l);
+                    if (strcmp(l, METRICS_CONFIG) == 0) {
+                        pthread_mutex_lock(&a->lock);
+                        a->metrics_poke = 1;
+                        pthread_cond_signal(&a->status_wake);
+                        pthread_mutex_unlock(&a->lock);
+                    }
+                } else {
+                    fc_port_log(FC_LOG_WARN, "config: could not remove %s", l);
+                }
+            }
+            l = end ? end + 1 : NULL;
+        }
+    }
+    if (before == NULL || strcmp(before, now) != 0) {
+        fc_port_kv_set(KV_CONFIG_FILES, now, strlen(now));
+    }
+    free(before);
+}
+
 /* spec.resources, kept in storage so that the monitors are the fleet's
  * again after a reboot (the long-poll then answers that nothing changed).
  * Written only when it changes. */
@@ -1594,6 +1648,11 @@ static void apply_rendered(agent_t *a, const char *json)
 
     apply_resources(cJSON_GetObjectItem(spec, "resources"), err, sizeof(err));
 
+    /* The paths this spec gives, to remove those it no longer does. Not
+     * known when a provider is not inline: then nothing is removed. */
+    size_t paths_cap = 256, paths_len = 0;
+    char *paths = calloc(1, paths_cap);
+    int paths_known = paths != NULL;
     const cJSON *provider;
     cJSON_ArrayForEach(provider, cJSON_GetObjectItem(spec, "config")) {
         const cJSON *inline_files = cJSON_GetObjectItem(provider, "inline");
@@ -1601,16 +1660,39 @@ static void apply_rendered(agent_t *a, const char *json)
         if (!cJSON_IsArray(inline_files)) {
             snprintf(err, sizeof(err), "config provider %s: only inline providers are supported",
                      pname ? pname : "?");
+            paths_known = 0;
             continue;
         }
         const cJSON *file;
         cJSON_ArrayForEach(file, inline_files) {
+            const char *fpath = cJSON_GetStringValue(cJSON_GetObjectItem(file, "path"));
+            if (paths_known && fpath != NULL && fpath[0] && !path_listed(paths, fpath)) {
+                size_t n = strlen(fpath);
+                char *room = paths;
+                if (paths_len + n + 2 > paths_cap) {
+                    paths_cap = 2 * (paths_len + n + 2);
+                    room = realloc(paths, paths_cap);
+                }
+                if (room == NULL) {
+                    paths_known = 0; /* the old buffer is freed below */
+                } else {
+                    paths = room;
+                    memcpy(paths + paths_len, fpath, n);
+                    paths_len += n;
+                    paths[paths_len++] = '\n';
+                    paths[paths_len] = '\0';
+                }
+            }
             if (apply_inline_file(a, file, err, sizeof(err)) == 0) {
                 fc_port_log(FC_LOG_INFO, "config: wrote %s",
                             cJSON_GetStringValue(cJSON_GetObjectItem(file, "path")));
             }
         }
     }
+    if (paths_known) {
+        remove_dropped_files(a, paths);
+    }
+    free(paths);
 
     /* Downloads below take the connection's turn: the agent's is closed
      * while the registry's is open (turn_begin, fc_tls_pool.h). */

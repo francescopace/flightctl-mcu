@@ -22,6 +22,8 @@ spec:
 | `endpoint` | the gateway, `host:port` (443 if no port). On OpenShift Flight Control's chart exposes it as `telemetry.<base domain>`; elsewhere it needs a route of its own (on kind, [tools/kind/telemetry-route.yaml](../tools/kind/telemetry-route.yaml)). |
 | `intervalSeconds` | how often the device sends, 60 by default, at least 30: each export is a TLS connection |
 
+Without the file, or with no `endpoint` in it, nothing is sent. Taking the file out of the fleet stops the exports from v3.14; before, the device kept the last file it was given.
+
 The device then asks Flight Control for the gateway's certificate on its own, as the Linux agent does for the collector: a request signed by `flightctl.io/device-svc-client`, with the CN `otel-<device name>` and the device key, which the server approves at once. It is valid for a year and renewed after a quarter of it; it is kept apart from the management certificate. The gateway's server certificate is checked against the CA the device already has for Flight Control.
 
 ## What is sent

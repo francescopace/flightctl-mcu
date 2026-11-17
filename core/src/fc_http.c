@@ -42,6 +42,7 @@
 #include "mbedtls/error.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/platform.h"
+#include "psa/crypto.h"
 #if defined(FC_TLS_DEBUG) /* a diagnostic build: mbedTLS's own log, at this level */
 #include "mbedtls/debug.h"
 #endif
@@ -300,7 +301,13 @@ int fc_http_global_init(void)
 static void log_mbedtls(const char *what, int rc)
 {
     char buf[128];
-    mbedtls_strerror(rc, buf, sizeof(buf));
+    /* mbedtls_strerror does not know PSA's codes; this one is the usual
+     * cause on a small heap. */
+    if (rc == PSA_ERROR_INSUFFICIENT_MEMORY) {
+        snprintf(buf, sizeof(buf), "out of memory");
+    } else {
+        mbedtls_strerror(rc, buf, sizeof(buf));
+    }
     fc_port_log(FC_LOG_WARN, "%s: -0x%04x %s", what, -rc, buf);
 }
 
@@ -1081,8 +1088,10 @@ static int conn_tls_open(conn_t *c, const fc_http_target_t *t)
     while ((rc = mbedtls_ssl_handshake(&c->ssl)) != 0) {
         if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) {
             log_mbedtls("handshake", rc);
+            /* All bits set: the handshake failed before the certificate
+             * was verified, so there is nothing to tell. */
             uint32_t flags = mbedtls_ssl_get_verify_result(&c->ssl);
-            if (flags != 0) {
+            if (flags != 0 && flags != UINT32_MAX) {
                 char vbuf[256];
                 mbedtls_x509_crt_verify_info(vbuf, sizeof(vbuf), "  ", flags);
                 fc_port_log(FC_LOG_WARN, "certificate verification:\n%s", vbuf);

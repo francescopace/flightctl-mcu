@@ -24,7 +24,7 @@ Here the microcontroller speaks the Flight Control agent API itself. That API is
 |---|---|
 | Enrollment request and approval | P-256 key generated on the device, CSR, certificate stored in flash |
 | Certificate renewal | Same key, renewed before the certificate expires |
-| `spec.config` | Files in the device's storage. The firmware can reject each one. |
+| `spec.config` | Files in the device's storage. The firmware can reject each one; a file the spec no longer gives is removed. |
 | `spec.os.image` | Firmware pulled from an OCI registry into the inactive OTA slot, after its cosign signature is checked. One index covers every chip, and an update can be a [delta](docs/DELTA.md). |
 | `spec.applications` | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
 | Registry credentials and CA (`auth.json`, `certs.d`) | The same files as on Linux, as config: TLS and a password to the [registry](docs/REGISTRY.md) |

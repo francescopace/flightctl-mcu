@@ -127,18 +127,20 @@ int fc_port_kv_set(const char *key, const void *data, size_t len)
     return file_path(KV_DIR, key, p, sizeof(p)) == 0 ? write_file(p, data, len) : -1;
 }
 
-int fc_port_kv_del(const char *key)
+static int remove_file(const char *p)
 {
-    char p[96];
-    if (file_path(KV_DIR, key, p, sizeof(p)) != 0) {
-        return -1;
-    }
     struct fs_dirent st;
     if (fs_stat(p, &st) != 0) {
         return 0; /* not there: LittleFS would log an error for the unlink */
     }
     int rc = fs_unlink(p);
     return rc == 0 || rc == -ENOENT ? 0 : -1;
+}
+
+int fc_port_kv_del(const char *key)
+{
+    char p[96];
+    return file_path(KV_DIR, key, p, sizeof(p)) == 0 ? remove_file(p) : -1;
 }
 
 /* Long enough for a registry's CA, /etc/containers/certs.d/<host:port>/ca.crt */
@@ -154,6 +156,12 @@ int fc_port_read_file(const char *path, char **out, size_t *len)
 {
     char p[FILE_PATH_MAX];
     return file_path(FILE_DIR, path, p, sizeof(p)) == 0 ? read_file(p, out, len) : -1;
+}
+
+int fc_port_remove_file(const char *path)
+{
+    char p[FILE_PATH_MAX];
+    return file_path(FILE_DIR, path, p, sizeof(p)) == 0 ? remove_file(p) : -1;
 }
 
 /* ---- system ----------------------------------------------------------------- */
