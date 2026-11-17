@@ -67,7 +67,7 @@ Proposed for 2.0, from what similar products offer ([COMPARISON.md](COMPARISON.m
 - [ ] Cellular (LTE-M, NB-IoT): a modem as the link, through ESP-IDF's PPP or Zephyr's cellular drivers. A long-poll held open over cellular costs data and power, so it comes with the battery-powered devices above.
 - [ ] Devices without IP (BLE, Thread) through a Linux gateway in the same fleet: the gateway's Flight Control agent, or an app on it, holds the device's identity and passes its spec, status and firmware.
 - [ ] More silicon: Nordic nRF (nRF7002 WiFi, nRF91 cellular), RP2350, STM32U5, the last two with TF-M to keep the device key protected.
-- [ ] On Zephyr, the device protected beyond signed images and anti-rollback: today its key is in the storage partition in clear and the flash is not encrypted. On an Espressif chip a protected device runs the ESP-IDF firmware; on Zephyr the protection comes with the TF-M chips above. For the ESP32-S3 under Zephyr, it would take Espressif's port of MCUboot in place of sysbuild's ([what it takes](SECURITY.md#zephyr)), and with encryption on each write to the storage erases its 4 KB sector and writes it back whole, which a power cut in between breaks.
+- [ ] On Zephyr, the device key protected and the flash encrypted: today only images are signed and rollback refused. It comes with the TF-M chips above; on an ESP32-S3 it would take Espressif's own MCUboot ([what it takes](SECURITY.md#zephyr)).
 
 Nice to have, last:
 
@@ -75,11 +75,11 @@ Nice to have, last:
 
 ## Upstream (Flight Control)
 
-The gaps found in Flight Control for this class of device, each with a proposal, are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals). They were checked against 1.4.0 and against Flight Control's main branch of 12 November 2026: all hold there, except the revocation of enrollment certificates (limitation 8), fixed on main and not yet released.
+The gaps found in Flight Control for this class of device, each with a proposal, are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals).
 
 To propose:
 
-- Firmware and apps built by Flight Control. Its image builder (`ImageBuild`, `flightctl new-version`) builds bootc images for Linux devices: a base image with the agent added, out as a container, qcow2 or ISO. A build of another kind would cover these devices: a toolchain image (ESP-IDF, Zephyr's SDK, clang for WASM), sources from Git and a list of chips, out as the signed multi-chip OCI index `tools/fw-push.py` makes, or a WASM artifact. `new-version` from a previous build is where the delta from that release would be made, and the build is where an SBOM per release would come from (today `tools/fw-push.py` makes it with `tools/sbom.py`, [SBOM.md](SBOM.md)). It needs an agreed artifact type for firmware first; to be raised as an issue before any code, after reading the image builder's source.
+- Firmware and apps built by Flight Control. Its image builder (`ImageBuild`, `flightctl new-version`) makes bootc images for Linux; a build of another kind (a toolchain image, sources from Git, a list of chips) could make the signed multi-chip index that `tools/fw-push.py` makes today, with the delta from the previous release and an SBOM ([SBOM.md](SBOM.md)). It needs an agreed artifact type for firmware first; to be raised as an issue before any code.
 
 ## Open questions
 
