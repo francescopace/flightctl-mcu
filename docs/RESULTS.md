@@ -281,17 +281,17 @@ Each in short; the source references, how it was found and the workarounds are i
 
 ## Current limitations
 
-- **Security**:
-  - The registry is reached over TLS, with a password when it asks ([REGISTRY.md](REGISTRY.md)), and only with a CA the fleet gives the device: there is no public CA bundle, and blobs redirected to another host are not followed.
-  - The device key is in flash in clear, except in the `secure` variant (see [SECURITY.md](SECURITY.md)), tested in the emulator only, where it is encrypted. There the CPU can still read it, except on the ESP32-C5, where it is in the ECDSA peripheral. On the other chips the Digital Signature peripheral could hold it, but Flight Control cannot enroll the RSA key that needs.
-- **Provisioning**: credentials are written over USB (`tools/provision.py`), the WiFi network over USB or in the field, over the device's own access point (see [PROVISIONING.md](PROVISIONING.md)). An enrollment certificate can be issued per batch, but Flight Control 1.4.0 cannot revoke it (its main branch can).
-- **Offline longer than the certificate**: a device whose management certificate expired while it was offline (a year by default) enrolls again with its enrollment certificate as a new device, keeping its apps, config and firmware; the old record is left for the operator to delete (limitation 13).
-- **Server unreachable**: a device that has had no status accepted for 10 minutes restarts, and so again every 10 minutes while the server stays out of reach; its apps restart with it. A write on a connection gives up after 30 s.
-- **App formats**: apps must be WASM OCI artifacts (`application/vnd.wasm.content.layer.v1+wasm`). Podman-style images with a `.wasm` inside a tarball are not supported.
-- **Firmware and apps that need it, in one spec**: the device applies a spec's apps before its firmware, and an app it cannot load holds the firmware back. So a spec that brings a new firmware together with an app that needs it (a function only the new firmware has, such as the C library's `snprintf` before v3.14) is refused by the old firmware (`not a loadable WASM module: imports env.snprintf, which this firmware does not have`), and a canary rollout is suspended. For now such a release goes out in two steps: the firmware first, then the app once the fleet is up to date. The fix proposed: when the spec also changes the firmware, an app that the running firmware cannot load because of a missing import is left for after the restart, the firmware is installed, and the new one loads the app.
-- **JSON depth**: the device refuses JSON nested more than 32 levels (spec, manifests, config files), and reports the error; real documents use fewer than 10.
-- **Hardware coverage**: the latest builds were tried on the classic ESP32, the C3, the C5, the C6 and the S3 with ESP-IDF, and on the S3 with Zephyr. Not yet tried on a board: the `secure` variant, certificate renewal, registry tokens, GPIO interrupts and wired peripherals.
-- **Zephyr**: an app's heap floor and the `.wasm` size limit are not checked yet. MQTT is built but not yet run on a board, and `lastFatalError` not yet checked on one.
-- **Memory for apps**: CoreMark's 64 KB fits on the classic ESP32, the C3, the C5, the C6 and the S3, and with Zephyr on the ESP32-S3 N8R8, in PSRAM; wasm-coremark's 128 KB on the C6 and the S3 with PSRAM. On the classic ESP32, the C3 and the C5 an install or a swap can still fail for want of one free block of 68 KB, most of all right after another app ([CoreMark](#coremark)).
+- **Registry**: TLS only, with the CA the fleet gives; no public CA bundle, no redirects to another host ([REGISTRY.md](REGISTRY.md)).
+- **Device key**: in flash in clear, except in the `secure` variant, where it is encrypted, or on the C5 in its ECDSA peripheral ([SECURITY.md](SECURITY.md)).
+- **Provisioning**: credentials over USB; the WiFi network over USB or the device's own access point ([PROVISIONING.md](PROVISIONING.md)).
+- **Enrollment certificates**: issued per batch, but Flight Control 1.4.0 cannot revoke one (limitation 8).
+- **Offline longer than the certificate** (a year by default): the device enrolls again as a new device, with its apps, config and firmware (limitation 13).
+- **Server unreachable**: without an accepted status for 10 minutes the device restarts, its apps with it, and again every 10 minutes; a write gives up after 30 s.
+- **App format**: WASM OCI artifacts only (`application/vnd.wasm.content.layer.v1+wasm`), not a `.wasm` inside a container image.
+- **Firmware and an app that needs it, in one spec**: the firmware goes first and the apps after its restart; checked in unit tests, not yet end to end.
+- **JSON depth**: at most 32 levels; real documents use fewer than 10.
+- **Not yet on a board**: the `secure` variant, certificate renewal, registry tokens, GPIO interrupts, wired peripherals; with Zephyr, MQTT and `lastFatalError`.
+- **Zephyr**: an app's heap floor and the `.wasm` size limit are not checked yet.
+- **Memory for apps**: CoreMark's 64 KB fits on every ESP-IDF board and, in PSRAM, on the Zephyr S3 N8R8; 128 KB only on the C6 and the S3 with PSRAM. On the classic ESP32, C3 and C5 the 68 KB block can be missing right after another app ([CoreMark](#coremark)).
 
 What comes next is in the [roadmap](ROADMAP.md).
