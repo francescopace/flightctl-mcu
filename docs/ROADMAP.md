@@ -27,20 +27,18 @@ Checks not made yet:
 
 What an app can do and hold:
 
-- [ ] A large app's memory on the classic ESP32, the C5 and the C3, every time: CoreMark takes about 105 KB of heap in all, and with the agent connected these chips have 103 to 117 KB free with no app, 20 to 34 KB short of it and the 32 KB kept for the agent, a few KB less with the agent's connection closed, as when an app starts ([RESULTS.md](RESULTS.md#coremark)). Left: that much less heap for the agent at rest, or a lower floor. Done on main, not yet on the boards: an app starts once the spec is freed, and one that did not fit is started again when the heap has room.
-- [ ] What the agent takes of the heap, measured, so that the 32 KB it keeps from the apps is a figure and not a guess ([APPS.md](APPS.md#size-and-limits)). The lowest the device logs today also counts the block held while a TLS connection opens. With Zephyr the 32 KB are not checked yet.
+- [ ] A large app's memory on the classic ESP32 and the C5, every time: with the 40 KB the device keeps for the agent, CoreMark runs on all five chips, but on the classic ESP32 one swap in three is refused, and on the C5 it leaves the agent 7 to 11 KB at the lowest, where status updates fail ([RESULTS.md](RESULTS.md#coremark)). Left: less heap for the agent at rest on these two.
+- [ ] Apps the spec removes, stopped and freed before the device writes the spec's config and downloads its firmware: a C3 holding two apps, 39 KB free, could not download a new firmware (the registry's manifest, `HTTP -1`, every 30 s), the apps being removed only after it.
 - [ ] CoreMark slower and less even on the C5 and C6 since v3.12 than with the same `-Os` firmware before it. Not explained yet ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] CoreMark with Zephyr on an ESP32-S3 without PSRAM: it runs only on the N8R8, from its PSRAM. Without PSRAM it needs about 85 KB of the C heap (a 68 KB block for its memory, the module, the instance), and the agent alone leaves about 65 KB of the 114 KB, with 4 KB of the data region left at link: some 20 KB more would have to come from the kernel heap or the WiFi driver's buffers ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] Apps against [Toit](https://toit.io) and against WAMR's AOT mode, on the same ESP32-C6 ([COMPARISON.md](COMPARISON.md#tied-to-one-chip-vendor)). Toit publishes no figures against native code or WebAssembly. Three benchmarks:
   - Richards (method calls and pointers between objects), in Toit and in C built to `.wasm`;
   - DeltaBlue (objects allocated and freed at every step), with the app's own `malloc` ([APPS.md](APPS.md#the-c-library));
   - CoreMark in AOT, against the interpreter. AOT needs `wamrc`, a module per architecture, executable memory, and another way to stop an app than the instruction count.
-- [ ] wasm3-arduino's blink beside another app on the ESP32-C5: with v3.14-rc10.1 its 64 KB of memory left the device short of heap, and it stopped reporting ([APPS.md](APPS.md#the-blink-of-wasm3-arduino)). Left: the same on a firmware that refuses an app the heap cannot hold.
 - [ ] The app interface for 1.0 ([APPS.md](APPS.md)):
   - GPIO interrupts, and I2C, SPI, UART, ADC and PWM with devices wired to them, on a board; on Zephyr also a board that names its hardware in the devicetree, and RS-485;
   - the 1 s limit of a call in the device's functions, on a board (unit tests only);
   - the app's stack with the C library, measured on Xtensa;
-  - `expf`, `logf` and `tanhf`, and `tinymlp`, on a board (unit tests only).
 - [ ] MQTT for the apps ([APPS.md](APPS.md#mqtt)):
   - on the C3 with an app using MQTT, the first metrics exports after a restart fail for want of memory, the heap down to 6 to 10 KB ([RESULTS.md](RESULTS.md#ram));
   - on the boards: the connection kept through a download, and MQTT with Zephyr beside a metrics export: on the ESP32-S3 the two used up the C heap; the wait for heap that came after it (z29) is not yet on that board ([APPS.md](APPS.md#mqtt));

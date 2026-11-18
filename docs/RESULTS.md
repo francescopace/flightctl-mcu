@@ -100,6 +100,7 @@ Internal heap with the `alarm` app running; on the ESP32, C5, C6 and S3 after 40
 | The MQTT connection, on the C3 | 10 KB of heap (49 KB free before, 39 KB after, v3.14-rc7), and 29 to 31 KB free at the lowest during its handshake; the client's thread used 3.2 to 4.2 KB of its 8 KB stack |
 | The metrics connection, Zephyr on the S3 | its 17 KB receive buffer, from the C heap |
 | The `tinyml` app's memory | 1.2 KB, with 4.1 KB of `.wasm` |
+| The `tinymlp` app's memory | 2.4 KB, with 6.8 KB of `.wasm`; on the C3, C5, C6 and S3 (v3.14-rc12) it ran with the device's `expf`, `logf` and `tanhf` and said `steady` at rest, 95 to 100% sure, once `warming` (46%) or `cooling` (93%) |
 | The memory of wasm3-arduino's blink, any of its four builds | 64 KB, in one block |
 
 The heap's lowest in the first 25 s after a restart (v3.14-rc7, three restarts each; the block held while a TLS connection opens left out):
@@ -113,11 +114,24 @@ The heap's lowest in the first 25 s after a restart (v3.14-rc7, three restarts e
 
 The difference is what the app and MQTT keep (`mqttdemo`'s instance 19 KB and its thread, the client's 8 KB thread and 4 KB pool), not a handshake beside another: the lowest comes during the first metrics export, before the broker's handshake. With the held block counted, the heap's own lowest is 1 to 10 KB on every chip, with or without MQTT. On the C3 with MQTT connected, a metrics export goes down to 6 to 10 KB, and the first one or two after a restart fail for want of memory (a 4.4 KB allocation); the later ones are sent. The C5 goes down to 9 to 15 KB and sends them. With Zephyr on the ESP32-S3, 4,112 bytes of the 372 KB DRAM segment are left at link time, with a 12 KB status-thread stack and a 92 KB kernel heap.
 
+What the agent took of the internal heap once an app's instance was made, up to a minute after, with a metrics export every 30 s; the block held while a TLS connection opens left out ([APPS.md](APPS.md#size-and-limits)). The 40 KB the device keeps for the agent comes from these:
+
+| Board | `alarm` (v3.14-rc12) | CoreMark's 64 KB build (v3.14-rc12) | Left at the lowest with CoreMark |
+|---|---|---|---|
+| Classic ESP32 | 21 to 25 KB | 35 KB | 10 KB |
+| ESP32-C3 | 24 to 28 KB | 39 KB | 24 KB |
+| ESP32-C5 | 21 to 27 KB | 33 to 34 KB | 7 KB, and two status updates failed |
+| ESP32-C6 | 21 to 27 KB | 34 to 47 KB | 87 KB |
+| ESP32-S3 N4R2 | 23 to 37 KB | 33 to 52 KB | 33 KB |
+
+Without a metrics export the agent took 12 to 16 KB (v3.14-rc7): reconnecting and sending its status; an export adds 10 to 15 KB, a spec applied meanwhile up to 38 KB in all, an MQTT connection about 10 KB, a console session up to 25 KB while it is open. On the S3 the TLS block is never held (its largest block is in PSRAM), so its lowest is the heap's own: 18 KB taken with no app and no export (v3.14-rc7). Since v3.14-rc12 the apps saved by a previous run start once the device's first status is accepted, 4 to 9 s after the firmware starts on the boards; before, they started before WiFi, with the heap the network and the agent take later still free.
+
 Stack used at most (`stackMinFreeBytes`), of the stack each thread has; here a KB is 1,024 bytes:
 
 | Firmware | Spec loop, on the main task | Status thread | App thread |
 |---|---|---|---|
 | Classic ESP32 | 8.9 of 24 KB (installing an app) | 4.2 of 12 KB | 3.4 of 8 KB |
+| ESP-IDF v3.14-rc10 and rc11, the five chips | 8.3 to 9.1 of 14 KB (C3, C5, C6) or 16 KB (ESP32, S3), downloading a whole firmware or a delta | at most 5 KB, of 8 KB (C3, C5, C6) or 10 KB (ESP32, S3) | |
 | Zephyr on the Pico W | 9.2 of 14 KB (downloading firmware over TLS, whole or as a delta); 4.6 polling | 3.8 of 8 KB | 2.2 of 8 KB |
 | Zephyr on the ESP32-S3 | 5.4 of 16 KB (polling, no firmware download) | 4.7 KB (now given 12 KB; no certificate renewal) | 3.0 of 8 KB (`alarm`) |
 | Zephyr on a Cortex-M3 (`mps2/an385` in QEMU) | | | 2.7 of 8 KB (`printf` of `%f`); 2.5 without the C library |
@@ -157,6 +171,7 @@ By release, wasm3's build:
 | v3.12 | 14.12–14.27 | | about 19.7 or about 22.3 from one run to the next, once 14.8, not explained yet | 11.45–11.98 | |
 | v3.13 | 14.19 | 14.46 | 19.46, one run | 11.81–11.98, four runs; wasm-coremark's build 13.24 and 13.71 | 17.63–18.08 |
 | v3.14-rc4, one run | 14.22 | 14.27 | 19.65 | 11.75 | 17.56 |
+| v3.14-rc12, one run, swapped in for `alarm` | 14.23 | 14.21 | 19.70 | 12.10 | 18.09 |
 
 Whether the 68 KB block is there depends on how broken up the heap is:
 
@@ -166,6 +181,7 @@ Whether the 68 KB block is there depends on how broken up the heap is:
 | v3.13 | there once in two tries on the classic ESP32 (else 64 KB the largest of 138 KB free) and on the C5 (else 44 KB); once in five on the C3, right after a restart (else 48 to 50 KB of 50 to 87 KB free, 22 KB after a swap); the same without metrics |
 | v3.14-rc4, with the 32 KB kept for the agent | taken and run (a 7.7 KB `.wasm`) on the classic ESP32, C3, C5, C6 and S3, its instance leaving 85 to 96 KB of internal heap (52 KB on the S3), no TLS handshake failed; right after a swap from another app missing on the ESP32, C3 and C5 (largest 28 to 44 KB), there after a restart |
 | v3.14-rc6 | missing right after another app and after a remove then install, on the C3, C5 and classic ESP32 (largest 36 to 56 KB), each later try finding the same block; on the classic ESP32 found but refused, leaving the agent 11 to 17 KB. In all CoreMark takes about 105 KB: the loaded module about 18 KB, the thread's stack 8.7 KB, the instance about 71 KB. With the agent connected and no app, about 103 KB are free on the C3, 107 KB on the C5, 117 KB on the classic ESP32: with the 32 KB kept for the agent, 20 to 34 KB short. After a restart it fits because its instance comes before the agent connects (150 to 168 KB free then) |
+| v3.14-rc11 and rc12, with 40 KB kept for the agent and memories in blocks of their size | swapped in for `alarm` and run on all five; on the classic ESP32 refused once in three swaps (`would leave the agent 30 KB`), on the C5 run with 7 to 11 KB left at the lowest and two status updates failed meanwhile. Added beside a finished CoreMark on the C5, `alarm` was refused (`layer is 2303 bytes (max 1641 with this heap)`) |
 | Lowest heap seen | 2.3 KB on the classic ESP32, the agent still reporting; 108 bytes on the C3 after a failed swap, where one TLS handshake failed (`PSA_ERROR_INSUFFICIENT_MEMORY`) |
 
 ### Timings
@@ -184,6 +200,7 @@ ESP-IDF boards with an early build, unless the row says otherwise:
 | An app call's budget of 5 million instructions, in a counting loop (v3.14-rc1) | 0.66 s on the C5, 0.9 s on the S3, 1.06 s on the C3, 1.2 s on the classic ESP32, 1.3 s on the C6 |
 | MQTT connected, from the spec that gives the broker (v3.14-rc6) | within 70 s |
 | Decommissioning, from the request to `Completed` | 2.4 to 3 s |
+| A whole firmware, from `Downloading` to `Rebooting` (v3.14-rc10 to rc10.1, polled every 3 s) | 13 s on the C3, 9 s on the C5 with fewer WiFi receive buffers (9 and 6 s before), 13 s on the C6 |
 
 ### Idle traffic
 
@@ -302,6 +319,7 @@ Each in short; the source references, how it was found and the workarounds are i
 - **MQTT with Zephyr**: beside a metrics export every 30 s it used up the ESP32-S3's C heap (z28), and the device restarted itself after 10 minutes without a status; z29 makes both wait for heap, not yet tried on the board ([APPS.md](APPS.md#mqtt)).
 - **Zephyr on the ESP32-S3 without PSRAM**: z28 with one app got down to 368 bytes of free C heap while trying to download an update, which did not go through, and the device then took no spec while its statuses went out ([ZEPHYR.md](ZEPHYR.md#on-an-esp32-s3)).
 - **A stuck agent**: no status accepted, or no spec taken, for 30 minutes restarts the device from outside the agent's threads, on ESP-IDF and Zephyr; tried in unit tests only.
-- **Memory for apps**: CoreMark's 64 KB fits on every ESP-IDF board and, in PSRAM, on the Zephyr S3 N8R8; 128 KB only on the C6 and the S3 with PSRAM. On the classic ESP32, C3 and C5 the 68 KB block can be missing right after another app ([CoreMark](#coremark)).
+- **Memory for apps**: CoreMark's 64 KB fits on every ESP-IDF board and, in PSRAM, on the Zephyr S3 N8R8; 128 KB only on the C6 and the S3 with PSRAM. On the classic ESP32, C3 and C5 the 68 KB block can be missing right after another app, and on the classic ESP32 and the C5 it leaves the agent under 10 KB at the lowest, where a status update can fail ([CoreMark](#coremark)).
+- **Flashing through a CH343 UART bridge** (one ESP32-C6 board): reads work, writes fail with a checksum error (0x0107 from esptool's stub, 0x0105 from the ROM) at every speed, compressed or not, with esptool 5.1.0 and 5.3.1; a failed write left the bootloader's 64 KB erased. Do not write such a board through its bridge.
 
 What comes next is in the [roadmap](ROADMAP.md).
