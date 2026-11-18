@@ -296,7 +296,7 @@ With ESP-IDF 6.0.3 and esp-emu 1.1.0, the ESP32-S3 app hardware drivers passed t
 | UART | The MH-Z19B reply triggered the receive callback and reported 400 ppm CO₂ with a valid checksum. |
 | PWM | At a configured 50 Hz, the virtual servo on GPIO6 observed 999 µs and 1,999 µs for commanded widths of 1 ms and 2 ms. |
 
-The emulator has no ADC model for the S3. Electrical measurements on wired boards remain open, including RS-485 driver-enable timing and peer turnaround.
+esp-emu 1.1.0 models ADC on the ESP32-C3. [Calibrated ADC readings](#esp32-c3-virtual-adc)
 
 ### ESP32-C3 virtual ADC
 
@@ -313,7 +313,7 @@ The example apps ([APPS.md](APPS.md#examples)), with ESP-IDF unless the row says
 | App | What it did |
 |---|---|
 | `alarm` | Opened `led0` with the firmware's pin on the C3, the C6 (its WS2812 LED) and the ESP32-S3 with Zephyr (LED and temperature simulated); a new threshold took it from alarm to ok without restarting it; on the C6 it came back from flash after a restart. It also runs on the classic ESP32. |
-| `hwcheck` | With nothing wired, I2C (a bus scan, a transfer), SPI, a UART write, ADC (a floating pin) and PWM open and answer on the classic ESP32, C5, C6 and S3 and on the emulated C3. GPIO interrupts and wired devices are not tried yet. |
+| `hwcheck` | With nothing wired, I2C (a bus scan, a transfer), SPI, a UART write, ADC (a floating pin) and PWM open and answer on the classic ESP32, C5, C6 and S3 and on the emulated C3. |
 | `mqttdemo`, the five chips | Beside `alarm`, against a broker with TLS on the LAN: published the temperature every 5 s with none missing over 8 minutes, and received and answered a command on the device's prefix (QoS 1) and one on the fleet's. |
 | `mqttdemo`, Zephyr on the S3 | Published every 10 s with none missing over 45 minutes, and answered a command on each prefix within a second. With internal TLS records the N8R8 deferred exports for lack of C heap. With both receive records in PSRAM and 32 POSIX mutexes, the telemetry gateway received a new sample while MQTT was online. |
 | `tinyml` | Said `steady` on the C3, C5, C6 and S3, and `warming` when the C3 warmed by 2 °C within a minute. The classic ESP32 has no temperature sensor, and the app says so. |
@@ -321,7 +321,7 @@ The example apps ([APPS.md](APPS.md#examples)), with ESP-IDF unless the row says
 | wasm3-arduino's blink, Rust build, beside `tinyml` | Ran for 45 minutes on the C3, C6 and S3. Refused on the C5 (`allocate linear memory failed (largest free block 52 KB)`) and on the classic ESP32 (`its memory would leave the agent 22 KB of heap, less than the 40 KB it needs`), the device reporting all along. |
 | wasm3-arduino's blink, C++ build, beside `alarm` | Ran on the C3, C6, S3 and the classic ESP32. The blink also runs on the host and on Zephyr's `native_sim`. |
 
-Zephyr `native_sim` passed eight hardware API tests covering devicetree names, GPIO, ADC, PWM, I²C, SPI, UART and RS-485. The RS-485 fixture held the driver-enable signal active while the FIFO was empty and the shift register was still sending. At DE release, a simulated peer sent a three-byte reply (`00 52 ff`). The receive callback fired and the driver returned all three bytes in order. A link with an ESP32-S3 UART1 and a driver-enable GPIO used 377,248 of 380,672 B of DRAM, leaving 3,424 B. Electrical timing and peer turnaround remain unmeasured.
+Zephyr `native_sim` passed eight hardware API tests covering devicetree names, GPIO, ADC, PWM, I²C, SPI, UART and RS-485. The RS-485 fixture held the driver-enable signal active while the FIFO was empty and the shift register was still sending. At DE release, a simulated peer sent a three-byte reply (`00 52 ff`). The receive callback fired and the driver returned all three bytes in order. A link with an ESP32-S3 UART1 and a driver-enable GPIO used 377,248 of 380,672 B of DRAM, leaving 3,424 B. The RS-485 test checks event order in the simulator.
 
 On the Zephyr S3 N8R8, `mqttdemo` answered four distinct QoS 1 commands during reception of a 1,037,990 B signed firmware image. The largest encrypted TLS record observed during this transfer was 16,401 B. The broker retained one connection until the firmware reboot, and the new boot reported the expected digest.
 
