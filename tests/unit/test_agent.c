@@ -767,7 +767,7 @@ static void metrics_and_pulls_take_turns(void)
  * the status thread runs, then seconds on a monotonic clock. */
 static void the_status_age_is_monotonic(void)
 {
-    long long saved = s_status_ok_mono;
+    long saved = s_status_ok_mono;
     s_status_ok_mono = 0;
     CHECK_INT(fc_agent_status_age(), -1);
     s_status_ok_mono = mono_s() - 30;

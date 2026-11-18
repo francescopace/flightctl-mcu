@@ -1445,20 +1445,21 @@ static void metrics_tick(agent_t *a)
 }
 
 /* When the last status update was accepted, in seconds of CLOCK_MONOTONIC;
- * 0 before the status thread runs (fc_agent_status_age). */
-static long long s_status_ok_mono;
+ * 0 before the status thread runs (fc_agent_status_age). A long: 32-bit
+ * Xtensa has no 8-byte atomics (Zephyr's link fails on __atomic_store_8). */
+static long s_status_ok_mono;
 
-static long long mono_s(void)
+static long mono_s(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (long long)ts.tv_sec + 1; /* never 0 */
+    return (long)ts.tv_sec + 1; /* never 0 */
 }
 
 long fc_agent_status_age(void)
 {
-    long long t = __atomic_load_n(&s_status_ok_mono, __ATOMIC_RELAXED);
-    return t == 0 ? -1 : (long)(mono_s() - t);
+    long t = __atomic_load_n(&s_status_ok_mono, __ATOMIC_RELAXED);
+    return t == 0 ? -1 : mono_s() - t;
 }
 
 static void *status_thread(void *arg)
