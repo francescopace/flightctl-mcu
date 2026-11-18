@@ -147,6 +147,8 @@ The fetch scripts bring Espressif's HAL module (164 MB), the binary WiFi librari
 
 On the board it enrolls, runs a signed app, takes its firmware whole or as a delta through MCUboot and goes back from a broken one, downloads over HTTP/2, and answers the UI's Logs tab; what was tried, with figures, is in [RESULTS.md](RESULTS.md#zephyr-on-the-esp32-s3).
 
+For the internal-RAM CoreMark run on the N8R8, the application and MCUboot overlays set `&psram0 { status = "disabled"; };`. In the application board configuration, set `CONFIG_ESP_SPIRAM=n`, omit the octal mode and external heap settings, and set `CONFIG_FC_HEAP_SIZE=140592` and `CONFIG_HEAP_MEM_POOL_SIZE=79872`. The WiFi buffer and thread stack settings are the same as on the ordinary N8R8 build. [CoreMark score and heap measurements](RESULTS.md#coremark)
+
 What it took, beyond the board's two files in `port/zephyr/boards/`:
 
 - **Memory by hand.** Zephyr gives the first core 372 KB for data. The kernel heap is the larger of what the application asks and what the drivers add: the WiFi driver's 51 KB are not added to a size that is set, and with 64 KB there were 28 KB left for thread stacks. It is 92 KiB, the C heap 120,112 B, made smaller for what the PSRAM driver (below), the device's 4 KB log and 1 KB for Zephyr's lines on their way into it take of the region, the status thread's stack 12 KB, the main thread's, where the spec loop runs, 16 KB. The ordinary N8R8 image leaves 4,992 B of the region at link time; what the stacks use is in [RESULTS.md](RESULTS.md#ram).

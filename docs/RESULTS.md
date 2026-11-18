@@ -218,7 +218,7 @@ Iterations per second of [CoreMark](https://github.com/eembc/coremark) 1.0's two
 | ESP32-C5 (240 MHz) | 19.70; from 18.9 to 22.3 from one run to the next since v3.12, not explained yet | does not fit: largest free block 72 KB | |
 | ESP32-S3 N4R2 (2 MB quad PSRAM) | 18.09 | 21.04–21.64, in PSRAM | about 614 |
 | ESP32-S3, PSRAM off | 18.88–18.95 (v3.10, built for speed) | does not fit: no internal block of 128 KB left once running | about 614 |
-| ESP32-S3 with Zephyr, no PSRAM | does not fit: the C heap has no block for the module and 64 KB | – | |
+| ESP32-S3 N8R8 with Zephyr, PSRAM disabled | 17.885 in internal DRAM (one run) | – | |
 | ESP32-S3 N8R8 with Zephyr | 17.83–17.84, in PSRAM (z26) | 21.69–21.70, in PSRAM (z26) | about 614 |
 
 | | |
@@ -229,7 +229,17 @@ Iterations per second of [CoreMark](https://github.com/eembc/coremark) 1.0's two
 | Block needed for the memory | one free block of 68 KB for 64 KB, of 136 KB for 128 KB |
 | ESP32-S3 with PSRAM | an app's memory goes to PSRAM when no internal block is large enough: the `esp32s3` image for quad PSRAM or none, `esp32s3-r8` for octal ([DEVICES.md](DEVICES.md)) |
 | Zephyr on the S3 N8R8 | the octal PSRAM is a heap of its own for app memories of 16 KB or more; its driver takes 4 KB of internal RAM |
-| Zephyr on an S3 without PSRAM | CoreMark needs about 85 KB of the C heap (a 68 KB block for its memory, the module, the instance); the agent alone leaves about 65 KB of the 114 KB, and the data region has 4 KB left at link, so some 20 KB more would have to come from the kernel heap or the WiFi driver's buffers |
+| Zephyr on the S3 N8R8 with PSRAM disabled | The 64 KiB wasm3 benchmark ran with a 140,592 B C heap and a 79,872 B kernel heap. This gives the C heap 20 KiB more, using 14 KiB from the kernel heap and 6 KiB of DRAM previously free at link time. The instrumented build left 1,392 B free at link time. |
+
+The N8R8 ran CoreMark as its only app, with MQTT and telemetry export off. Both the application and MCUboot were built with PSRAM disabled. A runtime check placed the C heap arena in internal DRAM.
+
+| CoreMark on Zephyr, internal RAM | C heap free | Largest free C heap block | Kernel heap free |
+|---|---:|---:|---:|
+| Before loading the WASM module | 105,036 B | 93,284 B | 29,216 B |
+| Before creating the WAMR instance | 92,940 B | 79,748 B | 23,400 B |
+| After creating the instance | 26,400 B | 14,204 B | 23,400 B |
+
+Flight Control received the completed score at 62 s uptime and another status at 122 s with the same score. The device then applied a new spec replacing CoreMark with `alarm`. At 128 s it reported `alarm` running and the new spec up to date. All three reports carried the same boot ID.
 
 With ESP-IDF the 64 KB build takes about 105 KB of heap in all: the loaded module about 18 KB, its thread's stack 8.7 KB, the instance about 71 KB with its 68 KB block. Whether that block is there depends on how broken up the heap is. With v3.14-rc12, 40 KB kept for the agent and app memories in blocks of their own size:
 

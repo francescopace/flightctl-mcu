@@ -4,10 +4,6 @@ What is left before 1.0 and after it. What the agent does today is in the [READM
 
 ## v1.0 (In progress)
 
-Verification:
-
-- [ ] **CoreMark on Zephyr ESP32-S3** — Run the benchmark from internal RAM with PSRAM disabled. The current build needs about 20 KB more C heap. [CoreMark](RESULTS.md#coremark)
-
 What an app can do and hold:
 
 - [ ] CoreMark slower and less even on the C5 and C6 since v3.12 than with the same `-Os` firmware before it. Not explained yet ([RESULTS.md](RESULTS.md#coremark)).
