@@ -297,7 +297,9 @@ On a physical ESP32-C3, a test build deliberately refused to start a console thr
 
 With two apps and outstanding console sessions, an instrumented C3 failed to grow an HTTP/2 response buffer to 16,384 B when it needed 8,193 B. Retrying with the exact size let the device receive the full 11,163 B rendered spec and process it in the same second. The fallback succeeded seven times as that response grew. On a build that retained the fallback and omitted the probes, two console clients still timed out after 60 s under load. When the rendered spec shrank from 11,907 to 9,902 B, the device opened the expired sessions and then failed to start their console threads.
 
-In a repeat with both apps running, the console client timed out after 60.115 s. Flight Control offered newer specs of 10,199 and 10,321 B while the device continued to report the previous version. After a manual reset, the C3 applied the latest spec within 3 s. The diagnostic markers did not survive the reset, so the last step the device completed before the timeout is unknown.
+With both apps running, one console client timed out after 60.115 s while the C3 continued to report its previous spec. After a reset, the device applied the latest spec within 3 s.
+
+With `alarm` and `blinkcpp` running, an instrumented C3 answered one console command in 0.304 s. The next client exited after 60.135 s without receiving a response. While reading a 12,781 B HTTP/2 response, the device failed to grow its buffer to 12,289 B. It had 22,364 B free, with 7,680 B in the largest block. The read failed before the device could parse the console list. Its last recorded step before timeout was starting another spec request. The next recorded DATA frame arrived 51 s later, after the desired spec was reduced. On the same boot the C3 read the 10,559 B response and started a thread for the expired session.
 
 ### Idle traffic
 
@@ -313,20 +315,29 @@ Bytes on the wire, TLS included (`netTxBytes`, `netRxBytes`), with the earlier H
 | A reconnection | a full handshake, about 1.5 KB received: the server issues session tickets but does not resume them |
 | After a server restart | both connections reopen; the next spec applies in 2 s |
 
-On the ESP32-C3 with `alarm`, two passive measurements captured the persistent HTTP/2 management connection. Both include TLS and exclude traffic on other sockets.
+On the ESP32-C3 with `alarm`, passive socket counters measured the persistent HTTP/2 management connection, including TLS.
 
 | ESP32-C3 sample | Duration | Sent by the board | Received by the board |
 |---|---:|---:|---:|
 | First measurement | 301 s | 14,676 B | 53,604 B |
-| Repeat on v3.14-rc12 | 330 s | 14,926 B | 54,004 B |
+| Repeat on v3.14-rc12, 11 outstanding console entries | 330 s | 14,926 B | 54,004 B |
+| Empty console list, fresh identity | 330 s | 3,964 B | 10,079 B |
 
-The repeat corresponds to 752 kB/hour on that connection. All 23 samples showed the same boot, rendered spec and eleven outstanding console entries. With entries present, Flight Control serves the rendered spec immediately. Comparing idle traffic with the earlier HTTP/1.1 result still requires a C3 window with an empty console list. [Console session lifetime](FLIGHTCTL-LIMITATIONS.md#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)
+The empty-list window corresponds to **153 kB/hour**. All 23 samples showed the same boot, spec and connection. Only `alarm` was running, telemetry export was off, and the device sent two status updates on its 120 s heartbeat. The window with 11 outstanding entries corresponds to 752 kB/hour. Those entries cause Flight Control to return the spec immediately. The earlier HTTP/1.1 result of about 280 kB/hour used the same heartbeat but included two server restarts over ten minutes. [Console session lifetime](FLIGHTCTL-LIMITATIONS.md#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)
 
 On an ESP32-S3 N8R8 with Zephyr, six minutes of idle management traffic with no apps, telemetry exports or console commands added 11,194 B sent and 42,660 B received (537 kB/h extrapolated). Status updates ran approximately once a minute. The handshake count stayed at seven throughout this window. The C3 and Zephyr runs have different device and status configurations.
 
 What is left is the full status, and going lower needs differential updates (limitation 6). The apps' changes go out together, one status every 15 s at most.
 
-With PSRAM disabled on the Zephyr N8R8, the management socket carried 9,868 B from the board and 30,891 B to it in 330 s (445 kB/hour extrapolated). All 23 samples showed the same boot and spec, with no apps, broker or telemetry export configured. Fifteen pre-existing console entries kept the server from holding the spec long-poll open. A quiet long-poll baseline on this profile remains unmeasured.
+With PSRAM disabled on the Zephyr N8R8, the following measurements cover the HTTP/2 management connection, including TLS. No apps, MQTT broker or telemetry export were configured.
+
+| Console entries | Duration | Sent by the board | Received by the board | Extrapolated traffic |
+|---|---:|---:|---:|---:|
+| 15 outstanding | 330 s | 9,868 B | 30,891 B | 445 kB/hour |
+| Empty | 668 s | 19,186 B | 35,397 B | 294 kB/hour |
+| Empty, final 330 s of the same run | 330 s | 10,592 B | 19,464 B | 328 kB/hour |
+
+The 15 entries kept Flight Control from holding the spec long-poll open. A fresh device identity provided the empty-list baseline. All 46 passive samples in that run showed the same boot, rendered spec and TCP connection. The TLS handshake counter stayed at five throughout the final 330 s.
 
 ### In Espressif's emulator
 

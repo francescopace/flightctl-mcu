@@ -6,14 +6,14 @@ What is left before 1.0 and after it. What the agent does today is in the [READM
 
 Verification:
 
-- [ ] **Blocked** — Collect an idle HTTP/2 window on a C3 with an empty console list for comparison with HTTP/1.1. Eleven outstanding console entries kept the server from holding the long-poll open during the 330 s sample. [Traffic measurements](RESULTS.md#idle-traffic) · [Console session lifetime](FLIGHTCTL-LIMITATIONS.md#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)
-- [ ] **Blocked** — Measure idle HTTP/2 traffic on the Zephyr N8R8 with PSRAM disabled and an empty console list. The previous window retained 15 console entries. [Traffic measurements](RESULTS.md#idle-traffic) · [Zephyr on ESP32-S3](ZEPHYR.md#on-an-esp32-s3)
+- [ ] **ESP32-C3 console sessions** — Prevent client timeouts under two-app load when a large HTTP/2 spec exceeds the available contiguous heap. Verify that the device opens the session while its client is still connected. [Console timing](RESULTS.md#timings)
+- [ ] **Zephyr on ESP32-S3 without PSRAM**
+  - Run CoreMark from internal RAM. The current build needs about 20 KB more C heap. [CoreMark](RESULTS.md#coremark)
+  - When an S3 manufactured without PSRAM is available, install z30 or later over USB and verify the firmware on that board. [Zephyr on ESP32-S3](RESULTS.md#zephyr-on-the-esp32-s3)
 
 What an app can do and hold:
 
-- [ ] Determine where the C3 stops processing a rendered spec under load when a console client times out. The timeout recurred with the HTTP/2 buffer fallback enabled. Capture the last completed step before reset. [Console timing](RESULTS.md#timings)
 - [ ] CoreMark slower and less even on the C5 and C6 since v3.12 than with the same `-Os` firmware before it. Not explained yet ([RESULTS.md](RESULTS.md#coremark)).
-- [ ] CoreMark with Zephyr on an ESP32-S3 without PSRAM: it runs only from the N8R8's PSRAM, and the C heap is about 20 KB short ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] Verify GPIO interrupts and I2C, SPI, UART, ADC and PWM with wired devices. On Zephyr, verify devicetree hardware names on a board and measure ESP32-S3 RS-485 driver-enable timing with a transceiver and a responding peer. See [APPS.md](APPS.md).
 
 ### Blocked on Flight Control
@@ -28,7 +28,6 @@ Each needs one of the [limitations in FLIGHTCTL-LIMITATIONS.md](FLIGHTCTL-LIMITA
 
 ### Blocked on hardware availability
 
-- [ ] **ESP32-S3 manufactured without PSRAM** — Install Zephyr z30 or later over USB and verify the firmware on that board. The older z28 failed to download its update with one app running and a C heap low of 368 B. The N8R8 measurements with PSRAM disabled are in [RESULTS.md](RESULTS.md#zephyr-on-the-esp32-s3).
 - [ ] **ST NUCLEO-F767ZI (ordered)** — Repeat the [emulated Arm Ethernet test](ZEPHYR.md#on-an-emulated-arm-cortex-m3) on the physical board. Enroll the Zephyr agent over Ethernet, verify that Flight Control receives status updates, then power-cycle the board and confirm it reconnects with the same device identity.
 - [ ] **Raspberry Pi Pico 2 W with headers (RP2350, SC1634, ordered)** — Enroll the Zephyr agent over WiFi, run a signed WASM app and record the minimum free heap with the app active.
 - [ ] **Nordic nRF7002-DK (ordered)** — Run the Zephyr agent on the nRF5340 and enroll over the nRF7002 WiFi connection. Verify status updates, deploy a signed WASM app and measure the minimum free heap while the app runs.
