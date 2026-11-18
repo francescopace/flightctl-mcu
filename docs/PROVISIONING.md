@@ -40,6 +40,10 @@ The session is ESP-IDF's provisioning Security 1: an X25519 key exchange, authen
 
 The network is kept with the device's credentials, as if it had been given at the factory: in `fc_creds`, or in the encrypted store in the secure variant. The device uses it from then on; provisioning the device again, or erasing the flash, brings the access point back. A network given at the factory (`--wifi-ssid`) replaces it.
 
+For a field-provisioning build, set `LOCAL=0` when running `port/espidf/build.sh` so the firmware has no development WiFi settings. When provisioning over USB, leave `WIFI_SSID` unset as well. A device with a network still saved by an older WiFi driver tries that network at startup.
+
+On an ESP32-C6 with ESP-IDF, the phone reported a credential error and accepted a retry. The C6 joined the selected network and reconnected after a restart. [Measured timings](RESULTS.md#what-works)
+
 `CONFIG_FC_FIELD_PROVISIONING` (on by default) adds 17.4 KB of flash on the ESP32-S3 (ESP-IDF 6.0.3, debug build) and no static RAM to speak of (16 bytes): `fc_prov.c` takes 6.9 KB, the rest is the WiFi access point and its DHCP server. Espressif's `network_provisioning` takes 117.5 KB: its manager, protocomm, an HTTP server and parser, protobuf-c and their strings.
 
 ## On Zephyr
@@ -50,7 +54,7 @@ Where the radio can be an access point and a station at once (Espressif's, `CONF
 
 Espressif's app can take the device from a QR code: `{"ver":"v1","name":"FC-xxxxxx","pop":"<secret>","password":"<secret>","transport":"softap","security":1}`, with `security` a number and `password` the access point's (the proof of possession here). The iOS app refuses a code whose `security` is a string.
 
-Boards: the ESP32-S3-DevKitC, provisioned from an iPhone with ESP SoftAP Prov (from its QR code): the phone got an address from the device, the session was set up, the device joined the network picked from its scan in 8 s, told the app, and was Online in Flight Control with its app running a second after the access point closed. The ESP-IDF firmware's field provisioning is verified in the emulator only ([below](#what-the-ci-checks)).
+On the ESP32-S3-DevKitC with Zephyr, an iPhone running ESP SoftAP Prov scanned the QR code and received an address from the device. The device joined the selected network in 8 s, confirmed the connection to the app and was Online in Flight Control with its app running a second after the access point closed.
 
 ## What the CI checks
 

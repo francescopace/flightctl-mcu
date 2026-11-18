@@ -20,6 +20,12 @@ All this is fixed in the chip's eFuses on the device's first boot, and cannot be
 
 The variant is tested on emulated chips by the end-to-end workflow, not on real boards ([below](#not-yet-done)).
 
+## Product compliance
+
+Each firmware release provides a CycloneDX SBOM tied to its OCI digest. For the port and build variant you ship, the test results identify where signed updates and rollback were verified. This page records the protections and limits of each port. See the [release SBOM](SBOM.md) and [verification results](RESULTS.md#what-works).
+
+The manufacturer assesses the finished product against the requirements that apply to it. For a product covered by the EU Cyber Resilience Act, this includes assessing cybersecurity risks and handling vulnerabilities throughout the product's support period. ETSI EN 303 645 provides baseline security requirements for consumer IoT devices. See the [Cyber Resilience Act, Article 13 and Annex I](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R2847) and [ETSI EN 303 645](https://portal.etsi.org/webapp/WorkProgram/Report_WorkItem.asp?WKI_ID=69970).
+
 ## Two signing keys
 
 They protect different things, and both belong offline (an HSM in production):
@@ -213,7 +219,7 @@ What the Zephyr builds have, on any board started by MCUboot:
 
 What they do not have:
 
-- **The device key, the credentials and a network given in the field are in the storage partitions in clear, and the flash is not encrypted**: whoever holds the board can read them over USB. On an Espressif chip, a device that must be protected runs the ESP-IDF firmware (its `secure` variant, above). On Zephyr the protection comes with the chips that have TF-M (below); it is planned for after 1.0 ([ROADMAP.md](ROADMAP.md#after-10)).
+- **The device key, the credentials and a network given in the field are in the storage partitions in clear, and the flash is not encrypted**: whoever holds the board can read them over USB. On an Espressif chip, a device that must be protected runs the ESP-IDF firmware (its `secure` variant, above). On Zephyr the protection comes with the chips that have TF-M (below); it is planned for after 1.0 ([ROADMAP.md](ROADMAP.md#v20-planned)).
   - Flash encryption and Secure Boot on the ESP32-S3 would take Espressif's own port of MCUboot, built apart from sysbuild with a flash layout matching the application's: the MCUboot that sysbuild builds has no code to turn them on. Zephyr's flash driver already reads and writes an encrypted flash (`CONFIG_ESP_FLASH_ENCRYPTION`), so the agent would not change. Nothing of it is built yet; on the ESP32-S3 the ESP-IDF firmware's `secure` variant has all of it today.
 - The path Zephyr offers is a chip with TrustZone-M and TF-M (the RP2350 of the Pico 2 W, Nordic's nRF54L, ST's STM32U5): the device key as a PSA key in TF-M's protected storage, which the core already uses through PSA, and a secure boot of the chip's own. Not tried.
 

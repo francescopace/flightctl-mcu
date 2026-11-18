@@ -2,6 +2,12 @@
 
 What the project is built with and tested against, at which version, and where each version is set. Everything is pinned in the repository: a build does not pick up a newer release by itself. Checked against the latest releases on 12 November 2026.
 
+## Release support
+
+Starting with 1.0, each agent release lists the exact Flight Control and ESP-IDF versions verified for its ESP-IDF firmware in this document. Consult the copy that ships with your agent release. The project maintains compatibility with that pair until the next agent release. Fixes target the current release, with no commitment to backport them to earlier releases.
+
+The pair verified during development for 1.0 is Flight Control 1.4.0 and ESP-IDF 6.0.3.
+
 ## In the core, on every port
 
 | Dependency | Version | Set in | Notes |

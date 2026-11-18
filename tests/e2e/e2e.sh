@@ -404,7 +404,8 @@ kubectl -n flightctl rollout status deployment/flightctl-api --timeout=10m >/dev
 last=$(custom mgmtCertNotAfter)
 wait_for 120 "status accepted after the restart" "ci.get('mgmtCertNotAfter', '') > '$last' and st['summary']['status'] == 'Online'"
 before=$(rendered)
-apply_fleet 30 ""
+# Drop the inline registry files before the Git fleet supplies them from Secrets.
+fleet_yaml 30 "" | flightctl apply -f - >/dev/null
 wait_for 330 "spec applied after the restart" "st['config']['renderedVersion'] == d['metadata']['annotations']['device-controller/renderedVersion'] != '$before'"
 
 if [[ "$CERT_EXPIRY" == 1 ]]; then
@@ -477,7 +478,8 @@ for i in $(seq 1 30); do
   sleep 2
 done
 tools/fleet/registry-secrets.sh >/dev/null
-writes_before=$(grep -c 'config: wrote /etc/containers/auth.json' "$WORK/agent.log" || true)
+auth_writes_before=$(grep -Fc 'config: wrote /etc/containers/auth.json' "$WORK/agent.log" || true)
+ca_writes_before=$(grep -Fc 'config: wrote /etc/containers/certs.d/' "$WORK/agent.log" || true)
 flightctl delete "fleet/$FLEET" >/dev/null   # the ResourceSync owns it from now on
 flightctl apply -f - >/dev/null <<EOF
 apiVersion: flightctl.io/v1beta1
@@ -498,9 +500,10 @@ spec:
   path: /fleets
 EOF
 wait_for 420 "fleet from Git applied, app pulled" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v1') and st['updated']['status'] == 'UpToDate'"
-(( $(grep -c 'config: wrote /etc/containers/auth.json' "$WORK/agent.log") > writes_before )) \
+(( $(grep -Fc 'config: wrote /etc/containers/auth.json' "$WORK/agent.log") > auth_writes_before )) \
   || fail "the credentials did not come from the secret"
-grep -q 'config: wrote /etc/containers/certs.d/' "$WORK/agent.log" || fail "the registry CA did not come from the secret"
+(( $(grep -Fc 'config: wrote /etc/containers/certs.d/' "$WORK/agent.log") > ca_writes_before )) \
+  || fail "the registry CA did not come from the secret"
 echo "ok: credentials mounted from the secrets"
 config_stored 25 1 "config from Git written" "config from Git not written"
 

@@ -36,12 +36,14 @@ What works, where it was verified, and the measurements. The devices are microco
 | Metrics | OTLP to the Telemetry Gateway | ✓ | – | ✓ | [METRICS](METRICS.md) |
 | MQTT for the apps | One broker connection for all apps, TLS | ◐ | – | ✓ | [APPS](APPS.md#mqtt) |
 | Known vulnerabilities | SBOM per release, CVEs through Trustify | ✓ | – | – | [SBOM](SBOM.md) |
-| Field provisioning | WiFi over the device's access point | ◐ | ✓ | ✓ | [PROVISIONING](PROVISIONING.md) |
+| Field provisioning | WiFi over the device's access point | C6 (ESP-IDF), S3 (Zephyr) | ✓ | ✓ | [PROVISIONING](PROVISIONING.md) |
 | Secure Boot, flash encryption, anti-rollback | The `secure` variant | – | ✓ | – | [SECURITY](SECURITY.md) |
 
 <a id="http2"></a>HTTP/2: the spec's long-poll and the status share one connection on the five ESP-IDF chips and on the ESP32-S3 with Zephyr; firmware and apps come over it on the classic ESP32, C5, C6 and S3 and on the ESP32-S3 with Zephyr (every request HTTP/2 in the registry's log); the end-to-end tests run over it in CI and in the emulator. An ESP32-C6 with a software P-256 key renewed its management certificate over this connection and continued reporting under the same identity. A test build brought the local renewal deadline forward. The server used its normal signer and certificate lifetime.
 
 A board keeps its identity across firmware updates; only a full flash erase makes it enroll again as a new device.
+
+On a physical ESP32-C6 running ESP-IDF firmware `v3.14-rc12`, ESP SoftAP Prov reported a wrong WiFi password. The installer retried from the phone. The C6 obtained an IP address about 2 s after receiving the corrected credentials and closed its access point about 8 s later. After a USB reset it rejoined the saved network automatically. Flight Control received an Online status for the same device with a new boot ID.
 
 ## Measurements
 
@@ -280,11 +282,22 @@ Bytes on the wire, TLS included (`netTxBytes`, `netRxBytes`), with the earlier H
 | A reconnection | a full handshake, about 1.5 KB received: the server issues session tickets but does not resume them |
 | After a server restart | both connections reopen; the next spec applies in 2 s |
 
-On the ESP32-C3 with `alarm`, one HTTP/2 management socket carried 14,676 B from the board and 53,604 B to the board in 301 s. The device had eleven outstanding console annotations and received repeated rendered specs during this window. These counts include TLS and exclude the separate telemetry connections. A clean idle comparison still needs a device with no outstanding sessions. On an ESP32-S3 N8R8 with Zephyr, six minutes of idle management traffic with no apps, telemetry exports or console commands added 11,194 B sent and 42,660 B received (537 kB/h extrapolated). Status updates ran approximately once a minute. The handshake count stayed at seven throughout this window. The C3 and Zephyr runs have different device and status configurations.
+On the ESP32-C3 with `alarm`, two passive measurements captured the persistent HTTP/2 management connection. Both include TLS and exclude traffic on other sockets.
+
+| ESP32-C3 sample | Duration | Sent by the board | Received by the board |
+|---|---:|---:|---:|
+| First measurement | 301 s | 14,676 B | 53,604 B |
+| Repeat on v3.14-rc12 | 330 s | 14,926 B | 54,004 B |
+
+The repeat corresponds to 752 kB/hour on that connection. All 23 samples showed the same boot, rendered spec and eleven outstanding console entries. With entries present, Flight Control serves the rendered spec immediately. Comparing idle traffic with the earlier HTTP/1.1 result still requires a C3 window with an empty console list. [Console session lifetime](FLIGHTCTL-LIMITATIONS.md#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)
+
+On an ESP32-S3 N8R8 with Zephyr, six minutes of idle management traffic with no apps, telemetry exports or console commands added 11,194 B sent and 42,660 B received (537 kB/h extrapolated). Status updates ran approximately once a minute. The handshake count stayed at seven throughout this window. The C3 and Zephyr runs have different device and status configurations.
 
 What is left is the full status, and going lower needs differential updates (limitation 6). The apps' changes go out together, one status every 15 s at most.
 
 ### In Espressif's emulator
+
+The ESP32-C5, C6 and S3 each passed the end-to-end tests with ordinary and `secure` firmware at commit `f09c6c6b`. On all six runs, the device reported `ota_0` at enrollment and `ota_1` after the signed update, with the release confirmed and the app running. After a broken update, each device returned to `ota_1` and reported the rollback. The checks observed the confirmed release after 22–34 s and the rollback after 61–74 s, measured from the start of each wait. In the same workflow, the host and both Zephyr jobs pulled the app from the Git-managed fleet, then failed the test's check for a fresh write of identical registry credentials. [End-to-end run](https://github.com/francescopace/flightctl-mcu/actions/runs/44348764399)
 
 [esp-emu](https://github.com/espressif/esp-emulator) 0.51 runs the real firmware against the same Flight Control. The workflow runs the C5, the S3 and the C6 ([TESTING.md](TESTING.md)); the runs below had 4-minute certificates, the C3's by hand:
 

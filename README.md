@@ -147,7 +147,7 @@ The support levels, the boards tried and how to add a chip, a board or an RTOS a
 
 ## Status
 
-Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), deltas, rollback, a registry with TLS and a password, decommissioning. Certificate renewal also passed on a physical ESP32-C6. Secure Boot is tested on emulated chips; provisioning in the field on emulated chips and on the Zephyr ESP32-S3, not yet on an ESP-IDF board ([RESULTS.md](docs/RESULTS.md#what-works)).
+Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), deltas, rollback, a registry with TLS and a password, decommissioning. Certificate renewal also passed on a physical ESP32-C6. Secure Boot is tested on emulated chips. WiFi provisioning from a phone was verified on the ESP32-C6 with ESP-IDF and the ESP32-S3 with Zephyr ([RESULTS.md](docs/RESULTS.md#what-works)).
 
 Known limits:
 
@@ -161,6 +161,8 @@ Known limits:
 The work also found gaps in Flight Control for this class of device, such as a fixed 5-minute disconnect timeout. They are written up in [docs/FLIGHTCTL-LIMITATIONS.md](docs/FLIGHTCTL-LIMITATIONS.md), with proposals; the agent's [current limitations](docs/RESULTS.md#current-limitations) in full are in RESULTS.
 
 ## Repository layout
+
+For 1.0, the canonical source repository is [francescopace/flightctl-mcu](https://github.com/francescopace/flightctl-mcu). Build the ESP-IDF firmware from this checkout. A future transfer to the Flight Control organization would require agreement with its maintainers. The Espressif Component Registry remains an optional distribution channel for a later release.
 
 ```
 core/         the agent, portable C: HTTP/TLS client, OCI client, WASM app manager

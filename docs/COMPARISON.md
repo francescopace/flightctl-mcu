@@ -43,7 +43,7 @@ It is behind on crash reports, which stop at what the status says after a restar
 
 These three manage ESP-IDF or Zephyr devices as a product, and are the nearest to flightctl-mcu. What works today is verified in [RESULTS.md](RESULTS.md).
 
-For flightctl-mcu, "next" is on the [roadmap](ROADMAP.md#next) for 1.0, "waits on Flight Control" needs a change there ([limitations](FLIGHTCTL-LIMITATIONS.md)), and "after 1.0" is proposed for 2.0 ([after 1.0](ROADMAP.md#after-10)).
+For flightctl-mcu, "next" is on the [roadmap](ROADMAP.md#v10-in-progress) for 1.0, "waits on Flight Control" needs a change there ([limitations](FLIGHTCTL-LIMITATIONS.md)), and "after 1.0" is proposed for 2.0 ([after 1.0](ROADMAP.md#v20-planned)).
 
 | | flightctl-mcu | Golioth | Memfault | Mender MCU |
 |---|---|---|---|---|
