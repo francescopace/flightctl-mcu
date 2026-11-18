@@ -53,7 +53,7 @@ The simulated device, `port/host`: the core above on POSIX, with nothing else li
 |---|---|---|---|
 | [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.0 | `tools/kind/up.sh`, `FLIGHTCTL_VERSION` in the workflow | Its label sync is narrowed for these devices ([FLIGHTCTL-LIMITATIONS.md](FLIGHTCTL-LIMITATIONS.md#label-sync)). |
 | Envoy Gateway | 1.2.5 | `tools/kind/up.sh` | The version Flight Control 1.4.0's installation guide names, not the latest. |
-| [esp-emulator](https://github.com/espressif/esp-emulator) | 1.1.0 | `ESP_EMU_VERSION` in the workflow | Checked against the release's sha256. |
+| [esp-emulator](https://github.com/espressif/esp-emulator) | 1.1.0 | `ESP_EMU_VERSION` in `ci.yml` and `e2e.yml` | The emulator and its virtual peripherals are checked against the release's SHA-256 sums. |
 | OCI registry | `registry:3` | `tools/registry/up.sh` | |
 | kubectl image for Flight Control's Helm jobs | `alpine/k8s` 1.37.2 | `tools/kind/cluster-cli/Containerfile` | On arm64 machines only, where `origin-cli` has no image. |
 | MQTT broker: [mosquitto](https://github.com/eclipse-mosquitto/mosquitto) | `eclipse-mosquitto:2.0.22` | `tests/mqtt-broker.sh`, `tools/mqtt/up.sh` | Plain and TLS, with a password ([APPS.md](APPS.md#mqtt)). |

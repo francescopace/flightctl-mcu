@@ -7,7 +7,8 @@ What is left before 1.0 and after it. What the agent does today is in the [READM
 What an app can do and hold:
 
 - [ ] Keep WAMR's decoded bytecode and app thread stack in main SRAM on C5 and C6 when there is room. Verify throughput and app admission across repeated installs with a fragmented heap. [CoreMark measurements](RESULTS.md#memory-placement-on-c5-and-c6)
-- [ ] Verify GPIO interrupts and I2C, SPI, UART, ADC and PWM with wired devices. On Zephyr, verify devicetree hardware names on a board and measure ESP32-S3 RS-485 driver-enable timing with a transceiver and a responding peer. See [APPS.md](APPS.md).
+- [ ] Run a WASM app on a physical ESP32-S3 with wired devices. Verify GPIO interrupts and I2C, SPI and UART transfers. Measure ADC readings at known voltages and PWM period and pulse width. [Virtual wiring results](RESULTS.md#esp32-s3-virtual-wiring)
+- [ ] Verify that a Zephyr app can open a physical peripheral by its devicetree name and its fleet-configured alias. On the ESP32-S3, measure DE release relative to the final UART stop bit and the start of a responding RS-485 peer's reply. [Hardware names and RS-485](ZEPHYR.md#hardware-for-apps)
 
 ### Blocked on Flight Control
 

@@ -189,7 +189,7 @@ On Zephyr the board map's names come from the devicetree, not from pins: the chi
 | SPI | master, up to 4 devices on one bus (two buses on the ESP32 and S3), chip select driven by the firmware; transfers in pieces of 64 bytes, without DMA | the devicetree's devices, chip select driven by the firmware; a transfer lasts as long as the driver makes it | MISO wired to MOSI: what is sent comes back |
 | UART | UART1, and UART2 on the ESP32 and S3 (UART0 is the console's); RS-485 half duplex with `de`; 512 bytes received ahead | interrupt-driven, 512 bytes received ahead, excluding the console. On ESP32-S3, enable runtime UART configuration and set `de-gpios` for RS-485. The port holds DE through the last stop bit, including after a timed-out write or close. Other controllers with `de-gpios` return `FC_ENOTSUP` | RX wired to TX: what is written comes back, with `FC_EV_UART` |
 
-What was tried on the boards is in [RESULTS.md](RESULTS.md#apps-on-the-boards); GPIO interrupts and wired devices are not yet tried on a board.
+The ESP32-S3 app drivers have been tested with virtual GPIO, I2C, SPI, UART and PWM peripherals. Physical board tests cover opening the buses and channels with nothing wired. [Virtual wiring results](RESULTS.md#esp32-s3-virtual-wiring) · [App results on boards](RESULTS.md#apps-on-the-boards)
 
 ## Size and limits
 

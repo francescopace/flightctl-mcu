@@ -271,6 +271,20 @@ With ESP-IDF the 64 KB build takes about 105 KB of heap in all: the loaded modul
 | ESP32-C5 | run with 7 to 11 KB left to the agent at the lowest, and two status updates failed meanwhile; added beside a finished CoreMark, `alarm` was refused (`layer is 2303 bytes (max 1641 with this heap)`) |
 | Lowest heap seen, earlier releases | 2.3 KB on the classic ESP32, the agent still reporting; 108 bytes on the C3 after a failed swap, where one TLS handshake failed (`PSA_ERROR_INSUFFICIENT_MEMORY`) |
 
+### ESP32-S3 virtual wiring
+
+With ESP-IDF 6.0.3 and esp-emu 1.1.0, the ESP32-S3 app hardware drivers passed the same wiring test on macOS and Linux. The test firmware calls the port's drivers directly. [Test circuit](../tests/espidf-hw/board.json)
+
+| Interface | Observed result |
+|---|---|
+| GPIO interrupts | Pressing and releasing the virtual button on GPIO5 delivered the falling and rising edges, with input levels 0 and 1. |
+| I²C | The SHT31 at address `0x44` returned 22.5 °C and 45% relative humidity. Both CRC bytes matched. |
+| SPI | The TMP123 returned `0x0c80` (25 °C). Moving its chip select from GPIO10 to GPIO14 produced `0xffff` and failed the temperature check as expected. |
+| UART | The MH-Z19B reply triggered the receive callback and reported 400 ppm CO₂ with a valid checksum. |
+| PWM | At a configured 50 Hz, the virtual servo on GPIO6 observed 999 µs and 1,999 µs for commanded widths of 1 ms and 2 ms. |
+
+The emulator has no ADC model for the S3. Electrical measurements on wired boards remain open, including RS-485 driver-enable timing and peer turnaround.
+
 ### Apps on the boards
 
 The example apps ([APPS.md](APPS.md#examples)), with ESP-IDF unless the row says otherwise:
