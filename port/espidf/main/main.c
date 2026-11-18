@@ -478,7 +478,7 @@ static void status_watchdog(void *arg)
     const char *what = fc_agent_watchdog(&age);
     if (what != NULL) {
         ESP_LOGE(TAG, "no %s for %ld s, the agent stuck: restarting", what, age);
-        esp_restart();
+        fc_agent_restart_silent(); /* blames an app that left the agent no heap */
     }
 }
 

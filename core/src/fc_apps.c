@@ -76,6 +76,12 @@ static long s_heap_floor = FC_APP_HEAP_FLOOR;
  * block, ~350 bytes), and the heap's headers. */
 #define THREAD_SLACK    1024
 #define RESTART_DELAY_S 5
+/* One string: a pending start held at boot is told by its address. */
+static const char s_boot_why[] = "boot";
+#define BOOT_WHY        s_boot_why
+#ifndef BOOT_APPS_WAIT_MS
+#define BOOT_APPS_WAIT_MS (180 * 1000) /* saved apps start without an accepted status after this */
+#endif
 #define MEM_RETRY_MS    (30 * 1000) /* fc_apps_poll: how often an app short of heap looks again */
 /* A module run once starts when the agent has had nothing on hand for
  * ENTRY_QUIET_MS, at most ENTRY_WAIT_MS after it was started (see
@@ -325,6 +331,11 @@ static void wake(app_t *a)
  * vars or the firmware change (another firmware forgets the record), or it
  * leaves the spec. A restart that was not a crash clears the counts. */
 #define KV_GUARD        "apps.guard"
+/* Set before the agent restarts the device for want of an accepted status
+ * while the heap was below the floor (fc_apps_note_silent_restart): at the
+ * next boot that restart counts as a crash. An ESP32-C5 whose two saved apps
+ * left the agent 7 KB restarted that way again and again (v3.14-rc10.1). */
+#define KV_SILENT       "apps.silent"
 #define GUARD_CRASHES   2
 #ifndef GUARD_SETTLE_MS
 #define GUARD_SETTLE_MS 60000
@@ -396,6 +407,13 @@ static void guard_boot(void)
         return;
     }
     int crash = g_fc_hw && g_fc_hw->restart_was_crash ? g_fc_hw->restart_was_crash() == 1 : 0;
+    char *silent = NULL;
+    size_t slen = 0;
+    if (fc_port_kv_get(KV_SILENT, &silent, &slen) == 0) {
+        fc_port_kv_del(KV_SILENT);
+        crash = 1;
+    }
+    free(silent);
     const char *ls = cJSON_GetStringValue(cJSON_GetObjectItem(g, "loading"));
     char loading[48];
     snprintf(loading, sizeof(loading), "%s", ls ? ls : "");
@@ -410,7 +428,8 @@ static void guard_boot(void)
                 int n = (int)cJSON_GetNumberValue(cJSON_GetObjectItem(e, "n")) + 1;
                 cJSON_DeleteItemFromObject(e, "n");
                 cJSON_AddNumberToObject(e, "n", n);
-                fc_port_log(FC_LOG_WARN, "app %s was starting when the device crashed (%d in a row)", e->string, n);
+                fc_port_log(FC_LOG_WARN, "app %s was starting when the device crashed or was left without heap (%d in a row)",
+                            e->string, n);
                 if (n >= GUARD_CRASHES) {
                     cJSON_AddTrueToObject(e, "bad");
                     fc_port_log(FC_LOG_ERROR, "app %s: %s", e->string, GUARD_ERROR);
@@ -490,14 +509,32 @@ static void guard_forget(const char *name, int all)
     pthread_mutex_unlock(&s_guard_lock);
 }
 
-/* On the app's thread: once it has been up GUARD_SETTLE_MS, it is past the
- * start. */
+/* How many of the agent's statuses were accepted (fc_apps_status_ok), 0
+ * before the first: without an agent, an app is past its start on time
+ * alone. A long, not 64 bits: Zephyr's ESP32-S3 has no 8-byte atomics. */
+static long s_status_oks;
+
+void fc_apps_status_ok(void)
+{
+    __atomic_add_fetch(&s_status_oks, 1, __ATOMIC_RELAXED);
+}
+
+/* On the app's thread: once it has been up GUARD_SETTLE_MS, and the agent
+ * has had a status accepted since it started, it is past the start. An app
+ * that leaves the agent no heap to reach Flight Control stays in its start
+ * until the agent restarts the device (fc_apps_note_silent_restart). */
 static void guard_tick(app_t *a, int64_t now)
 {
-    if (!a->settled && now >= a->settle_at_ms) {
-        a->settled = 1;
-        guard_forget(a->name, 0);
+    if (a->settled || now < a->settle_at_ms) {
+        return;
     }
+    long oks = __atomic_load_n(&s_status_oks, __ATOMIC_RELAXED);
+    if (oks > 0 && oks == a->begun_oks) {
+        a->settle_at_ms = now + 5000; /* not yet: look again */
+        return;
+    }
+    a->settled = 1;
+    guard_forget(a->name, 0);
 }
 
 /* ---- runner -------------------------------------------------------------- */
@@ -1739,6 +1776,7 @@ static void app_start(app_t *a, const char *why)
     __atomic_store_n(&a->runner_done, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&a->stack_unused, -1L, __ATOMIC_RELAXED);
     a->stack_at_ms = 0;
+    a->begun_oks = __atomic_load_n(&s_status_oks, __ATOMIC_RELAXED);
     a->settle_at_ms = fc_apps_now_ms() + s_settle_ms;
     a->settled = 0;
     set_status(a, "Preparing", NULL);
@@ -1792,6 +1830,66 @@ static void app_stop(app_t *a)
     a->mem_wait = 0; /* after the join: its runner may set it until it ends */
     run_low_end(a);
     set_status(a, "Stopped", NULL);
+}
+
+/* The apps saved by a previous run, held at boot (fc_apps_hold_saved) and
+ * started by fc_apps_start_saved. Started before the network, their memory
+ * was taken while the heap was whole, before WiFi and the agent took
+ * theirs: the floor always passed, and an ESP32-C5 with two apps saved was
+ * left 7 KB, never reached Flight Control again and could not be given
+ * another spec (v3.14-rc10.1). Held, they start once a status is accepted,
+ * or after BOOT_APPS_WAIT_MS without one (a device that runs offline), with
+ * the heap at regime under the floor's check. */
+static int s_hold_saved;
+static int64_t s_init_ms;
+
+void fc_apps_hold_saved(int on)
+{
+    s_hold_saved = on;
+}
+
+int fc_apps_saved_due(void)
+{
+    if (!s_hold_saved) {
+        return 0;
+    }
+    return __atomic_load_n(&s_status_oks, __ATOMIC_RELAXED) > 0 || fc_apps_now_ms() - s_init_ms >= BOOT_APPS_WAIT_MS;
+}
+
+int fc_apps_start_saved(void)
+{
+    int n = 0;
+    s_hold_saved = 0;
+    for (int i = 0; i < MAX_APPS; i++) {
+        app_t *a = &s_apps[i];
+        if (a->used && a->start_pending == BOOT_WHY) {
+            app_start(a, BOOT_WHY);
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Before the agent restarts the device for want of an accepted status: if
+ * the heap is below the floor now, or went below it since the last app's
+ * instance, the restart counts against the apps still in their start
+ * (guard_boot), as a crash does. */
+void fc_apps_note_silent_restart(void)
+{
+    long free_now = fc_port_heap_free();
+    long low = -1;
+    pthread_mutex_lock(&s_run_lock);
+    if (s_run_stretch >= 0) {
+        low = fc_heap_low_peek(s_run_stretch, NULL);
+    } else {
+        low = s_run_low;
+    }
+    pthread_mutex_unlock(&s_run_lock);
+    if ((free_now >= 0 && free_now < s_heap_floor) || (low >= 0 && low < s_heap_floor)) {
+        fc_port_log(FC_LOG_WARN, "restart with the heap below the agent's floor (%ld KB free, %ld KB at the lowest): "
+                    "the apps starting are blamed", free_now / 1024, low / 1024);
+        fc_port_kv_set(KV_SILENT, "1", 1);
+    }
 }
 
 /* Starts made by fc_apps_apply wait for fc_apps_start_pending (the agent):
@@ -1998,6 +2096,7 @@ int fc_apps_init(void)
     if (s_inited) {
         return 0;
     }
+    s_init_ms = fc_apps_now_ms();
     static int sync_inited;
     if (!sync_inited) {
         for (int i = 0; i < MAX_APPS; i++) {
@@ -2077,8 +2176,15 @@ int fc_apps_init(void)
             set_status(a, "Error", ebuf);
             continue;
         }
+        if (s_hold_saved) {
+            /* Its memory is taken once the agent is up (fc_apps_start_saved). */
+            fc_port_log(FC_LOG_INFO, "saved app %s (%s): starts once Flight Control is reached", a->name, a->image);
+            a->start_pending = BOOT_WHY;
+            set_status(a, "Preparing", NULL);
+            continue;
+        }
         fc_port_log(FC_LOG_INFO, "starting saved app %s (%s)", a->name, a->image);
-        app_start(a, "boot");
+        app_start(a, BOOT_WHY);
     }
     cJSON_Delete(list);
     return 0;

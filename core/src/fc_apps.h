@@ -60,6 +60,21 @@ int fc_apps_heap_agent(char *text, size_t len);
  * else the agent starts (a metrics export) waits for room above it. */
 long fc_apps_heap_floor(void);
 
+/* The apps saved by a previous run: with fc_apps_hold_saved(1) before
+ * fc_apps_init they are loaded but not started ("Preparing") until
+ * fc_apps_start_saved, which the agent calls once fc_apps_saved_due says so:
+ * a status accepted (fc_apps_status_ok), or none for 3 minutes. Their memory
+ * is then taken with the heap at regime, under the floor's check. */
+void fc_apps_hold_saved(int on);
+int fc_apps_saved_due(void);
+int fc_apps_start_saved(void);
+/* Each accepted status: an app is past its start once one comes after it. */
+void fc_apps_status_ok(void);
+/* Before the agent restarts the device for want of an accepted status: with
+ * the heap below the floor, the restart counts against the apps still in
+ * their start, as a crash does (not run again after two in a row). */
+void fc_apps_note_silent_restart(void);
+
 /* MQTT for the apps (fc_mqtt.h): sets the client's hooks, so that messages
  * reach the apps' event queues and FC_EV_NET the apps granted "mqtt". The
  * client connects only when agent_idle(0) says so (no download, no spec being

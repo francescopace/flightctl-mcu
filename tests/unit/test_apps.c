@@ -1741,6 +1741,62 @@ static int bad(const char *name, const char *image, const char *env)
     return guard_is_bad(name, image, env);
 }
 
+/* Saved apps held at boot start once a status is accepted, or after a
+ * while without one: not with the heap of before the network. */
+static void test_saved_apps_held(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    fc_apps_hold_saved(1);
+    power_cycle();
+    CHECK(strncmp(state_of("app"), "Preparing", 9) == 0);
+    CHECK_INT(fc_apps_saved_due(), 0);
+    fc_apps_status_ok();
+    CHECK_INT(fc_apps_saved_due(), 1);
+    CHECK_INT(fc_apps_start_saved(), 1);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    CHECK_INT(fc_apps_saved_due(), 0); /* once */
+    /* No status at all (offline): after BOOT_APPS_WAIT_MS. */
+    s_status_oks = 0;
+    fc_apps_hold_saved(1);
+    power_cycle();
+    CHECK_INT(fc_apps_saved_due(), 0);
+    s_init_ms -= BOOT_APPS_WAIT_MS;
+    CHECK_INT(fc_apps_saved_due(), 1);
+    CHECK_INT(fc_apps_start_saved(), 1);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    remove_all();
+}
+
+/* A restart for want of an accepted status, with the heap below the floor,
+ * counts against the app in its start as a crash does; with heap, not. */
+static void test_guard_silent_restart(void)
+{
+    char err[200];
+    s_status_oks = 1; /* the last accepted status came before it started */
+    CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    stub_heap_free = 100 * 1024;
+    fc_apps_note_silent_restart(); /* heap enough: not blamed */
+    CHECK(stub_kv(KV_SILENT) == NULL);
+    stub_heap_free = 8 * 1024;
+    fc_apps_note_silent_restart();
+    stub_heap_free = -1;
+    CHECK(stub_kv(KV_SILENT) != NULL);
+    restart(0);
+    CHECK(stub_kv(KV_SILENT) == NULL);
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1"); /* once could be anything */
+    stub_heap_free = 8 * 1024;
+    fc_apps_note_silent_restart();
+    stub_heap_free = -1;
+    restart(0);
+    CHECK_STR(state_of("app"), "Error " GUARD_ERROR);
+    s_status_oks = 0;
+    remove_all();
+    CHECK(stub_kv(KV_GUARD) == NULL);
+}
+
 static void test_guard_crash_at_start(void)
 {
     /* An app the device crashes on as it starts, at every boot: after two
@@ -2104,6 +2160,8 @@ int main(void)
     RUN(test_not_loadable);
     RUN(test_reboot);
     RUN(test_saved_module_broken);
+    RUN(test_saved_apps_held);
+    RUN(test_guard_silent_restart);
     RUN(test_guard_crash_at_start);
     RUN(test_guard_other_restarts);
     RUN(test_guard_blames_the_module_loading);

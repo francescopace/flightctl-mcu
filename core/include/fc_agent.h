@@ -86,6 +86,11 @@ int fc_agent_busy(void);
  * download or connection can hold. */
 long fc_agent_status_age(void);
 
+/* Restarts the device for want of an accepted status: if the heap is below
+ * the apps' floor, the apps in their start are blamed as for a crash (not run
+ * again after two in a row). For a port's watchdog. */
+void fc_agent_restart_silent(void);
+
 /* Seconds since the agent's spec thread last took a rendered device: told
  * it was unchanged, or got one it could parse; -1 before it starts. A device
  * whose statuses go out but whose spec does not come in (no heap to parse

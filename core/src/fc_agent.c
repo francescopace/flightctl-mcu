@@ -200,6 +200,7 @@ typedef struct {
     unsigned long metrics_skipped;
     long export_low; /* the heap's low during the last export (fc_heap_low_end), -1 unknown */
     int exporting; /* under lock: an export runs (fc_agent_busy) */
+    int starting_saved; /* under lock: the status thread starts the saved apps (apply_begin waits) */
     int metrics_poke; /* under lock: METRICS_CONFIG changed, export now */
     int mqtt_poke;    /* spec thread: the broker's config or CA changed (fc_mqtt.h) */
     int mqtt_retry;   /* spec thread: the client could not start for want of memory */
@@ -848,7 +849,7 @@ static void apply_begin(agent_t *a)
     pthread_mutex_lock(&a->lock);
     a->applying = 1;
     struct timespec until = {.tv_sec = time(NULL) + TURN_WAIT_S};
-    while ((a->exporting || a->mqtt_connecting) && time(NULL) < until.tv_sec) {
+    while ((a->exporting || a->mqtt_connecting || a->starting_saved) && time(NULL) < until.tv_sec) {
         pthread_cond_timedwait(&a->status_sent, &a->lock, &until);
     }
     pthread_mutex_unlock(&a->lock);
@@ -1662,7 +1663,7 @@ static void *status_thread(void *arg)
 
         if (time(NULL) - last_ok > STATUS_STALL_REBOOT_S) {
             fc_port_log(FC_LOG_ERROR, "no status update accepted for %d s: restarting", STATUS_STALL_REBOOT_S);
-            fc_port_reboot();
+            fc_agent_restart_silent();
         }
         if (a->verifying && time(NULL) > a->verify_deadline) {
             fc_port_log(FC_LOG_ERROR, "firmware %s could not reach Flight Control: rolling back", a->os_image);
@@ -1685,6 +1686,7 @@ static void *status_thread(void *arg)
         if (ok) {
             last_ok = last_put;
             __atomic_store_n(&s_status_ok_mono, mono_s(), __ATOMIC_RELAXED);
+            fc_apps_status_ok();
             pthread_mutex_lock(&a->lock);
             a->status_once = 1;
             pthread_mutex_unlock(&a->lock);
@@ -1692,6 +1694,23 @@ static void *status_thread(void *arg)
             fc_port_log(FC_LOG_WARN, "status update failed, retrying");
             if (!decommissioning) {
                 reenroll_if_expired(a);
+            }
+        }
+        /* The saved apps, once Flight Control was reached (or after a while
+         * without it, fc_apps_saved_due): not beside a spec being applied,
+         * which waits for them (apply_begin). */
+        if (fc_apps_saved_due()) {
+            pthread_mutex_lock(&a->lock);
+            int go = !a->applying && !a->downloading && a->turn_depth == 0;
+            a->starting_saved = go;
+            pthread_mutex_unlock(&a->lock);
+            if (go) {
+                fc_apps_start_saved();
+                pthread_mutex_lock(&a->lock);
+                a->starting_saved = 0;
+                pthread_cond_broadcast(&a->status_sent);
+                pthread_mutex_unlock(&a->lock);
+                request_status(a);
             }
         }
     }
@@ -2281,10 +2300,18 @@ static void resume_firmware_update(agent_t *a)
 int fc_agent_apps_start(const fc_agent_config_t *cfg)
 {
     /* The TLS buffers before any app takes the heap: a port may start the
-     * apps before the network. */
+     * apps before the network. The saved apps are loaded now, and started
+     * once the agent is up (fc_apps_saved_due, status thread). */
     fc_tls_pool_init();
     fc_apps_set_hw(cfg->hw);
+    fc_apps_hold_saved(1);
     return fc_apps_init();
+}
+
+void fc_agent_restart_silent(void)
+{
+    fc_apps_note_silent_restart();
+    fc_port_reboot();
 }
 
 int fc_agent_run(const fc_agent_config_t *cfg)
@@ -2301,6 +2328,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     if (decommissioned_at_boot()) {
         /* Unmanaged: the apps go on (Unenroll), nothing talks to the server. */
         fc_agent_apps_start(cfg);
+        fc_apps_start_saved();
         for (;;) {
             sleep(3600);
         }

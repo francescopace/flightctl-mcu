@@ -121,6 +121,12 @@ long fc_apps_heap_floor(void)
     return 24 * 1024;
 }
 
+void fc_apps_hold_saved(int on) {}
+int fc_apps_saved_due(void) { return 0; }
+int fc_apps_start_saved(void) { return 0; }
+void fc_apps_status_ok(void) {}
+void fc_apps_note_silent_restart(void) {}
+
 void fc_apps_set_hw(const fc_hw_t *hw) {}
 void fc_apps_set_device(const char *name) {}
 
