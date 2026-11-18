@@ -59,16 +59,16 @@
 #define THREAD_STACK    (256 * 1024) /* a host: its threads cannot have less than 16 KB or so */
 #endif
 /* The heap an app's memory must leave the agent (fc_port_heap_free, once
- * the instance is made, the agent's connection closed): what it takes to
- * open its TLS connection again, send its status and parse and apply a
- * spec. Measured on the five ESP-IDF chips with v3.14-rc7, the block a
- * handshake holds left out (fc_heap_hold.h): 12 to 16 KB; 24 KB leaves a
- * margin over few samples. A metrics export (fc_agent.c) and MQTT
- * (mqtt_may_connect) take more, and wait for room above it. With too
- * little, on a C3 running CoreMark, a TLS handshake failed for want of
- * memory and the heap went down to 108 bytes. */
+ * the instance is made, the spec freed and the agent's connection closed):
+ * what it takes to open that connection again, send its status and go on.
+ * Measured on the five ESP-IDF chips with v3.14-rc10, the block a TLS
+ * handshake holds left out (fc_heap_hold.h): 33 to 37 KB after an app's
+ * install at regime; with 24 KB, the classic ESP32 running CoreMark failed
+ * two status updates and its heap went down to 4 KB. A metrics export
+ * (fc_agent.c) and MQTT (mqtt_may_connect) take more, and wait for room
+ * above it. */
 #ifndef FC_APP_HEAP_FLOOR
-#define FC_APP_HEAP_FLOOR (24 * 1024)
+#define FC_APP_HEAP_FLOOR (40 * 1024)
 #endif
 static long s_heap_floor = FC_APP_HEAP_FLOOR;
 /* What pthread_create takes beside the stack (ESP-IDF: the task's control

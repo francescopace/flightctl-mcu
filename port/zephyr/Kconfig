@@ -16,7 +16,7 @@ config FC_APP_HEAP_CHECK
 	depends on !COMMON_LIBC_MALLOC
 	help
 	  The floor of heap for the agent (docs/APPS.md, Size and limits): an
-	  app whose instance leaves less than 32 KB of the C heap is refused,
+	  app whose instance leaves less than 40 KB of the C heap is refused,
 	  and the largest .wasm follows what is free. With it the device also
 	  logs, and puts in customInfo heapAgentBytes, what the agent took of
 	  the heap after an app's instance. Off until the floor is measured

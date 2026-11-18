@@ -120,9 +120,10 @@
 #endif
 /* And the heap an export takes above what the agent keeps for itself
  * (fc_apps_heap_floor): its second TLS connection took 8 to 22 KB more than
- * the agent alone on the boards (v3.14-rc7). */
+ * the agent alone on the boards (v3.14-rc7); on a C3 running CoreMark an
+ * export and the agent went down to 52 KB below the heap left (v3.14-rc10). */
 #ifndef FC_METRICS_HEAP_ROOM
-#define FC_METRICS_HEAP_ROOM (16 * 1024)
+#define FC_METRICS_HEAP_ROOM (20 * 1024)
 #endif
 
 /* Decommissioning, as the Linux agent does it: the DeviceDecommissioning
@@ -2209,6 +2210,8 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     size_t stack = FC_AGENT_STACK_SIZE;
 #elif defined(ESP_PLATFORM) && !defined(__ZEPHYR__) && defined(__riscv)
     size_t stack = 8 * 1024; /* ESP-IDF on RISC-V (C3, C5, C6): 4.6 KB at most used, v3.14-rc7 */
+#elif defined(ESP_PLATFORM) && !defined(__ZEPHYR__)
+    size_t stack = 10 * 1024; /* ESP-IDF on Xtensa (ESP32, S3): 5 KB at most used, v3.14-rc7 */
 #elif defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
     size_t stack = 12 * 1024;
 #else

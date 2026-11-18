@@ -1812,7 +1812,7 @@ static void test_heap_floor(void)
     CHECK(stub_log_has("app h: instance made, 64 KB of heap left for the agent"));
     /* What the agent took after it, once the agent has been idle a while. */
     const char *note = "app h (install): 64 KB of heap free after its instance, 40 KB at the lowest while the agent "
-                       "went on (it took 24 KB; 40 KB at the heap's own lowest; floor 24 KB)";
+                       "went on (it took 24 KB; 40 KB at the heap's own lowest; floor 40 KB)";
     for (int i = 0; i < 400 && !stub_log_has(note); i++) {
         usleep(10 * 1000);
     }
@@ -1824,7 +1824,7 @@ static void test_heap_floor(void)
     stub_heap_free_next[0] = 1024 * 1024; /* when it is downloaded (wasm_limit): room enough */
     stub_heap_free_queued = 1;
     CHECK_INT(apply_one("h", "reg/app:v1", NULL, err, sizeof(err)), 0);
-    const char *want = "Error its memory would leave the agent 8 KB of heap, less than the 24 KB it needs";
+    const char *want = "Error its memory would leave the agent 8 KB of heap, less than the 40 KB it needs";
     CHECK_STR(wait_state_of("h", want, 3000), want);
     /* Not started again, though it would now fit. */
     stub_heap_free = -1;
