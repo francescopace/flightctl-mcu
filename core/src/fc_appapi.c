@@ -143,24 +143,38 @@ static int64_t fc_time_unix_ms(wasm_exec_env_t env)
     return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
+/* A step of the apps' waits: a tick of ESP-IDF's (FREERTOS_HZ 100). Shorter,
+ * its usleep spins, and on a chip with one core the agent's threads wait for
+ * it. */
+#define WAIT_STEP_MS 10
+
+int (*fc_appapi_usleep)(useconds_t us) = usleep;
+
+int fc_appapi_wait(wasm_exec_env_t env, app_t *a, uint32_t ms)
+{
+    uint32_t steps = ms / WAIT_STEP_MS + (ms % WAIT_STEP_MS != 0 || ms == 0);
+    for (uint32_t i = 0;; i++) {
+        if (fc_apps_stopping(a)) {
+            wasm_runtime_set_exception(wasm_runtime_get_module_inst(env), "stopped");
+            return 1;
+        }
+        if (i == steps) {
+            return 0;
+        }
+        int64_t t0 = fc_apps_now_us();
+        fc_appapi_usleep(WAIT_STEP_MS * 1000);
+        if (fc_apps_native_time(env, a, t0)) {
+            return 1; /* past APP_CALL_MS: the app traps */
+        }
+    }
+}
+
 static int32_t fc_sleep_ms(wasm_exec_env_t env, int32_t ms)
 {
-    app_t *a = app_of(env);
-    int64_t t0 = fc_apps_now_us();
     if (ms < 0) {
         return FC_HW_EINVAL;
     }
-    if (ms > APP_WAIT_MS) {
-        ms = APP_WAIT_MS;
-    }
-    for (int32_t left = ms; left > 0 && !fc_apps_stopping(a); left -= 10) {
-        usleep((useconds_t)(left < 10 ? left : 10) * 1000);
-    }
-    if (fc_apps_stopping(a)) {
-        wasm_runtime_set_exception(wasm_runtime_get_module_inst(env), "stopped");
-        return 0;
-    }
-    fc_apps_native_time(env, a, t0); /* past APP_CALL_MS: the app traps */
+    fc_appapi_wait(env, app_of(env), (uint32_t)(ms > APP_WAIT_MS ? APP_WAIT_MS : ms));
     return 0;
 }
 

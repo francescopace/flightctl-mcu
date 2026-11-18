@@ -40,6 +40,7 @@ int stub_ec_key(struct mbedtls_pk_context *pk);
 void stub_reset(void);
 /* Whether the log since the start has this whole line (the last 4 KB). */
 int stub_log_has(const char *line);
+void stub_log_clear(void);
 int stub_log_count(const char *line);
 const char *stub_kv(const char *key);     /* NULL if missing */
 const char *stub_file(const char *path);  /* NULL if never written */

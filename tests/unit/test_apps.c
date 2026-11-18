@@ -1064,12 +1064,46 @@ static void test_fc_grants(void)
     remove_all();
 }
 
+/* The apps' waits (fc_appapi_wait): how many, and the shortest. */
+static int s_ard_sleeps;
+static useconds_t s_ard_sleep_min;
+
+static int count_usleep(useconds_t us)
+{
+    pthread_mutex_lock(&f_lock);
+    s_ard_sleeps++;
+    s_ard_sleep_min = s_ard_sleep_min == 0 || us < s_ard_sleep_min ? us : s_ard_sleep_min;
+    pthread_mutex_unlock(&f_lock);
+    return usleep(us);
+}
+
+static int ard_sleeps(useconds_t *min)
+{
+    pthread_mutex_lock(&f_lock);
+    int n = s_ard_sleeps;
+    *min = s_ard_sleep_min;
+    s_ard_sleeps = 0;
+    s_ard_sleep_min = 0;
+    pthread_mutex_unlock(&f_lock);
+    return n;
+}
+
 static void test_fc_limits(void)
 {
     char err[160];
+    /* Stopped at its second, a step of 10 ms at a time: at most 101 waits. */
+    useconds_t min;
+    fc_appapi_usleep = count_usleep;
+    ard_sleeps(&min);
     CHECK_INT(apply_one("s", "reg/t_sleep", NULL, err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("s", "Error Exception: a call spent more than 1 s in the device's functions", 3000),
               "Error Exception: a call spent more than 1 s in the device's functions");
+    int n = ard_sleeps(&min);
+    if (n < 1 || n > 101 || min != 10000) {
+        fprintf(stderr, "  t_sleep: %d waits, the shortest %u us\n", n, (unsigned)min);
+        t_failures++;
+    }
+    fc_appapi_usleep = usleep;
     CHECK_INT(apply_one("s", "reg/t_oob", NULL, err, sizeof(err)), 0);
     const char *st = wait_state_of("s", "", 0);
     for (int i = 0; i < 300 && strncmp(st, "Error", 5) != 0; i++) {
@@ -1601,6 +1635,7 @@ static void test_arduino(void)
 {
     char err[160];
     const char *env = "{\"FC_ENTRY\": \"run\", \"FC_ALLOW\": \"relay1 led0\"}";
+    stub_log_clear();
     CHECK_INT(apply_one("a", "reg/t_arduino", env, err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("a", "Completed run() returned 63", 30000), "Completed run() returned 63");
     CHECK(stub_log_has("app a: greeting: Hello from Flight Control"));
@@ -1624,13 +1659,31 @@ static void test_arduino(void)
     remove_all();
     CHECK(fc_apps_now_ms() - t0 < STOP_MS);
     CHECK_INT(gpio_level(5), 0);
+    /* delay() waits a tick at a time, never less, so that the agent's
+     * threads run on a chip with one core (ESP-IDF's usleep spins below a
+     * tick): delay(0) and delay(1) once each, delay(105) 11 times. */
+    useconds_t min;
+    fc_appapi_usleep = count_usleep;
+    ard_sleeps(&min);
+    CHECK_INT(apply_one("a", "reg/t_arduino", "{\"FC_ENTRY\": \"delays\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("a", "Completed delays() returned", 30000), "Completed delays() returned");
+    CHECK_INT(ard_sleeps(&min), 13);
+    CHECK_INT((int)min, 10000);
+    remove_all();
     /* In an app with tick(), a delay counts against the call's second in the
-     * device's functions: 150 ms is fine, 1500 stops the app. */
+     * device's functions: 150 ms is fine, 1500 stops the app, at its second:
+     * 15 waits for each of the first three, at most 101 for the fourth. */
     CHECK_INT(apply_one("a", "reg/t_arduinotick", NULL, err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("a", "Running waited 3", 30000), "Running waited 3");
     const char *want = "Error Exception: a call spent more than 1 s in the device's functions";
     CHECK_STR(wait_state_of("a", want, 30000), want);
+    int n = ard_sleeps(&min);
+    if (n < 45 + 1 || n > 45 + 101) {
+        fprintf(stderr, "  t_arduinotick: %d waits in delay()\n", n);
+        t_failures++;
+    }
     remove_all();
+    fc_appapi_usleep = usleep;
 }
 
 /* The blink of wasm3-arduino, its four builds as published: each lights led0

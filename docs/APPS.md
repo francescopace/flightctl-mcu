@@ -277,7 +277,7 @@ The model is the C that emlearn writes ([model.h](../wasm-apps/tinyml/model.h)),
 |---|---|
 | `pinMode(pin, mode)`, `digitalWrite(pin, value)` | pin n is the n-th name of `FC_ALLOW`, counted from 0: a GPIO opens as `fc_gpio_open` opens it, an LED lights white. One app holds a name at a time, and an output goes back to its safe level when the app stops |
 | `getPinLED()` | the pin of `led0` in `FC_ALLOW` |
-| `delay(ms)` | any length; removing or updating the app stops it within 10 ms |
+| `delay(ms)` | any length, in steps of 10 ms (`delay(0)` and `delay(1)` wait 10 ms), each one letting the device's other threads run; removing or updating the app stops it within 10 ms |
 | `millis()` | milliseconds since the app started |
 | `print(s, len)` | the app's log, a line at a time, as `printf` |
 | `getGreeting(buf, len)` | `Hello from Flight Control` |

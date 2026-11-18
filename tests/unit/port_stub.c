@@ -326,6 +326,16 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
     }
 }
 
+/* Forgets the log, for a test that counts its lines: full, it starts again
+ * from nothing, and a count could miss the lines before. */
+void stub_log_clear(void)
+{
+    pthread_mutex_lock(&s_log_lock);
+    s_log_len = 0;
+    s_log[0] = 0;
+    pthread_mutex_unlock(&s_log_lock);
+}
+
 /* How many of the log's last lines are this one. */
 int stub_log_count(const char *line)
 {

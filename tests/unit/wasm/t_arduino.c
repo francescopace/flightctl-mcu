@@ -1,8 +1,9 @@
 /* The module "arduino" (core/src/fc_arduino.c), as wasm3-arduino's examples
  * import it, run once through FC_ENTRY. With FC_ALLOW "relay1 led0": pin 0
  * is relay1 (a GPIO), pin 1 led0.
- *   run()   returns a bit per check that holds (63 when all do)
- *   hold()  drives relay1 high and waits in delay() until it is stopped */
+ *   run()     returns a bit per check that holds (63 when all do)
+ *   hold()    drives relay1 high and waits in delay() until it is stopped
+ *   delays()  delay(0), delay(1), delay(105): 13 waits of a tick */
 #include <stdint.h>
 
 #define A(n) __attribute__((import_module("arduino"), import_name(#n)))
@@ -58,4 +59,11 @@ __attribute__((export_name("hold"))) void hold(void)
     for (;;) {
         delay(1000);
     }
+}
+
+__attribute__((export_name("delays"))) void delays(void)
+{
+    delay(0);
+    delay(1);
+    delay(105);
 }

@@ -6,6 +6,7 @@
 
 #include <pthread.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include "cJSON.h"
 #include "fc_board.h"
@@ -180,6 +181,14 @@ int32_t fc_appapi_gpio_write(wasm_exec_env_t env, int32_t h, int32_t level);
 int32_t fc_appapi_led_open(wasm_exec_env_t env, const char *name);
 int32_t fc_appapi_led_rgb(wasm_exec_env_t env, int32_t h, int32_t r, int32_t g, int32_t b);
 int32_t fc_appapi_close(wasm_exec_env_t env, int32_t h);
+
+/* Waits ms in steps of 10 ms, at least one, each letting the other threads
+ * run: fc_sleep_ms and arduino's delay. In a call with limits each step
+ * counts against the call's second at once. 0, or 1: the app is stopping or
+ * past its second (the exception is set). The steps sleep with
+ * fc_appapi_usleep: usleep, or a counter in the unit tests. */
+int fc_appapi_wait(wasm_exec_env_t env, app_t *a, uint32_t ms);
+extern int (*fc_appapi_usleep)(useconds_t us);
 
 /* fc_arduino.c: the module "arduino", for wasm3-arduino's examples. */
 NativeSymbol *fc_arduino_natives(int *count);

@@ -4,7 +4,8 @@
  * that their blink runs as it is published (docs/APPS.md).
  *
  *   millis()                  ms since the app started
- *   delay(ms)                 any length; removing or updating the app stops it
+ *   delay(ms)                 any length, in steps of 10 ms; removing or
+ *                             updating the app stops it
  *   pinMode(pin, mode)        INPUT 0, OUTPUT 1, INPUT_PULLUP 2
  *   digitalWrite(pin, value)  LOW 0, HIGH 1
  *   getPinLED()               the pin of led0
@@ -27,7 +28,6 @@
  */
 #include <stdint.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "fc_apps_int.h"
 #include "fc_port.h"
@@ -179,21 +179,15 @@ static uint32_t ard_millis(wasm_exec_env_t env)
     return (uint32_t)(fc_apps_now_ms() - (a ? a->started_ms : 0));
 }
 
+/* In steps of a tick, at least one (fc_appapi_wait): delay(1) or delay(0) in
+ * a loop still lets the other threads run, and a long delay in a call with
+ * limits stops at the call's second. */
 static void ard_delay(wasm_exec_env_t env, uint32_t ms)
 {
     app_t *a = wasm_runtime_get_user_data(env);
-    if (a == NULL) {
-        return;
+    if (a != NULL) {
+        fc_appapi_wait(env, a, ms);
     }
-    int64_t t0 = fc_apps_now_us();
-    for (int64_t left = ms; left > 0 && !fc_apps_stopping(a); left -= 10) {
-        usleep((useconds_t)(left < 10 ? left : 10) * 1000);
-    }
-    if (fc_apps_stopping(a)) {
-        wasm_runtime_set_exception(wasm_runtime_get_module_inst(env), "stopped");
-        return;
-    }
-    fc_apps_native_time(env, a, t0); /* in a call with limits, past its second the app traps */
 }
 
 /* Into the app's line (a->out, as printf's): logged at each newline. */
