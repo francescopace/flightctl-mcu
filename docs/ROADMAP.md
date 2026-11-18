@@ -6,9 +6,7 @@ What is left before 1.0 and after it. What the agent does today is in the [READM
 
 Verification:
 
-- [ ] **Zephyr on ESP32-S3 without PSRAM**
-  - Run CoreMark from internal RAM. The current build needs about 20 KB more C heap. [CoreMark](RESULTS.md#coremark)
-  - When an S3 manufactured without PSRAM is available, install z30 or later over USB and verify the firmware on that board. [Zephyr on ESP32-S3](RESULTS.md#zephyr-on-the-esp32-s3)
+- [ ] **CoreMark on Zephyr ESP32-S3** — Run the benchmark from internal RAM with PSRAM disabled. The current build needs about 20 KB more C heap. [CoreMark](RESULTS.md#coremark)
 
 What an app can do and hold:
 
