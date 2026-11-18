@@ -7,10 +7,12 @@ import hashlib
 import importlib.util
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -269,8 +271,17 @@ spec:
 class SbomTest(unittest.TestCase):
     DIGEST = "sha256:" + "ab" * 32
 
+    @staticmethod
+    def app_header(version):
+        # ESP image and first segment headers, followed by esp_app_desc_t.
+        header = bytearray(32 + 256)
+        header[0] = 0xe9
+        header[32:36] = bytes.fromhex("3254cdab")
+        header[144:144 + len(version)] = version.encode("ascii")
+        return header
+
     def test_root_is_the_digest_flight_control_looks_up(self):
-        doc = sbom.make_sbom("reg:5443/flightctl-mcu/fw:v9", self.DIGEST, ["esp32c3"])
+        doc = sbom.make_sbom("reg:5443/flightctl-mcu/fw:v9", self.DIGEST)
         root = doc["metadata"]["component"]
         # Flight Control finds the package URL that holds the device's image digest.
         self.assertIn("ab" * 32, root["purl"])
@@ -279,7 +290,10 @@ class SbomTest(unittest.TestCase):
         self.assertEqual(len(doc["dependencies"][0]["dependsOn"]), len(doc["components"]))
 
     def test_esp_idf_components_from_the_lock_file(self):
-        doc = sbom.make_sbom("reg/fw:v9", self.DIGEST, ["esp32c3", "esp32s3"])
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "app.bin"
+            image.write_bytes(self.app_header("v6.1.1"))
+            doc = sbom.make_sbom("reg/fw:v9", self.DIGEST, [f"esp32c3={image}", f"esp32s3-r8={image}"])
         by_name = {}
         for c in doc["components"]:
             by_name.setdefault(c["name"], []).append(c)
@@ -290,6 +304,33 @@ class SbomTest(unittest.TestCase):
             self.assertIn(name, by_name)
         refs = [c["bom-ref"] for c in doc["components"]]
         self.assertEqual(len(refs), len(set(refs)))
+
+    def test_rejects_invalid_app_descriptor(self):
+        header = self.app_header("v6.1.1")
+        for invalid in (header[:145], bytes(len(header)), self.app_header("")):
+            with self.subTest(header=invalid), self.assertRaisesRegex(SystemExit, "app.bin"):
+                sbom.image_idf_version(invalid, "app.bin")
+
+    def test_fw_push_checks_all_platforms_before_contacting_registry(self):
+        with patch.dict(sys.modules, sbom=sbom):
+            push = load("fw_push", "tools/fw-push.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for chip, version in (("esp32s3", "v6.1.1"), ("esp32c3", "v6.0.3")):
+                build = root / "port" / "espidf" / f"build-{chip}"
+                build.mkdir(parents=True)
+                (build / "flightctl_mcu_fw.bin").write_bytes(self.app_header(version))
+            push.__file__ = str(root / "tools" / "fw-push.py")
+            cases = [
+                ("esp32c3", "ESP-IDF 6.0.3, lock file specifies 6.1.1"),
+                (f"new_board={build}/flightctl_mcu_fw.bin", "Add it to ZEPHYR_BOARD_MODULES"),
+            ]
+            for platform, error in cases:
+                with self.subTest(platform=platform), patch.object(push.registry_client, "base_url") as registry:
+                    with patch.object(sys, "argv", ["fw-push.py", "reg/fw:v1", "esp32s3", platform]):
+                        with self.assertRaisesRegex(SystemExit, error):
+                            push.main()
+                    registry.assert_not_called()
 
     @unittest.skipUnless(os.path.isdir(os.path.join(ROOT, "third_party", "zephyr-ws", "zephyr")),
                          "no Zephyr tree (third_party/fetch-zephyr.sh)")

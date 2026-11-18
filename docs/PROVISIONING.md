@@ -18,7 +18,7 @@ tools/provision.py --image port/espidf/build-esp32c3-secure/merged-binary.bin --
 BATCH=2026-11-a EXPIRATION=30d tools/enrollment.sh .secrets/batch-2026-11-a
 ```
 
-A leaked enrollment certificate lets anyone create enrollment requests until it expires: Flight Control 1.4.0 cannot revoke one ([limitation 8](FLIGHTCTL-LIMITATIONS.md#8-an-enrollment-certificate-cannot-be-revoked)). A certificate per batch with a short lifetime limits that; approving devices from an allow list (`tools/auto-approve`) decides who actually gets in. The lifetime must cover the factory window and the longest a device may stay offline before it enrolls, or enrolls again after its management certificate expired.
+A leaked enrollment certificate lets anyone create enrollment requests until it expires: Flight Control 1.4.0 cannot revoke one ([limitation 2](FLIGHTCTL-LIMITATIONS.md#2-an-enrollment-certificate-cannot-be-revoked)). A certificate per batch with a short lifetime limits that; approving devices from an allow list (`tools/auto-approve`) decides who actually gets in. The lifetime must cover the factory window and the longest a device may stay offline before it enrolls, or enrolls again after its management certificate expired.
 
 ![An enrollment request in Flight Control's UI, waiting for approval](img/enrollment-pending.png)
 <img src="img/enrollment-approve.png" alt="Approving the request, with the device's labels" width="420">

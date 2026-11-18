@@ -145,7 +145,7 @@ BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 port/zephyr/build.s
 ERASE=1 port/zephyr/flash-esp32.sh /dev/cu.usbmodemXXXX .secrets
 ```
 
-The fetch scripts bring Espressif's HAL module (164 MB), the binary WiFi libraries it needs (under Espressif's licence) and the Xtensa toolchain. The build is always with MCUboot, which is how Zephyr starts this chip when it is to be updated; `flash-esp32.sh` writes MCUboot, the signed application and the credentials with esptool, through the board's UART port, where the console also is (115200). Nothing burns eFuses: MCUboot checks the image's signature in software, and Secure Boot and flash encryption stay off.
+The fetch scripts bring Espressif's HAL module (164 MB), the binary WiFi libraries it needs (under Espressif's licence) and the Xtensa toolchain. The agent firmware uses MCUboot for updates; `flash-esp32.sh` writes MCUboot, the signed application and the credentials with esptool, through the board's UART port, where the console also is (115200). Nothing burns eFuses: MCUboot checks the image's signature in software, and Secure Boot and flash encryption stay off.
 
 On the board it enrolls, runs a signed app, takes its firmware whole or as a delta through MCUboot and goes back from a broken one, downloads over HTTP/2, and answers the UI's Logs tab; what was tried, with figures, is in [RESULTS.md](RESULTS.md#zephyr-on-the-esp32-s3).
 
@@ -168,7 +168,7 @@ A board must hold the public half of the key the release is signed with; one pro
 
 Field provisioning ([PROVISIONING.md](PROVISIONING.md#on-zephyr)) needs, on this board: Zephyr's STA+AP usage mode (`CONFIG_WIFI_USAGE_MODE_STA_AP`; with `ESP32_WIFI_AP_STA_MODE` alone the network manager keeps one interface, the access point's address and DHCP server land on the station's, and installers get none), 4 KB of stack for the DHCP server's thread, and no ICMP probe before a lease (with it, the board restarted a second after a client joined).
 
-Not tried: Secure Boot or flash encryption under Zephyr ([SECURITY.md](SECURITY.md#zephyr)). CI builds it on every push, with the Xtensa toolchain; no emulator runs it.
+CI builds the MCUboot agent with the Xtensa toolchain. A separate Simple Boot image runs the WASM GPIO test on the emulated ESP32-S3. Secure Boot and flash encryption remain unverified on Zephyr. [GPIO test results](RESULTS.md#zephyr-esp32-s3-hardware-names) · [Zephyr security](SECURITY.md#zephyr)
 
 ## Things to know about native_sim
 

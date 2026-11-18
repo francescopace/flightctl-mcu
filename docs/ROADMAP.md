@@ -2,17 +2,9 @@
 
 What is left before 1.0 and after it. What the agent does today is in the [README](../README.md#what-maps-to-what), and how it was verified in [RESULTS.md](RESULTS.md).
 
-## v1.0 (In progress)
+## v1.0.0 (In progress)
 
-### Blocked on Flight Control
-
-Each needs one of the [limitations in FLIGHTCTL-LIMITATIONS.md](FLIGHTCTL-LIMITATIONS.md) lifted:
-
-- [ ] Battery-powered devices: deep sleep, status only on wake-up, no long-poll (limitation 3).
-- [ ] The same device name after re-enrollment: a device whose certificate expired while offline enrolls again as a new device (limitation 13).
-- [ ] The device key in the Digital Signature peripheral on the ESP32 chips that have no ECDSA one. Written and switched off (limitation 9).
-- [ ] The firmware from the software catalog, as apps already can (limitation 11).
-- [ ] Revoking a batch's enrollment certificate from `tools/enrollment.sh`. Flight Control's main branch has the API (limitation 8); it waits for a release.
+The MCU agent is implemented and usable today with Flight Control 1.4.0. Before the official 1.0.0 release, we need Flight Control to address five upstream limitations. We will open issues or submit pull requests for the outstanding changes. [Five upstream blockers for agent 1.0.0](FLIGHTCTL-LIMITATIONS.md#upstream-blockers-for-agent-100)
 
 ### Blocked on hardware availability
 
@@ -20,9 +12,7 @@ Each needs one of the [limitations in FLIGHTCTL-LIMITATIONS.md](FLIGHTCTL-LIMITA
 - [ ] **Raspberry Pi Pico 2 W with headers (RP2350, SC1634, ordered)** — Enroll the Zephyr agent over WiFi, run a signed WASM app and record the minimum free heap with the app active.
 - [ ] **Nordic nRF7002-DK (ordered)** — Run the Zephyr agent on the nRF5340 and enroll over the nRF7002 WiFi connection. Verify status updates, deploy a signed WASM app and measure the minimum free heap while the app runs.
 
-## v2.0 (Planned)
-
-Proposed for 2.0, from what similar products offer ([COMPARISON.md](COMPARISON.md)):
+## v2.0.0 (Planned)
 
 - [ ] Let operators enable automatic coredump uploads after reboot to an external destination of their choice, such as an S3-compatible bucket.
 - [ ] Verify enrollment and status over LTE-M or NB-IoT using an nRF91 or an external cellular modem with a supported host board and network subscription. Measure traffic and power with the spec long-poll active.
@@ -31,3 +21,4 @@ Proposed for 2.0, from what similar products offer ([COMPARISON.md](COMPARISON.m
 - [ ] Verify flash encryption separately on a Zephyr target that supports it. Cover the device's stored credentials and application data. [Current Zephyr protections](SECURITY.md#zephyr)
 - [ ] Apps against [Toit](https://toit.io) and against WAMR's AOT mode, on the same ESP32-C6 ([the benchmarks](COMPARISON.md#tied-to-one-chip-vendor)).
 - [ ] A soak test: a fleet of boards left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); not yet run.
+- [ ] Open a Flight Control issue to agree on a firmware artifact type and discuss extending its image builder to MCU firmware and apps. A firmware build could publish a signed multi-chip index, a delta from the previous release and an SBOM, as `tools/fw-push.py` does today. [Firmware SBOM](SBOM.md)

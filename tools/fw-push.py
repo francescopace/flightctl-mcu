@@ -45,11 +45,14 @@ import gzip
 import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
 import urllib.request
+
+import sbom
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "registry"))
 import registry_client  # noqa: E402
@@ -155,15 +158,11 @@ def make_delta(py, old, new):
             return f.read()
 
 
-def push_sbom(base, host, repo, tag, idigest, isize, entries, empty, root):
+def push_sbom(base, host, repo, tag, idigest, isize, inventory, empty, root):
     """The release's SBOM (tools/sbom.py): in build/sbom/, in the registry as an
     artifact that refers to the index (OCI 1.1 subject), and in Trustify when
     $TRUSTIFY_URL is set."""
-    sys.path.insert(0, os.path.join(root, "tools"))
-    import sbom
-    esp_idf = [e["platform"]["architecture"] for e in entries if e["platform"]["os"] == "esp-idf"]
-    zephyr = [e["platform"]["architecture"] for e in entries if e["platform"]["os"] == "zephyr"]
-    doc = sbom.make_sbom(f"{host}/{repo}:{tag}", idigest, esp_idf, zephyr)
+    doc = sbom.sbom_document(f"{host}/{repo}:{tag}", idigest, *inventory)
     data = (json.dumps(doc, indent=2) + "\n").encode()
     os.makedirs(f"{root}/build/sbom", exist_ok=True)
     path = f"{root}/build/sbom/{repo.rsplit('/', 1)[-1]}-{tag}.cdx.json"
@@ -246,7 +245,6 @@ def main():
     ref = args[0]
     host, rest = ref.split("/", 1)
     repo, tag = rest.rsplit(":", 1)
-    base = registry_client.base_url(host)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     fw_dir = f"{root}/port/espidf"
     chips = args[1:] or sorted(
@@ -256,15 +254,31 @@ def main():
     if not chips:
         sys.exit("no firmware builds found")
 
+    # Validate the complete inventory before the first registry request. Keep
+    # the bytes checked here so a concurrent rebuild cannot change the upload.
+    images, esp_idf, zephyr = [], [], []
+    for spec in chips:
+        chip, explicit_image, path = spec.partition("=")
+        if not explicit_image:
+            path = f"{fw_dir}/build-{chip}{variant}/flightctl_mcu_fw.bin"
+        try:
+            data = Path(path).read_bytes()
+        except OSError as e:
+            sys.exit(str(e))
+        if explicit_image:
+            zephyr.append(chip)
+            images.append((chip, "zephyr", path, data))
+        else:
+            esp_idf.append((chip, sbom.image_idf_version(data, path)))
+            images.append((chip, "esp-idf", path, data))
+    inventory = sbom.release_inventory(esp_idf, zephyr)
+
+    base = registry_client.base_url(host)
     empty = push_blob(base, repo, EMPTY)
     py = detools_python(root) if delta_from else None
     entries, elfs = [], []
-    for chip in chips:
-        path, platform_os, layer_type = f"{fw_dir}/build-{chip}{variant}/flightctl_mcu_fw.bin", "esp-idf", LAYER_TYPE
-        if "=" in chip:
-            chip, path = chip.split("=", 1)
-            platform_os, layer_type = "zephyr", ZEPHYR_LAYER_TYPE
-        data = open(path, "rb").read()
+    for chip, platform_os, path, data in images:
+        layer_type = LAYER_TYPE if platform_os == "esp-idf" else ZEPHYR_LAYER_TYPE
         digest = push_blob(base, repo, data)
         elf = "zephyr.elf" if platform_os == "zephyr" else "flightctl_mcu_fw.elf"
         elfs.append((chip, os.path.join(os.path.dirname(path), elf), digest))
@@ -309,7 +323,7 @@ def main():
              "manifests": entries, "annotations": {"org.opencontainers.image.version": tag}}
     idigest, isize = push_manifest(base, repo, tag, INDEX_TYPE, index)
     print(f"{ref}@{idigest}")
-    push_sbom(base, host, repo, tag, idigest, isize, entries, empty, root)
+    push_sbom(base, host, repo, tag, idigest, isize, inventory, empty, root)
     key = os.environ.get("SIGNING_KEY") or f"{root}/.secrets/signing.key"
     if not os.environ.get("NO_SIGN") and os.path.exists(key):
         subprocess.run([f"{root}/tools/signing/sign.py", "--key", key, f"{host}/{repo}@{idigest}"], check=True)

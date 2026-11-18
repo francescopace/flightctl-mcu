@@ -73,7 +73,7 @@ From then on TLS signs through the peripheral. The key is of the same kind as on
 
 ### Other chips: the DS peripheral, off for now
 
-The S3, C3 and C6 have a Digital Signature peripheral instead, which signs only with RSA, and Flight Control cannot enroll a device with an RSA key ([limitation 9](FLIGHTCTL-LIMITATIONS.md#9-a-device-with-an-rsa-key-cannot-enroll)). Until Flight Control fixes it these chips keep the device key in the encrypted store, and `CONFIG_FC_DEVICE_KEY_DS` stays off. With a CA that signs RSA keys it can be turned on. Then, on the first boot, the agent:
+The S3, C3 and C6 have a Digital Signature peripheral instead, which signs only with RSA, and Flight Control cannot enroll a device with an RSA key ([limitation 3](FLIGHTCTL-LIMITATIONS.md#3-a-device-with-an-rsa-key-cannot-enroll)). Until Flight Control fixes it these chips keep the device key in the encrypted store, and `CONFIG_FC_DEVICE_KEY_DS` stays off. With a CA that signs RSA keys it can be turned on. Then, on the first boot, the agent:
 
 1. generates an RSA-3072 key (about 3 s on the C3) and the CSR with it;
 2. burns a random HMAC key into a free eFuse key block, with the DS purpose: software cannot read that block, the DS peripheral can use it;
@@ -219,7 +219,7 @@ What the Zephyr builds have, on any board started by MCUboot:
 
 What they do not have:
 
-- **The device key, the credentials and a network given in the field are in the storage partitions in clear, and the flash is not encrypted**: whoever holds the board can read them over USB. On an Espressif chip, a device that must be protected runs the ESP-IDF firmware (its `secure` variant, above). On Zephyr the protection comes with the chips that have TF-M (below); it is planned for after 1.0 ([ROADMAP.md](ROADMAP.md#v20-planned)).
+- **The device key, the credentials and a network given in the field are in the storage partitions in clear, and the flash is not encrypted**: whoever holds the board can read them over USB. On an Espressif chip, a device that must be protected runs the ESP-IDF firmware (its `secure` variant, above). On Zephyr the protection comes with the chips that have TF-M (below); it is planned for after 1.0 ([ROADMAP.md](ROADMAP.md#v200-planned)).
   - Flash encryption and Secure Boot on the ESP32-S3 would take Espressif's own port of MCUboot, built apart from sysbuild with a flash layout matching the application's: the MCUboot that sysbuild builds has no code to turn them on. Zephyr's flash driver already reads and writes an encrypted flash (`CONFIG_ESP_FLASH_ENCRYPTION`), so the agent would not change. Nothing of it is built yet; on the ESP32-S3 the ESP-IDF firmware's `secure` variant has all of it today.
 - The path Zephyr offers is a chip with TrustZone-M and TF-M (the RP2350 of the Pico 2 W, Nordic's nRF54L, ST's STM32U5): the device key as a PSA key in TF-M's protected storage, which the core already uses through PSA, and a secure boot of the chip's own. Not tried.
 

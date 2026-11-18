@@ -14,8 +14,8 @@ holds that package URL and shows the advisories Trustify matches against the
 components' package URLs and CPEs. --upload sends it to Trustify the way
 Flight Control's own client does (POST /api/v2/sbom, label sha256~<digest>).
 
-Versions come from where they are set: cJSON's header, the fetch scripts
-(WAMR, Zephyr), the ESP-IDF lock files (port/espidf/dependencies.lock.<chip>),
+Versions come from cJSON's header, the fetch scripts, the ESP-IDF application
+descriptors and their matching lock files (port/espidf/dependencies.lock.<chip>),
 and the Zephyr tree's own files (third_party/zephyr-ws). The mbedTLS that comes
 with an ESP-IDF release is not in this repository: MBEDTLS_IN_ESP_IDF names it.
 """
@@ -100,16 +100,30 @@ def core_components():
     ]
 
 
-def esp_idf_components(chips):
+def image_idf_version(header, path):
+    # The first segment starts at byte 32 with esp_app_desc_t. Its idf_ver
+    # is a 32-byte string at offset 112 in the descriptor, also on signed apps.
+    if len(header) < 176 or header[0] != 0xe9 or header[32:36] != bytes.fromhex("3254cdab"):
+        sys.exit(f"{path}: missing ESP-IDF application descriptor")
+    version = header[144:176].split(b"\0", 1)[0]
+    if not re.fullmatch(rb"v?[0-9][0-9A-Za-z.+_-]*", version):
+        sys.exit(f"{path}: invalid ESP-IDF version in application descriptor")
+    return version.decode("ascii").removeprefix("v")
+
+
+def esp_idf_components(images):
     out, seen = [], set()
-    for chip in chips:
+    for chip, idf in images:
         lock = read(f"port/espidf/dependencies.lock.{chip.split('-')[0]}")  # esp32s3-r8: esp32s3
         deps = {}
         for name, version in re.findall(r"^  (\S+):\n(?:    .*\n)*?    version: (\S+)", lock, re.M):
             deps[name] = version
-        idf = deps.get("idf")
-        if idf is None:
-            sys.exit(f"dependencies.lock.{chip}: no idf version")
+        locked_idf = deps.get("idf")
+        if not locked_idf:
+            sys.exit(f"dependencies.lock.{chip.split('-')[0]}: no idf version")
+        if idf != locked_idf:
+            sys.exit(f"{chip}: firmware uses ESP-IDF {idf}, lock file specifies {locked_idf}. "
+                     "Rebuild the image or use the checkout that built it.")
         if ("idf", idf) not in seen:
             seen.add(("idf", idf))
             out.append(component("esp-idf", idf, f"pkg:github/espressif/esp-idf@v{idf}", "framework",
@@ -179,31 +193,43 @@ def zephyr_module(name, revs):
 
 
 def zephyr_components(platforms):
-    v = zephyr_version("third_party/zephyr-ws/zephyr/VERSION")
-    out = [component("zephyr", v, f"pkg:github/zephyrproject-rtos/zephyr@v{v}", "operating-system",
-                     cpe_id=cpe("zephyrproject", "zephyr", v, part="o"), license_id="Apache-2.0")]
-    revs = west_revisions()
     modules = list(ZEPHYR_COMMON)
     for p in platforms:
         if p not in ZEPHYR_BOARD_MODULES:
             sys.exit(f"which Zephyr modules does {p} take? Add it to ZEPHYR_BOARD_MODULES in {__file__}")
         modules += [m for m in ZEPHYR_BOARD_MODULES[p] if m not in modules]
+    v = zephyr_version("third_party/zephyr-ws/zephyr/VERSION")
+    out = [component("zephyr", v, f"pkg:github/zephyrproject-rtos/zephyr@v{v}", "operating-system",
+                     cpe_id=cpe("zephyrproject", "zephyr", v, part="o"), license_id="Apache-2.0")]
+    revs = west_revisions()
     out += [zephyr_module(m, revs) for m in modules]
     return out
 
 
+def release_inventory(esp_idf, zephyr):
+    components = core_components() + esp_idf_components(esp_idf)
+    if zephyr:
+        components += zephyr_components(zephyr)
+    platforms = [f"esp-idf/{chip}" for chip, _ in esp_idf] + [f"zephyr/{board}" for board in zephyr]
+    return platforms, components
+
+
 def make_sbom(ref, digest, esp_idf=(), zephyr=()):
+    images = []
+    for spec in esp_idf:
+        chip, _, path = spec.partition("=")
+        path = path or os.path.join(ROOT, "port", "espidf", f"build-{chip}", "flightctl_mcu_fw.bin")
+        with open(path, "rb") as image:
+            images.append((chip, image_idf_version(image.read(176), path)))
+    return sbom_document(ref, digest, *release_inventory(images, zephyr))
+
+
+def sbom_document(ref, digest, platforms, comps):
     host, rest = ref.split("/", 1)
     repo, tag = rest.rsplit(":", 1) if ":" in rest else (rest, "")
     hexd = digest.removeprefix("sha256:")
     root_purl = (f"pkg:oci/{repo.rsplit('/', 1)[-1]}@sha256%3A{hexd}?repository_url="
                  + urllib.parse.quote(f"{host}/{repo}", safe="") + (f"&tag={tag}" if tag else ""))
-    comps = core_components()
-    if esp_idf:
-        comps += esp_idf_components(esp_idf)
-    if zephyr:
-        comps += zephyr_components(zephyr)
-    platforms = [f"esp-idf/{c}" for c in esp_idf] + [f"zephyr/{p}" for p in zephyr]
     root = {"type": "firmware", "bom-ref": root_purl, "name": f"{host}/{repo}", "version": tag or digest,
             "purl": root_purl, "hashes": [{"alg": "SHA-256", "content": hexd}],
             "description": "flightctl-mcu firmware release (OCI index), one image per platform: "
@@ -245,13 +271,16 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--ref", required=True, help="<registry>/<repository>:<tag> of the release")
     p.add_argument("--digest", required=True, help="the index's digest, sha256:...")
-    p.add_argument("--esp-idf", default="", help="chips with an ESP-IDF image, comma separated")
+    p.add_argument("--esp-idf", default="", help="comma-separated chip or chip=app.bin (default: build-<chip>)")
     p.add_argument("--zephyr", default="", help="Zephyr platforms (CONFIG_FC_FW_PLATFORM), comma separated")
     p.add_argument("-o", "--out", help="write it here (default: stdout)")
     p.add_argument("--upload", default=os.environ.get("TRUSTIFY_URL"), help="Trustify's URL ($TRUSTIFY_URL)")
     a = p.parse_args()
     split = lambda s: [x for x in s.split(",") if x]
-    sbom = make_sbom(a.ref, a.digest, split(a.esp_idf), split(a.zephyr))
+    try:
+        sbom = make_sbom(a.ref, a.digest, split(a.esp_idf), split(a.zephyr))
+    except OSError as e:
+        p.exit(1, f"{e}\n")
     text = json.dumps(sbom, indent=2) + "\n"
     if a.out:
         with open(a.out, "w") as f:

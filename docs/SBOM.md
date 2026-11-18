@@ -9,10 +9,10 @@ Every firmware release has an SBOM: what its images are built from, at which ver
 | | From |
 |---|---|
 | the agent (this repository, at its commit), cJSON, WAMR | cJSON's header, `third_party/fetch-wamr.sh` |
-| ESP-IDF, the mbedTLS it ships, its managed components | `port/espidf/dependencies.lock.<chip>`; ESP-IDF's mbedTLS from `MBEDTLS_IN_ESP_IDF` in `tools/sbom.py` |
+| ESP-IDF, its mbedTLS and managed components | SDK version from the application binary’s `esp_app_desc_t.idf_ver`, checked against `port/espidf/dependencies.lock.<chip>`. The lock supplies managed component versions. `MBEDTLS_IN_ESP_IDF` maps SDK releases to mbedTLS versions. |
 | Zephyr, its modules: mbedTLS, TF-PSA-Crypto, MCUboot, littlefs, picolibc, zcbor, and each board's HALs | the Zephyr tree (`third_party/zephyr-ws`): the modules' own version files, else the revision Zephyr's manifest names |
 
-One SBOM covers every image in the release: an index with ESP-IDF and Zephyr images lists both.
+One SBOM covers every image in the release. Publish from the checkout and dependency trees used for the build. Before writing to the registry, `fw-push.py` checks each selected ESP-IDF image against its chip’s lock and resolves the Zephyr modules for each selected board. If an SDK version differs, rebuild the image or publish from its original checkout.
 
 ## Where it goes
 
@@ -20,7 +20,7 @@ One SBOM covers every image in the release: an index with ESP-IDF and Zephyr ima
 - the registry, as an artifact that refers to the release's index (OCI 1.1 `subject`, type `application/vnd.cyclonedx+json`), also tagged `sha256-<index digest>.sbom`, as cosign tags its attachments: `registry:3` has no referrers API, so `oras discover` finds it only on registries that do;
 - Trustify, when `TRUSTIFY_URL` is set (and `TRUSTIFY_TOKEN`, when it asks for one): `POST /api/v2/sbom`, labelled with the index's digest, as Flight Control's image builder uploads its own.
 
-Another release's, or one made again: `tools/sbom.py --ref <registry>/flightctl-mcu/fw:<tag> --digest sha256:<index> --esp-idf esp32c3 --zephyr esp32s3_devkitc --upload <Trustify URL>`.
+To regenerate a release’s SBOM, use its source checkout, dependency trees and binaries. For ESP-IDF, `--esp-idf esp32c3` reads `port/espidf/build-esp32c3/flightctl_mcu_fw.bin`. Pass `--esp-idf esp32c3=path/to/flightctl_mcu_fw.bin` to select a variant or an archived image. For example, `tools/sbom.py --ref <registry>/flightctl-mcu/fw:<tag> --digest sha256:<index> --esp-idf esp32c3 --zephyr esp32s3_devkitc --upload <Trustify URL>`.
 
 ## In Flight Control
 

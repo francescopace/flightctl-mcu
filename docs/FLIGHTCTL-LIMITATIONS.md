@@ -1,127 +1,107 @@
 # Flight Control: limitations found
 
-The gaps found in Flight Control for microcontrollers, each with what the source shows, how it was found, and a proposal. Other pages cite them by number.
+Flight Control 1.4.0 has 15 documented limitations affecting MCU devices or fleet operations.
 
-1. [`matchExpressions` in the fleet selector is accepted but ignored](#1-matchexpressions-in-the-fleet-selector-is-accepted-but-ignored)
-2. [Batch success is based only on `renderedVersion`](#2-batch-success-is-based-only-on-renderedversion)
-3. [Fixed 5-minute disconnect timeout (`DeviceDisconnectedTimeout`)](#3-fixed-5-minute-disconnect-timeout-devicedisconnectedtimeout)
-4. [No way to declare the device class or the supported runtimes](#4-no-way-to-declare-the-device-class-or-the-supported-runtimes)
-5. [No free-form status field per app](#5-no-free-form-status-field-per-app)
-6. [Cost of each status update](#6-cost-of-each-status-update)
-7. [The server compares `os.image` only as a string](#7-the-server-compares-osimage-only-as-a-string)
-8. [An enrollment certificate cannot be revoked](#8-an-enrollment-certificate-cannot-be-revoked)
-9. [A device with an RSA key cannot enroll](#9-a-device-with-an-rsa-key-cannot-enroll)
-10. [Since 1.4, a change in the status is a label event](#10-since-14-a-change-in-the-status-is-a-label-event)
-11. [A fleet's OS image cannot come from the software catalog](#11-a-fleets-os-image-cannot-come-from-the-software-catalog)
-12. [An inline file given in base64 reaches the device percent-encoded](#12-an-inline-file-given-in-base64-reaches-the-device-percent-encoded)
-13. [A device cannot enroll again under its own name](#13-a-device-cannot-enroll-again-under-its-own-name)
-14. [A withdrawn advisory stays on the devices](#14-a-withdrawn-advisory-stays-on-the-devices)
-15. [A console session whose user left before the device came stays listed](#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)
+These findings cover Flight Control 1.4.0 and the main branch as checked on 12 November 2026. Only limitation 2 had a fix on main. Limitation 15 was observed on 1.4.0 and confirmed in the source on main.
 
-## 1. `matchExpressions` in the fleet selector is accepted but ignored
+---
 
-- The fleet stays empty with no error. The controller only uses `matchLabels` (`internal/tasks/fleet_selector.go`).
-- Proposal: support it, or reject it at validation.
+## Upstream blockers for agent 1.0.0
 
-## 2. Batch success is based only on `renderedVersion`
+The official agent 1.0.0 release depends on the five Flight Control changes below. Each entry describes what works with 1.4.0 and what still needs a server change or release. [Release roadmap](ROADMAP.md#v100-in-progress)
 
-- An agent that reports the version before confirming the new OS makes the rollout advance. The Linux agent avoids this implicitly; this agent keeps reporting the previous version until the new firmware is confirmed.
-- Proposal: write this requirement into the agent API contract, or base success also on `os.image` and the `Updating` condition.
+### 1. Fixed 5-minute disconnect timeout (`DeviceDisconnectedTimeout`)
 
-## 3. Fixed 5-minute disconnect timeout (`DeviceDisconnectedTimeout`)
+- **Works today.** For normally connected devices, operators can use the five-minute timeout to identify a missed check-in.
+- **Feature limit.** A battery-powered device that reports only on wake-up would appear `Unknown` after five minutes of sleep, even if its next check-in were due hours later. Waking it just to send status would defeat the planned sleep schedule.
+- **Server change.** Flight Control decides when a device is overdue. It needs to honor an expected contact interval, configured per fleet or device or reported by the agent.
 
-- Battery devices in deep sleep would be `Unknown` most of the time.
-- Proposal: make it configurable per fleet or per device, or let the device declare its expected contact interval.
+### 2. An enrollment certificate cannot be revoked
 
-## 4. No way to declare the device class or the supported runtimes
+- **Works today.** Operators can issue a short-lived certificate per batch and approve devices from an allow list. A leaked certificate can still submit enrollment requests until expiry.
+- **Feature limit.** Deleting the CertificateSigningRequest leaves a leaked certificate usable. Operators have no way to revoke it immediately on 1.4.0.
+- **Server change.** The 1.4.0 enrollment endpoint checks the signer and expiry. On Flight Control’s main branch, an operator can revoke the certificate through its CertificateSigningRequest, and enrollment checks the CSR’s approval and revocation status (`CSRStatusAllowsEnrollment`). Operators need a server release containing that API. Running `tools/enrollment.sh` issues a certificate and leaves earlier certificates valid until expiry or explicit revocation.
 
-- For an MCU the server also accepts `compose`, `quadlet` or `helm` apps, and Podman fields (ports, volumes, `runAs`) that mean nothing there. The error only surfaces on the device.
-- Proposal: let the device report something like `applicationRuntimes: [wasm]` (in `status.systemInfo`, where 1.4 moved `osMode` from `status.capabilities`), and validate rendering against it.
-- Possibly also add an explicit `appType: wasm`, or recognize images with platform `wasip1/wasm` as WASM.
+### 3. A device with an RSA key cannot enroll
 
-## 5. No free-form status field per app
+- **Works today.** The ESP32-S3, C3 and C6 can enroll with an ECDSA device key kept in storage.
+- **Feature limit.** Their Digital Signature peripheral signs only with RSA. Approval of an enrollment request using that key fails with HTTP 400, so the agent keeps this hardware-key option disabled.
+- **Server change.** Flight Control's ECDSA certificate authority copies the RSA request's signature algorithm into the certificate template (`internal/crypto/internal_ca.go`). Leaving `SignatureAlgorithm` unset would let the authority certify the device's RSA public key using its own ECDSA signing key.
 
-- `DeviceApplicationStatus` has no field such as `message` or `info`.
-- The app state ended up in `customInfo` (`app.<name>`).
+### 4. A fleet's OS image cannot come from the software catalog
 
-## 6. Cost of each status update
+- **Works today.** Operators deploy firmware by setting `os.image` directly. Catalog references also work for apps, as verified with the `alarm` app.
+- **Feature limit.** Selecting Zephyr firmware through `spec.os.catalogItemRef` gave the device an empty `os` field. The agent had no image to fetch, so the device could appear `UpToDate` while still running the old firmware.
+- **Server change.** When building the device spec from the fleet template, `assembleDesiredSpec` copies only `os.image` (`internal/tasks/desired_spec.go`). Flight Control needs to carry the firmware catalog reference through and resolve it to an image the agent can fetch, as it does for apps.
 
-- Every PUT sends the full status, 2–3 KB of JSON. The agent API also takes a JSON Patch of the status (`patchDeviceStatus`), which the Linux agent uses for urgent changes, but nothing documents it as the way for a constrained device, and there is no heartbeat-only variant.
-- Proposal: document PATCH as the recommended path for constrained devices, or add a heartbeat-only variant.
+### 5. A device cannot enroll again under its own name
 
-## 7. The server compares `os.image` only as a string
+- **Works today.** Routine renewal preserves identity. If the management certificate expires offline, a device with a valid enrollment credential can re-enroll under a new key and name.
+- **Feature limit.** The returning device appears under a new record. Its old record remains until an operator deletes it, so the operator loses continuity under the original name.
+- **Server change.** The enrollment handler rejects any request for an existing device name with `ErrDuplicateName`. Flight Control needs a way for an operator to approve re-enrollment against the existing record.
 
-- Re-pushing the same tag is not seen as an update.
-- Proposal: recommend digest references (`@sha256:`) for firmware and apps, or compare `imageDigest`.
+---
 
-## 8. An enrollment certificate cannot be revoked
+## Non-blocking for agent v1.0
 
-- The enrollment endpoint checks only the certificate's signer and expiry (`internal/api_server/middleware/enrollment_auth.go`). One leaked from a batch of devices can enroll new devices until it expires; deleting its CertificateSigningRequest changes nothing.
-- Workaround: one certificate per batch with a short lifetime (`BATCH=… EXPIRATION=… tools/enrollment.sh`), and approval from an allow list.
-- Proposal: a revocation list for enrollment certificates, or refuse those whose CertificateSigningRequest was deleted or denied.
-- Fixed on Flight Control's main branch, not in 1.4.0: enrollment is refused when the certificate's CertificateSigningRequest is revoked or not approved (`CSRStatusAllowsEnrollment`, with an API to revoke it). It waits for a release.
+### 6. `matchExpressions` in the fleet selector is accepted but ignored
 
-## 9. A device with an RSA key cannot enroll
+- **Impact.** The fleet controller ignores `matchExpressions`. A selector using only expressions can leave a fleet empty without informing the operator (`internal/tasks/fleet_selector.go`).
+- **Today.** The supplied fleet definitions use `matchLabels`. For example, the ESP-IDF fleet selects devices labeled `app=alarm`. [Fleet definition](../tools/fleet/idf-lab.yaml)
+- **Why v1.0 can proceed.** Exact label matches let operators target the intended devices and roll out a fleet spec. More expressive selectors would require controller support.
 
-- The internal CA builds the certificate with the request's signature algorithm (`internal/crypto/internal_ca.go`: `SignatureAlgorithm: csr.SignatureAlgorithm`). An RSA request asks for SHA256WithRSA, the CA's key is ECDSA, and Go's `x509.CreateCertificate` refuses: "requested SignatureAlgorithm does not match private key type". Approving the request fails with a 400.
-- It matters for keys in hardware: the ESP32 DS peripheral signs only with RSA.
-- Proposal: leave `SignatureAlgorithm` unset in the template, so the CA signs with its own algorithm whatever the device key.
+### 7. Batch success is based only on `renderedVersion`
 
-## 10. Since 1.4, a change in the status is a label event
+- **Impact.** If a device reports the new `renderedVersion` as soon as it downloads firmware, Flight Control can start the next batch before the first device has confirmed a working image.
+- **Today.** The agent keeps reporting the previous version while the new firmware is awaiting confirmation. It reports the new version only after confirmation.
+- **Why v1.0 can proceed.** The server therefore sees a successful firmware rollout step only after the agent reaches the required state. Documenting this reporting rule in the API would help other agents implement it.
 
-- The default `custom-info` mapping copies all of `customInfo` into labels, and the service logs "label reconciliation was requested" at every change in the status (`internal/service/common/device.go`: `deviceStatusesEqual`), even when no label changes ([below](#label-sync)).
-- `customInfo` is the only free-form place in the status, so a constrained device's counters end up there (limitation 5).
-- Proposal: ask for a reconciliation only when a mapping's inputs changed, and do not copy all of `customInfo` by default; or give counters a place of their own.
+### 8. No way to declare the device class or the supported runtimes
 
-## 11. A fleet's OS image cannot come from the software catalog
+- **Impact.** Flight Control lets operators assign `compose`, `quadlet` or `helm` workloads to an MCU. It also accepts Podman fields such as ports and volumes that the MCU cannot use.
+- **Today.** Operators deploy WASM images with `appType: container`. The agent checks the app type on the device and reports an error for unsupported types. [MCU apps](APPS.md)
+- **Why v1.0 can proceed.** Supported WASM apps can be deployed and updated. A runtime declaration in `status.systemInfo` would let the server catch incompatible workloads before they reach the device.
 
-- The fleet accepts `spec.os.catalogItemRef` and keeps it in its template version, but the device gets `os: {}`: building the device's spec from the template copies `os.image` only (`internal/tasks/desired_spec.go`: `assembleDesiredSpec`). The device is reported `UpToDate` and its firmware never changes, with no error.
-- Tried with a catalog for the Zephyr firmware and the `alarm` app. The app's `catalogItemRef` works: the server turned the catalog's version into the app's image reference, and the agent got the image reference as before.
-- Proposal: copy `os.catalogItemRef` too, as is done for the applications.
+### 9. No free-form status field per app
 
-## 12. An inline file given in base64 reaches the device percent-encoded
+- **Impact.** An operator looking at the standard per-app status can see the lifecycle state, but `DeviceApplicationStatus` has no message field for an app reading such as `calibrating`.
+- **Today.** The agent publishes the text supplied by `fc_set_state` under `status.systemInfo.customInfo["app.<name>"]`, keyed by app name. [App state reporting](APPS.md)
+- **Why v1.0 can proceed.** Operators can already read each app's message alongside the device status. A dedicated per-app field would change where they find it.
 
-- The server keeps inline files as data URLs (`pkg/ignition/ignition_wrapper.go`: `SetFile`). For content already in base64 it sets the URL's encoding to ASCII, which percent-encodes the text. Building the rendered spec (`internal/tasks/device_render.go`: `ignitionConfigToRenderedConfig`) then cuts off the `data:...,` prefix and serves what is left as base64, escapes included. `aGk=` arrives as `aGk%3D`.
-- The Linux agent decodes with Go's `base64.StdEncoding` (`api/core/v1beta1/types.go`: `decodeContents`), which refuses `%`. Base64 content whose length is not a multiple of three, which is most of it, should then fail to be written (read in the source, not tried with the Linux agent).
-- Found with an `auth.json` for the registry ([REGISTRY.md](REGISTRY.md)). Content given as text is turned into proper base64 by the same code and arrives intact. This agent undoes the escapes before decoding, and the tools give text.
-- Proposal: unescape the data URL's text (or use the URL's own decoding) before serving it as base64.
+### 10. Cost of each status update
 
-## 13. A device cannot enroll again under its own name
+- **Impact.** Each status PUT sends 2–3 KB of JSON, even for a heartbeat with no state change. This consumes bandwidth on constrained links.
+- **Today.** The agent sends full status on its heartbeat and groups app notifications so they trigger at most one status update every 15 seconds.
+- **Why v1.0 can proceed.** Flight Control receives both liveness and state changes with the existing API. Smaller updates would save bandwidth. The API already accepts JSON Patch (`patchDeviceStatus`), and a heartbeat-only request could reduce traffic further.
 
-- An enrollment request for a name that already has a device is refused (`internal/service/enrollmentrequest/handler.go`: `ErrDuplicateName`). A device whose management certificate expired while it was offline can only enroll again under a new key, hence a new name; the old record stays until an operator deletes it.
-- Proposal: let an enrollment certificate re-enroll a known device, with the same approval as a new one.
+### 11. The server compares `os.image` only as a string
 
-## 14. A withdrawn advisory stays on the devices
+- **Impact.** Publishing different firmware under the same tag leaves `os.image` unchanged. Devices can keep running the old firmware even though the registry now serves a new image for that tag.
+- **Today.** Operators change the fleet's `os.image` for each release, using a new version tag or pinning the new digest (`@sha256:…`).
+- **Why v1.0 can proceed.** A changed reference triggers the normal firmware rollout. Detecting a change behind a reused tag would require the server to compare image digests.
 
-- The vulnerability sync only inserts and updates findings (`internal/store/vulnerabilityfinding/store.go`: `UpsertFindings`); nothing removes one that Trustify no longer returns.
-- Found with a test advisory deleted from Trustify ([SBOM.md](SBOM.md#what-was-verified-with-a-test-advisory)): two syncs later Flight Control still counted it. It went away once the device moved to another release: the device's, fleet's and organization's lists count only the images the devices run.
-- Proposal: replace a digest's findings with what the scan returns for it.
+<a name="label-sync"></a>
 
-## 15. A console session whose user left before the device came stays listed
+### 12. A change in the status is a label event
 
-- A session is listed in the device's annotation (`device-controller/console`) when it starts, and taken out only when the user's websocket closes after the device joined (`internal/console/console.go`: `CloseSession`). If the user leaves first (`flightctl console` gives up after 60 s, the UI's Logs tab after 50 s), nothing takes it out. While any session is listed the rendered spec is served at once, with no long-poll (`internal/store/model/device.go`), so the device asks for its spec every few seconds, for good.
-- This agent works around it ([CONSOLE.md](CONSOLE.md#how-it-works)).
-- Proposal: take a session out when its user leaves, joined or not, and give listed sessions a lifetime.
+- **Impact.** The default `custom-info` mapping turns changing heap, uptime and traffic counters into label writes. Flight Control also requests label reconciliation whenever status changes beyond `lastSeen` (`deviceStatusesEqual` in `internal/service/common/device.go`).
+- **Today.** The supplied mapping copies stable fields such as board and device class. Operators can select devices with `custominfo.flightctl.io/deviceClass=zephyr` and must preserve managed labels when editing a device to avoid HTTP 409. The agent updates the `Updating` timestamp only when the condition changes and samples counters at startup, after five minutes and then hourly. [Fleet label mapping](../tools/fleet/labelsync-custom-info.yaml)
+- **Why v1.0 can proceed.** Fleet selection and app state reporting still work. On a simulated device with no app and one status report per minute, the changes reduced reconciliation events from 10 to 2 over nine minutes. Other status changes can still trigger reconciliation even when labels stay the same.
 
-All of these were read again in the source of 1.4.0 and of Flight Control's main branch of 12 November 2026: they hold in both, except limitation 8, fixed on main. Limitation 15 was read in main's source and seen with 1.4.0.
+### 13. An inline file given in base64 reaches the device percent-encoded
 
-## Label sync
+- **Impact.** An inline base64 file such as registry credentials can arrive with percent escapes. For example, `aGk=` arrives as `aGk%3D`. The Linux agent's base64 decoder rejects `%` according to its source. The file delivery test covered the MCU agent.
+- **Today.** The MCU agent removes the escapes before base64 decoding. The provisioning tools supply plain text, which Flight Control encodes correctly. [Registry configuration](REGISTRY.md)
+- **Why v1.0 can proceed.** Both input forms deliver usable files on the MCU. Decoding the data URL from `SetFile` in the server's `ignitionConfigToRenderedConfig` would remove the need for the agent workaround.
 
-Flight Control 1.4 installs `LabelSyncMapping` resources, and one of them copies every entry of `customInfo` into the device's labels (`custominfo.flightctl.io/<key>`). These devices report counters there: free heap, traffic, uptime. With the default, each status update rewrote the device's labels and logged two events ("label reconciliation was requested", "updated successfully (labels)"): more than half of the events on a test cluster while the tests ran.
+### 14. A withdrawn advisory stays on the devices
 
-`tools/fleet/labelsync-custom-info.yaml` copies only what stays the same between firmware updates: device class, board, firmware and OS version, security state. The labels then stop changing, and so does the second event. The first is logged whenever anything in the status changes (the service compares the whole status, `lastSeen` aside), before it knows nothing will come of it (limitation 10). So the agent keeps its status still between changes: the `Updating` condition's time moves only with the condition, and the counters are read at the start, five minutes later, then hourly. What an app reports is not held back: an app whose state changes about twice a minute makes an event at each change.
+- **Impact.** A withdrawn advisory can still count against a device, its fleet and the organization. Flight Control's `UpsertFindings` inserts and updates findings but leaves entries that Trustify has removed.
+- **Today.** The agent reports the running image digest. It cannot clear a server finding. In the test, the withdrawn advisory remained after two syncs and disappeared from the device's list only after it moved to another release. [Advisory test](SBOM.md#what-was-verified-with-a-test-advisory)
+- **Why v1.0 can proceed.** The reported digest identifies the running release and its SBOM, and matching advisories reach the fleet view. Cleaning up withdrawn findings requires the server to reconcile each digest against the latest scan.
 
-The simulated device, with no app, over 9 minutes (a status a minute):
+### 15. A console session whose user left before the device came stays listed
 
-| | Events |
-|---|---|
-| Counters and the condition's time new at every status | 10, one per status |
-| The condition's time kept, counters once an hour | 2: at the start, and when the counters were read again five minutes later; then one an hour |
-
-The labels a mapping makes are its own: editing a device without them, to change another label, is refused (409, "cannot edit a managed label owned by a mapping"). An edit must carry them as they are.
-
-The new labels also let a fleet select on what a device says it is, `custominfo.flightctl.io/deviceClass=zephyr` for instance, which is part of what limitation 4 asks for.
-
-## Proposals not yet raised
-
-- **Firmware and apps built by Flight Control.** Its image builder (`ImageBuild`, `flightctl new-version`) makes bootc images for Linux. A build of another kind (a toolchain image, sources from Git, a list of chips) could make the signed multi-chip index that `tools/fw-push.py` makes today, with the delta from the previous release and an SBOM ([SBOM.md](SBOM.md)). It needs an agreed artifact type for firmware first; to be raised as an issue before any code.
+- **Impact.** If the user leaves before the device joins (after 60 s for a CLI timeout or 50 s in the UI's Logs tab), the stale session keeps the server answering spec requests immediately. This increases management traffic.
+- **Today.** The agent remembers the last 64 sessions it opened across restarts, closes an unjoined session after one minute and polls every 15 seconds while only remembered sessions remain listed. [Console behavior](CONSOLE.md#how-it-works)
+- **Why v1.0 can proceed.** Operators can still open a new console session, and a remembered session cannot replay its command. Extra polling continues until the stale entry clears. The server could remove it when the user leaves or give it an expiry.

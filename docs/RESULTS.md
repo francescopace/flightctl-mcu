@@ -20,7 +20,7 @@ What works, where it was verified, and the measurements. The devices are microco
 | Automatic rollback | Back to the previous firmware if the new one fails | ✓ | ✓ | – | [The way back](#the-way-back-on-the-esp32-s3-both-ports) |
 | Mixed fleets | One fleet for every chip | ✓ | – | – | [DEVICES](DEVICES.md) |
 | WASM apps | Installed and updated without a reboot | ✓ | ✓ | ✓ | [APPS](APPS.md) |
-| App interface | Hardware by name, timers, events, storage, C library | ◐ | – | ✓ | [APPS](APPS.md#ports) |
+| App interface | Hardware by name, timers, events, storage, C library | ◐ | ◐ | ✓ | [APPS](APPS.md#ports) |
 | An app's limits | CPU budget per call, heap kept for the agent | ◐ | ✓ | ✓ | [APPS](APPS.md#size-and-limits) |
 | Modules built for no device | Any WebAssembly module, run once | ✓ | – | ✓ | [APPS](APPS.md#modules-built-for-no-device) |
 | Demo apps | emlearn's TinyML model, wasm3-arduino's blink as published | ◐ | – | ✓ | [APPS](APPS.md#the-blink-of-wasm3-arduino) |
@@ -306,6 +306,10 @@ On esp-emu 1.1.0 on macOS and Linux with ESP-IDF 6.0.3, the production `adc_open
 
 On Zephyr 4.5.0 in esp-emu 1.1.0 on macOS and Linux, a 445-byte WASM app opened the active-low button on GPIO5 by its devicetree name `button`. It reported released, pressed and released. Applying the fleet board map and granting only `fleet-button` produced the same three states with the same bytecode and pin. The fixture supplies the rendered fleet files and the app image locally, and runs the production board map, WAMR and Zephyr GPIO driver. [App source](../tests/zephyr-apps/wasm/t_button.c) · [Devicetree overlay](../tests/zephyr-apps/boards/esp32s3_devkitc_procpu.overlay)
 
+### Zephyr RS-485
+
+Zephyr `native_sim` passed eight hardware API tests covering devicetree names, GPIO, ADC, PWM, I²C, SPI, UART and RS-485. The RS-485 fixture held the driver-enable signal active while the FIFO was empty and the shift register was still sending. At DE release, a simulated peer sent a three-byte reply (`00 52 ff`). The receive callback fired and the driver returned all three bytes in order. A link with an ESP32-S3 UART1 and a driver-enable GPIO used 377,248 of 380,672 B of DRAM, leaving 3,424 B. The RS-485 test checks event order in the simulator.
+
 ### Apps on the boards
 
 The example apps ([APPS.md](APPS.md#examples)), with ESP-IDF unless the row says otherwise:
@@ -320,8 +324,6 @@ The example apps ([APPS.md](APPS.md#examples)), with ESP-IDF unless the row says
 | `tinymlp` | With the device's `expf`, `logf` and `tanhf`, on the C3, C5, C6 and S3: `steady` at rest, 95 to 100% sure, once in a while `warming` or `cooling` at under 95% (`warming` at 46% once, `cooling` at 93%). |
 | wasm3-arduino's blink, Rust build, beside `tinyml` | Ran for 45 minutes on the C3, C6 and S3. Refused on the C5 (`allocate linear memory failed (largest free block 52 KB)`) and on the classic ESP32 (`its memory would leave the agent 22 KB of heap, less than the 40 KB it needs`), the device reporting all along. |
 | wasm3-arduino's blink, C++ build, beside `alarm` | Ran on the C3, C6, S3 and the classic ESP32. The blink also runs on the host and on Zephyr's `native_sim`. |
-
-Zephyr `native_sim` passed eight hardware API tests covering devicetree names, GPIO, ADC, PWM, I²C, SPI, UART and RS-485. The RS-485 fixture held the driver-enable signal active while the FIFO was empty and the shift register was still sending. At DE release, a simulated peer sent a three-byte reply (`00 52 ff`). The receive callback fired and the driver returned all three bytes in order. A link with an ESP32-S3 UART1 and a driver-enable GPIO used 377,248 of 380,672 B of DRAM, leaving 3,424 B. The RS-485 test checks event order in the simulator.
 
 On the Zephyr S3 N8R8, `mqttdemo` answered four distinct QoS 1 commands during reception of a 1,037,990 B signed firmware image. The largest encrypted TLS record observed during this transfer was 16,401 B. The broker retained one connection until the firmware reboot, and the new boot reported the expected digest.
 
@@ -391,7 +393,7 @@ The empty-list window corresponds to **153 kB/hour**. All 23 samples showed the 
 
 On an ESP32-S3 N8R8 with Zephyr, six minutes of idle management traffic with no apps, telemetry exports or console commands added 11,194 B sent and 42,660 B received (537 kB/h extrapolated). Status updates ran approximately once a minute. The handshake count stayed at seven throughout this window. The C3 and Zephyr runs have different device and status configurations.
 
-What is left is the full status, and going lower needs differential updates (limitation 6). The apps' changes go out together, one status every 15 s at most.
+What is left is the full status, and going lower needs differential updates (limitation 10). The apps' changes go out together, one status every 15 s at most.
 
 With PSRAM disabled on the Zephyr N8R8, the following measurements cover the HTTP/2 management connection, including TLS. No apps, MQTT broker or telemetry export were configured.
 
@@ -514,12 +516,12 @@ The gaps found in Flight Control for this class of device, each with a proposal,
 - **Registry**: TLS only, with the CA the fleet gives; no public CA bundle, no redirects to another host ([REGISTRY.md](REGISTRY.md)).
 - **Device key**: in flash in clear, except in the `secure` variant, where it is encrypted, or on the C5 in its ECDSA peripheral ([SECURITY.md](SECURITY.md)).
 - **Provisioning**: credentials over USB; the WiFi network over USB or the device's own access point ([PROVISIONING.md](PROVISIONING.md)).
-- **Enrollment certificates**: issued per batch, but Flight Control 1.4.0 cannot revoke one (limitation 8).
-- **Offline longer than the certificate** (a year by default): the device enrolls again as a new device, with its apps, config and firmware (limitation 13).
+- **Enrollment certificates**: issued per batch, but Flight Control 1.4.0 cannot revoke one (limitation 2).
+- **Offline longer than the certificate** (a year by default): the device enrolls again as a new device, with its apps, config and firmware (limitation 5).
 - **Server unreachable**: without an accepted status for 10 minutes the device restarts, its apps with it, and again every 10 minutes; a write gives up after 30 s.
 - **App format**: WASM OCI artifacts only (`application/vnd.wasm.content.layer.v1+wasm`), not a `.wasm` inside a container image.
 - **JSON depth**: at most 32 levels; real documents use fewer than 10.
-- **Not yet on a board**: the `secure` variant, registry tokens, GPIO interrupts and wired peripherals.
+- Physical-board coverage is still pending for the `secure` variant and registry tokens.
 - **Zephyr**: an app's heap floor and the `.wasm` size limit are not checked yet.
 - **MQTT with Zephyr** depends on internal RAM and available POSIX mutexes. On the N8R8 with both TLS records in internal RAM, `mqttdemo` left 32,364 B free and a 25,580 B largest block, below the 61,440 B telemetry threshold. With the records in PSRAM the board could export at cold boot, but a broker connection exhausted the pool of 28 mutexes during TLS client-certificate signing. With 32 mutexes, the gateway received telemetry both when MQTT connected before enabling exports and when it connected after a successful export on a fresh boot (64,648 and 64,644 B free). The four additional mutexes cost 84 B in the ELF's mutex tables. [Apps on the boards](#apps-on-the-boards).
 - **Zephyr on the ESP32-S3 without PSRAM**: with one app it got down to 368 bytes of free C heap while trying to download an update, which did not go through, and the device then took no spec while its statuses went out ([Zephyr on the ESP32-S3](#zephyr-on-the-esp32-s3)).

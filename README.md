@@ -115,7 +115,7 @@ The image is streamed into the inactive slot and checked against its sha256. The
 
 ## Where it runs
 
-On ESP-IDF 6.1 (the ESP32, S3, C3, C5 and C6, with Secure Boot, flash encryption and WiFi provisioning), on Zephyr 4.5 (the ESP32-S3, and an Arm Cortex-M3 on Ethernet in QEMU), and as a process on Linux or macOS, the simulated device of the tests. The same `.wasm` file runs on all of them, whatever the CPU. A device needs 384 KB of SRAM, 2 MB of flash and a TCP/IP network.
+On ESP-IDF 6.1 (the ESP32, S3, C3, C5 and C6, with Secure Boot, flash encryption and WiFi provisioning), on Zephyr 4.5 (the ESP32-S3, and an Arm Cortex-M3 on Ethernet in QEMU), and as a process on Linux or macOS, the simulated device of the tests. The same `.wasm` file runs on all of them, whatever the CPU. A device needs at least 384 KB of SRAM and a TCP/IP network. The supplied flash layouts require 4 MiB on ESP-IDF and 8 MiB on the Zephyr ESP32-S3.
 
 The support levels, the boards tried and how to add a chip, a board or an RTOS are in [docs/DEVICES.md](docs/DEVICES.md).
 
@@ -149,13 +149,15 @@ The support levels, the boards tried and how to add a chip, a board or an RTOS a
 
 Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), deltas, rollback, a registry with TLS and a password, decommissioning. Certificate renewal also passed on a physical ESP32-C6. Secure Boot is tested on emulated chips. WiFi provisioning from a phone was verified on the ESP32-C6 with ESP-IDF and the ESP32-S3 with Zephyr ([RESULTS.md](docs/RESULTS.md#what-works)).
 
+CI exercises GPIO interrupts, I2C, SPI, UART and PWM against virtual peripherals on ESP32-S3, and ADC on ESP32-C3. On Zephyr S3, the same WASM app reads a button by its devicetree name and by the name configured by the fleet. [Wiring results](docs/RESULTS.md#esp32-s3-virtual-wiring)
+
 Known limits:
 
 - The device trusts only the registry CA its fleet gives it: no public CA bundle, and no blobs redirected to another host ([REGISTRY.md](docs/REGISTRY.md)).
 - The device key is in flash in clear unless the device runs the `secure` variant (Secure Boot and flash encryption, tested in the emulator only), which Zephyr does not have: on an Espressif chip, a device that must be protected runs the ESP-IDF firmware. On Zephyr the protection comes with chips that have TF-M, after 1.0 ([SECURITY.md](docs/SECURITY.md#zephyr)).
 - WiFi is the only link tried on hardware; Ethernet runs in QEMU.
 - Flight Control 1.4.0 cannot revoke an enrollment certificate; its main branch can, not yet in a release.
-- Apps: MQTT runs on the five ESP-IDF chips and on the Zephyr ESP32-S3. The S3 N8R8 kept its MQTT session through a signed firmware download and exported telemetry with MQTT connected ([current limitations](docs/RESULTS.md#current-limitations)). I2C, SPI, UART, ADC and PWM answer on the boards but have not been tried with devices wired to them ([APPS.md](docs/APPS.md)).
+- Apps: MQTT runs on the five ESP-IDF chips and on the Zephyr ESP32-S3. The S3 N8R8 kept its MQTT session through a signed firmware download and exported telemetry with MQTT connected ([current limitations](docs/RESULTS.md#current-limitations)).
 - Apps must be WASM OCI artifacts. Podman-style images with a `.wasm` inside a tarball are not supported.
 
 The work also found gaps in Flight Control for this class of device, such as a fixed 5-minute disconnect timeout. They are written up in [docs/FLIGHTCTL-LIMITATIONS.md](docs/FLIGHTCTL-LIMITATIONS.md), with proposals; the agent's [current limitations](docs/RESULTS.md#current-limitations) in full are in RESULTS.

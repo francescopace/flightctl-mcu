@@ -8,8 +8,8 @@ The agent is not tied to a chip or a vendor: it is a C core and a thin port for 
 
 - a CPU that [WAMR](https://github.com/wasm-micro-runtime/wasm-micro-runtime) has a target for. In use here: Xtensa, RISC-V, Arm Cortex-M3 (emulated), and AArch64 and x86-64 on a host;
 - 384 KB of SRAM at the least. What counts is the heap left once the agent and an app run ([RESULTS.md](RESULTS.md#ram)). Chips with less SRAM are not supported ([support levels](#support-levels));
-- flash for two firmware slots and some storage, 2 MB at the least (images are 0.7 to 1.5 MB);
-- an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried on hardware. Ethernet is tried on Zephyr in QEMU (`mps2/an385`, [ZEPHYR.md](ZEPHYR.md#on-an-emulated-arm-cortex-m3)); a real Zephyr board with Ethernet is two files ([below](#another-zephyr-board));
+- flash for two firmware slots, credentials and storage. The supplied [ESP-IDF partition table](../port/espidf/partitions.csv) requires 4 MiB and the [Zephyr ESP32-S3 overlay](../port/zephyr/boards/esp32s3_devkitc_procpu.overlay) requires 8 MiB;
+- an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried on hardware. Ethernet is tried on Zephyr in QEMU (`mps2/an385`, [ZEPHYR.md](ZEPHYR.md#on-an-emulated-arm-cortex-m3)). See [Adding another Zephyr board](#another-zephyr-board) for the board configuration and OTA registration;
 - a random generator and a way to learn the time (SNTP), for TLS;
 - mbedTLS 4.1.1.
 
@@ -19,8 +19,8 @@ Three stacks have a port today:
 
 | Stack | Devices | What works there |
 |---|---|---|
-| **ESP-IDF** 6.0<br/>`port/espidf` | Espressif's WiFi chips. Five run it: ESP32, S3, C3, C5, C6. Another one ESP-IDF supports is mostly configuration. | Everything, and the most complete: also Secure Boot, flash encryption, keys in hardware, WiFi provisioning over SoftAP ([SECURITY.md](SECURITY.md), [PROVISIONING.md](PROVISIONING.md)). On five boards, and on emulated chips in CI. |
-| **Zephyr** 4.5<br/>`port/zephyr` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. One board runs it, an ESP32-S3-DevKitC, and an Arm Cortex-M3 on Ethernet emulated in QEMU (`mps2/an385`). | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([ZEPHYR.md](ZEPHYR.md)). On one board, and in CI as a Linux process (`native_sim`) and in QEMU (`mps2/an385`). A new board is two files. |
+| **[ESP-IDF](DEPENDENCIES.md#esp-idf-port)**<br/>`port/espidf` | Espressif's WiFi chips. Five run it: ESP32, S3, C3, C5, C6. Another one ESP-IDF supports is mostly configuration. | Everything, and the most complete: also Secure Boot, flash encryption, keys in hardware, WiFi provisioning over SoftAP ([SECURITY.md](SECURITY.md), [PROVISIONING.md](PROVISIONING.md)). On five boards, and on emulated chips in CI. |
+| **Zephyr** 4.5<br/>`port/zephyr` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. One board runs it, an ESP32-S3-DevKitC, and an Arm Cortex-M3 on Ethernet emulated in QEMU (`mps2/an385`). | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([ZEPHYR.md](ZEPHYR.md)). The agent runs on the ESP32-S3 board and in end-to-end CI on `native_sim` and QEMU (`mps2/an385`). The WASM GPIO test runs on the emulated S3. |
 | **Linux, macOS**<br/>`port/host` | Anything with POSIX threads and sockets: a gateway, a single-board computer, a container, your laptop. | Runs as a process. Enrollment, monitoring, config and WASM apps are real; a firmware update only saves the image to a file. It is the simulated device of the tests. A Linux device that can run bootc and Podman should run Flight Control's own agent instead. |
 
 Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs a port: about 30 functions, in `core/include/fc_port.h` (see [Adding another device](#adding-another-device)). None is written.
@@ -35,7 +35,7 @@ Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs 
 | **Best effort** | ESP32-C3 | 400 KB | Built in CI and with each release; tried on a board from time to time. |
 | **Removed** | ESP32-S2, Raspberry Pi Pico W (RP2040) | 320, 264 KB | Below 384 KB of SRAM: the S2 needed its PSRAM for TLS, the Pico W had about 30 KB free with an app. |
 | **Emulated** | Arm MPS2 AN385 (Cortex-M3, Ethernet) on Zephyr, in QEMU | 4 MB, of which the build uses 300 KB | The end-to-end test (e2e workflow), with the memory of a 384 KB device. The first link other than WiFi. No firmware updates (no MCUboot there) and no random generator: not a device. |
-| **Planned** | An ST Nucleo board with Ethernet (H563ZI or F767ZI) on Zephyr | 640 / 512 KB | Not tried yet ([ROADMAP.md](ROADMAP.md)). |
+| **Planned** | NUCLEO-F767ZI, Raspberry Pi Pico 2 W and Nordic nRF7002-DK on Zephyr | 512, 520, 512 KB (nRF5340 application core) | Ethernet enrollment on the Nucleo and WiFi enrollment on the Pico and Nordic boards. [Roadmap](ROADMAP.md#blocked-on-hardware-availability) |
 
 The host port (Linux, macOS) is supported: it is the simulated device of the tests.
 
@@ -78,11 +78,12 @@ Per-device differences, such as a different LED pin on a clone board, don't need
 
 ### Another Zephyr board
 
-If Zephyr supports the board and it meets [the list above](#what-a-device-needs), it is two files in `port/zephyr/boards/`, as for the boards that are there:
+If Zephyr supports the board and it meets [the list above](#what-a-device-needs), start with its configuration in `port/zephyr/boards/`:
 
 1. `<board>.overlay`: the `fc_creds` (16 KB) and `fc_storage` partitions, usually carved out of the board's storage partition, and the nodes Zephyr leaves off (the WiFi chip, the random generator).
 2. `<board>.conf`: the network driver, MCUboot's image manager, and the memory the board can give: the kernel heap (thread stacks come from it), the C heap, the agent's stacks.
 3. Build with `BOARD=<board> port/zephyr/build.sh`, write the credentials with `tools/provision.py --format zephyr --board <board files>`. Firmware updates need MCUboot: the script builds with it for a board named `.../mcuboot` and for Espressif's, and for any other with `MCUBOOT=1`.
+4. For OTA, add the board’s `CONFIG_FC_FW_PLATFORM` (the board name by default) to `ZEPHYR_BOARD_MODULES` in [tools/sbom.py](../tools/sbom.py). List its board-specific modules, or use an empty tuple if the common modules cover it. Pass the same platform name to `tools/fw-push.py` as `PLATFORM=path/to/zephyr.signed.bin`.
 
 A CPU family that is new here needs its WAMR target named in `port/zephyr/CMakeLists.txt`, and a chip without a random generator needs an entropy driver. What the ESP32-S3 took is in [ZEPHYR.md](ZEPHYR.md).
 

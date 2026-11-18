@@ -176,7 +176,7 @@ For a lab, `tools/mqtt/up.sh` starts mosquitto in Docker on port 8883 of the mac
 
 ## Ports
 
-On Zephyr the board map's names come from the devicetree, not from pins: the children of a node with compatible `flightctl,app-hw` ([ZEPHYR.md](ZEPHYR.md#hardware-for-apps)). The fleet's `board.json` may give those nodes other names (`"dt": "<node>"`), never pins. A board without that node has only the simulated `led0` and `die_temp`.
+On Zephyr the board map's names come from the devicetree, not from pins: the children of a node with compatible `flightctl,app-hw` ([ZEPHYR.md](ZEPHYR.md#hardware-for-apps)). The fleet can rename a node in `/etc/fc/board.json` with `"dt": "<node>"`. Grant the new name in `FC_ALLOW`. A GPIO keeps its polarity and safe output level unless the fleet overrides them. A board without that node has only the simulated `led0` and `die_temp`.
 
 | | ESP-IDF | Zephyr | Host simulator |
 |---|---|---|---|
@@ -189,7 +189,7 @@ On Zephyr the board map's names come from the devicetree, not from pins: the chi
 | SPI | master, up to 4 devices on one bus (two buses on the ESP32 and S3), chip select driven by the firmware; transfers in pieces of 64 bytes, without DMA | the devicetree's devices, chip select driven by the firmware; a transfer lasts as long as the driver makes it | MISO wired to MOSI: what is sent comes back |
 | UART | UART1, and UART2 on the ESP32 and S3 (UART0 is the console's); RS-485 half duplex with `de`; 512 bytes received ahead | interrupt-driven, 512 bytes received ahead, excluding the console. On ESP32-S3, enable runtime UART configuration and set `de-gpios` for RS-485. The port holds DE through the last stop bit, including after a timed-out write or close. Other controllers with `de-gpios` return `FC_ENOTSUP` | RX wired to TX: what is written comes back, with `FC_EV_UART` |
 
-The ESP32-S3 app drivers have been tested with virtual GPIO, I2C, SPI, UART and PWM peripherals. Physical board tests cover opening the buses and channels with nothing wired. [Virtual wiring results](RESULTS.md#esp32-s3-virtual-wiring) · [App results on boards](RESULTS.md#apps-on-the-boards)
+CI tests the ESP-IDF drivers against virtual peripherals on the S3 (GPIO interrupts, I2C, SPI, UART and PWM) and the C3 (calibrated ADC). On Zephyr S3, the same WASM app reads GPIO5 first by its devicetree name and then by its fleet alias. The responding RS-485 peer runs on Zephyr `native_sim`. [S3 wiring](RESULTS.md#esp32-s3-virtual-wiring) · [C3 ADC](RESULTS.md#esp32-c3-virtual-adc) · [Zephyr GPIO](RESULTS.md#zephyr-esp32-s3-hardware-names) · [RS-485](RESULTS.md#zephyr-rs-485)
 
 ## Size and limits
 

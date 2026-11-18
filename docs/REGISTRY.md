@@ -115,7 +115,7 @@ A fleet that a `ResourceSync` owns is changed through Git only: delete one appli
 
 ## Moving a fleet to the TLS door
 
-Devices pull through the TLS door only. Changing the registry's address in a fleet's `os.image` makes every device download its firmware again and restart, as Flight Control compares `os.image` as a string ([limitation 7](FLIGHTCTL-LIMITATIONS.md#7-the-server-compares-osimage-only-as-a-string)): push the release with a delta from the running one (`--delta-from`, [DELTA-UPDATES.md](DELTA-UPDATES.md)) to keep that download small.
+Devices pull through the TLS door only. Changing the registry's address in a fleet's `os.image` makes every device download its firmware again and restart, as Flight Control compares `os.image` as a string ([limitation 11](FLIGHTCTL-LIMITATIONS.md#11-the-server-compares-osimage-only-as-a-string)): push the release with a delta from the running one (`--delta-from`, [DELTA-UPDATES.md](DELTA-UPDATES.md)) to keep that download small.
 
 ## Memory
 

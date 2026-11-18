@@ -39,13 +39,13 @@ Of the eight, only flightctl-mcu:
 
 Crash reports give the fault details in the device status after a restart. Operators with console access can download the native dump from flash and debug it with the crashed release's ELF. This was verified on a physical ESP32-S3 running Zephyr and in emulation on ESP-IDF C3 and Zephyr Arm. [Crash report measurements](RESULTS.md#a-crash-in-the-status)
 
-The apps' peripherals have not yet been tried with devices wired to them. WiFi is its only link on real boards, deep sleep waits on Flight Control, and support is the community's.
+WiFi is its only link on real boards, deep sleep waits on Flight Control, and support is the community's.
 
 ## Golioth, Memfault and Mender in detail
 
 These three manage ESP-IDF or Zephyr devices as a product, and are the nearest to flightctl-mcu. What works today is verified in [RESULTS.md](RESULTS.md).
 
-For flightctl-mcu, "next" is on the [roadmap](ROADMAP.md#v10-in-progress) for 1.0, "waits on Flight Control" needs a change there ([limitations](FLIGHTCTL-LIMITATIONS.md)), and "after 1.0" is proposed for 2.0 ([after 1.0](ROADMAP.md#v20-planned)).
+For flightctl-mcu, "next" is on the [roadmap](ROADMAP.md#v100-in-progress) for 1.0, "waits on Flight Control" needs a change there ([limitations](FLIGHTCTL-LIMITATIONS.md)), and "after 1.0" is proposed for 2.0 ([after 1.0](ROADMAP.md#v200-planned)).
 
 | | flightctl-mcu | Golioth | Memfault | Mender MCU |
 |---|---|---|---|---|
@@ -66,8 +66,8 @@ For flightctl-mcu, "next" is on the [roadmap](ROADMAP.md#v10-in-progress) for 1.
 | **Crash reports** | ✓ `resetReason` and `lastFatalError` in status. Download the native dump on demand with `flightctl console` and decode it with the release ELF. Zephyr on Xtensa captures the faulting thread's registers and stack. Optional external uploads proposed for 2.0. [Results](RESULTS.md#a-crash-in-the-status) | – | ✓ its core feature | – |
 | **Remote log** | ✓ the last lines, kept in RAM, in the UI's Logs tab and the console ([CONSOLE.md](CONSOLE.md#the-log)) | ✓ | ✓ with crashes | – |
 | **Remote commands** | ✓ Flight Control's terminal and `flightctl console`, with a closed set of commands ([CONSOLE.md](CONSOLE.md)) | ✓ RPC | – | – |
-| **Data from apps** | ✓ MQTT to your broker, both ways ([APPS.md](APPS.md#mqtt)), and metrics as OTLP to Flight Control ([METRICS.md](METRICS.md)), with ESP-IDF · next: MQTT with Zephyr on a board | ✓ LightDB Stream and pipelines | ◐ metrics only | – |
-| **Peripherals from apps** | ◐ GPIO, LEDs, I2C, SPI, UART, ADC and PWM by name, with ESP-IDF and Zephyr ([APPS.md](APPS.md#ports)) · next: tried with devices wired to them | – in the firmware | – in the firmware | – in the firmware |
+| **Data from apps** | ✓ Two-way MQTT and OTLP metrics on ESP-IDF and Zephyr ESP32-S3. [Board results](RESULTS.md#apps-on-the-boards) | ✓ LightDB Stream and pipelines | ◐ metrics only | – |
+| **Peripherals from apps** | ◐ ESP-IDF exposes GPIO, LEDs, I2C, SPI, UART, ADC and PWM. On Zephyr, physical peripherals need devicetree nodes and enabled drivers. The shipped S3 overlay exposes none. CI exercises the drivers on `native_sim` and a GPIO button in an S3 test build. [Zephyr board configuration](ZEPHYR.md#hardware-for-apps) | – in the firmware | – in the firmware | – in the firmware |
 | **SBOM and known vulnerabilities** | ✓ an SBOM per release, CVEs shown in Flight Control through Trustify | – | – | – |
 | **Links** | ◐ WiFi; Ethernet in QEMU · next: Ethernet on a board · after 1.0: cellular (LTE-M, NB-IoT) | ✓ WiFi, Ethernet, cellular | ✓ any, including BLE through a phone or gateway | ✓ what the Zephyr board has |
 | **Devices without IP** | after 1.0: BLE or Thread devices behind a Linux gateway in the same fleet | ✓ Bluetooth through gateways (Pouch) | ✓ BLE through a phone or gateway | – |

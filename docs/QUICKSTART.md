@@ -48,21 +48,21 @@ tools/signing/keygen.sh
 
 ## 3. Build and flash a board (ESP-IDF)
 
-The firmware has no credentials in it, so one build serves every installation. `flash.sh` detects the chip on the port:
+Build the image with `LOCAL=0` to exclude the checkout’s WiFi credentials and endpoint. Step 4 provisions each board separately. `flash.sh` detects the chip on the port:
 
 ```bash
 third_party/fetch-wamr.sh
 ```
 
 ```bash
-TARGET=esp32c3 FW_VERSION=v1 port/espidf/build.sh
+LOCAL=0 TARGET=esp32c3 FW_VERSION=v3.14-rc9 port/espidf/build.sh
 ```
 
 ```bash
 port/espidf/flash.sh /dev/cu.usbmodem1101
 ```
 
-That build is optimized for size (`-Os`), with WAMR, which runs the apps, at `-O2` and the CPU at the chip's highest clock. `VARIANT=release` builds the same with quieter logs, in `port/espidf/build-<chip>-release`; push those with `fw-push.py --variant release`.
+That build is optimized for size (`-Os`), with WAMR, which runs the apps, at `-O2` and the CPU at the chip's highest clock. `VARIANT=release` builds the same with quieter logs, in `port/espidf/build-<chip>-release`; select that profile with `--variant release` before the registry reference in step 6.
 
 Nothing above touches the chip's eFuses. The `secure` variant does: Secure Boot v2, flash encryption and NVS encryption, for devices in the field. It is never built by default, and its first boot burns the chip's eFuses for good: read [SECURITY.md](SECURITY.md) first.
 
@@ -98,16 +98,18 @@ tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
 
 ## 6. Give it firmware, config and an app
 
-Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to the local registry's door with TLS (`.secrets/registry/host`), and adds its CA and password to the fleet as config files; set `REGISTRY=host:port` to use another one. Use the tags the example fleet `tools/fleet/idf-lab.yaml` names, or edit them there.
+These commands publish the C3 image built in step 3 and the alarm app using the tags in `tools/fleet/idf-lab.yaml`. For another chip, replace `esp32c3` in both steps. When updating an existing fleet, give each new release a fresh tag and update its reference in the fleet manifest.
+
+`apply.sh` fills in the registry address from `.secrets/registry/host` and adds the registry CA and password to the fleet as config files. Set `REGISTRY=host:port` to use another registry.
 
 ```bash
-tools/fw-push.py <your-ip>:5001/flightctl-mcu/fw:<firmware tag>
+tools/fw-push.py localhost:5001/flightctl-mcu/fw:v3.14-rc9 esp32c3
 ```
 
 It also pushes each image's ELF, which devices never pull: after a crash, `tools/fw-elf.py <registry>/flightctl-mcu/fw:<tag> <chip>` gets it back to decode the device's `lastFatalError` with `addr2line`.
 
 ```bash
-wasm-apps/build.sh alarm <app tag>
+wasm-apps/build.sh alarm v2.3
 ```
 
 ```bash
