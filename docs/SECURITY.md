@@ -18,7 +18,7 @@ All this is fixed in the chip's eFuses on the device's first boot, and cannot be
 
 **It is a separate build, off by default.** `port/espidf/build.sh` without `VARIANT=secure` builds the plain firmware, which never touches the eFuses: the development boards and most of CI run it. The secure variant is built only on purpose, with your Secure Boot key, in its own directory (`port/espidf/build-<chip>-secure`), and pushed with its own `--variant`. A device stays on the variant it was flashed with: each image carries the security features it was built for, and the agent refuses an update built for others before it is installed (`firmware built for another security variant`). A secure build pushed to plain devices by mistake therefore changes nothing on them; a plain device can become a secure one only by flashing it over USB. An image a device refuses (this, an older security version, the bootloader's checks) is reported in its status and not downloaded again until the fleet's spec changes: the device stays out of date with the reason, and its flash is not written every minute.
 
-The variant is tested on emulated chips (esp-emu, which runs the chip's real ROM) by the end-to-end workflow. It has not been burned on a real board, and this project does not plan to: a burn cannot be undone.
+The variant is tested on emulated chips by the end-to-end workflow, not on real boards ([below](#not-yet-done)).
 
 ## Two signing keys
 
@@ -67,7 +67,7 @@ From then on TLS signs through the peripheral. The key is of the same kind as on
 
 ### Other chips: the DS peripheral, off for now
 
-The S3, C3 and C6 have a Digital Signature peripheral instead, which signs only with RSA, and Flight Control cannot enroll a device with an RSA key: its internal CA copies the request's signature algorithm into the certificate (`internal_ca.go`), and with its ECDSA key Go refuses to sign ("requested SignatureAlgorithm does not match private key type"). Found by the end-to-end test. Until Flight Control fixes it (limitation 9 in RESULTS.md) these chips keep the device key in the encrypted store, and `CONFIG_FC_DEVICE_KEY_DS` stays off. With a CA that signs RSA keys it can be turned on. Then, on the first boot, the agent:
+The S3, C3 and C6 have a Digital Signature peripheral instead, which signs only with RSA, and Flight Control cannot enroll a device with an RSA key ([limitation 9](FLIGHTCTL-LIMITATIONS.md#9-a-device-with-an-rsa-key-cannot-enroll)). Until Flight Control fixes it these chips keep the device key in the encrypted store, and `CONFIG_FC_DEVICE_KEY_DS` stays off. With a CA that signs RSA keys it can be turned on. Then, on the first boot, the agent:
 
 1. generates an RSA-3072 key (about 3 s on the C3) and the CSR with it;
 2. burns a random HMAC key into a free eFuse key block, with the DS purpose: software cannot read that block, the DS peripheral can use it;
@@ -82,7 +82,6 @@ TLS then signs through the peripheral (RSA-PSS, as TLS 1.3 asks). Flight Control
 - **The key is in RAM once**, on the first boot, between its generation and the burn.
 - **A key already in storage stays there**: devices keep their name.
 - **The ESP32** has neither peripheral: its key stays in the encrypted store.
-- **Emulator only**, like the rest: no real chip has been burned.
 
 ## Anti-rollback
 
@@ -142,7 +141,7 @@ After that the serial port can no longer write the flash either: `fc_creds` cann
 
 ## Flash layout
 
-Signed, a bootloader with Secure Boot and flash encryption takes up to 48 KB (ESP32-C5), more than fits below the default partition table at 0x8000. The table is at 0x10000 in every build, secure or not ([port/espidf/partitions.csv](../port/espidf/partitions.csv)); the OTA slots did not move. A board flashed with the earlier layout has to be flashed over USB and provisioned again: an OTA update cannot change the partition table.
+Signed, a bootloader with Secure Boot and flash encryption takes up to 48 KB (ESP32-C5), more than fits below the default partition table at 0x8000. The table is at 0x10000 in every build, secure or not ([port/espidf/partitions.csv](../port/espidf/partitions.csv)). An OTA update cannot change the partition table.
 
 ## Factory procedure
 
@@ -210,19 +209,17 @@ What the Zephyr builds have, on any board started by MCUboot:
   SECURE_VERSION=1 BOARD=esp32s3_devkitc/esp32s3/procpu port/zephyr/build.sh
   ```
 
-  MCUboot installs no update below the running image's counter (`port/zephyr/sysbuild/mcuboot.conf`), and the agent refuses it before it restarts, with the same reason as on ESP-IDF (`firmware older than this device accepts`); the device reports its counter as `secureVersion`. Unlike ESP-IDF's eFuse, the counter is the running image's, in flash: it stops a signed vulnerable release from being put back over the air, not someone who writes the flash over USB or SWD. Verified on a Raspberry Pi Pico W, a board since removed: running counter 1, a release with counter 0 was refused in 20 s, without a restart.
+  MCUboot installs no update below the running image's counter (`port/zephyr/sysbuild/mcuboot.conf`), and the agent refuses it before it restarts, with the same reason as on ESP-IDF (`firmware older than this device accepts`); the device reports its counter as `secureVersion`. Unlike ESP-IDF's eFuse, the counter is the running image's, in flash: it stops a signed vulnerable release from being put back over the air, not someone who writes the flash over USB or SWD. Not yet verified on a supported board; on a board since dropped, a release with counter 0 was refused over one running counter 1, without a restart.
 
 What they do not have:
 
 - **The device key, the credentials and a network given in the field are in the storage partitions in clear, and the flash is not encrypted**: whoever holds the board can read them over USB. On an Espressif chip, a device that must be protected runs the ESP-IDF firmware (its `secure` variant, above). On Zephyr the protection comes with the chips that have TF-M (below); it is planned for after 1.0 ([ROADMAP.md](ROADMAP.md#after-10)).
-  - What it would take on the ESP32-S3 (studied, not built). The application's side is there in Zephyr 4.5: `CONFIG_ESP_FLASH_ENCRYPTION`, with a 32-byte write block for the flash in the devicetree, makes Zephyr's flash driver read, write and erase an encrypted flash, so the storage partitions and an update written to the second slot would be encrypted with no change to the agent. It works under the MCUboot this build uses. The bootloader's side is not: flash encryption is turned on, and the flash encrypted, by the bootloader at the first boot, and the MCUboot that sysbuild builds has no code for it, nor for Secure Boot v2. That takes Espressif's own port of MCUboot, built on its own and not with sysbuild, with a flash layout of its own that must match the application's slots, images signed for a 32-byte write block, and the storage erased before that first boot. Each write to the encrypted storage then erases its 4 KB sector and writes it back whole: a power cut in between loses what else the sector held, which the storage's own journaling does not expect. The bootloader's side would fit this build's: Espressif's port uses the same slots (0x20000 and 0x170000, 1.3 MB each), swap using move, ECDSA P-256 signatures and a security counter against rollback, and builds with ESP-IDF 6.0's sources.
-  - The device key would then be protected as the ESP-IDF firmware's is on the ESP32-S3: by the encrypted storage. Zephyr has no driver for the chip's HMAC or Digital Signature peripheral, so the step after it ([device key in hardware](#device-key-in-hardware)) would be glue of our own.
-  - It could be verified in the emulator only (no real chip is burned here), where no Zephyr build runs yet. On the ESP32-S3 the ESP-IDF firmware's `secure` variant has all of it today.
-- The path Zephyr offers is a chip with TrustZone-M and TF-M (the RP2350 of the Pico 2 W, Nordic's nRF54L, ST's STM32U5): the device key as a PSA key in TF-M's protected storage, which the core already uses through PSA, and a secure boot of the chip's own. Not tried: there is no such board here.
+  - Flash encryption and Secure Boot on the ESP32-S3 would take Espressif's own port of MCUboot, built apart from sysbuild with a flash layout matching the application's: the MCUboot that sysbuild builds has no code to turn them on. Zephyr's flash driver already reads and writes an encrypted flash (`CONFIG_ESP_FLASH_ENCRYPTION`), so the agent would not change. Nothing of it is built yet; on the ESP32-S3 the ESP-IDF firmware's `secure` variant has all of it today.
+- The path Zephyr offers is a chip with TrustZone-M and TF-M (the RP2350 of the Pico 2 W, Nordic's nRF54L, ST's STM32U5): the device key as a PSA key in TF-M's protected storage, which the core already uses through PSA, and a secure boot of the chip's own. Not tried.
 
 ## Not yet done
 
 - **Device key in hardware on chips without an ECDSA peripheral.** Blocked by Flight Control (above).
-- **Real boards.** Nothing has been burned, here or in CI: everything above was verified on emulated chips. Before a batch, burn one board per chip, then run a full OTA cycle on it.
+- **Real boards.** Everything above was verified on emulated chips (esp-emu, which runs the chip's real ROM and models the eFuses); no real chip has been burned, as a burn cannot be undone. Before a batch, burn one board per chip, then run a full OTA cycle on it.
 - **ESP32 (classic).** Secure Boot v2 needs silicon revision 3 (`CONFIG_ESP32_REV_MIN_3`, set by the variant). Not run anywhere yet: the emulator does not run the ESP32.
 - **The image signing key in an HSM.** `tools/signing` signs OCI artifacts with a key file; cosign itself can sign with a KMS or PKCS#11 key.

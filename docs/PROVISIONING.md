@@ -18,7 +18,7 @@ tools/provision.py --image port/espidf/build-esp32c3-secure/merged-binary.bin --
 BATCH=2026-11-a EXPIRATION=30d tools/enrollment.sh .secrets/batch-2026-11-a
 ```
 
-A leaked enrollment certificate lets anyone create enrollment requests until it expires: Flight Control 1.4.0 cannot revoke one (it checks only the signer and the expiry; its main branch also checks that the certificate's request was not revoked, not yet in a release). A certificate per batch with a short lifetime limits that; approving devices from an allow list (`tools/auto-approve`) decides who actually gets in. The lifetime must cover the factory window and the longest a device may stay offline before it enrolls, or enrolls again after its management certificate expired.
+A leaked enrollment certificate lets anyone create enrollment requests until it expires: Flight Control 1.4.0 cannot revoke one ([limitation 8](FLIGHTCTL-LIMITATIONS.md#8-an-enrollment-certificate-cannot-be-revoked)). A certificate per batch with a short lifetime limits that; approving devices from an allow list (`tools/auto-approve`) decides who actually gets in. The lifetime must cover the factory window and the longest a device may stay offline before it enrolls, or enrolls again after its management certificate expired.
 
 ![An enrollment request in Flight Control's UI, waiting for approval](img/enrollment-pending.png)
 <img src="img/enrollment-approve.png" alt="Approving the request, with the device's labels" width="420">
@@ -40,7 +40,7 @@ The session is ESP-IDF's provisioning Security 1: an X25519 key exchange, authen
 
 The network is kept with the device's credentials, as if it had been given at the factory: in `fc_creds`, or in the encrypted store in the secure variant. The device uses it from then on; provisioning the device again, or erasing the flash, brings the access point back. A network given at the factory (`--wifi-ssid`) replaces it.
 
-`CONFIG_FC_FIELD_PROVISIONING` (on by default) adds 17.4 KB of flash on the ESP32-S3 (ESP-IDF 6.0.3, debug build) and no static RAM to speak of (16 bytes): `fc_prov.c` takes 6.9 KB, the rest is the WiFi access point and its DHCP server. Espressif's `network_provisioning`, which the firmware used before, took 117.5 KB: its manager, protocomm, an HTTP server and parser, protobuf-c and their strings.
+`CONFIG_FC_FIELD_PROVISIONING` (on by default) adds 17.4 KB of flash on the ESP32-S3 (ESP-IDF 6.0.3, debug build) and no static RAM to speak of (16 bytes): `fc_prov.c` takes 6.9 KB, the rest is the WiFi access point and its DHCP server. Espressif's `network_provisioning` takes 117.5 KB: its manager, protocomm, an HTTP server and parser, protobuf-c and their strings.
 
 ## On Zephyr
 
@@ -50,7 +50,7 @@ Where the radio can be an access point and a station at once (Espressif's, `CONF
 
 Espressif's app can take the device from a QR code: `{"ver":"v1","name":"FC-xxxxxx","pop":"<secret>","password":"<secret>","transport":"softap","security":1}`, with `security` a number and `password` the access point's (the proof of possession here). The iOS app refuses a code whose `security` is a string.
 
-Boards: the ESP32-S3-DevKitC, provisioned from an iPhone with ESP SoftAP Prov (from its QR code): the phone got an address from the device, the session was set up, the device joined the network picked from its scan in 8 s, told the app, and was Online in Flight Control with its app running a second after the access point closed.
+Boards: the ESP32-S3-DevKitC, provisioned from an iPhone with ESP SoftAP Prov (from its QR code): the phone got an address from the device, the session was set up, the device joined the network picked from its scan in 8 s, told the app, and was Online in Flight Control with its app running a second after the access point closed. The ESP-IDF firmware's field provisioning is verified in the emulator only ([below](#what-the-ci-checks)).
 
 ## What the CI checks
 

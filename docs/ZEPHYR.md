@@ -75,20 +75,11 @@ None of the boards here names any yet: the ESP32-S3 build, with 4 KB of its data
 
 ## Zephyr 4.5
 
-`third_party/fetch-zephyr.sh` pins v4.5.0, which has mbedTLS 4.1.1, the same as ESP-IDF 6.0.3: the core is written for mbedTLS 4, whose cryptography is PSA only. (The port was first made on Zephyr 4.3, the last release with mbedTLS 3.6, when the core was written for that.)
-
-## What the port taught the core
-
-- **One `pthread_attr_t` per thread, kept until the thread is joined.** On Zephyr the attribute object owns the thread's stack: the core used one for its two threads (the second took the first one's stack, which never ran), and destroyed an app thread's right after creating it.
-- **Thread stacks by platform.** A 64-bit host needs more than a microcontroller, and `native_sim` is a 64-bit host that gives a thread exactly what it asks for.
+`third_party/fetch-zephyr.sh` pins v4.5.0, which has mbedTLS 4.1.1, the same as ESP-IDF 6.0.3: the core is written for mbedTLS 4, whose cryptography is PSA only.
 
 ## What the tests check
 
-`DEVICE_KIND=zephyr tests/e2e/e2e.sh` is the end-to-end test of the simulated device with the Zephyr build as the device: CI builds the application in Zephyr's image on every push, and the end-to-end workflow runs that build against Flight Control on kind, nightly or on request ([TESTING.md](TESTING.md)): enrollment and approval, status, a config file and its change, a WASM app installed, updated in place and removed, an unsigned app refused, an update while the registry is down, a second app, the renewal of the management certificate, a server restart, and a device whose certificate expired while the server was down, which enrolls again under a new key after rebooting itself.
-
-One check is weaker than on the host: that a config file was stored is read from the device's log, as the file is inside the flash image.
-
-`DEVICE_KIND=qemu tests/e2e/e2e.sh` is the same test with the build for `mps2/an385` in QEMU ([below](#on-an-emulated-arm-cortex-m3)), run the same way.
+CI runs the end-to-end test of the simulated device with the Zephyr build as the device, on `native_sim` and on `mps2/an385` in QEMU, and the port's hardware for apps and the apps' C library on emulated drivers: see [TESTING.md](TESTING.md) (Zephyr). One check is weaker than on the host: that a config file was stored is read from the device's log, as the file is inside the flash image.
 
 ## On an emulated Arm Cortex-M3
 
@@ -120,16 +111,14 @@ The build has the memory of a microcontroller with 384 KB of SRAM, the least a d
 
 What it is not: there is no MCUboot and no firmware update, and no random generator (Zephyr's test generator, whose numbers are not secret, stands in for one).
 
-## What the boards taught the port
+## On a board
 
-- **A stack that cannot be had becomes a 1 KB stack.** Zephyr takes a thread's stack from the kernel heap when its size is set; if that fails the thread keeps the default. The core checks, and says so instead of overflowing.
-- **A fatal error restarts the device**, and what it was is kept in RAM and logged at the next boot: Zephyr's default is to stop for ever. The status says it too, in `customInfo`: `resetReason` is `panic`, as on ESP-IDF, and `lastFatalError` gives the reason, the thread, the uptime, the `pc` and what was calling: the `lr` on Arm, on the ESP32-S3 (Xtensa) the return addresses of Zephyr's own backtrace; on `native_sim` the `pc` is 0. It is the ESP-IDF firmware's text ([core/include/fc_fatal.h](../core/include/fc_fatal.h)), for `addr2line` against `zephyr.elf` (`tools/fw-elf.py` gets a release's back from the registry), with the firmware's version after it when a rollback put another one in its place.
-- **Statuses can go out while the spec cannot come in.** With 368 bytes of C heap at the lowest, the ESP32-S3 kept reporting but took no spec for hours: the agent restarts the device itself only after 10 minutes without a status. A watchdog on the system work queue now restarts it after 30 minutes without a status accepted or a spec taken, as on ESP-IDF; and while only console sessions change, the agent parses the list of sessions, not the whole spec.
-- **One DNS query at a time** is Zephyr's default; the agent's two threads ask together at start. **Four connections in all** is another: the two to Flight Control, DHCP and DNS used them up, and the one to the registry was refused. Since HTTP/2 there is one connection to Flight Control.
-- **POSIX mutexes come from a fixed pool** (`CONFIG_MAX_PTHREAD_MUTEX_COUNT`, 5 by default), and so do condition variables. The core takes 7, mbedTLS's threading layer 7, the HTTP/2 client up to 11 (two per connection, one per session, one for the TLS buffers). Short of them, mbedTLS's own mutexes fail and a TLS handshake ends in `PSA_ERROR_GENERIC_ERROR` when the device signs with its key: a build with too few did, on the ESP32-S3. `prj.conf` gives 28 mutexes and 12 condition variables, and the core logs it when it finds none left.
+- **A thread's stack** comes from the kernel heap when its size is set; if that fails, Zephyr keeps a 1 KB default. The core checks and logs it instead of overflowing.
+- **A fatal error restarts the device** (Zephyr's default is to stop), and what it was is kept in RAM and logged at the next boot. The status says it too, in `customInfo`: `resetReason` is `panic`, as on ESP-IDF, and `lastFatalError` gives the reason, the thread, the uptime, the `pc` and what was calling: the `lr` on Arm, on the ESP32-S3 (Xtensa) the return addresses of Zephyr's own backtrace; on `native_sim` the `pc` is 0. It is the ESP-IDF firmware's text ([core/include/fc_fatal.h](../core/include/fc_fatal.h)), for `addr2line` against `zephyr.elf` (`tools/fw-elf.py` gets a release's back from the registry), with the firmware's version after it when a rollback put another one in its place.
+- **A watchdog on the system work queue** restarts the device after 30 minutes without a status accepted or a spec taken, as on ESP-IDF; the agent itself restarts it after 10 minutes without a status. While only console sessions change, the agent parses the list of sessions, not the whole spec.
+- **DNS and connections**: Zephyr resolves one query at a time and allows four connections by default; the agent's threads resolve together at start, and the registry needs a connection beside Flight Control's, DHCP's and DNS's. `prj.conf` raises both (`CONFIG_DNS_NUM_CONCUR_QUERIES`, `CONFIG_NET_MAX_CONN`).
+- **POSIX mutexes come from a fixed pool** (`CONFIG_MAX_PTHREAD_MUTEX_COUNT`, 5 by default), and so do condition variables. The core takes 7, mbedTLS's threading layer 7, the HTTP/2 client up to 11 (two per connection, one per session, one for the TLS buffers). Short of them, mbedTLS's own mutexes fail and a TLS handshake ends in `PSA_ERROR_GENERIC_ERROR` when the device signs with its key. `prj.conf` gives 28 mutexes and 12 condition variables, and the core logs it when it finds none left.
 - **The port reads a firmware slot back** before it asks MCUboot to try it: a flash driver may report a write it did not do.
-
-The Raspberry Pi Pico W (RP2040) ran the port. It was removed for its RAM, below what a device needs ([support levels](DEVICES.md#support-levels)); what was verified on it is in [RESULTS.md](RESULTS.md#what-works).
 
 ## On an ESP32-S3
 
@@ -156,38 +145,24 @@ ERASE=1 port/zephyr/flash-esp32.sh /dev/cu.usbmodemXXXX .secrets
 
 The fetch scripts bring Espressif's HAL module (164 MB), the binary WiFi libraries it needs (under Espressif's licence) and the Xtensa toolchain. The build is always with MCUboot, which is how Zephyr starts this chip when it is to be updated; `flash-esp32.sh` writes MCUboot, the signed application and the credentials with esptool, through the board's UART port, where the console also is (115200). Nothing burns eFuses: MCUboot checks the image's signature in software, and Secure Boot and flash encryption stay off.
 
-Tried on the board, against Flight Control 1.4.0:
-
-| | |
-|---|---|
-| Enrollment | key made by PSA from the chip's random generator, certificate for a year |
-| WASM app | the signed `alarm` app runs (WAMR's fast interpreter on Xtensa); a copy signed with another key was refused |
-| Firmware, whole | 885 KB in 7 s, 24 s from the restart to the agent, MCUboot's swap included; confirmed |
-| Firmware, as a delta | 19 KB (2.2%) rebuilt the 885 KB image in 8 s; confirmed |
-| A firmware that cannot reach Flight Control | downloaded whole in 14 s; given up after its 30 s; MCUboot put the previous firmware back (a 15 s swap), which reported the failure 1 min 53 s after the fleet changed, and did not try the image again |
-| Reflashed over USB | same device: its key is in the storage partition |
-| Memory | 49 KB of the 128 KB C heap free with the app and both connections up (before HTTP/2), 40 KB at the lowest. With z26 (the C heap 115 KB, 4 KB having gone to the device's log) and metrics sent every 30 s on a second connection: 55 KB free, 8.3 KB at the lowest; the first core's data region is 99.9% full. z27 (MQTT linked in, the C heap 114 KB, the kernel heap 92 KB): a 1,038 KB signed image, the data region 98.9% full (4 KB free); z29: 99.0% (3.6 KB free) |
-| Downloads over HTTP/2 | z28 as a 54 KB delta and the `mqttdemo` app: manifests, signatures and blobs, every request HTTP/2 in the registry's log |
-| MQTT | `mqttdemo` against a broker with TLS: published every 10 s for 45 minutes, a command on each prefix answered within a second; beside a metrics export it used up the C heap ([APPS.md](APPS.md#mqtt)) |
-| Update from z28 to z29 | not done: z28 with the `alarm` app, while trying it, got down to 368 bytes of C heap; the download failed (`HTTP -1`), and the spec then stopped coming in while statuses went out, until a RESET |
-| The UI's Logs tab, metrics | the tab's commands answered (every filter, live mode); the device's metrics at the Telemetry Gateway ([CONSOLE.md](CONSOLE.md), [METRICS.md](METRICS.md)) |
+On the board it enrolls, runs a signed app, takes its firmware whole or as a delta through MCUboot and goes back from a broken one, downloads over HTTP/2, and answers the UI's Logs tab; what was tried, with figures, is in [RESULTS.md](RESULTS.md#zephyr-on-the-esp32-s3).
 
 What it took, beyond the board's two files in `port/zephyr/boards/`:
 
-- **Memory by hand.** Zephyr gives the first core 372 KB for data. The kernel heap is the larger of what the application asks and what the drivers add: the WiFi driver's 51 KB are not added to a size that is set, and with 64 KB there were 28 KB left for thread stacks. It is 92 KB now, the C heap 114 KB (4 KB went to the PSRAM driver, 5 KB to the device's log), the status thread's stack 12 KB (4.7 KB used on the board), the main thread's, where the spec loop runs, 16 KB (5.4 KB used): 98.9% of the region, 4 KB left (z27).
-- **PSRAM for apps.** The N8R8's 8 MB of octal PSRAM is a heap of its own (`CONFIG_ESP_SPIRAM`, `CONFIG_SPIRAM_MODE_OCT`, its size in the overlay); WASM apps' memories of 16 KB or more come from it, through WAMR's `set_exec_mem_alloc_func` (`port/zephyr/fc_heap_zephyr.c`), the rest of the firmware keeps internal RAM. Its driver takes 4 KB of that, from the C heap. CoreMark, which did not fit before, runs there ([RESULTS.md](RESULTS.md#coremark)).
+- **Memory by hand.** Zephyr gives the first core 372 KB for data. The kernel heap is the larger of what the application asks and what the drivers add: the WiFi driver's 51 KB are not added to a size that is set, and with 64 KB there were 28 KB left for thread stacks. It is 92 KB, the C heap 114 KB, made smaller for what the PSRAM driver (below), the device's 4 KB log and 1 KB for Zephyr's lines on their way into it take of the region, the status thread's stack 12 KB, the main thread's, where the spec loop runs, 16 KB. About 4 KB of the region are left at link time; what the stacks use is in [RESULTS.md](RESULTS.md#ram).
+- **PSRAM for apps.** The N8R8's 8 MB of octal PSRAM is a heap of its own (`CONFIG_ESP_SPIRAM`, `CONFIG_SPIRAM_MODE_OCT`, its size in the overlay); WASM apps' memories of 16 KB or more come from it, through WAMR's `set_exec_mem_alloc_func` (`port/zephyr/fc_heap_zephyr.c`), the rest of the firmware keeps internal RAM. Its driver takes 4 KB of internal RAM. CoreMark, which did not fit before, runs there ([RESULTS.md](RESULTS.md#coremark)).
 - **The WiFi driver joins after the request returns**, and chooses the access point itself (`CONFIG_ESP32_WIFI_STA_SCAN_ALL`: the strongest).
 - **A kept connection the server closed** is `ENOTCONN` to Zephyr's TCP, not a reset: the port took it for an error and warned at every request, before the core opened another connection as it should.
 
-The board is in a fleet of its own (`tools/fleet/zephyr-lab.yaml`). A release is one OCI index with an image for each Zephyr board, named by the board's `CONFIG_FC_FW_PLATFORM`:
+Zephyr boards go in a fleet of their own (the example is `tools/fleet/zephyr-lab.yaml`). A release is one OCI index with an image for each Zephyr board, named by the board's `CONFIG_FC_FW_PLATFORM`:
 
 ```bash
 tools/fw-push.py --delta-from <running tag> <registry>/flightctl-mcu/fw:<new tag> esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
 ```
 
-It took its image as a delta: 9 KB (1.0%). A board must hold the public half of the key the release is signed with; one provisioned with another refuses the fleet's app until its credentials are written again.
+A board must hold the public half of the key the release is signed with; one provisioned with another refuses the fleet's app until its credentials are written again.
 
-Field provisioning ([PROVISIONING.md](PROVISIONING.md#on-zephyr)): with a proof of possession and no network in its credentials, the board opened `FC-E8EC00` on channel 6 three seconds after boot, with the provisioning server listening, and the access point went away once the network was written back. The build that added it came to the board as a delta (72 KB) and changed nothing for a board with its network: it was Online with the app running about 90 s after the fleet changed. Provisioned from an iPhone with Espressif's app: Online with its app a second after the access point closed. What it took: Zephyr's STA+AP usage mode (`CONFIG_WIFI_USAGE_MODE_STA_AP`; with `ESP32_WIFI_AP_STA_MODE` alone the network manager keeps one interface, the access point's address and DHCP server land on the station's, and installers get none), 4 KB of stack for the DHCP server's thread, and no ICMP probe before a lease (with it, the board restarted a second after a client joined).
+Field provisioning ([PROVISIONING.md](PROVISIONING.md#on-zephyr)) needs, on this board: Zephyr's STA+AP usage mode (`CONFIG_WIFI_USAGE_MODE_STA_AP`; with `ESP32_WIFI_AP_STA_MODE` alone the network manager keeps one interface, the access point's address and DHCP server land on the station's, and installers get none), 4 KB of stack for the DHCP server's thread, and no ICMP probe before a lease (with it, the board restarted a second after a client joined).
 
 Not tried: Secure Boot or flash encryption under Zephyr ([SECURITY.md](SECURITY.md#zephyr)). CI builds it on every push, with the Xtensa toolchain; no emulator runs it.
 

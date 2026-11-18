@@ -1,6 +1,22 @@
 # Flight Control: limitations found
 
-The gaps found in Flight Control for microcontrollers, with what the source shows, how each was found, and a proposal. The numbers are the same as in the short list of [RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals), which other pages cite.
+The gaps found in Flight Control for microcontrollers, each with what the source shows, how it was found, and a proposal. Other pages cite them by number.
+
+1. [`matchExpressions` in the fleet selector is accepted but ignored](#1-matchexpressions-in-the-fleet-selector-is-accepted-but-ignored)
+2. [Batch success is based only on `renderedVersion`](#2-batch-success-is-based-only-on-renderedversion)
+3. [Fixed 5-minute disconnect timeout (`DeviceDisconnectedTimeout`)](#3-fixed-5-minute-disconnect-timeout-devicedisconnectedtimeout)
+4. [No way to declare the device class or the supported runtimes](#4-no-way-to-declare-the-device-class-or-the-supported-runtimes)
+5. [No free-form status field per app](#5-no-free-form-status-field-per-app)
+6. [Cost of each status update](#6-cost-of-each-status-update)
+7. [The server compares `os.image` only as a string](#7-the-server-compares-osimage-only-as-a-string)
+8. [An enrollment certificate cannot be revoked](#8-an-enrollment-certificate-cannot-be-revoked)
+9. [A device with an RSA key cannot enroll](#9-a-device-with-an-rsa-key-cannot-enroll)
+10. [Since 1.4, a change in the status is a label event](#10-since-14-a-change-in-the-status-is-a-label-event)
+11. [A fleet's OS image cannot come from the software catalog](#11-a-fleets-os-image-cannot-come-from-the-software-catalog)
+12. [An inline file given in base64 reaches the device percent-encoded](#12-an-inline-file-given-in-base64-reaches-the-device-percent-encoded)
+13. [A device cannot enroll again under its own name](#13-a-device-cannot-enroll-again-under-its-own-name)
+14. [A withdrawn advisory stays on the devices](#14-a-withdrawn-advisory-stays-on-the-devices)
+15. [A console session whose user left before the device came stays listed](#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)
 
 ## 1. `matchExpressions` in the fleet selector is accepted but ignored
 
@@ -53,7 +69,7 @@ The gaps found in Flight Control for microcontrollers, with what the source show
 
 ## 10. Since 1.4, a change in the status is a label event
 
-- The default `custom-info` mapping copies all of `customInfo` into labels, and the service logs "label reconciliation was requested" at every change in the status (`internal/service/common/device.go`: `deviceStatusesEqual`), even when no label changes ([below](#label-sync-in-detail)).
+- The default `custom-info` mapping copies all of `customInfo` into labels, and the service logs "label reconciliation was requested" at every change in the status (`internal/service/common/device.go`: `deviceStatusesEqual`), even when no label changes ([below](#label-sync)).
 - `customInfo` is the only free-form place in the status, so a constrained device's counters end up there (limitation 5).
 - Proposal: ask for a reconciliation only when a mapping's inputs changed, and do not copy all of `customInfo` by default; or give counters a place of their own.
 
@@ -84,17 +100,28 @@ The gaps found in Flight Control for microcontrollers, with what the source show
 ## 15. A console session whose user left before the device came stays listed
 
 - A session is listed in the device's annotation (`device-controller/console`) when it starts, and taken out only when the user's websocket closes after the device joined (`internal/console/console.go`: `CloseSession`). If the user leaves first (`flightctl console` gives up after 60 s, the UI's Logs tab after 50 s), nothing takes it out. While any session is listed the rendered spec is served at once, with no long-poll (`internal/store/model/device.go`), so the device asks for its spec every few seconds, for good.
-- Seen on boards: sessions asked for while a board was restarting stayed listed. This agent remembers the last 64 sessions it opened (it never opens one twice), parses only the list of sessions while the spec is unchanged, ends a session nobody joins within a minute, and polls every 15 s instead of 5 once only sessions it has seen are listed.
+- This agent works around it ([CONSOLE.md](CONSOLE.md#how-it-works)).
 - Proposal: take a session out when its user leaves, joined or not, and give listed sessions a lifetime.
 
 All of these were read again in the source of 1.4.0 and of Flight Control's main branch of 12 November 2026: they hold in both, except limitation 8, fixed on main. Limitation 15 was read in main's source and seen with 1.4.0.
 
-## Label sync in detail
+## Label sync
 
-Flight Control 1.4 installs `LabelSyncMapping` resources, and one of them copies every entry of `customInfo` into the device's labels (`custominfo.flightctl.io/<key>`). These devices report counters there: free heap, traffic, uptime. With the default, each status update rewrote the device's labels and logged two events ("label reconciliation was requested", "updated successfully (labels)").
+Flight Control 1.4 installs `LabelSyncMapping` resources, and one of them copies every entry of `customInfo` into the device's labels (`custominfo.flightctl.io/<key>`). These devices report counters there: free heap, traffic, uptime. With the default, each status update rewrote the device's labels and logged two events ("label reconciliation was requested", "updated successfully (labels)"): more than half of the events on a test cluster while the tests ran.
 
-`tools/fleet/labelsync-custom-info.yaml` copies only what stays the same between firmware updates: device class, board, firmware and OS version, security state. The labels then stop changing, and so does the second event. The first is logged whenever anything in the status changes (the service compares the whole status, `lastSeen` aside), before it knows nothing will come of it (limitation 10). So the agent keeps its status still: the `Updating` condition's time changes only with the condition, as in Kubernetes, and the counters are read at the start, five minutes later, then once an hour. What an app reports is not held back: an app whose state changes about twice a minute makes an event at each change.
+`tools/fleet/labelsync-custom-info.yaml` copies only what stays the same between firmware updates: device class, board, firmware and OS version, security state. The labels then stop changing, and so does the second event. The first is logged whenever anything in the status changes (the service compares the whole status, `lastSeen` aside), before it knows nothing will come of it (limitation 10). So the agent keeps its status still between changes: the `Updating` condition's time moves only with the condition, and the counters are read at the start, five minutes later, then hourly. What an app reports is not held back: an app whose state changes about twice a minute makes an event at each change.
+
+The simulated device, with no app, over 9 minutes (a status a minute):
+
+| | Events |
+|---|---|
+| Counters and the condition's time new at every status | 10, one per status |
+| The condition's time kept, counters once an hour | 2: at the start, and when the counters were read again five minutes later; then one an hour |
 
 The labels a mapping makes are its own: editing a device without them, to change another label, is refused (409, "cannot edit a managed label owned by a mapping"). An edit must carry them as they are.
 
 The new labels also let a fleet select on what a device says it is, `custominfo.flightctl.io/deviceClass=zephyr` for instance, which is part of what limitation 4 asks for.
+
+## Proposals not yet raised
+
+- **Firmware and apps built by Flight Control.** Its image builder (`ImageBuild`, `flightctl new-version`) makes bootc images for Linux. A build of another kind (a toolchain image, sources from Git, a list of chips) could make the signed multi-chip index that `tools/fw-push.py` makes today, with the delta from the previous release and an SBOM ([SBOM.md](SBOM.md)). It needs an agreed artifact type for firmware first; to be raised as an issue before any code.

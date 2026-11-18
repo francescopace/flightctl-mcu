@@ -7,7 +7,7 @@ What the agent asks of a device, where it runs today, and how to add another one
 The agent is not tied to a chip or a vendor: it is a C core and a thin port for each system it runs on. What it asks of a device:
 
 - a CPU that [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) has a target for. In use here: Xtensa, RISC-V, Arm Cortex-M3 (emulated), and AArch64 and x86-64 on a host;
-- 384 KB of SRAM at the least. What counts is the heap left once the agent and an app run, in the tables [below](#boards-tried): the ESP32-C3 has 57 KB free, the C5 131 KB, the ESP32-S3 118 KB. Chips with less SRAM are not supported ([support levels](#support-levels));
+- 384 KB of SRAM at the least. What counts is the heap left once the agent and an app run ([RESULTS.md](RESULTS.md#ram)). Chips with less SRAM are not supported ([support levels](#support-levels));
 - flash for two firmware slots and some storage, 2 MB at the least (images are 0.7 to 1.5 MB);
 - an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried on hardware. Ethernet is tried on Zephyr in QEMU (`mps2/an385`, [ZEPHYR.md](ZEPHYR.md#on-an-emulated-arm-cortex-m3)); a real Zephyr board with Ethernet is two files ([below](#another-zephyr-board));
 - a random generator and a way to learn the time (SNTP), for TLS;
@@ -20,10 +20,10 @@ Three stacks have a port today:
 | Stack | Devices | What works there |
 |---|---|---|
 | **ESP-IDF** 6.0<br/>`port/espidf` | Espressif's WiFi chips. Five run it: ESP32, S3, C3, C5, C6. Another one ESP-IDF supports is mostly configuration. | Everything, and the most complete: also Secure Boot, flash encryption, keys in hardware, WiFi provisioning over SoftAP ([SECURITY.md](SECURITY.md), [PROVISIONING.md](PROVISIONING.md)). On five boards, and on emulated chips in CI. |
-| **Zephyr** 4.5<br/>`port/zephyr` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. One board runs it, an ESP32-S3-DevKitC, and an Arm Cortex-M3 on Ethernet emulated in QEMU (`mps2/an385`). Next: a real Arm board with Ethernet, see [support levels](#support-levels). | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([ZEPHYR.md](ZEPHYR.md)). On one board, and in CI as a Linux process (`native_sim`) and in QEMU (`mps2/an385`). A new board is two files. |
-| **Linux, macOS**<br/>`port/host` | Anything with POSIX threads and sockets: a gateway, a single-board computer, a container, your laptop. | Runs as a process. Enrollment, monitoring, config and WASM apps are real; a firmware update only saves the image to a file. It is the simulated device of the tests, and where the protocol work was done. A Linux device that can run bootc and Podman should run Flight Control's own agent instead. |
+| **Zephyr** 4.5<br/>`port/zephyr` | Any board Zephyr supports that meets the list above: Zephyr brings the drivers, the network stack and MCUboot. One board runs it, an ESP32-S3-DevKitC, and an Arm Cortex-M3 on Ethernet emulated in QEMU (`mps2/an385`). | Enrollment, monitoring, config, WASM apps, firmware through MCUboot, whole or as a delta ([ZEPHYR.md](ZEPHYR.md)). On one board, and in CI as a Linux process (`native_sim`) and in QEMU (`mps2/an385`). A new board is two files. |
+| **Linux, macOS**<br/>`port/host` | Anything with POSIX threads and sockets: a gateway, a single-board computer, a container, your laptop. | Runs as a process. Enrollment, monitoring, config and WASM apps are real; a firmware update only saves the image to a file. It is the simulated device of the tests. A Linux device that can run bootc and Podman should run Flight Control's own agent instead. |
 
-Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs a port, which is about 20 functions: see [Adding another device](#adding-another-device). None is written.
+Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs a port: about 30 functions, in `core/include/fc_port.h` (see [Adding another device](#adding-another-device)). None is written.
 
 "Everything" means enrollment, monitoring, config, firmware OTA with rollback and WASM apps. The same `.wasm` file runs on every one of these, whatever the CPU.
 
@@ -35,7 +35,7 @@ Any other RTOS (NuttX, RT-Thread, ThreadX, FreeRTOS outside ESP-IDF, ...) needs 
 | **Best effort** | ESP32-C3 | 400 KB | Built in CI and with each release; tried on a board from time to time. |
 | **Removed** | ESP32-S2, Raspberry Pi Pico W (RP2040) | 320, 264 KB | Below 384 KB of SRAM: the S2 needed its PSRAM for TLS, the Pico W had about 30 KB free with an app. |
 | **Emulated** | Arm MPS2 AN385 (Cortex-M3, Ethernet) on Zephyr, in QEMU | 4 MB, of which the build uses 300 KB | The end-to-end test (e2e workflow), with the memory of a 384 KB device. The first link other than WiFi. No firmware updates (no MCUboot there) and no random generator: not a device. |
-| **Planned** | An ST Nucleo board with Ethernet (H563ZI or F767ZI) on Zephyr | 640 / 512 KB | Not tried yet. A real Arm board. |
+| **Planned** | An ST Nucleo board with Ethernet (H563ZI or F767ZI) on Zephyr | 640 / 512 KB | Not tried yet ([ROADMAP.md](ROADMAP.md)). |
 
 The host port (Linux, macOS) is supported: it is the simulated device of the tests.
 
@@ -47,29 +47,21 @@ Another chip Espressif or Zephyr supports, with 384 KB of SRAM or more, should w
 
 *An ESP32-C6 as Flight Control shows it: the system (`esp-idf` on `riscv32-esp32c6`), the firmware it runs and its config sources; then what the device reports of itself: heap, stack margins, traffic, temperature, WiFi signal (the MAC is hidden here).*
 
-With ESP-IDF 6.0.3 and mbedTLS 4, every board. The free heap is the last one measured, with the `alarm` app running and the agent connected ([RESULTS.md](RESULTS.md#ram)):
+With ESP-IDF 6.0.3 and mbedTLS 4, and with Zephyr 4.5 and MCUboot ([ZEPHYR.md](ZEPHYR.md)); what was verified on each is in [RESULTS.md](RESULTS.md#what-works), the heap in [RAM](RESULTS.md#ram):
 
-| Chip | Core | Status | Free heap with an app running |
+| Chip | Core | ESP-IDF | Zephyr |
 |---|---|---|---|
-| ESP32-S3 | Xtensa LX7 | everything works | ~145 KB (release build, ESP-IDF 6.0.3) |
-| ESP32-C3 | RISC-V | everything works | ~66 KB |
-| ESP32-C5 | RISC-V | everything works; also tested in the emulator | ~131 KB |
-| ESP32 (classic) | Xtensa LX6 | everything works; temperature is simulated because there is no supported internal sensor | ~137 KB |
-| ESP32-C6 | RISC-V | everything | ~163 KB |
-
-The C3 and C6 figures are from an earlier build, before the spec loop moved to the main task (37 KB more free on the classic ESP32): they are low.
+| ESP32-S3 | Xtensa LX7 | ✓ | ✓ |
+| ESP32-C3 | RISC-V | ✓ | – |
+| ESP32-C5 | RISC-V | ✓ | – |
+| ESP32 (classic) | Xtensa LX6 | ✓; the chip has no temperature sensor, so the status's temperature is simulated | – |
+| ESP32-C6 | RISC-V | ✓ | – |
 
 The C6 DevKitC flashes only over its native USB port, started in download mode (plug them in holding BOOT).
 
 PSRAM is not used, so a single image runs on every board variant of a chip, except on the ESP32-S3, where it holds the memory of apps too large for internal RAM. An S3 comes with no PSRAM, 2 MB of quad PSRAM (N4R2, N8R2) or 8 MB of octal (N8R8, N16R8), and the mode is fixed at build time, so a release has two S3 images: `esp32s3`, for quad PSRAM, which boots without it on the other boards, and `esp32s3-r8` (`VARIANT=r8`), for octal. A board takes updates for the image it runs: an N8R8 is flashed once over USB with `esp32s3-r8`, and then updates from it over the air. Tried on an N4R2 and an N8R8. The Zephyr build for the S3 uses the N8R8's octal PSRAM the same way ([ZEPHYR.md](ZEPHYR.md)).
 
-With ESP-IDF 6.0.3 (built for size, WAMR for speed) the firmware images are 977 to 1,110 KB, leaving 33–41% of the 1,664 KB OTA slot free ([RESULTS.md](RESULTS.md#firmware-size)). Most of that size is the WiFi stack and cryptography. The agent itself, with its HTTP/2 client, is about 62 KB (79 KB with cJSON, WiFi provisioning, the delta decoder and its ESP-IDF port; on the C3), and WAMR about 68 KB, both measured built for speed.
-
-With Zephyr 4.5 and firmware updates through MCUboot ([ZEPHYR.md](ZEPHYR.md)):
-
-| Board | Core | Status | Free heap with an app running |
-|---|---|---|---|
-| ESP32-S3 | Xtensa LX7 | everything works | ~49 KB |
+The firmware images, what takes the space and the agent's own share are in [RESULTS.md](RESULTS.md#firmware-size).
 
 ## Adding another device
 
@@ -104,18 +96,19 @@ The core needs:
 - mbedTLS 4.1 or later (TLS 1.3; its cryptography is PSA only);
 - a platform layer for WAMR. WAMR already has one for Zephyr, NuttX, RT-Thread and RIOT, among others.
 
-Then implement `core/include/fc_port.h` for your platform:
+Then implement [core/include/fc_port.h](../core/include/fc_port.h) for your platform, the reference for each function:
 
-| Function | What it does |
+| Functions | What they do |
 |---|---|
 | `fc_port_kv_get/set/del` | Persistent key/value storage: device key, certificate, config files, WASM modules |
-| `fc_port_sysinfo`, `fc_port_custom_info` | Hardware and OS facts for `status.systemInfo` |
+| `fc_port_sysinfo`, `fc_port_custom_info`, `fc_port_metrics` | Hardware and OS facts for `status.systemInfo`: what stays the same, and what changes (heap, uptime, RSSI, temperature) |
+| `fc_port_stack_unused`, `fc_port_heap_largest/free/free_now/watch/low` | Stack and heap figures, for the status and for the checks that keep the agent its heap; -1 when the port cannot tell |
 | `fc_port_write_file`, `fc_port_read_file`, `fc_port_remove_file` | Where `spec.config` files end up, reading them back, and removing those the spec no longer gives (the registry's CA and credentials, [REGISTRY.md](REGISTRY.md)) |
 | `fc_port_fw_platform` | The `platform.architecture` to pick from a firmware index, e.g. `esp32c3` |
 | `fc_port_ota_begin/write/end` | Write an image into the inactive slot and make it the next boot image |
 | `fc_port_ota_pending_verify/confirm/rollback`, `fc_port_reboot` | Confirm a new image or go back. On Zephyr this is MCUboot's test and confirm. |
-| `fc_port_fw_read` | Read the running image, for [delta updates](DELTA.md). A port that cannot returns -1, and its updates are whole images. |
+| `fc_port_fw_read` | Read the running image, for [delta updates](DELTA-UPDATES.md). A port that cannot returns -1, and its updates are whole images. |
 | `fc_port_hwkey_bits/seal/pk/forget` | A device key kept in hardware ([SECURITY.md](SECURITY.md)). A port without one says so, and the key stays in storage. |
 | `fc_port_log` | Logging |
 
-`port/host/fc_port_host.c` (250 lines), `port/zephyr/fc_port_zephyr.c` (480) and `port/espidf/fc_port_espidf.c` (1000, with the keys in hardware) are the three references. The firmware wiring in `port/espidf/main/` covers WiFi, time sync, the demo app and its host functions; it is ESP-IDF specific and would be rewritten for another platform.
+`port/host/fc_port_host.c`, `port/zephyr/fc_port_zephyr.c` and `port/espidf/fc_port_espidf.c` (with the keys in hardware) are the three references. The firmware wiring in `port/espidf/main/` covers WiFi, time sync and the apps' host functions; it is ESP-IDF specific and would be rewritten for another platform.

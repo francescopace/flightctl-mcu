@@ -6,11 +6,11 @@ You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/fli
 
 The scripts were written on macOS (Apple Silicon). CI runs the host agent, the firmware build and the kind setup on Linux too.
 
-The walk below is for an Espressif board with the ESP-IDF firmware, the most complete of the three ports. For a board with the Zephyr build, steps 3 and 4 are in [ZEPHYR.md](ZEPHYR.md) and the fleet is `tools/fleet/zephyr-lab.yaml`; with no board at all, see [Without a board](#without-a-board).
+The walk below is for an Espressif board with the ESP-IDF firmware, the most complete of the three ports. For a board with the Zephyr build, steps 3 and 4 are in [ZEPHYR.md](ZEPHYR.md#on-an-esp32-s3) and its example fleet is `tools/fleet/zephyr-lab.yaml`; with no board at all, see [Without a board](#without-a-board).
 
 ## 1. Control plane
 
-Flight Control on [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker: a Kubernetes cluster whose nodes are containers on one machine), reachable from your LAN at `<your-ip>.nip.io`, and an OCI registry with two doors to the same images: TLS with a password at `registry.<your-ip>.nip.io:5443`, which devices pull through, and plain HTTP on port 5001, which the tools on your machine push through ([REGISTRY.md](REGISTRY.md)). If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and set its agent endpoint in `port/espidf/sdkconfig.local` (step 2).
+Flight Control on [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker: a Kubernetes cluster whose nodes are containers on one machine), reachable from your LAN at `<your-ip>.nip.io`, and an OCI registry with two doors to the same images: TLS with a password at `registry.<your-ip>.nip.io:5443`, which devices pull through, and plain HTTP on port 5001, which the tools on your machine push through ([REGISTRY.md](REGISTRY.md)). If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and give the device its agent endpoint with `tools/provision.py --server` (step 4).
 
 ```bash
 tools/kind/up.sh
@@ -26,7 +26,7 @@ flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t 
 
 The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
 
-Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, once an hour, so narrow that to what does not change ([why](RESULTS.md#label-sync)):
+Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, once an hour, so narrow that to what does not change ([why](FLIGHTCTL-LIMITATIONS.md#label-sync)):
 
 ```bash
 tools/fleet/apply.sh tools/fleet/labelsync-custom-info.yaml
@@ -64,7 +64,7 @@ port/espidf/flash.sh /dev/cu.usbmodem1101
 
 That build is optimized for size (`-Os`), with WAMR, which runs the apps, at `-O2` and the CPU at the chip's highest clock. `VARIANT=release` builds the same with quieter logs, in `port/espidf/build-<chip>-release`; push those with `fw-push.py --variant release`.
 
-Nothing above touches the chip's eFuses. The `secure` variant does: Secure Boot v2, flash encryption and NVS encryption, for devices in the field. It is never built by default, only with `VARIANT=secure` and a Secure Boot key of your own, in its own directory (`port/espidf/build-<chip>-secure`). Its first boot burns the chip's eFuses for good; read [SECURITY.md](SECURITY.md) first, which also has the factory procedure. `flash.sh` will not flash it without being told, and a device takes over the air only firmware of its own variant: a plain device refuses a secure build, and the reverse.
+Nothing above touches the chip's eFuses. The `secure` variant does: Secure Boot v2, flash encryption and NVS encryption, for devices in the field. It is never built by default, and its first boot burns the chip's eFuses for good: read [SECURITY.md](SECURITY.md) first.
 
 ## 4. Provision it
 
@@ -98,7 +98,7 @@ tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
 
 ## 6. Give it firmware, config and an app
 
-Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to the local registry's door with TLS (`.secrets/registry/host`), and adds its CA and password to the fleet as config files; set `REGISTRY=host:port` to use another one. Use the tags `tools/fleet/idf-lab.yaml` names, or edit them there. (The fleet of the boards with the Zephyr build is `tools/fleet/zephyr-lab.yaml`: the two ports are released apart for now.)
+Push a firmware index and the WASM app to the registry, then apply the fleet. `apply.sh` fills in the registry address, which defaults to the local registry's door with TLS (`.secrets/registry/host`), and adds its CA and password to the fleet as config files; set `REGISTRY=host:port` to use another one. Use the tags the example fleet `tools/fleet/idf-lab.yaml` names, or edit them there.
 
 ```bash
 tools/fw-push.py <your-ip>:5001/flightctl-mcu/fw:<firmware tag>
@@ -116,7 +116,7 @@ tools/fleet/apply.sh
 
 The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest.
 
-![The fleet idf-lab in Flight Control's UI](img/fleet.png)
+![The example fleet in Flight Control's UI](img/fleet.png)
 *The fleet once applied: the firmware release as its system image, the four config sources, and every device up to date.*
 
 The pushes go through the plain door, the devices pull the same images through the one with TLS: they speak nothing else. A fleet that still names the plain door has to move first; see [REGISTRY.md](REGISTRY.md#moving-a-fleet-to-the-tls-door). To keep the fleet in Git instead, see [REGISTRY.md](REGISTRY.md#fleets-kept-in-git).
@@ -136,7 +136,7 @@ flightctl delete device/<name>
 The device keeps running its apps and config, but it no longer talks to Flight Control. It also does not enroll again by itself, even after a restart. To bring it back as a new device, erase its storage and flash it again:
 
 - ESP-IDF: `esptool -p <port> erase-flash`, then steps 3 and 4 again.
-- Zephyr on an ESP32: `ERASE=1 port/zephyr/flash-esp32.sh`.
+- Zephyr on an ESP32: `ERASE=1 port/zephyr/flash-esp32.sh <port> .secrets` ([ZEPHYR.md](ZEPHYR.md#on-an-esp32-s3)).
 
 ## Without a board
 

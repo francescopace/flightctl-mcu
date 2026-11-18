@@ -40,7 +40,7 @@
 /* Flight Control lists a session until the device's stream for it closes:
  * one whose stream died with a restart stays listed, beside the new ones,
  * and one whose user left before the device came stays listed for good
- * (docs/UPSTREAM.md, 15). The device remembers a hash of each session it
+ * (docs/FLIGHTCTL-LIMITATIONS.md, 15). The device remembers a hash of each session it
  * opened, kept across restarts, so that it never opens an old one again:
  * more than the server has been seen to list, in less RAM than 16 IDs took.
  * One it forgot would be opened again at each poll, with its stream and

@@ -4,7 +4,7 @@ Where devices get their firmware and apps: an OCI registry, reached over TLS and
 
 ## The rule
 
-A device reaches a registry over TLS, with the CA its fleet gives it, and HTTP/2. Without the CA the pull fails, and the error names the file the CA is expected in. Plain HTTP is not spoken: earlier firmware used it when it had no CA.
+A device reaches a registry over TLS, with the CA its fleet gives it, and HTTP/2. Without the CA the pull fails, and the error names the file the CA is expected in. Plain HTTP is not spoken.
 
 The CA and the credentials reach the device as config files in its fleet. The paths are the ones containers use on Linux, and so does Flight Control's Linux agent:
 
@@ -22,7 +22,7 @@ A key may also name a repository, as in `registry.example.com:5443/flightctl-mcu
 The device sends the credentials only when the registry asks for them with a 401. It supports two schemes:
 
 - **Basic**, which is what `registry:3` with a password file asks for.
-- **Bearer tokens**, the scheme of Harbor, Quay, GitLab and most hosted registries. The token comes from the realm named in the challenge, which must be on https, with the credentials as Basic, or with none for a public repository (an anonymous token). A realm on another host needs that host's CA as well (`certs.d/<that host>/ca.crt`), and is a second connection for the length of the request; a realm on the registry's own host and port is asked on the same connection. The device asks for one token per pull, for the scope the registry names (`repository:<repo>:pull`), and keeps it until the pull ends: a token that runs out during a pull (a 401 on a later request) is replaced once. Verified against Quay 3.17 with a robot account, and against `registry:3` with [docker_auth](https://github.com/cesanta/docker_auth) as the token service, with the realm on another host and on the registry's own host behind nginx, as Harbor has it ([TESTING.md](TESTING.md#registry-tokens)).
+- **Bearer tokens**, the scheme of Harbor, Quay, GitLab and most hosted registries. The token comes from the realm the challenge names, on https, with the credentials as Basic, or with none for a public repository (an anonymous token). A realm on another host needs that host's CA too (`certs.d/<that host>/ca.crt`) and takes a second connection while the token is asked for; one on the registry's own host and port uses the same connection. The device asks for one token per pull, for the scope the registry names, and replaces it once if it runs out during the pull.
 
 A robot account of Harbor or Quay goes into `auth.json` as any account: its name (`<organization>+<robot>` in Quay, `robot$<project>+<robot>` in Harbor) as the user and its token as the password:
 
@@ -34,7 +34,9 @@ A 401 that remains once the device has authenticated says why: `credentials refu
 
 The credentials never appear in the device's errors or its log. A registry that refuses them shows up in `status.updated.info` as `HTTP 401`.
 
-The CA covers every port of its host.
+## What was verified
+
+The device's registry client, built for the host, against Quay 3.17 with a robot account, and against `registry:3` with [docker_auth](https://github.com/cesanta/docker_auth) as the token service, with the realm on another host and on the registry's own host behind nginx, as Harbor has it ([TESTING.md](TESTING.md#registry-tokens)): a firmware index with the C3 and S3 images (1.1 MB) and a signed WASM layer pulled, each with one token; the refusals above; a token that ran out during a pull replaced, the image intact. The tokens were RS256, about 1 KB from Quay for a pull-only robot account and 0.8 KB from docker_auth. Not run: Harbor (no arm64 image), and Bearer tokens on a board (the same code).
 
 ## The local registry
 
@@ -113,13 +115,13 @@ A fleet that a `ResourceSync` owns is changed through Git only: delete one appli
 
 ## Moving a fleet to the TLS door
 
-Firmware that speaks HTTP/2 pulls over TLS only, so a fleet that names the plain door moves to the TLS door before it gets that firmware: apply it again with the TLS door while its devices still run firmware that speaks both (the builds before HTTP/2), then release. Changing the registry address in `os.image` makes every device download its firmware again and restart, because Flight Control compares `os.image` as a string. Push a new release with a delta from the running one (`--delta-from`) to keep that download small.
+Devices pull through the TLS door only. Changing the registry's address in a fleet's `os.image` makes every device download its firmware again and restart, as Flight Control compares `os.image` as a string ([limitation 7](FLIGHTCTL-LIMITATIONS.md#7-the-server-compares-osimage-only-as-a-string)): push the release with a delta from the running one (`--delta-from`, [DELTA-UPDATES.md](DELTA-UPDATES.md)) to keep that download small.
 
 ## Memory
 
-The spec's long-poll and the status share one HTTP/2 connection on the five ESP-IDF chips and on the ESP32-S3 with Zephyr, and firmware and apps come from the registry over HTTP/2 on the classic ESP32, C5, C6 and S3, and on the ESP32-S3 with Zephyr (a firmware delta and an app, every request HTTP/2 in the registry's log); the end-to-end tests run over HTTP/2 in CI and in the emulator.
+The spec's long-poll and the status share one HTTP/2 connection, and firmware and apps come from the registry over HTTP/2; which boards this was checked on is in [RESULTS.md](RESULTS.md#http2).
 
-A TLS connection costs about 25 KB of RAM on these boards, 16.7 KB of it the buffer that receives the largest record the server may send. Neither Flight Control nor `registry:3` accepts smaller records (Go's TLS has neither `record_size_limit` nor `max_fragment_length`), so a connection cannot cost less, and the device holds one at a time. The agent's connection, where the spec's long-poll and the status share one HTTP/2 connection, is closed while a download from the registry runs, with manifests, signatures and blobs over one connection of its own: a status already on its way goes out first, the next one waits for the end of the download, and the agent then opens its connection again, with a new handshake. One receive buffer is reserved when the agent starts ([fc_tls_pool.h](../core/include/fc_tls_pool.h)), so a connection does not depend on finding 16.7 KB in one piece in a heap shared with WiFi and the apps. On ESP-IDF the TLS buffers are otherwise sized to each record and freed once it is read (dynamic buffers): only full-size records take the reserved one, and an idle connection holds little. Against two connections with a buffer each, that leaves about 20 KB more in the largest free block: 64 → 84 KB on the C5, 84 → 100 KB on the classic ESP32, 88 → 112 KB on the S3. A token service on another host is a second connection for the length of its request, with its buffer from the heap.
+A TLS connection costs about 25 KB of RAM on these boards, 16.7 KB of it the buffer that receives the largest record the server may send. Neither Flight Control nor `registry:3` accepts smaller records (Go's TLS has neither `record_size_limit` nor `max_fragment_length`), so a connection cannot cost less, and the device holds one at a time. The agent's connection, where the spec's long-poll and the status share one HTTP/2 connection, is closed while a download from the registry runs, with manifests, signatures and blobs over one connection of its own: a status already on its way goes out first, the next one waits for the end of the download, and the agent then opens its connection again, with a new handshake. One receive buffer is reserved when the agent starts ([fc_tls_pool.h](../core/include/fc_tls_pool.h)), so a connection does not depend on finding 16.7 KB in one piece in a heap shared with WiFi and the apps. On ESP-IDF the TLS buffers are otherwise sized to each record and freed once it is read (dynamic buffers): only full-size records take the reserved one, and an idle connection holds little. Against two connections with a buffer each, that leaves about 20 KB more in the largest free block. A token service on another host is a second connection for the length of its request, with its buffer from the heap.
 
 ## What it does not do
 

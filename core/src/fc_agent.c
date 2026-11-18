@@ -290,7 +290,7 @@ static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, cons
 
 /* The rendered device is parsed whole only when it is to be applied. While
  * a console session is listed the server sends it every poll, and Flight
- * Control may list stale sessions for good (docs/UPSTREAM.md, 15): parsing
+ * Control may list stale sessions for good (docs/FLIGHTCTL-LIMITATIONS.md, 15): parsing
  * it each time took a tree several times its size from the heap every 15 s,
  * on a board with little to spare. These read the text in place; malformed
  * text gives NULL, and what they find is parsed by cJSON (the console list)

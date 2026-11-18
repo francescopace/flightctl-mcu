@@ -31,7 +31,7 @@ Here the microcontroller speaks the Flight Control agent API itself. That API is
 | Enrollment request and approval | P-256 key generated on the device, CSR, certificate stored in flash |
 | Certificate renewal | Same key, renewed before the certificate expires |
 | `spec.config` | Files in the device's storage. The firmware can reject each one; a file the spec no longer gives is removed. |
-| `spec.os.image` | Firmware pulled from an OCI registry into the inactive OTA slot, after its cosign signature is checked. One index covers every chip, and an update can be a [delta](docs/DELTA.md). |
+| `spec.os.image` | Firmware pulled from an OCI registry into the inactive OTA slot, after its cosign signature is checked. One index covers every chip, and an update can be a [delta](docs/DELTA-UPDATES.md). |
 | `spec.applications` | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
 | Registry credentials and CA (`auth.json`, `certs.d`) | The same files as on Linux, as config: TLS and a password to the [registry](docs/REGISTRY.md) |
 | Decommission | Key and certificate wiped; the device does not enroll again until its storage is erased |
@@ -74,7 +74,22 @@ flowchart TB
   port -.-> other["your RTOS"]
 ```
 
-`core/` is C11 on pthreads, BSD sockets, mbedTLS 4, cJSON and WAMR. What differs between platforms is behind `core/include/fc_port.h`, about 20 functions: key/value storage, system info, OTA, logging. The host port is not a mock: it runs the same agent as a process on Linux or macOS against a real Flight Control server, which is how most of the protocol work was done without flashing anything.
+`core/` is C11 on pthreads, BSD sockets, mbedTLS 4, cJSON and WAMR. What differs between platforms is behind `core/include/fc_port.h`, about 30 functions: key/value storage, system info, heap and stack figures, OTA, logging. The host port is not a mock: it runs the same agent as a process on Linux or macOS against a real Flight Control server.
+
+Two rules hold for every feature. Nothing changes on the Flight Control server: the agent uses only the public device API, and the gaps it finds are raised upstream ([FLIGHTCTL-LIMITATIONS.md](docs/FLIGHTCTL-LIMITATIONS.md)). And it also runs on the simulated device, so CI checks it against a real Flight Control on kind; tests on the boards add to that, they don't replace it.
+
+### The Flight Control API it uses
+
+Checked against Flight Control 1.4.0:
+
+- `POST/GET enrollmentrequests`, `POST/GET certificatesigningrequests`;
+- `GET devices/{name}/rendered?knownRenderedVersion=`, a long-poll of about 4 minutes that returns `204` when nothing changed;
+- `PUT devices/{name}/status` (the API also has `PATCH`, which the agent does not use);
+- mTLS with TLS 1.3 and ECDSA P-256. The device name is derived from the public key: `lower(base32hex_nopad(sha256(X || Y)))`;
+- a device is up to date when `status.config.renderedVersion` equals the rendered version served; the OS is out of date when `status.os.image` differs from `spec.os.image` as a string;
+- a device becomes `Unknown` after 5 minutes without contact;
+- `consoles` in the rendered spec (someone asked for a terminal on the device, or the UI's Logs tab): the device opens `flightctl.v1.RouterService/Stream` on the agent's connection ([CONSOLE.md](docs/CONSOLE.md));
+- the Telemetry Gateway: a certificate request signed by `flightctl.io/device-svc-client`, CN `otel-<device name>`, approved at once; then OTLP over gRPC (`ExportMetricsServiceRequest`) with that certificate ([METRICS.md](docs/METRICS.md)).
 
 ### Firmware update with rollback
 
@@ -100,19 +115,13 @@ The image is streamed into the inactive slot and checked against its sha256. The
 
 ## Where it runs
 
-| Stack | Runs on | What works |
-|---|---|---|
-| **ESP-IDF** 6.0 | ESP32, S3, C3, C5, C6 | Everything, plus Secure Boot, flash encryption and WiFi provisioning over SoftAP. Five boards, and emulated chips in CI. |
-| **Zephyr** 4.5 | ESP32-S3; an Arm Cortex-M3 on Ethernet in QEMU | Enrollment, monitoring, config, WASM apps, signed firmware through MCUboot. No flash encryption: the device key is in clear. A new board is two files. |
-| **Linux, macOS** | Any POSIX system | The simulated device of the tests. A firmware update only saves the image to a file. |
+On ESP-IDF 6.0 (the ESP32, S3, C3, C5 and C6, with Secure Boot, flash encryption and WiFi provisioning), on Zephyr 4.5 (the ESP32-S3, and an Arm Cortex-M3 on Ethernet in QEMU), and as a process on Linux or macOS, the simulated device of the tests. The same `.wasm` file runs on all of them, whatever the CPU. A device needs 384 KB of SRAM, 2 MB of flash and a TCP/IP network.
 
-"Everything" is enrollment, monitoring, config, firmware OTA with rollback and WASM apps. The same `.wasm` file runs on all of them, whatever the CPU. A device needs 384 KB of SRAM, 2 MB of flash and a TCP/IP network. Supported: ESP32-S3, ESP32, C6 and C5; the C3 is best effort ([support levels](docs/DEVICES.md#support-levels)).
-
-The requirements in full, the boards tried and how to add a chip, a board or an RTOS are in [docs/DEVICES.md](docs/DEVICES.md).
+The support levels, the boards tried and how to add a chip, a board or an RTOS are in [docs/DEVICES.md](docs/DEVICES.md).
 
 ## Try it
 
-[docs/QUICKSTART.md](docs/QUICKSTART.md) sets up Flight Control on [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker: a Kubernetes cluster whose nodes are containers on one machine) and a local registry, then enrolls a device: an Espressif board, or a simulated one on your machine if you have no board. kind is only the quickest way to try it: Flight Control also installs on Kubernetes or OpenShift, or on a Fedora or RHEL host as Podman quadlets, and the device works with any of them. For a Zephyr board, the build and flash steps are in [docs/ZEPHYR.md](docs/ZEPHYR.md).
+[docs/QUICKSTART.md](docs/QUICKSTART.md) sets up Flight Control on [kind](https://kind.sigs.k8s.io/) and a local registry, then enrolls a device: an Espressif board, or a simulated one on your machine if you have no board. kind is only the quickest way to try it: Flight Control also installs on Kubernetes or OpenShift, or on a Fedora or RHEL host as Podman quadlets, and the device works with any of them. For a Zephyr board, the build and flash steps are in [docs/ZEPHYR.md](docs/ZEPHYR.md).
 
 ## Documentation
 
@@ -124,33 +133,32 @@ The requirements in full, the boards tried and how to add a chip, a board or an 
 | [ZEPHYR.md](docs/ZEPHYR.md) | The Zephyr port: ESP32-S3, `mps2/an385` in QEMU, `native_sim` |
 | [SECURITY.md](docs/SECURITY.md) | Secure Boot, flash encryption, keys in hardware, the factory procedure |
 | [PROVISIONING.md](docs/PROVISIONING.md) | Credentials over USB, WiFi over SoftAP |
-| [DELTA.md](docs/DELTA.md) | Firmware updates as deltas |
+| [DELTA-UPDATES.md](docs/DELTA-UPDATES.md) | Firmware updates as deltas |
 | [SBOM.md](docs/SBOM.md) | Each release's SBOM, and its known vulnerabilities in Flight Control through Trustify |
 | [REGISTRY.md](docs/REGISTRY.md) | The registry: TLS, credentials, the local one |
 | [CONSOLE.md](docs/CONSOLE.md) | The remote console and the UI's Logs tab |
 | [METRICS.md](docs/METRICS.md) | Metrics to the Telemetry Gateway (OpenTelemetry) |
 | [TESTING.md](docs/TESTING.md) | Unit tests, fuzzing, end-to-end tests, what CI runs |
-| [RESULTS.md](docs/RESULTS.md) | What was verified and where, measurements, gaps in Flight Control |
-| [UPSTREAM.md](docs/UPSTREAM.md) | The gaps in Flight Control in detail, with proposals |
+| [RESULTS.md](docs/RESULTS.md) | What was verified and where, measurements, current limitations |
+| [FLIGHTCTL-LIMITATIONS.md](docs/FLIGHTCTL-LIMITATIONS.md) | The gaps in Flight Control in detail, with proposals |
 | [ROADMAP.md](docs/ROADMAP.md) | What comes next |
 | [COMPARISON.md](docs/COMPARISON.md) | Against Golioth, Memfault, Mender, AWS, Azure, hawkBit and LwM2M |
 | [DEPENDENCIES.md](docs/DEPENDENCIES.md) | Versions, where each is set, licenses |
 
 ## Status
 
-Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), deltas, rollback, a registry with TLS and a password, decommissioning. Certificate renewal, Secure Boot and provisioning in the field are tested on emulated chips ([RESULTS.md](docs/RESULTS.md#what-works)).
+Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), deltas, rollback, a registry with TLS and a password, decommissioning. Certificate renewal and Secure Boot are tested on emulated chips; provisioning in the field on emulated chips and on the Zephyr ESP32-S3, not yet on an ESP-IDF board ([RESULTS.md](docs/RESULTS.md#what-works)).
 
 Known limits:
 
 - The device trusts only the registry CA its fleet gives it: no public CA bundle, and no blobs redirected to another host ([REGISTRY.md](docs/REGISTRY.md)).
-- Secure Boot and flash encryption (the `secure` variant) are tested in the emulator only. Without them the device key is in flash in clear.
-- On Zephyr the device key is in flash in clear and the flash is not encrypted: on an Espressif chip, a device that must be protected runs the ESP-IDF firmware. On Zephyr the protection comes with chips that have TF-M, after 1.0 ([SECURITY.md](docs/SECURITY.md#zephyr)).
-- WiFi is the only link tried.
+- The device key is in flash in clear unless the device runs the `secure` variant (Secure Boot and flash encryption, tested in the emulator only), which Zephyr does not have: on an Espressif chip, a device that must be protected runs the ESP-IDF firmware. On Zephyr the protection comes with chips that have TF-M, after 1.0 ([SECURITY.md](docs/SECURITY.md#zephyr)).
+- WiFi is the only link tried on hardware; Ethernet runs in QEMU.
 - Flight Control 1.4.0 cannot revoke an enrollment certificate; its main branch can, not yet in a release.
-- Apps: MQTT runs on the five ESP-IDF chips; with Zephyr it is built, not yet tried on a board. I2C, SPI, UART, ADC and PWM answer on the boards but have not been tried with devices wired to them ([APPS.md](docs/APPS.md)).
+- Apps: MQTT runs on the five ESP-IDF chips and on the Zephyr ESP32-S3, where beside a metrics export it used up the C heap ([current limitations](docs/RESULTS.md#current-limitations)). I2C, SPI, UART, ADC and PWM answer on the boards but have not been tried with devices wired to them ([APPS.md](docs/APPS.md)).
 - Apps must be WASM OCI artifacts. Podman-style images with a `.wasm` inside a tarball are not supported.
 
-The work also found gaps in Flight Control for this class of device, such as a fixed 5-minute disconnect timeout. They are written up in [docs/RESULTS.md](docs/RESULTS.md#flight-control-limitations-found-upstream-proposals), with the [current limitations](docs/RESULTS.md#current-limitations) in full.
+The work also found gaps in Flight Control for this class of device, such as a fixed 5-minute disconnect timeout. They are written up in [docs/FLIGHTCTL-LIMITATIONS.md](docs/FLIGHTCTL-LIMITATIONS.md), with proposals; the agent's [current limitations](docs/RESULTS.md#current-limitations) in full are in RESULTS.
 
 ## Repository layout
 

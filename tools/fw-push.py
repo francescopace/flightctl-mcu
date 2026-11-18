@@ -23,7 +23,7 @@ application/vnd.zephyr.mcuboot-image.
 --delta-from TAG (a tag or digest in the same repository, repeatable): also
 push, for each chip, a delta from that release's image to this one. A device
 running that image downloads the delta instead and rebuilds the new image
-from its own (docs/DELTA.md); the others, and older firmware, take the whole
+from its own (docs/DELTA-UPDATES.md); the others, and older firmware, take the whole
 image. A delta is a detools patch (sequential, heatshrink): this needs the
 detools package, here or in a virtual environment made in build/ on first use.
 

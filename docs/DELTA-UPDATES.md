@@ -2,13 +2,14 @@
 
 A firmware image is 0.7 to 1.5 MB, and most of it does not change from one release to the next. A release can therefore carry deltas: for a device that runs a known earlier release, the difference between the two images instead of the whole new one.
 
-Measured on release builds for the ESP32-C3 (an image of 1.11 MB):
+Measured on the boards, each delta applied (`lastDelta: Applied`):
 
-| Update | Delta | Of the image |
+| Update | Boards | Delta |
 |---|---|---|
-| A large release (field provisioning added, 103 KB of new code) | 136 KB | 12.2% |
-| A small release (bug fixes) | 32 KB | 2.9% |
-| The same source, another version string | 11 KB | 1.0% |
+| A release with much new code | classic ESP32, C5, C6, S3 | 12 to 15% of the image |
+| A release of fixes | the same | 2 to 3% |
+| From the debug build to the release build | ESP32-S3 | 511 KB, half of the image: the two are compiled differently |
+| From one Zephyr build to the next | ESP32-S3 | 19 KB, 2.2% |
 
 ## Publishing a release with deltas
 
@@ -49,9 +50,6 @@ The device reports how its last firmware came in `status.os.lastDelta`, the fiel
 ![status.os.lastDelta in a device's YAML](img/delta-applied.png)
 *In the device's YAML in the UI: the release it runs and `lastDelta: Applied`, the firmware taken as a delta.*
 
-![A firmware that failed to start, rolled back](img/rollback-events.png)
-*The device's events when a release does not start: the device reboots into it, goes back to the one it ran, and Flight Control reports the update failed.*
-
 With Secure Boot and flash encryption nothing changes: the device reads its image in clear through the flash encryption, the delta is between the signed images, and what it rebuilds is the signed image, byte for byte.
 
 ## A delta is not trusted until the end
@@ -73,8 +71,11 @@ The decoder is in the core. A port only has to read its running image: `fc_port_
 - Unit tests (`tests/unit/test_oci.c`): a delta is used when it starts from the running image and not otherwise; a delta that rebuilds another image, one corrupted at each byte in turn, one cut short, one with a larger window and one that does not match its digest all end with the whole image in the slot.
 - End-to-end, on every emulated chip and variant (`tests/e2e/e2e-emu.sh`): the release is pushed with a delta from the default build the device starts on, and the device must report that it came as a delta; the next image, which has none, must come whole.
 
+## What was verified
+
+The ESP-IDF firmware on the classic ESP32, C5, C6 and S3, and the Zephyr firmware on the ESP32-S3, took releases as deltas, with the sizes above; on the S3 the 511 KB delta took 13 s, Zephyr's 19 KB 8 s. The C3 only in the emulator.
+
 ## Limits
 
 - **Deltas are per pair of images.** A device on a release with no delta to the new one downloads the image. Which releases to make deltas from is the publisher's choice.
 - **A device flashed over USB** takes a delta only if what was flashed is, byte for byte, an image that was pushed (it is, when both come from the same build).
-- **Tried on a board.** An ESP32-S3 with both ports: the ESP-IDF firmware went from its debug build to the release one with a delta of 511 KB (half of the image: the two are compiled differently) in 13 s, the Zephyr one from a build to the next with 19 KB (2.2%) in 8 s. The classic ESP32, C5, C6 and S3, with the core's decoder: v3.12 to v3.13-rc1 with deltas of 12 to 15% (much new code), then rc1 to rc2 with 2 to 3%, all `Applied`. The C3: emulator only.
