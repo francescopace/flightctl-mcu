@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include <zephyr/drivers/hwinfo.h>
+#include <zephyr/debug/coredump.h>
 #include <zephyr/fatal.h>
 #ifdef CONFIG_MCUBOOT_IMG_MANAGER
 #include <zephyr/dfu/mcuboot.h>
@@ -458,6 +459,40 @@ long fc_port_stack_unused(void)
     size_t unused;
     if (k_thread_stack_space_get(k_current_get(), &unused) == 0) {
         return (long)unused;
+    }
+#endif
+    return -1;
+}
+
+size_t fc_port_coredump_size(void)
+{
+#ifdef CONFIG_DEBUG_COREDUMP_BACKEND_FLASH_PARTITION
+    int size = coredump_query(COREDUMP_QUERY_GET_STORED_DUMP_SIZE, NULL);
+    if (size > 0 && (size_t)size < PARTITION_SIZE(coredump_partition) &&
+        coredump_cmd(COREDUMP_CMD_VERIFY_STORED_DUMP, NULL) == 1) {
+        return (size_t)size;
+    }
+#endif
+    return 0;
+}
+
+void fc_port_coredump_erase(void)
+{
+#ifdef CONFIG_DEBUG_COREDUMP_BACKEND_FLASH_PARTITION
+    if (coredump_cmd(COREDUMP_CMD_ERASE_STORED_DUMP, NULL) != 0) {
+        fc_port_log(FC_LOG_WARN, "could not erase the crash dump");
+    }
+#endif
+}
+
+int fc_port_coredump_read(size_t offset, void *buf, size_t len)
+{
+#ifdef CONFIG_DEBUG_COREDUMP_BACKEND_FLASH_PARTITION
+    int size = coredump_query(COREDUMP_QUERY_GET_STORED_DUMP_SIZE, NULL);
+    if (size > 0 && (size_t)size < PARTITION_SIZE(coredump_partition) &&
+        offset <= (size_t)size && len <= (size_t)size - offset) {
+        struct coredump_cmd_copy_arg copy = {.offset = offset, .buffer = buf, .length = len};
+        return coredump_cmd(COREDUMP_CMD_COPY_STORED_DUMP, &copy) == (int)len ? 0 : -1;
     }
 #endif
     return -1;

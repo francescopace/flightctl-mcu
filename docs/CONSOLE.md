@@ -7,6 +7,8 @@ Flight Control's console reaches the device as it reaches a Linux one: `flightct
 | `help` | the commands |
 | `status` | the device's name, system, memory, storage, and its `customInfo` (heap, firmware, active boot slot where available, network) |
 | `apps` | the WASM apps, their status and the state each reports |
+| `coredump info` | size in bytes of the saved crash dump, or zero if none is available |
+| `coredump read` | the complete native dump on binary stdout in a non-interactive CLI session |
 | `log` | the device's log: the last 50 lines, or `-n N`; `-p err` (or `warning`, `info`) and above; `-f` follows it until Ctrl-C |
 | `reboot` | restarts the device, once the session has ended |
 | `exit` | ends the session (so does Ctrl-D on an empty line) |
@@ -23,6 +25,37 @@ Or a prompt, in a terminal (`--tty`, and the UI's terminal), with the line edite
 
 ![status in the UI's terminal](img/console-status.png)
 *`status` in the UI's terminal, on an ESP32-C6 (the MAC is hidden here).*
+
+## Download a crash dump
+
+After reboot, `status.systemInfo.customInfo.coredumpBytes` gives the size of a valid dump in flash. An operator with console access can download the dump while the device is online. It can contain sensitive task memory. In a local terminal, set `device` to the device name and save the bytes in a new private file.
+
+```bash
+umask 077
+flightctl console --notty "device/$device" -- coredump info
+flightctl console --notty "device/$device" -- coredump read > crash.bin
+wc -c < crash.bin
+```
+
+Check that the byte count matches `coredump info`. If the connection drops, repeat the download. Reading leaves the dump in flash. A later crash can replace it, and decommissioning erases it.
+
+Use the ELF for the platform and release that **crashed**, including when the device rolled back after the fault. Set `release` to that release's registry reference by digest and `platform` to its architecture in the index.
+
+```bash
+tools/fw-elf.py "$release" "$platform" firmware.elf
+```
+
+With the ESP-IDF tools active, run `esp-coredump --chip esp32c3 info_corefile -t raw -c crash.bin firmware.elf`, substituting the device's chip. With Zephyr, start the target GDB (`arm-zephyr-eabi-gdb firmware.elf` for Arm) and connect it to Zephyr's coredump GDB server.
+
+```gdb
+target remote | python3 /path/to/zephyr/scripts/coredump/coredump_gdbserver.py --pipe firmware.elf crash.bin
+info registers pc
+bt
+```
+
+ESP-IDF captures registers and task snapshots. Zephyr on Arm captures registers and thread stacks. The Xtensa backend on the ESP32-S3 captures the faulting thread's registers and stack. [Measured dumps](RESULTS.md#a-crash-in-the-status)
+
+The ESP-IDF factory layout reserves 64 KiB for a dump and 576 KiB for the agent's data. An OTA update preserves the installed partition table. Devices with the older 640 KiB data partition still report `lastFatalError`. Saving a native dump requires provisioning with the new factory layout. The Zephyr ESP32-S3 DevKitC with 8 MiB of flash reserves 128 KiB for a dump.
 
 ## The log
 

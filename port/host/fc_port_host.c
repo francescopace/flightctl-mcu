@@ -186,9 +186,7 @@ void fc_port_sysinfo(fc_sysinfo_t *si)
         fclose(mi);
     }
 #endif
-    /* The simulated device's storage: what its data directory holds, out of
-     * FC_HOST_DISK_BYTES (default 640 KB, the ESP-IDF firmware's partition),
-     * not the host's file system. */
+    /* The simulated device's storage quota is FC_HOST_DISK_BYTES (default 640 KiB). */
     const char *quota = getenv("FC_HOST_DISK_BYTES");
     si->disk_total = quota != NULL ? strtoull(quota, NULL, 10) : 640 * 1024;
     uint64_t used = du(s_data_dir, 0);
@@ -284,6 +282,10 @@ const char *fc_port_fw_platform(void)
     const char *p = getenv("FC_FW_PLATFORM");
     return p && *p ? p : "host";
 }
+
+size_t fc_port_coredump_size(void) { return 0; }
+void fc_port_coredump_erase(void) {}
+int fc_port_coredump_read(size_t offset, void *buf, size_t len) { return -1; }
 
 int fc_port_ota_begin(size_t size, void **handle)
 {

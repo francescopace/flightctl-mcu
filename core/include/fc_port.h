@@ -136,6 +136,12 @@ void fc_port_ota_confirm(void);
 void fc_port_ota_rollback(void);
 void fc_port_reboot(void);
 
+/* A validated native crash dump from a previous boot. Return its length,
+ * or zero if unavailable. Read only within that dump (0 on success). */
+size_t fc_port_coredump_size(void);
+int fc_port_coredump_read(size_t offset, void *buf, size_t len);
+void fc_port_coredump_erase(void); /* remove stored task memory on decommissioning */
+
 /* ---- Device key in hardware (optional) ----------------------------------
  * A port that can keep the device's private key where software cannot read
  * it says which key it takes from fc_port_hwkey_bits: an RSA key size (the

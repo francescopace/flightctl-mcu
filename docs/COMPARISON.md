@@ -8,7 +8,7 @@ flightctl-mcu next to the services and open-source projects that manage microcon
 
 | | Self-hosted | Open source | ESP-IDF | Zephyr | Linux in the same fleets | Delta updates | Remote config | Crash reports | Apps without reflashing |
 |---|---|---|---|---|---|---|---|---|---|
-| **flightctl-mcu** | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ |
+| **flightctl-mcu** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **Golioth** | ✗ | ◐ | ✓ | ✓ | ◐ | – | ✓ | – | ◐ |
 | **Memfault** | ✗ | ◐ | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✗ |
 | **Mender MCU** | ✗ | ◐ | ✗ | ✓ | ✓ | ✗ | – | – | ✗ |
@@ -37,7 +37,9 @@ Of the eight, only flightctl-mcu:
 - publishes an SBOM per release to Trustify, and Flight Control shows the CVEs on the devices that run it ([SBOM.md](SBOM.md));
 - puts microcontrollers in Red Hat Edge Manager, with the same fleets, label selectors, rollouts and RBAC as bootc devices. Most of the others manage Linux too, each in its own way.
 
-It is behind on crash reports, which stop at what the status says after a restart, with no coredump (a 2.0 item), and its apps' peripherals have not yet been tried with devices wired to them. WiFi is its only link on real boards, deep sleep waits on Flight Control, and support is the community's.
+Crash reports give the fault details in the device status after a restart. Operators with console access can download the native dump from flash and debug it with the crashed release's ELF. This was verified on a physical ESP32-S3 running Zephyr and in emulation on ESP-IDF C3 and Zephyr Arm. [Crash report measurements](RESULTS.md#a-crash-in-the-status)
+
+The apps' peripherals have not yet been tried with devices wired to them. WiFi is its only link on real boards, deep sleep waits on Flight Control, and support is the community's.
 
 ## Golioth, Memfault and Mender in detail
 
@@ -61,7 +63,7 @@ For flightctl-mcu, "next" is on the [roadmap](ROADMAP.md#v10-in-progress) for 1.
 | **Staged rollouts** | ✓ Flight Control's batches with a failure threshold | ✓ cohorts | ✓ cohorts and percentages | ◐ phased deployments, on paid plans |
 | **Remote configuration** | ✓ files the firmware can reject | ✓ settings | – | – |
 | **Health and alerts** | ✓ CPU, heap, storage against the fleet's rules | ◐ device state and logs | ✓ metrics and alerts | ◐ inventory |
-| **Crash reports** | ◐ after a restart, `resetReason` and `lastFatalError` in the status (reason, thread, uptime; the `pc` and return addresses, decoded against the release's ELF, which the registry keeps next to the release, with ESP-IDF and with Zephyr on Arm and Xtensa) · after 1.0: coredumps off the device | – | ✓ its core feature | – |
+| **Crash reports** | ✓ `resetReason` and `lastFatalError` in status. Download the native dump on demand with `flightctl console` and decode it with the release ELF. Zephyr on Xtensa captures the faulting thread's registers and stack. Optional external uploads proposed for 2.0. [Results](RESULTS.md#a-crash-in-the-status) | – | ✓ its core feature | – |
 | **Remote log** | ✓ the last lines, kept in RAM, in the UI's Logs tab and the console ([CONSOLE.md](CONSOLE.md#the-log)) | ✓ | ✓ with crashes | – |
 | **Remote commands** | ✓ Flight Control's terminal and `flightctl console`, with a closed set of commands ([CONSOLE.md](CONSOLE.md)) | ✓ RPC | – | – |
 | **Data from apps** | ✓ MQTT to your broker, both ways ([APPS.md](APPS.md#mqtt)), and metrics as OTLP to Flight Control ([METRICS.md](METRICS.md)), with ESP-IDF · next: MQTT with Zephyr on a board | ✓ LightDB Stream and pipelines | ◐ metrics only | – |

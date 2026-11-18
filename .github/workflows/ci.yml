@@ -136,7 +136,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: third_party/zephyr-ws
-          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh') }}
+          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh', 'third_party/patches/zephyr-*.patch') }}
       - run: third_party/fetch-zephyr.sh
       - name: build
         run: port/zephyr/build.sh
@@ -162,7 +162,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: third_party/zephyr-ws
-          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh') }}
+          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh', 'third_party/patches/zephyr-*.patch') }}
       - run: third_party/fetch-zephyr.sh
       # The Arm toolchain alone (about 2 GB), kept between runs.
       - uses: actions/cache@v6
@@ -194,7 +194,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: third_party/zephyr-ws
-          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh') }}
+          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh', 'third_party/patches/zephyr-*.patch') }}
       - run: third_party/fetch-zephyr.sh
       # The Xtensa toolchain alone, kept between runs; the script also fetches
       # Espressif's WiFi blobs into the Zephyr tree.

@@ -30,6 +30,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+#include "esp_core_dump.h"
+#include "esp_partition.h"
+#endif
 #if __XTENSA__
 #include "esp_cpu_utils.h"
 #include "esp_debug_helpers.h"
@@ -40,6 +44,42 @@
 
 static __NOINIT_ATTR fc_fatal_t s_rec;
 static char s_text[272];
+
+size_t fc_port_coredump_size(void)
+{
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+    size_t address, size;
+    if (esp_core_dump_image_get(&address, &size) == ESP_OK && esp_core_dump_image_check() == ESP_OK) {
+        return size;
+    }
+#endif
+    return 0;
+}
+
+void fc_port_coredump_erase(void)
+{
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+    const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                                           ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+    if (part && esp_partition_erase_range(part, 0, part->size) != ESP_OK) {
+        fc_port_log(FC_LOG_WARN, "could not erase the crash dump");
+    }
+#endif
+}
+
+int fc_port_coredump_read(size_t offset, void *buf, size_t len)
+{
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+    const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                                           ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+    size_t address, size;
+    if (part && esp_core_dump_image_get(&address, &size) == ESP_OK && address == part->address &&
+        size <= part->size && offset <= size && len <= size - offset) {
+        return esp_partition_read(part, offset, buf, len) == ESP_OK ? 0 : -1;
+    }
+#endif
+    return -1;
+}
 
 extern void __real_esp_panic_handler(panic_info_t *info);
 

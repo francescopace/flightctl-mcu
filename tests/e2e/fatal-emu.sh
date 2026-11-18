@@ -123,6 +123,22 @@ head -1 "$WORK/decoded.txt" | grep -q '^fc_fatal_test_fault ' || fail "the pc do
 sed '1,/^--$/d' "$WORK/decoded.txt" | grep -q '^fault_task ' || fail "fault_task not among the return addresses"
 echo "ok: $CHIP ($MODE): lastFatalError names the fault and the task; pc and caller decode against the ELF"
 
+if [[ "$MODE" == fault ]] && grep -qx 'CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y' "$BUILD/sdkconfig"; then
+  size="$(custom coredumpBytes)"
+  [[ "$size" =~ ^[1-9][0-9]*$ ]] || fail "no valid dump size in the device status"
+  (
+    umask 077
+    flightctl console --notty "device/$DEVICE" -- coredump read >"$WORK/crash.bin"
+  ) || fail "coredump download"
+  (( $(wc -c <"$WORK/crash.bin") == size )) || fail "incomplete coredump download"
+  docker run --rm --network none -v "$WORK/crash.bin:/dump.bin:ro" \
+    -v "$ROOT/$BUILD/flightctl_mcu_fw.elf:/firmware.elf:ro" "$IDF_IMAGE" \
+    bash -ec 'esp-coredump --chip "$1" info_corefile -t raw -c /dump.bin /firmware.elf >/tmp/report
+              grep -qE "^#0 .*fc_fatal_test_fault" /tmp/report
+              grep -qE "^#1 .*fault_task" /tmp/report' _ "$CHIP" || fail "coredump backtrace"
+  echo "ok: $size downloaded bytes decode to the fault and its caller"
+fi
+
 # Once: the test build faults only after a boot that was not a crash.
 sleep 40
 (( $(grep -cE "$PANIC" "$WORK/emu.log") == 1 )) || fail "faulted again after the restart"

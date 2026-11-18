@@ -15,11 +15,18 @@ ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.30.0}"
 MODULES="${ZEPHYR_MODULES:-mbedtls tf-psa-crypto littlefs mcuboot zcbor cmsis cmsis_6 hal_espressif picolibc}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WS="$ROOT/third_party/zephyr-ws"
+patch_coredump() {
+  local patch="$ROOT/third_party/patches/zephyr-coredump-erased-partition.patch"
+  if ! git -C "$WS/zephyr" apply --reverse --check "$patch" 2>/dev/null; then
+    git -C "$WS/zephyr" apply "$patch"
+  fi
+}
 # The tree is there at this version: nothing to do, or only the modules that
 # were added to the list since it was fetched.
 HAVE=""
 if [[ -d "$WS/zephyr/.git" && "$(git -C "$WS/zephyr" rev-parse HEAD)" == "$ZEPHYR_COMMIT" && -f "$WS/.fetched" ]]; then
   if [[ "$(cat "$WS/.fetched")" == "$MODULES" ]]; then
+    patch_coredump
     echo "Zephyr $ZEPHYR_TAG already in $WS"
     exit 0
   fi
@@ -47,5 +54,6 @@ filter="-.*"
 for m in $MODULES; do filter="$filter,+$m"; done
 west config manifest.project-filter -- "$filter"
 west update --narrow -o=--depth=1
+patch_coredump
 echo "$MODULES" > "$WS/.fetched"
 echo "Zephyr $ZEPHYR_TAG in $WS"

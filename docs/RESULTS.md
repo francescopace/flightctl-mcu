@@ -26,6 +26,7 @@ What works, where it was verified, and the measurements. The devices are microco
 | Demo apps | emlearn's TinyML model, wasm3-arduino's blink as published | ◐ | – | ✓ | [APPS](APPS.md#the-blink-of-wasm3-arduino) |
 | Apps that crash the device | Not started again | – | ✓ | ✓ | [APPS](APPS.md#how-an-app-runs) |
 | Crash reports | `lastFatalError` in the status | ✓ | ✓ | ✓ | [Crash](#a-crash-in-the-status) |
+| Native coredump | Download from flash with console access and open with the release ELF | S3 (Zephyr) | ✓ | ✓ | [Download results](#a-crash-in-the-status) |
 | Certificate renewal | Same key, new certificate | C6 | ✓ | ✓ | [TESTING](TESTING.md) |
 | Signed images | Cosign signatures checked on the device | ✓ | ✓ | ✓ | [SECURITY](SECURITY.md#two-signing-keys) |
 | Registry with TLS and a password | CA and `auth.json` from the fleet | ✓ | ✓ | ✓ | [REGISTRY](REGISTRY.md) |
@@ -330,6 +331,19 @@ Neither tried the image again. The ESP32-C6 was back and reporting 50 s after it
 ### A crash in the status
 
 After a crash, the status gives `lastFatalError`: the fault, the task or thread, the uptime, the `pc` and the callers, for `addr2line` against the ELF of the firmware that crashed. `tools/fw-push.py` keeps each release's ELF in the registry, and `tools/fw-elf.py` gets it back. With ESP-IDF the panic handler records a fault, an `abort()`, the interrupt watchdog, and the task watchdog when it is set to panic (by default it only logs). On Xtensa the record has the backtrace; on RISC-V, which has no frame pointers, `ra` and the firmware's code addresses found on the stack. Zephyr gives the same text with the `pc` and `lr` on Arm, and the `pc` and Zephyr's own backtrace on the ESP32-S3.
+
+A physical ESP32-S3 and two emulated targets enrolled in Flight Control 1.4 each retained a native coredump across a crash and reboot. Two downloads per device through `flightctl console --notty` matched byte for byte. The ELF retrieved by release digest and platform matched the build's ELF in each case. [Download and decoding commands](CONSOLE.md#download-a-crash-dump)
+
+| Target | Bytes downloaded | What the debugger recovered |
+|---|---:|---|
+| ESP32-C3, emulated, ESP-IDF 6.0.3, no WASM apps | 11,200 | `esp-coredump` located the fault in `fc_fatal_test_fault` and its caller `fault_task` |
+| ESP32-C3, emulated, ESP-IDF 6.0.3, `alarm` and `trend` running | 14,080 | The same two frames from a dump occupying 21.5% of the 64 KiB partition |
+| MPS2 AN385, QEMU, Zephyr on Arm Cortex-M3 | 49,371 | GDB located the console test fault in `command` and unwound through `pipeline`, `exec_script` and `run` |
+| ESP32-S3 DevKitC N8R8, physical, Zephyr 4.5 on Xtensa, `alarm` running | 8,535 | GDB matched PC `0x42010604` to the test fault in `command` and unwound through `pipeline`, `exec_script`, `run`, `session_thread`, `zephyr_thread_wrapper` and `z_thread_entry` |
+
+On the C3 with both apps installed, `flightctl console` reported 569,920 B free out of 576,576 B usable in the 576 KiB NVS data partition. Repeating the crash with a 32 KiB dump partition also saved and transferred 14,080 B. The factory layout reserves 64 KiB to allow for larger task stacks at the time of a fault.
+
+The Zephyr ESP32-S3 DevKitC build with the flash backend linked with 3,872 B of DRAM to spare.
 
 In the emulator against Flight Control ([tests/e2e/fatal-emu.sh](../tests/e2e/fatal-emu.sh)), with test builds that crash from a task 30 s after power-on:
 

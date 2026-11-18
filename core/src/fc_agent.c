@@ -146,6 +146,7 @@ typedef struct {
      * thread's requests go over it at once, each on its stream. */
     fc_http_session_t *sess;
     char boot_id[40];
+    size_t coredump_size; /* validated once after boot; the dump is read-only until the next crash */
 
     pthread_mutex_t lock;
     pthread_cond_t status_wake;
@@ -579,6 +580,11 @@ static cJSON *build_status(agent_t *a)
      * status is an event in Flight Control 1.4: what changes all the time
      * is in add_metrics. */
     cJSON_AddStringToObject(custom, "osVersion", si.os_version);
+    if (a->coredump_size) {
+        char bytes[24];
+        snprintf(bytes, sizeof(bytes), "%zu", a->coredump_size);
+        cJSON_AddStringToObject(custom, "coredumpBytes", bytes);
+    }
     add_metrics(a, custom, &si);
     if (a->cert_not_after > 0) {
         char exp[32];
@@ -651,6 +657,7 @@ static void request_status(agent_t *a);
  * firmware stay: Unenroll leaves the device running, unmanaged. */
 static void decommission_wipe(void)
 {
+    fc_port_coredump_erase();
     fc_port_kv_del(KV_MGMT_CERT);
     fc_port_kv_del(KV_OTEL_CERT);
     fc_port_kv_del(KV_RENDERED);
@@ -2388,6 +2395,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     fc_apps_set_device(a.id.name);
     fc_console_set_device(a.id.name);
     make_boot_id(a.boot_id);
+    a.coredump_size = fc_port_coredump_size();
     fc_oci_set_signing_key(cfg->signing_pub_pem);
     if (cfg->signing_pub_pem == NULL) {
         fc_port_log(FC_LOG_WARN, "no signing key: firmware and app signatures are not checked");

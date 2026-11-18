@@ -80,6 +80,8 @@ void stub_reset(void)
     stub_ota_commits = stub_ota_aborts = stub_ota_end_result = 0;
     stub_fw = NULL;
     stub_fw_len = 0;
+    stub_coredump = NULL;
+    stub_coredump_len = 0;
     stub_hwkey_bits = 0;
     stub_hwkey_seal_fails = 0;
     stub_hwkey_seals = 0;
@@ -255,6 +257,20 @@ size_t stub_ota_len;
 int stub_ota_commits, stub_ota_aborts, stub_ota_end_result;
 const unsigned char *stub_fw;
 size_t stub_fw_len;
+
+const uint8_t *stub_coredump;
+size_t stub_coredump_len;
+
+size_t fc_port_coredump_size(void) { return stub_coredump_len; }
+void fc_port_coredump_erase(void) { stub_coredump_len = 0; }
+int fc_port_coredump_read(size_t offset, void *buf, size_t len)
+{
+    if (!stub_coredump || offset > stub_coredump_len || len > stub_coredump_len - offset) {
+        return -1;
+    }
+    memcpy(buf, stub_coredump + offset, len);
+    return 0;
+}
 
 int fc_port_ota_begin(size_t size, void **handle)
 {

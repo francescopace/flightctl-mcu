@@ -1485,12 +1485,16 @@ static void a_decommissioning_spec_is_not_applied(void)
 static void decommissioning_reports_started_then_completed_then_wipes(void)
 {
     new_agent();
+    stub_coredump_len = 512;
+    s_a.coredump_size = fc_port_coredump_size();
     fc_port_kv_set("mgmt.crt", "cert", 4);
     fc_port_kv_set("rendered.ver", "7", 1);
     fc_port_kv_set("app:alarm", "wasm", 4);
     cJSON *st = build_status(&s_a);
     CHECK(decom_condition(st) == NULL);
     CHECK_STR(lifecycle(st), "Enrolled");
+    cJSON *custom = cJSON_GetObjectItem(cJSON_GetObjectItem(st, "systemInfo"), "customInfo");
+    CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(custom, "coredumpBytes")), "512");
     cJSON_Delete(st);
 
     apply("8", "{\"decommissioning\":{\"target\":\"Unenroll\"}}");
@@ -1519,6 +1523,7 @@ static void decommissioning_reports_started_then_completed_then_wipes(void)
     CHECK(stub_kv("mgmt.crt") == NULL);
     CHECK(stub_kv("device.key") == NULL);
     CHECK(stub_kv("rendered.ver") == NULL);
+    CHECK_INT(fc_port_coredump_size(), 0);
     CHECK_INT(stub_reboots, 1);
     CHECK_STR(stub_kv("app:alarm"), "wasm"); /* Unenroll: the apps stay */
     CHECK_STR(stub_kv("decommission"), "Unenroll");

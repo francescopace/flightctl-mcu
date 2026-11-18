@@ -1,0 +1,18 @@
+--- a/subsys/debug/coredump/coredump_backend_flash_partition.c
++++ b/subsys/debug/coredump/coredump_backend_flash_partition.c
+@@ -441,6 +441,15 @@
+ 					offset,
+ 					backend_ctx.flash_area->fa_size - header_size,
+ 					NULL);
++#ifdef CONFIG_STREAM_FLASH_ERASE
++		/* The backend flattened the entire partition above. A second erase
++		 * from a stream starting after the header can erase payload bytes
++		 * already written across a page boundary.
++		 */
++		if (ret == 0) {
++			backend_ctx.stream_ctx.erased_up_to = backend_ctx.stream_ctx.available;
++		}
++#endif
+ 	}
+ 
+ 	if (ret != 0) {

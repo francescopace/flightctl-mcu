@@ -346,9 +346,47 @@ static void cmd_help(session_t *s)
     out(s, "help     these commands\n"
            "status   the device: firmware, memory, storage, network\n"
            "apps     the WASM apps and their state\n"
+           "coredump info | read   show size or download the saved crash dump\n"
            "log      the device's log: -n lines, -p level (err, warning, info), -f to follow\n"
            "reboot   restart the device\n"
            "exit     end the session\n");
+}
+
+static int cmd_coredump(session_t *s, char **argv, int argc)
+{
+    if (argc != 2 || (strcmp(argv[1], "info") != 0 && strcmp(argv[1], "read") != 0)) {
+        out(s, "usage: coredump info | read\n");
+        return 2;
+    }
+    size_t size = fc_port_coredump_size();
+    if (strcmp(argv[1], "info") == 0) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "coredump: %zu bytes\n", size);
+        out(s, msg);
+        return size ? 0 : 1;
+    }
+    if (s->tty || !s->command) {
+        out(s, "download with flightctl console --notty device/<name> -- coredump read > dump.bin\n");
+        return 2;
+    }
+    /* Keep stdout exclusively binary, including on failure. The remote
+     * command exit status travels on a separate channel. */
+    uint8_t buf[512];
+    for (size_t offset = 0; offset < size;) {
+        size_t len = size - offset < sizeof(buf) ? size - offset : sizeof(buf);
+        if (__atomic_load_n(&s_stop, __ATOMIC_ACQUIRE) ||
+            fc_port_coredump_read(offset, buf, len) != 0 || send_payload(s, CH_STDOUT, buf, len) != 0) {
+            return 1;
+        }
+        offset += len;
+        /* This one-shot command has no stdin. Service the return stream
+         * during long downloads so pending HTTP/2 control frames do not
+         * occupy the device's limited receive buffers. */
+        if (offset < size && fc_http_stream_read(s->st, buf, sizeof(buf), 10) < 0) {
+            return 1;
+        }
+    }
+    return size ? 0 : 1;
 }
 
 static void put_value(char *buf, size_t cap, const cJSON *v)
@@ -1116,6 +1154,8 @@ static int command(session_t *s, char **argv, int argc, long limit, int depth)
         cmd_status(s);
     } else if (strcmp(b, "apps") == 0) {
         cmd_apps(s);
+    } else if (strcmp(b, "coredump") == 0) {
+        return cmd_coredump(s, argv, argc);
     } else if (strcmp(b, "log") == 0 || strcmp(b, "journalctl") == 0) {
         return cmd_journal(s, argv, argc, limit, b[0] == 'l');
     } else if (strcmp(b, "reboot") == 0) {

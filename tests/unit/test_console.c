@@ -288,6 +288,27 @@ static void an_unknown_command_fails_with_127(void)
                               "\"details\":{\"causes\":[{\"reason\":\"ExitCode\",\"message\":\"127\"}]},\"code\":127}");
 }
 
+static void download_preserves_binary_data_across_frames(void)
+{
+    static uint8_t dump[1301];
+    for (size_t i = 0; i < sizeof(dump); ++i) {
+        dump[i] = (uint8_t)i;
+    }
+    reset();
+    stub_coredump = dump;
+    stub_coredump_len = sizeof(dump);
+    session("dump", "{\"command\":{\"command\":\"coredump\",\"args\":[\"read\"]}, " V5 "}");
+    CHECK(wait_closed(1));
+    CHECK(memcmp(sent(CH_STDOUT), dump, sizeof(dump)) == 0);
+    CHECK_STR(sent(CH_ERROR), "{\"metadata\":{},\"status\":\"Success\"}");
+
+    reset();
+    session("empty", "{\"command\":{\"command\":\"coredump\",\"args\":[\"read\"]}, " V5 "}");
+    CHECK(wait_closed(1));
+    CHECK_STR(sent(CH_STDOUT), "");
+    CHECK(strstr(sent(CH_ERROR), "\"code\":1}") != NULL);
+}
+
 static void a_thread_start_failure_reaches_the_console_client(void)
 {
     reset();
@@ -857,6 +878,7 @@ int main(void)
     RUN(one_command_runs_and_exits);
     RUN(completed_console_can_be_joined_without_a_new_session);
     RUN(an_unknown_command_fails_with_127);
+    RUN(download_preserves_binary_data_across_frames);
     RUN(a_thread_start_failure_reaches_the_console_client);
     RUN(a_terminal_gets_a_prompt_and_line_editing);
     RUN(a_session_seen_is_not_run_again_even_after_a_restart);
