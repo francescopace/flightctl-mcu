@@ -1547,7 +1547,11 @@ static void test_arduino(void)
     CHECK_INT(apply_one("a", "reg/t_arduino", env, err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("a", "Completed run() returned 63", 30000), "Completed run() returned 63");
     CHECK(stub_log_has("app a: greeting: Hello from Flight Control"));
-    CHECK(stub_log_has("app a: arduino pin 7: no such name in FC_ALLOW (-3)"));
+    CHECK_INT(stub_log_count("app a: arduino pin 7: no such name in FC_ALLOW (-3)"), 1);
+    CHECK_INT(stub_log_count("app a: arduino pin 16: no such name in FC_ALLOW (-3)"), 1);
+    CHECK_INT(stub_log_count("app a: arduino pin 0: written before pinMode(OUTPUT) (-1)"), 1);
+    CHECK(!stub_log_has("app a: arduino pin 7: written before pinMode(OUTPUT) (-1)"));
+    CHECK(!stub_log_has("app a: arduino pin 17: written before pinMode(OUTPUT) (-1)"));
     CHECK_INT(gpio_level(5), 0); /* closed when run() returned: relay1's safe level */
     CHECK(!f_led_open);
     remove_all();

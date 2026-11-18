@@ -46,7 +46,7 @@ typedef struct {
     int64_t started_ms;
     int8_t h[PINS];
     uint32_t serial[PINS];
-    uint32_t warned; /* pins already logged */
+    uint32_t warned; /* pins already logged, bit PINS for any pin past them */
 } pins_t;
 
 static pins_t s_pins[MAX_APPS];
@@ -88,14 +88,16 @@ static int pin_name(const app_t *a, uint32_t pin, char *out, size_t cap)
     }
 }
 
+/* Once per pin and instance: a blink writes its pin twice a second, and the
+ * log keeps 4 KB. The pins past FC_ALLOW's names (getPinLED() without led0)
+ * share one bit. */
 static void warn(app_t *a, pins_t *p, uint32_t pin, const char *what, int rc)
 {
-    if (pin < PINS && (p->warned & (1u << pin))) {
+    uint32_t bit = 1u << (pin < PINS ? pin : PINS);
+    if (p->warned & bit) {
         return;
     }
-    if (pin < PINS) {
-        p->warned |= 1u << pin;
-    }
+    p->warned |= bit;
     fc_port_log(FC_LOG_WARN, "app %s: arduino pin %u: %s (%d)", a->name, (unsigned)pin, what, rc);
 }
 

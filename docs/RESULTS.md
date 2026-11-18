@@ -23,6 +23,7 @@ What works, where it was verified, and the measurements. The devices are microco
 | App interface | Hardware by name, timers, events, storage, C library | ◐ | – | ✓ | [APPS](APPS.md#ports) |
 | An app's limits | CPU budget per call, heap kept for the agent | ◐ | ✓ | ✓ | [APPS](APPS.md#size-and-limits) |
 | Modules built for no device | Any WebAssembly module, run once | ✓ | – | ✓ | [APPS](APPS.md#modules-built-for-no-device) |
+| Demo apps | emlearn's TinyML model, wasm3-arduino's blink as published | ◐ | – | ✓ | [APPS](APPS.md#the-blink-of-wasm3-arduino) |
 | Apps that crash the device | Not started again | – | ✓ | ✓ | [APPS](APPS.md#how-an-app-runs) |
 | Crash reports | `lastFatalError` in the status | ◐ | ✓ | ✓ | [TESTING](TESTING.md#a-crash-in-the-status) |
 | Certificate renewal | Same key, new certificate | – | ✓ | ✓ | [TESTING](TESTING.md) |
@@ -98,6 +99,8 @@ Internal heap with the `alarm` app running; on the ESP32, C5, C6 and S3 after 40
 | A WASM app: `trend`, 1.9 KB of `.wasm`, on the C3 | 17.7 KB of heap: the loaded module about 5 KB, the instance and its WAMR stack about 3.5 KB, its memory about 1 KB, its thread's stack 8 KB |
 | The MQTT connection, on the C3 | 10 KB of heap (49 KB free before, 39 KB after, v3.14-rc7), and 29 to 31 KB free at the lowest during its handshake; the client's thread used 3.2 to 4.2 KB of its 8 KB stack |
 | The metrics connection, Zephyr on the S3 | its 17 KB receive buffer, from the C heap |
+| The `tinyml` app's memory | 1.2 KB, with 4.1 KB of `.wasm` |
+| The memory of wasm3-arduino's blink, any of its four builds | 64 KB, in one block |
 
 The heap's lowest in the first 25 s after a restart (v3.14-rc7, three restarts each; the block held while a TLS connection opens left out):
 

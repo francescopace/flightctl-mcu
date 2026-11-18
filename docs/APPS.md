@@ -191,7 +191,7 @@ On the boards, the `alarm` app opened `led0` with its pin from the firmware on t
 |---|---|
 | Apps per device | 2 |
 | Module | what the heap can load beside the agent: a quarter of the internal heap free less 32 KB, 64 KB at most (below) |
-| Linear memory | one 64 KB page, shrunk to what the module uses (see below); a module that does not export `__heap_base` and `__data_end` keeps all it declares |
+| Linear memory | one 64 KB page, shrunk to what the module uses (see below); a module that does not export `__heap_base` and `__data_end` keeps all it declares, as does one whose `__data_end`, which WAMR rounds up to 16 bytes, is past its `__heap_base` |
 | Open handles per app (GPIOs, LEDs, timers...) | 12 |
 | Timers per app | 4 |
 | Storage per app | 4 KB |
@@ -244,11 +244,11 @@ On a chip without a temperature sensor both set their state to say so and stay i
 
 - [CoreMark](../wasm-apps/coremark/fetch.sh), as published, not rebuilt: `wasm-apps/coremark/fetch.sh` downloads both builds and checks them against their SHA-256, then `wasm-apps/push.sh coremark wasm3` pushes one. See [Modules built for no device](#modules-built-for-no-device).
 
-- [tinyml](../wasm-apps/tinyml/tinyml.c): a TinyML model from emlearn ([below](#tinyml-with-emlearn)). No grants needed. About 3.9 KB.
+- [tinyml](../wasm-apps/tinyml/tinyml.c): a TinyML model from emlearn ([below](#tinyml-with-emlearn)). No grants needed. About 4.1 KB.
 
 ### TinyML with emlearn
 
-`tinyml` runs a random forest made with [emlearn](https://emlearn.readthedocs.io). It reads the last minute of `die_temp` (12 samples, 5 s apart) and says whether the temperature is `steady`, `warming`, `cooling` or `unstable` (swinging up and down), as `warming (52.4 C)`. `sample_ms` in `/etc/fc-app/<name>.json` changes the period; the model still reads the samples as 5 s apart, so 500 makes a minute pass in 6 s. Of its 3.9 KB of `.wasm`, the model (5 trees, 193 nodes) takes 1.6 KB. It imports only from `fc`.
+`tinyml` runs a random forest made with [emlearn](https://emlearn.readthedocs.io). It reads the last minute of `die_temp` (12 samples, 5 s apart) and says whether the temperature is `steady`, `warming`, `cooling` or `unstable` (swinging up and down), as `warming (52.4 C)`. `sample_ms` in `/etc/fc-app/<name>.json` changes the period; the model still reads the samples as 5 s apart, so 500 makes a minute pass in 6 s. Of its 4.1 KB of `.wasm`, the model (5 trees, 193 nodes) takes 1.6 KB; its memory is 1.2 KB. It imports only from `fc`. On the ESP32-C3, C5, C6 and S3 it said `steady`, and `warming` when the C3 warmed by 2 °C within a minute; the classic ESP32 has no temperature sensor, and the app says so.
 
 The model is the C that emlearn writes ([model.h](../wasm-apps/tinyml/model.h)), built unmodified with `fc_app.h`: with `method="inline"` it needs only `stdint.h`. [train.py](../wasm-apps/tinyml/train.py) trains it on synthetic data from a fixed seed; with the versions in [requirements.txt](../wasm-apps/tinyml/requirements.txt) (emlearn 0.23.2, scikit-learn 1.9.1), in a new environment on Python 3.14 and macOS arm64, it wrote the same file, byte for byte. For a model of your own:
 
@@ -275,4 +275,4 @@ A neural network (emlearn's `eml_net.h`) also needs `expf`, `tanhf` and `logf`, 
 | `print(s, len)` | the app's log, a line at a time, as `printf` |
 | `getGreeting(buf, len)` | `Hello from Flight Control` |
 
-They return nothing, as Arduino's: a pin with no name in `FC_ALLOW`, or written before `pinMode`, is logged once. Each build exports `_start()`, which never returns, so the device runs it once with no instruction budget ([Modules built for no device](#modules-built-for-no-device)): the app is `Running` until it is removed. In an app with `tick()` or `on_event()`, a `delay` counts against the call's second in the device's functions. The C++ and AssemblyScript builds do not export `__heap_base`, so they keep their whole 64 KB of memory; the Rust one shrinks it. Tested on the host and on Zephyr's `native_sim`.
+They return nothing, as Arduino's: a pin with no name in `FC_ALLOW`, or written before `pinMode`, is logged once. Each build exports `_start()`, which never returns, so the device runs it once with no instruction budget ([Modules built for no device](#modules-built-for-no-device)): the app is `Running` until it is removed. In an app with `tick()` or `on_event()`, a `delay` counts against the call's second in the device's functions. Each build keeps its whole 64 KB of memory, in one block: the C++ and AssemblyScript ones do not export `__heap_base`, and the Rust one's `__heap_base` is below its `__data_end` rounded up to 16 bytes. The Rust build ran beside `tinyml` on the ESP32-C3, C6 and S3, and on the C5, which then stopped reporting, its memory at the warning level (v3.14-rc10.1); the C++ one ran beside `alarm` on the C3, C6, S3 and the classic ESP32; beside `tinyml`, the classic ESP32 had no block for the Rust one (`allocate linear memory failed (largest free block 64 KB)`). Tested also on the host and on Zephyr's `native_sim`.

@@ -34,13 +34,19 @@ __attribute__((export_name("run"))) int32_t run(void)
     print("\n", 1);
     getGreeting(g, 6);
     r |= g[4] == 'o' && g[5] == '\0' ? 8 : 0; /* cut, and ended */
+    digitalWrite(0, 1); /* before pinMode: logged once */
+    digitalWrite(0, 1);
     pinMode(0, 1);
     digitalWrite(0, 1);
     pinMode(getPinLED(), 1);
     digitalWrite(getPinLED(), 1);
     r |= 16;
-    pinMode(7, 1);      /* no 8th name: logged once */
-    digitalWrite(7, 1); /* not opened: logged, and nothing happens */
+    for (int i = 0; i < 3; i++) { /* logged once per pin, as a blink would flood the log */
+        pinMode(7, 1);      /* no 8th name */
+        digitalWrite(7, 1); /* not opened: nothing happens */
+        pinMode(16, 1);     /* getPinLED() without led0, and any pin past 15 */
+        digitalWrite(17, 1);
+    }
     r |= 32;
     return r;
 }

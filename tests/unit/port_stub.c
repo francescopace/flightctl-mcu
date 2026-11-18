@@ -326,15 +326,21 @@ void fc_port_log(fc_log_level_t level, const char *fmt, ...)
     }
 }
 
-int stub_log_has(const char *line)
+/* How many of the log's last lines are this one. */
+int stub_log_count(const char *line)
 {
     pthread_mutex_lock(&s_log_lock);
-    int found = 0;
-    for (const char *p = s_log; !found && (p = strstr(p, line)) != NULL; p++) {
-        found = (p == s_log || p[-1] == '\n') && p[strlen(line)] == '\n';
+    int n = 0;
+    for (const char *p = s_log; (p = strstr(p, line)) != NULL; p++) {
+        n += (p == s_log || p[-1] == '\n') && p[strlen(line)] == '\n';
     }
     pthread_mutex_unlock(&s_log_lock);
-    return found;
+    return n;
+}
+
+int stub_log_has(const char *line)
+{
+    return stub_log_count(line) > 0;
 }
 
 /* "Hardware" key store: the sealed key is a PSA key that cannot be exported,
