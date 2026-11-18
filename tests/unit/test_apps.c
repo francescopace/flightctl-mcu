@@ -2092,6 +2092,7 @@ static void test_heap_low_holds(void)
 static void test_heap_floor(void)
 {
     char err[160];
+    stub_log_clear();
     stub_heap_free = 64 * 1024;
     stub_heap_watch_low = 40 * 1024;
     CHECK_INT(apply_one("h", "reg/app:v1", NULL, err, sizeof(err)), 0);
@@ -2115,17 +2116,16 @@ static void test_heap_floor(void)
     CHECK_STR(wait_state_of("h", want, 3000), want);
     /* Not started again, though it would now fit. */
     stub_heap_free = -1;
-    usleep((RESTART_DELAY_S * 1000 + 500) * 1000);
+    app_t *h = find("h");
+    while (!__atomic_load_n(&h->runner_done, __ATOMIC_ACQUIRE)) {
+        usleep(1000); /* once the runner has exited it cannot restart itself */
+    }
     CHECK_STR(state_of("h"), want);
     pthread_mutex_lock(&s_lock);
     CHECK_INT(find("h")->restarts, 0);
     pthread_mutex_unlock(&s_lock);
     /* Started again once the heap has room for it (fc_apps_poll), but not
      * before its next look. */
-    app_t *h = find("h");
-    while (!__atomic_load_n(&h->runner_done, __ATOMIC_ACQUIRE)) {
-        usleep(1000); /* its runner has ended (mem_wait is set before) */
-    }
     CHECK_INT(h->mem_wait, 1);
     fc_apps_poll(0);
     CHECK_STR(state_of("h"), want);

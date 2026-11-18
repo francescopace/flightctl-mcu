@@ -9,7 +9,7 @@
 #   4. a radio that cannot join with its access point up (--later): the server
 #      returns once the network is applied.
 # Needs build/host (cmake), and Python with protobuf and cryptography, which
-# are installed in build/prov-venv when missing.
+# are installed in PROV_VENV (default build/prov-venv) when missing.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PORT="${PORT:-8090}"
@@ -17,9 +17,12 @@ POP=prov-test-pop-1
 BIN="$ROOT/build/host/fc-prov-host"
 [[ -x "$BIN" ]] || { echo "no $BIN: build the host agent first (cmake --build build/host)" >&2; exit 1; }
 if ! python3 -c 'import google.protobuf, cryptography' 2>/dev/null; then
-  [[ -x "$ROOT/build/prov-venv/bin/python3" ]] || python3 -m venv "$ROOT/build/prov-venv"
-  "$ROOT/build/prov-venv/bin/pip" install -q --disable-pip-version-check protobuf cryptography
-  export PATH="$ROOT/build/prov-venv/bin:$PATH"
+  venv="${PROV_VENV:-$ROOT/build/prov-venv}"
+  [[ -x "$venv/bin/python3" ]] || python3 -m venv "$venv"
+  if ! "$venv/bin/python3" -c 'import google.protobuf, cryptography' 2>/dev/null; then
+    "$venv/bin/python3" -m pip install -q --disable-pip-version-check protobuf cryptography
+  fi
+  export PATH="$venv/bin:$PATH"
 fi
 export ESP_PROV_LOCAL=1
 LOG="$(mktemp)"; OUT="$(mktemp)"

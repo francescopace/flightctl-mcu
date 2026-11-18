@@ -143,6 +143,8 @@ if(FC_UNIT)
     fc_unit(test_resources third_party/cjson/cJSON.c)
     fc_unit(test_console third_party/cjson/cJSON.c core/src/fc_log.c)
     fc_unit(test_apps third_party/cjson/cJSON.c core/src/fc_appapi.c core/src/fc_arduino.c core/src/fc_board.c core/src/fc_metrics.c core/src/fc_http.c core/src/fc_mqtt.c)
+    # Start the longest executable first even in a fresh CTest build directory.
+    set_tests_properties(test_apps PROPERTIES COST 40)
     target_link_libraries(test_apps PRIVATE vmlib)
     fc_unit(test_threads third_party/cjson/cJSON.c)
     fc_unit(test_metrics third_party/cjson/cJSON.c)

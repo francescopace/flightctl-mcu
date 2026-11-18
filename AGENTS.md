@@ -2,25 +2,22 @@
 
 Notes for coding agents working in this repository. The code and `docs/` explain what the agent does; this file holds what they don't: the checks CI runs, the traps in the builds, and how we work.
 
-## Before every commit
+## Before a push
 
-CI goes red on things that pass a quick local run, and a red main blocks everyone. Run the same checks as the CI job "unit tests, field provisioning, quick fuzzing" on the exact tree you commit, and say in the commit's report which ones you ran.
+When the user requests a push, record the SHA of the final commit to publish. Run the checks below once in a temporary detached worktree at that SHA. Run these checks on an intermediate commit only if explicitly requested. If the cumulative diff from the remote tip contains only Markdown, files under `docs/` or the root `LICENSE`, skip builds and tests as CI does. Pass `--include-docs` if the user asks for the checks on a documentation-only push. After the applicable checks pass, push the selected SHA and remove the temporary worktree. Report the SHA and which checks passed. If fuzzing was requested, include the duration per target.
 
-```bash
-third_party/fetch-wamr.sh
-```
+The `tests` job in [the CI workflow](.github/workflows/ci.yml) builds the host provisioning executable before exercising it. For code changes, export `MBEDTLS_DIR` pointing to the directory containing `MbedTLSConfig.cmake` for the project's mbedTLS build. The optional local fuzz run on macOS uses Homebrew LLVM because Apple's clang lacks libFuzzer.
 
 ```bash
-tests/unit.sh
+remote_tip=$(git rev-parse origin/main)  # after fetching the remote tip
+python3 tests/pre-push.py "$remote_tip"
 ```
 
-```bash
-FUZZ_SECONDS=3 CC=/opt/homebrew/opt/llvm/bin/clang tests/fuzz.sh
-```
-
-- On macOS, Apple's `/usr/bin/clang` has no libFuzzer and every fuzz target fails to link; use Homebrew's LLVM as above. On Linux, `CC=clang` is enough.
+- The runner copies WAMR and the Espressif provisioning tools from a cache shared by worktrees (`build/pre-push-cache` in the main checkout, or `FC_CHECK_CACHE`). It keys each copy on its fetch script, version override and patches, and reuses the provisioning virtualenv for the same Python interpreter. The Docker ESP32-S3 build keeps compiler objects in the `flightctl-zephyr-s3-ccache` volume.
+- CTest runs two executables at a time. With `--fuzz`, the pre-push runner runs up to three fuzzers at a time and keeps each log and any failure input in `build/fuzz/findings/<target>/`. Use `CTEST_PARALLEL_LEVEL=1` or `FUZZ_JOBS=1` for serial execution.
+- Fuzzing runs in CI (30 seconds per target on code pushes) and nightly (20 minutes per target by default). Only build and run the fuzzers locally when explicitly requested: pass `--fuzz` for 3 seconds per target, or `FUZZ_SECONDS=30` with `--fuzz` for the CI duration.
 - The fuzzers link the core against their own port stubs, in `tests/fuzz/`, apart from the unit tests' `tests/unit/port_stub.c`. A new `fc_port_*` function needs a stub there too, or the fuzz build breaks while `tests/unit.sh` stays green.
-- When a change touches the core's statics, thread stacks or port code, also link the Zephyr build for the ESP32-S3, then delete `port/zephyr/build-esp32s3-check`:
+- If the cumulative diff from the remote tip to the commit being pushed touches the core's statics, thread stacks or port code, also link the Zephyr build for the ESP32-S3 in the same worktree, then delete `port/zephyr/build-esp32s3-check`:
 
 ```bash
 BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3-check port/zephyr/build.sh
@@ -44,7 +41,7 @@ Tests must not depend on wall-clock margins: CI's runner is slower than a workst
 - Firmware: `port/espidf/build.sh` (ESP-IDF in Docker); CI uses `port/espidf/build-ci.sh <target> [version] [variant]`. Builds land in `port/espidf/build-<target>[-<variant>]`.
 - Zephyr: `port/zephyr/build.sh`, `BOARD=` to pick the board (default `native_sim`).
 - Host agent: `port/host/build-ci.sh`. WASM apps: `NO_PUSH=1 wasm-apps/build.sh <app> <version>`.
-- Run one heavy build at a time. To wait for another build, check `docker ps` or `pgrep -x docker`; don't grep `ps` output for "docker run", which matches the waiting shell's own command line.
+- Run one heavy build at a time. For containers, use `docker ps` to identify the build command and `docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' <id>` to identify the checkout. For native Zephyr builds, check `pgrep -fl '[w]est build'` and match the application or build directory to a project worktree. Wait for the matching build to finish.
 - Don't run builds while `tests/e2e/e2e-emu.sh` is running: the emulated clock falls behind and the test's 2-minute certificates expire before the device renews them.
 
 ## Boundaries
@@ -57,7 +54,7 @@ Tests must not depend on wall-clock margins: CI's runner is slower than a workst
 ## Git
 
 - Work on `main`; no feature branches.
-- Other agents may be editing the same checkout. Commit only your own hunks: write them to a patch and stage it with `git apply --cached`, then leave the index empty. Don't use `git add -p` or `git add -A`.
+- Coordinate with other agents so only one writer stages and commits on `main` at a time. If `git diff --cached` shows someone else's work, leave it staged and wait for its owner to finish. Starting with a clean index, stage a patch containing only your hunks with `git apply --cached`, review the staged diff and commit it. Don't use `git add -p` or `git add -A`.
 - Commit subjects say what changed in behaviour, as a sentence, optionally after an area (`Agent: …`, `Tests: …`, `Docs: …`). See `git log` for the tone.
 
 ## Docs

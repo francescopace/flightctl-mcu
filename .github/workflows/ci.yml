@@ -93,7 +93,7 @@ jobs:
         if: failure()
         with:
           name: fuzz-findings
-          path: build/fuzz/crash-*
+          path: build/fuzz/findings/
 
   # Every chip, uploaded for the e2e workflow (and kept 90 days): plain and
   # secure for the chips it emulates (secure: Secure Boot v2 + flash and NVS

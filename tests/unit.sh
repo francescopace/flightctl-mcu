@@ -8,5 +8,5 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 cmake -S . -B build/unit -G Ninja -DFC_UNIT=ON -DFC_SANITIZE=ON "$@" >/dev/null
 cmake --build build/unit
-ctest --test-dir build/unit --output-on-failure
+ctest --parallel "${CTEST_PARALLEL_LEVEL:-2}" --test-dir build/unit --output-on-failure
 python3 -m unittest discover -s tests/python -v 2>&1 | tail -n +1

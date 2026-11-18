@@ -55,4 +55,4 @@ jobs:
         if: failure()
         with:
           name: fuzz-findings
-          path: build/fuzz/crash-*
+          path: build/fuzz/findings/

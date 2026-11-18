@@ -74,6 +74,11 @@ elif [[ ! -d "$ROOT/third_party/zephyr-sdk" ]]; then
   echo "no Zephyr SDK: run third_party/fetch-zephyr-sdk.sh" >&2
   exit 1
 fi
+# west detects ccache in the image. Keep objects across disposable S3 builds;
+# the fixed /project mount also keeps debug paths stable across worktrees.
+if [[ "$BOARD" == esp32s3* ]]; then
+  TOOLCHAIN+=(-v flightctl-zephyr-s3-ccache:/ccache -e CCACHE_DIR=/ccache)
+fi
 docker run --rm ${TOOLCHAIN[@]+"${TOOLCHAIN[@]}"} -v "$ROOT:/project" -w /project/third_party/zephyr-ws "$ZEPHYR_IMAGE" \
   bash -c 'git config --global --add safe.directory "*"
     bash -c "$1" make-key "/project/$2" /project/third_party/zephyr-ws
