@@ -4,7 +4,29 @@
  * gen-otlp-vectors.py), the apps' values and their limits, and the gRPC call
  * against a fake stream.
  */
+#include <stdlib.h>
+
+static int fail_allocations;
+static unsigned live_tables;
+
+static void *table_malloc(size_t bytes)
+{
+    void *p = fail_allocations ? NULL : malloc(bytes);
+    live_tables += p != NULL;
+    return p;
+}
+
+static void table_free(void *p)
+{
+    live_tables -= p != NULL;
+    free(p);
+}
+
+#define malloc table_malloc
+#define free table_free
 #include "../../core/src/fc_metrics.c"
+#undef free
+#undef malloc
 
 #include "otlp_vectors.h"
 #include "port_stub.h"
@@ -123,6 +145,7 @@ static void the_request_is_what_opentelemetry_writes(void)
 
 static void apps_set_add_and_lose_their_values(void)
 {
+    CHECK_INT(fc_metrics_app_count(), 0);
     CHECK_INT(fc_metrics_app_set("trend", "temp", 4, 0, 21.5), 0);
     CHECK_INT(fc_metrics_app_set("trend", "temp", 4, 0, 22.0), 0); /* a gauge is set */
     CHECK_INT(fc_metrics_app_set("trend", "samples", 7, 1, 2), 0);
@@ -137,6 +160,7 @@ static void apps_set_add_and_lose_their_values(void)
     fc_metric_point_t p[FC_METRICS_APPS_MAX];
     int n = fc_metrics_app_points(p, FC_METRICS_APPS_MAX);
     CHECK_INT(n, 2);
+    CHECK_INT(fc_metrics_app_count(), n);
     CHECK_STR(p[0].name, "app.trend.temp");
     CHECK(p[0].sum == 0 && p[0].d == 22.0);
     CHECK_STR(p[1].name, "app.trend.samples");
@@ -152,6 +176,7 @@ static void apps_set_add_and_lose_their_values(void)
     fc_metrics_app_drop("trend");
     n = fc_metrics_app_points(p, FC_METRICS_APPS_MAX);
     CHECK_INT(n, 1);
+    CHECK_INT(fc_metrics_app_count(), n);
     CHECK_STR(p[0].name, "app.alarm.m6");
     fc_metrics_app_drop("alarm");
     CHECK_INT(fc_metrics_app_points(p, FC_METRICS_APPS_MAX), 0);
@@ -166,11 +191,58 @@ static void apps_set_add_and_lose_their_values(void)
         }
     }
     CHECK_INT(ok, FC_METRICS_APPS_MAX);
+    CHECK_INT(fc_metrics_app_count(), ok);
     for (int a = 0; a < 6; a++) {
         char app[8];
         snprintf(app, sizeof(app), "a%d", a);
         fc_metrics_app_drop(app);
     }
+}
+
+static void each_publisher_owns_one_table(void)
+{
+    char first[FC_APP_NAME_MAX + 1], second[sizeof(first)], metric[FC_METRIC_NAME_MAX + 1];
+    memset(first, 'a', sizeof(first) - 1);
+    first[FC_APP_NAME_MAX] = '\0';
+    memcpy(second, first, sizeof(first));
+    second[FC_APP_NAME_MAX - 1] = 'b';
+    memset(metric, 'm', FC_METRIC_NAME_MAX);
+    metric[FC_METRIC_NAME_MAX] = '\0';
+
+    char too_long[sizeof(first) + 1];
+    snprintf(too_long, sizeof(too_long), "%sx", first);
+    CHECK_INT(live_tables, 0);
+    CHECK_INT(fc_metrics_app_set(too_long, metric, FC_METRIC_NAME_MAX, 0, 0), FC_HW_EINVAL);
+    CHECK_INT(fc_metrics_app_set(first, "?", 1, 0, 0), FC_HW_EINVAL);
+    CHECK_INT(live_tables, 0);
+    CHECK_INT(fc_metrics_app_set(first, metric, FC_METRIC_NAME_MAX, 1, 2), 0);
+    CHECK_INT(live_tables, 1);
+    fail_allocations = 1;
+    CHECK_INT(fc_metrics_app_set(second, metric, FC_METRIC_NAME_MAX, 0, 1), FC_HW_ENOSPC);
+    CHECK_INT(fc_metrics_app_set(first, metric, FC_METRIC_NAME_MAX, 1, 3), 0);
+    CHECK_INT(live_tables, 1);
+    fail_allocations = 0;
+    CHECK_INT(fc_metrics_app_set(second, metric, FC_METRIC_NAME_MAX, 0, 7), 0);
+    CHECK_INT(live_tables, 2);
+
+    fc_metric_point_t p[2];
+    CHECK_INT(fc_metrics_app_points(p, 1), 1);
+    CHECK_INT(fc_metrics_app_points(p, 2), 2);
+    char expected[sizeof(p[0].name)];
+    snprintf(expected, sizeof(expected), "app.%s.%s", first, metric);
+    CHECK_STR(p[0].name, expected);
+    CHECK(p[0].sum && p[0].d == 5);
+    fc_metrics_app_drop(first);
+    CHECK_INT(live_tables, 1);
+    CHECK_INT(fc_metrics_app_points(p, 1), 1);
+    snprintf(expected, sizeof(expected), "app.%s.%s", second, metric);
+    CHECK_STR(p[0].name, expected);
+    CHECK(!p[0].sum && p[0].d == 7);
+    CHECK_INT(fc_metrics_app_set(first, metric, FC_METRIC_NAME_MAX, 0, 1), 0);
+    fc_metrics_app_drop(first);
+    fc_metrics_app_drop(first);
+    fc_metrics_app_drop(second);
+    CHECK_INT(live_tables, 0);
 }
 
 static void the_export_is_one_grpc_call(void)
@@ -212,6 +284,7 @@ int main(void)
 {
     RUN(the_request_is_what_opentelemetry_writes);
     RUN(apps_set_add_and_lose_their_values);
+    RUN(each_publisher_owns_one_table);
     RUN(the_export_is_one_grpc_call);
     return TEST_RESULT();
 }

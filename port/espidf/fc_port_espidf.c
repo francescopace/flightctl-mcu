@@ -242,12 +242,14 @@ int fc_port_kv_get(const char *key, char **out, size_t *len)
     nvs_handle_t h;
     char k[16];
     nvs_key(key, k);
-    if (nvs_open_from_partition(PART, NS, NVS_READONLY, &h) != ESP_OK) {
-        return -1;
+    esp_err_t err = nvs_open_from_partition(PART, NS, NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        return err == ESP_ERR_NVS_NOT_FOUND ? FC_KV_MISSING : -1;
     }
     size_t n = 0;
-    int rc = -1;
-    if (nvs_get_blob(h, k, NULL, &n) == ESP_OK) {
+    err = nvs_get_blob(h, k, NULL, &n);
+    int rc = err == ESP_ERR_NVS_NOT_FOUND ? FC_KV_MISSING : -1;
+    if (err == ESP_OK) {
         char *buf = malloc(n + 1);
         if (buf && nvs_get_blob(h, k, buf, &n) == ESP_OK) {
             buf[n] = '\0';
@@ -290,9 +292,13 @@ int fc_port_kv_del(const char *key)
         return -1;
     }
     esp_err_t err = nvs_erase_key(h, k);
-    nvs_commit(h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = ESP_OK;
+    } else if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
     nvs_close(h);
-    return err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND ? 0 : -1;
+    return err == ESP_OK ? 0 : -1;
 }
 
 void fc_port_sysinfo(fc_sysinfo_t *si)
@@ -343,6 +349,10 @@ void fc_port_custom_info(void *obj)
     cJSON_AddStringToObject(o, "mac", si.hw_id);
     cJSON_AddStringToObject(o, "firmwareVersion", esp_app_get_description()->version);
     cJSON_AddStringToObject(o, "resetReason", reset_reason_name());
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running != NULL) {
+        cJSON_AddStringToObject(o, "bootSlot", running->label);
+    }
     /* What the chip enforces (eFuses), not what the image was built for. */
     cJSON_AddStringToObject(o, "deviceKey", hwkey_info());
     cJSON_AddStringToObject(o, "secureBoot", esp_secure_boot_enabled() ? "true" : "false");
@@ -438,6 +448,11 @@ void fc_port_metrics(void *obj)
     }
 }
 
+void fc_port_background_compute(void)
+{
+    vTaskPrioritySet(NULL, tskIDLE_PRIORITY);
+}
+
 long fc_port_stack_unused(void)
 {
     /* ESP-IDF's FreeRTOS counts stacks in bytes; a pthread is a task. */
@@ -455,7 +470,7 @@ int fc_port_read_file(const char *path, char **out, size_t *len)
 {
     char key[300];
     snprintf(key, sizeof(key), "file:%s", path);
-    return fc_port_kv_get(key, out, len);
+    return fc_port_kv_get(key, out, len) == 0 ? 0 : -1;
 }
 
 int fc_port_remove_file(const char *path)

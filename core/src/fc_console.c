@@ -108,9 +108,9 @@ static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 static char s_device[64];
 static uint32_t s_seen[SEEN_MAX]; /* id_hash of the sessions opened; 0 empty */
 static int s_seen_next, s_seen_loaded;
-static int s_running;  /* the session thread runs */
-static int s_joinable; /* it ran, and was not joined */
-static volatile int s_stop;
+enum { CONSOLE_IDLE, CONSOLE_RUNNING, CONSOLE_FINISHED };
+static int s_thread_state; /* also read by the spec long-poll */
+static int s_stop;
 static pthread_t s_thread;
 static pthread_attr_t s_attr; /* until joined: on Zephyr it owns the stack */
 
@@ -1691,7 +1691,7 @@ static void *session_thread(void *arg)
         prompt(s);
     }
     uint8_t buf[256];
-    while (!s->done && !s_stop) {
+    while (!s->done && !__atomic_load_n(&s_stop, __ATOMIC_ACQUIRE)) {
         int n = fc_http_stream_read(s->st, buf, sizeof(buf), 200);
         if (n < 0) {
             break; /* the server or the connection ended it */
@@ -1711,7 +1711,7 @@ static void *session_thread(void *arg)
             follow_some(s);
         }
     }
-    if (s_stop && !s->finished) {
+    if (__atomic_load_n(&s_stop, __ATOMIC_ACQUIRE) && !s->finished) {
         out(s, "\nthe device needs its connection: the session ends\n");
     }
     finish(s, s->exit_code);
@@ -1727,14 +1727,14 @@ static void *session_thread(void *arg)
     } else {
         fc_port_log(FC_LOG_INFO, "console: session ended");
     }
-    pthread_mutex_lock(&s_lock);
-    s_running = 0;
-    pthread_mutex_unlock(&s_lock);
     if (reboot) {
         fc_port_log(FC_LOG_WARN, "console: restarting, as asked");
         sleep(1);
         fc_port_reboot();
     }
+    int running = CONSOLE_RUNNING;
+    /* A concurrent stop may already have claimed the thread for joining. */
+    __atomic_compare_exchange_n(&s_thread_state, &running, CONSOLE_FINISHED, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED);
     return NULL;
 }
 
@@ -1813,8 +1813,12 @@ static int offers(const cJSON *meta, const char *protocol)
     return 0;
 }
 
-static void start(const char *id, const char *metadata, const fc_http_target_t *t, int busy)
+static void start(const char *id, const char *metadata, const fc_http_target_t *t, int busy, uint64_t *keep)
 {
+    /* Reclaim a finished console stack before allocating its replacement. */
+    if (!busy) {
+        fc_console_stop();
+    }
     cJSON *meta = cJSON_Parse(metadata ? metadata : "{}");
     char device[64];
     pthread_mutex_lock(&s_lock);
@@ -1834,6 +1838,11 @@ static void start(const char *id, const char *metadata, const fc_http_target_t *
         cJSON_Delete(meta);
         return;
     }
+    /* An unopened stream cannot execute anything and can be tried again.
+     * Record an opened session before a command can request a reboot. */
+    pthread_mutex_lock(&s_lock);
+    *keep |= (uint64_t)1 << remember_locked(id_hash(id), *keep);
+    pthread_mutex_unlock(&s_lock);
     s->tty = cJSON_IsTrue(cJSON_GetObjectItem(meta, "tty"));
     s->command = command_of(meta);
     cJSON_Delete(meta);
@@ -1847,27 +1856,21 @@ static void start(const char *id, const char *metadata, const fc_http_target_t *
     }
     fc_port_log(FC_LOG_INFO, "console: session %s%s", id, s->tty ? " (terminal)" : s->script ? " (commands on stdin)" : "");
     pthread_mutex_lock(&s_lock);
-    if (s_joinable) {
-        pthread_mutex_unlock(&s_lock);
-        pthread_join(s_thread, NULL);
-        pthread_attr_destroy(&s_attr);
-        pthread_mutex_lock(&s_lock);
-        s_joinable = 0;
-    }
-    s_stop = 0;
+    __atomic_store_n(&s_stop, 0, __ATOMIC_RELEASE);
     pthread_attr_init(&s_attr);
     pthread_attr_setstacksize(&s_attr, THREAD_STACK);
-    s_running = 1;
+    __atomic_store_n(&s_thread_state, CONSOLE_RUNNING, __ATOMIC_RELEASE);
     if (pthread_create(&s_thread, &s_attr, session_thread, s) != 0) {
-        s_running = 0;
+        __atomic_store_n(&s_thread_state, CONSOLE_IDLE, __ATOMIC_RELEASE);
         pthread_mutex_unlock(&s_lock);
         pthread_attr_destroy(&s_attr);
         fc_port_log(FC_LOG_WARN, "console %s: no thread for it", id);
+        out(s, "could not start the console thread\n");
+        finish(s, 1);
         fc_http_stream_close(s->st);
         session_free(s);
         return;
     }
-    s_joinable = 1;
     pthread_mutex_unlock(&s_lock);
 }
 
@@ -1895,27 +1898,29 @@ int fc_console_sync(const cJSON *consoles, const fc_http_target_t *t)
         uint32_t h = id_hash(id);
         listed = listed ? listed : 1;
         pthread_mutex_lock(&s_lock);
+        int busy = __atomic_load_n(&s_thread_state, __ATOMIC_ACQUIRE) == CONSOLE_RUNNING;
         if (seen_locked(h) >= 0) {
-            listed = s_running ? 2 : listed;
+            listed = busy ? 2 : listed;
             pthread_mutex_unlock(&s_lock);
             continue;
         }
         listed = 2;
-        /* before it runs: a reboot it asks for is not asked again */
-        keep |= (uint64_t)1 << remember_locked(h, keep);
-        int busy = s_running;
         pthread_mutex_unlock(&s_lock);
-        start(id, meta, t, busy);
+        start(id, meta, t, busy, &keep);
     }
     return listed;
+}
+
+int fc_console_finished(void)
+{
+    return __atomic_load_n(&s_thread_state, __ATOMIC_ACQUIRE) == CONSOLE_FINISHED;
 }
 
 void fc_console_stop(void)
 {
     pthread_mutex_lock(&s_lock);
-    int joinable = s_joinable;
-    s_joinable = 0;
-    s_stop = 1;
+    int joinable = __atomic_exchange_n(&s_thread_state, CONSOLE_IDLE, __ATOMIC_ACQ_REL) != CONSOLE_IDLE;
+    __atomic_store_n(&s_stop, 1, __ATOMIC_RELEASE);
     pthread_mutex_unlock(&s_lock);
     if (joinable) {
         pthread_join(s_thread, NULL);

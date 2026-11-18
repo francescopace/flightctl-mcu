@@ -147,7 +147,7 @@ The support levels, the boards tried and how to add a chip, a board or an RTOS a
 
 ## Status
 
-Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), deltas, rollback, a registry with TLS and a password, decommissioning. Certificate renewal and Secure Boot are tested on emulated chips; provisioning in the field on emulated chips and on the Zephyr ESP32-S3, not yet on an ESP-IDF board ([RESULTS.md](docs/RESULTS.md#what-works)).
+Tested on real boards and in CI: enrollment, monitoring, config, signed firmware and apps (cosign format), deltas, rollback, a registry with TLS and a password, decommissioning. Certificate renewal also passed on a physical ESP32-C6. Secure Boot is tested on emulated chips; provisioning in the field on emulated chips and on the Zephyr ESP32-S3, not yet on an ESP-IDF board ([RESULTS.md](docs/RESULTS.md#what-works)).
 
 Known limits:
 
@@ -155,7 +155,7 @@ Known limits:
 - The device key is in flash in clear unless the device runs the `secure` variant (Secure Boot and flash encryption, tested in the emulator only), which Zephyr does not have: on an Espressif chip, a device that must be protected runs the ESP-IDF firmware. On Zephyr the protection comes with chips that have TF-M, after 1.0 ([SECURITY.md](docs/SECURITY.md#zephyr)).
 - WiFi is the only link tried on hardware; Ethernet runs in QEMU.
 - Flight Control 1.4.0 cannot revoke an enrollment certificate; its main branch can, not yet in a release.
-- Apps: MQTT runs on the five ESP-IDF chips and on the Zephyr ESP32-S3, where beside a metrics export it used up the C heap ([current limitations](docs/RESULTS.md#current-limitations)). I2C, SPI, UART, ADC and PWM answer on the boards but have not been tried with devices wired to them ([APPS.md](docs/APPS.md)).
+- Apps: MQTT runs on the five ESP-IDF chips and on the Zephyr ESP32-S3. The S3 N8R8 kept its MQTT session through a signed firmware download and exported telemetry with MQTT connected ([current limitations](docs/RESULTS.md#current-limitations)). I2C, SPI, UART, ADC and PWM answer on the boards but have not been tried with devices wired to them ([APPS.md](docs/APPS.md)).
 - Apps must be WASM OCI artifacts. Podman-style images with a `.wasm` inside a tarball are not supported.
 
 The work also found gaps in Flight Control for this class of device, such as a fixed 5-minute disconnect timeout. They are written up in [docs/FLIGHTCTL-LIMITATIONS.md](docs/FLIGHTCTL-LIMITATIONS.md), with proposals; the agent's [current limitations](docs/RESULTS.md#current-limitations) in full are in RESULTS.

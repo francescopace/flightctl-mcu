@@ -36,6 +36,9 @@ void fc_console_set_device(const char *name);
  * caller waits a little before the next one. */
 int fc_console_sync(const cJSON *consoles, const fc_http_target_t *t);
 
+/* Lock-free: the spec loop can reclaim a finished thread and its stack. */
+int fc_console_finished(void);
+
 /* Ends the session, if any, and waits for its thread: before the agent lets
  * go of its connection (a download's turn), so that it is the only one. */
 void fc_console_stop(void);

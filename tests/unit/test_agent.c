@@ -4,9 +4,67 @@
  * Network calls are not made: downloads and apps are stubs.
  */
 #include <unistd.h>
+#include <errno.h>
+#include <pthread.h>
+#include <time.h>
+#include "fc_http.h"
+#include "test.h"
+
+/* Advance to the deadlines requested by the real status loop. In the
+ * offline boot test every management PUT fails for 400 simulated seconds. */
+static const time_t offline_boot = 1800000000;
+static time_t offline_now, saved_started_at;
+static int offline_puts, saved_starts;
+
+static time_t agent_time(time_t *out)
+{
+    if (!offline_now) {
+        return time(out);
+    }
+    if (out) {
+        *out = offline_now;
+    }
+    return offline_now;
+}
+
+static int agent_timedwait(pthread_cond_t *cond, pthread_mutex_t *lock, const struct timespec *until)
+{
+    if (!offline_now) {
+        return pthread_cond_timedwait(cond, lock, until);
+    }
+    if (until->tv_sec >= offline_boot + 400 || until->tv_sec <= offline_now) {
+        CHECK(until->tv_sec > offline_now);
+        offline_now = offline_boot + 400;
+        pthread_mutex_unlock(lock);
+        pthread_exit(NULL);
+    }
+    offline_now = until->tv_sec;
+    return ETIMEDOUT;
+}
+
+static int agent_request(const fc_http_target_t *t, const char *method, const char *path,
+                         const char *content_type, const char *body, size_t body_len, fc_http_response_t *r)
+{
+    if (!offline_now) {
+        return fc_http_request(t, method, path, content_type, body, body_len, r);
+    }
+    CHECK_STR(method, "PUT");
+    CHECK_CONTAINS(path, "/status");
+    CHECK(t->discard_200_body);
+    offline_puts++;
+    *r = (fc_http_response_t){.status = -1};
+    return -1;
+}
+
+#define time agent_time
+#define pthread_cond_timedwait agent_timedwait
+#define fc_http_request agent_request
 #define sleep(s) ((void)(s), 0u) /* retries must not slow the tests */
 
 #include "../../core/src/fc_agent.c"
+#undef time
+#undef pthread_cond_timedwait
+#undef fc_http_request
 
 #include <stdlib.h>
 
@@ -19,9 +77,11 @@
 static agent_t s_a;
 
 static int s_fw_fetches, s_fw_refused, s_fw_ok;
+static int s_prunes, s_prunes_at_download, s_prunes_at_config;
 
 int fc_oci_fetch_firmware(const char *image, char *digest, size_t digest_len, char *err, size_t err_len)
 {
+    s_prunes_at_download = s_prunes;
     s_fw_fetches++;
     if (s_fw_ok) {
         snprintf(digest, digest_len, "sha256:new");
@@ -52,15 +112,32 @@ int fc_apps_init(void)
     return 0;
 }
 
-static int s_apps_applied, s_apps_removed_all;
+static int s_apps_applied, s_apps_removed_all, s_wait_primary, s_prepare_result;
 static char s_apps_running_on[64]; /* the firmware the last apps were applied with */
 
 /* Two firmwares: "fw:v1" has no env.snprintf, "fw:v2" has it. An app whose
  * image says "needs-v2" imports it, and v1 refuses it as fc_apps does. */
+int fc_apps_prepare(const cJSON *applications, fc_apps_plan_t *plan)
+{
+    *plan = (fc_apps_plan_t){.applications = applications};
+    s_prunes++;
+    return s_prepare_result;
+}
+
+int fc_apps_apply_prepared(const fc_apps_plan_t *plan, char *err, size_t err_len, int *retry)
+{
+    return fc_apps_apply(plan->applications, err, err_len, retry);
+}
+
 int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *retry)
 {
     *retry = 0;
     s_apps_applied++;
+    if (s_wait_primary) {
+        *retry = FC_APPS_WAIT_PRIMARY;
+        snprintf(err, err_len, "waiting for the primary");
+        return -1;
+    }
     snprintf(s_apps_running_on, sizeof(s_apps_running_on), "%s", s_a.os_image);
     if (cJSON_IsArray(applications) && cJSON_GetArraySize(applications) == 0) {
         s_apps_removed_all++;
@@ -95,8 +172,15 @@ void fc_apps_defer_starts(int on)
     (void)on;
 }
 
-void fc_apps_poll(void)
+int fc_apps_poll_due(void) { return 0; }
+int fc_apps_awaiting_primary_completion(void) { return 0; }
+static int s_retry_due, s_poll_held, s_poll_released;
+int fc_apps_primary_retry_due(void) { return s_retry_due; }
+int fc_apps_poll(int idle_released)
 {
+    s_poll_held = s_a.downloading;
+    s_poll_released = idle_released;
+    return 1;
 }
 
 void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
@@ -122,8 +206,21 @@ long fc_apps_heap_floor(void)
 }
 
 void fc_apps_hold_saved(int on) {}
-int fc_apps_saved_due(void) { return 0; }
-int fc_apps_start_saved(void) { return 0; }
+int fc_apps_saved_delay_s(void)
+{
+    if (!offline_now || saved_starts) {
+        return -1;
+    }
+    return offline_now < offline_boot + 180 ? (int)(offline_boot + 180 - offline_now) : 0;
+}
+int fc_apps_start_saved(void)
+{
+    if (offline_now) {
+        saved_starts++;
+        saved_started_at = offline_now;
+    }
+    return 0;
+}
 void fc_apps_status_ok(void) {}
 void fc_apps_note_silent_restart(void) {}
 
@@ -138,6 +235,7 @@ int fc_console_sync(const cJSON *consoles, const fc_http_target_t *t)
     s_console_syncs++;
     return cJSON_GetArraySize(consoles) > 0 && t->session != NULL && t->cert_pem != NULL;
 }
+int fc_console_finished(void) { return 0; }
 void fc_console_stop(void)
 {
     s_console_stops++;
@@ -158,6 +256,7 @@ void fc_apps_mqtt_hooks(int (*agent_idle)(int claim), void (*agent_connected)(vo
 
 static int on_config_file(const char *path, const char *data, size_t len, void *ctx)
 {
+    s_prunes_at_config = s_prunes;
     return len > 0 && data[0] == '!' ? -1 : 0; /* "!..." means invalid */
 }
 
@@ -179,9 +278,37 @@ static void new_agent(void)
     pthread_cond_init(&s_a.status_sent, NULL);
     fc_identity_load(&s_a.id);
     s_fw_fetches = 0;
+    s_prunes = s_prunes_at_download = s_prunes_at_config = 0;
     s_fw_ok = 0;
-    s_apps_applied = s_apps_removed_all = 0;
+    s_apps_applied = s_apps_removed_all = s_wait_primary = s_prepare_result = 0;
     s_apps_running_on[0] = '\0';
+}
+
+static void offline_apps_wake_between_failed_status_retries(void)
+{
+    new_agent();
+    fc_agent_config_t cfg = s_cfg;
+    cfg.status_interval_s = 120;
+    s_a.cfg = &cfg;
+    s_a.apps_ready = 1;
+    s_a.mgmt_cert_pem = strdup("test");
+    /* Resource/telemetry wakes cannot accidentally mask a missed app deadline. */
+    s_a.metrics_next = offline_boot + 600;
+    offline_now = offline_boot;
+    saved_started_at = 0;
+    offline_puts = saved_starts = 0;
+    pthread_t thread;
+    int rc = pthread_create(&thread, NULL, status_thread, &s_a);
+    CHECK_INT(rc, 0);
+    if (rc == 0) {
+        pthread_join(thread, NULL);
+        CHECK_INT(offline_now - offline_boot, 400);
+        CHECK_INT(saved_starts, 1);
+        CHECK_INT(saved_started_at - offline_boot, 180);
+        CHECK(offline_puts >= 5 && !s_a.status_once);
+    }
+    offline_now = 0;
+    s_a.cfg = &s_cfg;
 }
 
 /* A reboot: memory gone, storage kept, then what fc_agent_run does first.
@@ -238,7 +365,9 @@ static void apps_hear_only_of_files_that_changed(void)
     const char *spec = "{\"config\":[{\"name\":\"a\",\"inline\":[{\"path\":\"/etc/fc/board.json\",\"content\":\"{}\"}]}]}";
     apply("7", spec);
     CHECK_INT(s_files_changed, 1);
+    stub_log_clear();
     apply("8", spec);
+    CHECK(!stub_log_has("config: wrote"));
     CHECK_INT(s_files_changed, 1);
     apply("9", "{\"config\":[{\"name\":\"a\",\"inline\":[{\"path\":\"/etc/fc/board.json\",\"content\":\"{ }\"}]}]}");
     CHECK_INT(s_files_changed, 2);
@@ -275,6 +404,60 @@ static void inline_config_is_written_and_the_version_kept(void)
 
 /* A file the spec no longer gives is removed, as by the Linux agent, and the
  * apps hear of it; a metrics.json removed stops the exports. */
+static void only_a_valid_config_retires_the_legacy_gateway(void)
+{
+    new_agent();
+    fc_port_write_file(METRICS_CONFIG, "old", 3);
+    fc_port_write_file("/etc/local", "x", 1);
+    apply("3", "{\"config\":{}}");
+    CHECK_CONTAINS(s_a.update_error, "spec.config");
+    CHECK_INT(s_prunes, 0);
+    CHECK_STR(stub_file(METRICS_CONFIG), "old");
+    apply("4", "{\"config\":[]}");
+    CHECK(stub_file(METRICS_CONFIG) == NULL);
+    CHECK_STR(stub_file("/etc/local"), "x");
+}
+
+static void a_failed_app_catalog_commit_retries_the_spec(void)
+{
+    new_agent();
+    apply("1", "{}");
+    const char *spec = "{\"config\":[{\"inline\":[{\"path\":\"/new\",\"content\":\"b\"}]}]}";
+    s_prepare_result = FC_APPS_CATALOG_ERROR;
+    apply("2", spec);
+    CHECK_CONTAINS(s_a.update_error, "app catalog");
+    CHECK_STR(s_a.rendered_version, "1");
+    CHECK_STR(s_a.attempted_version, "1");
+    CHECK(!stub_file("/new"));
+    s_prepare_result = 0;
+    apply("2", spec);
+    CHECK_STR(s_a.rendered_version, "2");
+    CHECK_STR(stub_file("/new"), "b");
+}
+
+static void config_storage_failure_keeps_ownership_for_the_next_spec(void)
+{
+    new_agent();
+    const char *first = "{\"config\":[{\"inline\":[{\"path\":\"/old\",\"content\":\"a\"}]}]}";
+    const char *second = "{\"config\":[{\"inline\":[{\"path\":\"/new\",\"content\":\"b\"}]}]}";
+    apply("1", first);
+    stub_kv_set_fails = 1;
+    apply("2", second);
+    CHECK(stub_file("/new") == NULL);
+    CHECK_STR(stub_file("/old"), "a");
+    stub_kv_set_fails = 0;
+    stub_kv_del_fails = 1;
+    apply("2", second);
+    CHECK_STR(s_a.rendered_version, "1");
+    CHECK_STR(stub_file("/new"), "b");
+    CHECK_STR(stub_file("/old"), "a");
+    stub_kv_del_fails = 0;
+    apply("3", "{}");
+    CHECK(stub_file("/new") == NULL);
+    CHECK(stub_file("/old") == NULL);
+    CHECK_STR(s_a.rendered_version, "3");
+}
+
 static void files_dropped_from_the_spec_are_removed(void)
 {
     new_agent();
@@ -434,6 +617,34 @@ static void a_refused_firmware_is_not_downloaded_again(void)
 static const char *FW_AND_APP = "{\"os\":{\"image\":\"reg/fw:v2\"},\"applications\":[{\"name\":\"spin\","
                                 "\"appType\":\"container\",\"image\":\"reg/spin:needs-v2\"}]}";
 
+static void omitted_apps_are_released_before_files_and_ota(void)
+{
+    new_agent();
+    apply("1", "{\"config\":[{\"name\":\"c\",\"inline\":[{\"path\":\"/etc/a\",\"content\":\"a\"}]}],"
+               "\"applications\":[],\"os\":{\"image\":\"reg/fw:v2\"}}");
+    CHECK_INT(s_prunes_at_config, 1);
+    CHECK_INT(s_prunes_at_download, 1);
+    CHECK_INT(s_apps_applied, 0); /* the firmware fetch failed; removals still took place */
+    apply_rendered(&s_a, "{}");
+    CHECK_INT(s_prunes, 1);
+}
+
+static void waiting_for_primary_accepts_a_newer_spec(void)
+{
+    new_agent();
+    apply("1", "{}");
+    s_wait_primary = 1;
+    apply("2", "{\"applications\":[]}");
+    CHECK_INT(s_a.waiting_primary, 1);
+    CHECK_STR(s_a.attempted_version, "2");
+    CHECK_STR(s_a.rendered_version, "1");
+    CHECK_STR(stub_kv(KV_RENDERED), "1");
+    s_wait_primary = 0;
+    apply("3", "{}");
+    CHECK_INT(s_a.waiting_primary, 0);
+    CHECK_STR(s_a.rendered_version, "3");
+}
+
 static void a_new_firmware_and_an_app_that_needs_it_in_one_spec(void)
 {
     new_agent();
@@ -560,7 +771,27 @@ static int csr_answer(const char *cond, const char *cert_pem)
     snprintf(json, sizeof(json), "{\"status\":{\"conditions\":[{\"type\":\"%s\",\"status\":\"True\"}]%s%s%s}}", cond,
              cert_pem ? ",\"certificate\":\"" : "", b64, cert_pem ? "\"" : "");
     snprintf(s_a.csr_name, sizeof(s_a.csr_name), "csr-1");
-    return handle_csr(&s_a, json);
+    return handle_csr(&s_a, CERT_MANAGEMENT, json);
+}
+
+static void csr_body_matches_the_signer_and_request(void)
+{
+    const char *signers[] = {RENEWAL_SIGNER, OTEL_SIGNER};
+    for (size_t i = 0; i < sizeof(signers) / sizeof(signers[0]); i++) {
+        char *body = csr_body("device-1234", signers[i], "test");
+        CHECK(body != NULL);
+        cJSON *json = cJSON_Parse(body);
+        const cJSON *spec = cJSON_GetObjectItem(json, "spec");
+        const cJSON *usages = cJSON_GetObjectItem(spec, "usages");
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(json, "kind")), "CertificateSigningRequest");
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(json, "metadata"), "name")), "device-1234");
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(spec, "request")), "dGVzdA==");
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(spec, "signerName")), signers[i]);
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetArrayItem(usages, 0)), "clientAuth");
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetArrayItem(usages, 1)), "CA:false");
+        cJSON_Delete(json);
+        free(body);
+    }
 }
 
 static void a_renewed_certificate_for_our_key_is_installed(void)
@@ -606,7 +837,7 @@ static void the_gateways_certificate_never_replaces_the_management_one(void)
     b64[n] = '\0';
     snprintf(json, sizeof(json), "{\"status\":{\"conditions\":[{\"type\":\"Approved\",\"status\":\"True\"}],"
              "\"certificate\":\"%s\"}}", b64);
-    CHECK_INT(handle_otel_csr(&s_a, json), 1);
+    CHECK_INT(handle_csr(&s_a, CERT_TELEMETRY, json), 1);
     CHECK_STR(s_a.otel_cert_pem, otel);
     CHECK_STR(stub_kv("otel.crt"), otel);
     CHECK_STR(s_a.mgmt_cert_pem, "mgmt");
@@ -616,10 +847,10 @@ static void the_gateways_certificate_never_replaces_the_management_one(void)
     mbedtls_base64_encode((unsigned char *)b64, sizeof(b64), &n, (const unsigned char *)mgmt, strlen(mgmt));
     b64[n] = '\0';
     snprintf(json, sizeof(json), "{\"status\":{\"certificate\":\"%s\"}}", b64);
-    CHECK_INT(handle_otel_csr(&s_a, json), -1);
+    CHECK_INT(handle_csr(&s_a, CERT_TELEMETRY, json), -1);
     CHECK_STR(s_a.otel_cert_pem, otel);
-    CHECK_INT(handle_otel_csr(&s_a, "{\"status\":{\"conditions\":[{\"type\":\"Denied\",\"status\":\"True\"}]}}"), -1);
-    CHECK_INT(handle_otel_csr(&s_a, "{\"status\":{}}"), 0); /* pending */
+    CHECK_INT(handle_csr(&s_a, CERT_TELEMETRY, "{\"status\":{\"conditions\":[{\"type\":\"Denied\",\"status\":\"True\"}]}}"), -1);
+    CHECK_INT(handle_csr(&s_a, CERT_TELEMETRY, "{\"status\":{}}"), 0); /* pending */
     /* Stored and read back at the next start; one of an older key is not. */
     free(s_a.otel_cert_pem);
     s_a.otel_cert_pem = NULL;
@@ -950,6 +1181,27 @@ static void a_spec_waits_for_the_brokers_handshake(void)
     mqtt_connected();
     fc_port_remove_file(METRICS_CONFIG);
     s_running = NULL;
+}
+
+static void an_idle_primary_retry_holds_off_the_next_handshake(void)
+{
+    new_agent();
+    s_console_stops = 0;
+    s_retry_due = 1;
+    CHECK(poll_apps(&s_a)); /* a NULL session is already idle */
+    CHECK(s_poll_held && s_poll_released);
+    CHECK(!s_a.downloading);
+    CHECK(!s_a.status_urgent);
+    CHECK_INT(s_console_stops, 0);
+
+    s_a.putting = 1;
+    CHECK(poll_apps(&s_a));
+    CHECK(!s_poll_held && !s_poll_released);
+    CHECK(s_a.putting);
+    s_a.putting = 0;
+    s_retry_due = 0;
+    CHECK(poll_apps(&s_a));
+    CHECK(!s_poll_held && !s_poll_released);
 }
 
 static void a_download_takes_the_connections_turn(void)
@@ -1308,9 +1560,13 @@ int main(void)
 {
     fc_http_global_init();
     RUN(x509_dates_convert_to_epoch);
+    RUN(offline_apps_wake_between_failed_status_retries);
     RUN(inline_config_is_written_and_the_version_kept);
     RUN(a_rejected_config_keeps_the_old_version);
     RUN(files_dropped_from_the_spec_are_removed);
+    RUN(config_storage_failure_keeps_ownership_for_the_next_spec);
+    RUN(a_failed_app_catalog_commit_retries_the_spec);
+    RUN(only_a_valid_config_retires_the_legacy_gateway);
     RUN(apps_hear_only_of_files_that_changed);
     RUN(percent_encoded_base64_is_decoded);
     RUN(only_inline_config_is_supported);
@@ -1318,9 +1574,12 @@ int main(void)
     RUN(a_deeply_nested_spec_is_refused_without_crashing);
     RUN(the_current_firmware_is_not_downloaded_again);
     RUN(a_refused_firmware_is_not_downloaded_again);
+    RUN(omitted_apps_are_released_before_files_and_ota);
+    RUN(waiting_for_primary_accepts_a_newer_spec);
     RUN(a_new_firmware_and_an_app_that_needs_it_in_one_spec);
     RUN(a_firmware_rolled_back_leaves_the_apps_to_the_old_one);
     RUN(the_apps_wait_for_a_firmware_still_to_come);
+    RUN(csr_body_matches_the_signer_and_request);
     RUN(a_renewed_certificate_for_our_key_is_installed);
     RUN(a_certificate_for_another_key_is_refused);
     RUN(a_denied_request_is_a_failure);
@@ -1329,6 +1588,7 @@ int main(void)
     RUN(the_device_counters_become_points);
     RUN(an_expired_certificate_starts_over_as_a_new_device);
     RUN(status_requests_are_urgent_or_grouped);
+    RUN(an_idle_primary_retry_holds_off_the_next_handshake);
     RUN(a_download_takes_the_connections_turn);
     RUN(a_spec_waits_for_an_export);
     RUN(a_spec_waits_for_the_brokers_handshake);

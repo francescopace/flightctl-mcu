@@ -79,6 +79,13 @@ endif()
 # The C heap is the port's unless the build keeps Zephyr's.
 if(NOT CONFIG_COMMON_LIBC_MALLOC)
     target_sources(app PRIVATE ${ROOT}/port/zephyr/fc_heap_zephyr.c)
+    # The S3 with PSRAM and software crypto can receive TLS records in
+    # external RAM. A hardware accelerator may require DMA-capable memory.
+    if(CONFIG_BOARD_ESP32S3_DEVKITC_ESP32S3_PROCPU AND CONFIG_ESP_SPIRAM AND CONFIG_SPIRAM_MODE_OCT
+       AND CONFIG_ESP_SPIRAM_SIZE EQUAL 8388608 AND CONFIG_SHARED_MULTI_HEAP AND NOT CONFIG_CRYPTO)
+        set_source_files_properties(${ROOT}/core/src/fc_http.c ${ROOT}/port/zephyr/fc_heap_zephyr.c
+            PROPERTIES COMPILE_DEFINITIONS FC_TLS_POOL_PORT_STORAGE)
+    endif()
 endif()
 target_include_directories(app PRIVATE
     ${ROOT}/core/include ${ROOT}/core/src ${ROOT}/third_party/cjson ${ROOT}/port/zephyr)

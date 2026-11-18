@@ -4,7 +4,38 @@
  * many bodies, two threads on one connection, GOAWAY, resets, a lost
  * connection, CONTINUATION both ways, and the TLS buffer pool.
  */
+#include <time.h>
+#include <stdlib.h>
+
+enum { SHORT_TLS_RX_BYTES = 6248 };
+static int fail_short_tls_alloc;
+
+static void *test_tls_calloc(size_t n, size_t size)
+{
+    return fail_short_tls_alloc && n == 1 && size == SHORT_TLS_RX_BYTES ? NULL : calloc(n, size);
+}
+
+#define FC_IDF_DYNAMIC_TLS_RX 1
+#include "../../port/espidf/fc_tls_record.c"
+
+static long s_elapsed_ms;
+static int test_clock_gettime(clockid_t clock, struct timespec *ts)
+{
+    int rc = clock_gettime(clock, ts);
+    if (rc == 0 && clock == CLOCK_MONOTONIC) {
+        long ms = __atomic_load_n(&s_elapsed_ms, __ATOMIC_RELAXED);
+        ts->tv_sec += ms / 1000;
+        ts->tv_nsec += ms % 1000 * 1000000;
+        ts->tv_sec += ts->tv_nsec / 1000000000;
+        ts->tv_nsec %= 1000000000;
+    }
+    return rc;
+}
+#define clock_gettime test_clock_gettime
+#define calloc test_tls_calloc
 #include "../../core/src/fc_http.c"
+#undef calloc
+#undef clock_gettime
 
 #include <poll.h>
 #include <stdint.h>
@@ -134,6 +165,33 @@ static void fd_close(conn_t *c)
 }
 
 static const transport_t FD = {fd_read, fd_write, fd_wait, fd_close};
+
+static void header_fragments_use_only_the_needed_heap(void)
+{
+    int sv[2];
+    int rc = socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
+    CHECK_INT(rc, 0);
+    if (rc != 0) {
+        return;
+    }
+    conn_t c = {.tp = &FD, .tctx = (void *)(intptr_t)sv[0], .io = PTHREAD_MUTEX_INITIALIZER};
+    stream_t s = {0};
+    static const uint8_t bytes[MAX_HEADER_BLOCK];
+    CHECK_INT(read_header_fragment(&c, &s, 0), 0);
+    CHECK(s.hblock == NULL);
+    CHECK_INT(send(sv[1], bytes, sizeof(bytes), 0), sizeof(bytes));
+    CHECK_INT(read_header_fragment(&c, &s, 100), 0);
+    CHECK_INT(s.hcap, 100);
+    CHECK_INT(read_header_fragment(&c, &s, 1), 0);
+    CHECK_INT(s.hlen, 101);
+    CHECK_INT(read_header_fragment(&c, &s, sizeof(bytes) - s.hlen), 0);
+    CHECK_INT(s.hcap, MAX_HEADER_BLOCK);
+    CHECK_INT(s.hlen, MAX_HEADER_BLOCK);
+    free(s.hblock);
+    pthread_mutex_destroy(&c.io);
+    close(sv[0]);
+    close(sv[1]);
+}
 
 typedef void (*script_t)(int fd);
 static script_t s_script;
@@ -462,7 +520,8 @@ static void a_get_returns_status_and_body(void)
 static void script_put(int fd)
 {
     if (srv_hello(fd) == 0 && srv_request(fd, &s_req) == 0) {
-        srv_headers(fd, s_req.sid, 401, "www-authenticate", "Bearer realm=\"r\"", 1);
+        srv_headers(fd, s_req.sid, 401, "www-authenticate", "Bearer realm=\"r\"", 0);
+        srv_send(fd, F_DATA, FL_END_STREAM, s_req.sid, "denied", 6);
     }
     srv_drain(fd);
 }
@@ -472,10 +531,11 @@ static void a_put_sends_its_body_and_reads_a_challenge(void)
     serve(script_put);
     fc_http_target_t t = target(NULL);
     t.authorization = "Basic dXNlcjpwYXNz";
+    t.discard_200_body = 1;
     fc_http_response_t r;
     CHECK_INT(fc_http_request(&t, "PUT", "/s", "application/json", "{\"a\":1}", 7, &r), 0);
     CHECK_INT(r.status, 401);
-    CHECK_STR(r.body, "");
+    CHECK_STR(r.body, "denied");
     CHECK_STR(r.www_authenticate, "Bearer realm=\"r\"");
     fc_http_free(&r);
     join_servers();
@@ -485,6 +545,43 @@ static void a_put_sends_its_body_and_reads_a_challenge(void)
     CHECK(memcmp(s_req.body, "{\"a\":1}", 7) == 0);
     CHECK_STR(s_req.auth, "Basic dXNlcjpwYXNz");
     CHECK_INT(s_req.auth_never_indexed, 1);
+}
+
+enum { DEVICE_REPLY_BYTES = 5596 };
+static void script_device_replies(int fd)
+{
+    static const char device[DEVICE_REPLY_BYTES];
+    if (srv_hello(fd) == 0) {
+        for (int i = 0; i < 2; i++) {
+            req_t r;
+            if (srv_request(fd, &r) != 0) {
+                return;
+            }
+            srv_headers(fd, r.sid, 200, NULL, NULL, 0);
+            srv_send(fd, F_DATA, FL_END_STREAM, r.sid, device, sizeof(device));
+        }
+    }
+    srv_drain(fd);
+}
+
+static void a_status_put_drains_the_device_without_a_response_buffer(void)
+{
+    serve(script_device_replies);
+    fc_http_session_t *session = fc_http_session_new();
+    fc_http_target_t t = target(session);
+    for (int discard = 0; discard <= 1; discard++) {
+        stream_t s = {0};
+        t.discard_200_body = discard;
+        CHECK_INT(request(&t, "PUT", "/status", "application/json", "{}", 2, &s), 0);
+        CHECK_INT(s.status, 200);
+        CHECK_INT(s.got, DEVICE_REPLY_BYTES);
+        CHECK_INT(s.body_len, discard ? 0 : DEVICE_REPLY_BYTES);
+        CHECK_INT(s.body_cap, discard ? 0 : 8192);
+        free(s.body);
+    }
+    CHECK_INT(s_opens, 1);
+    fc_http_session_free(session);
+    join_servers();
 }
 
 /* Bodies of 100 KB, three times on one connection: past the 64 KB the
@@ -546,8 +643,12 @@ static void flow_control_keeps_a_kept_connection_going(void)
     fc_http_target_t t = target(s);
     for (int i = 0; i < 3; i++) {
         fc_http_response_t r;
+        t.discard_200_body = i == 1;
         CHECK_INT(fc_http_request(&t, "GET", "/big", NULL, NULL, 0, &r), 0);
-        CHECK_INT(r.body_len, BIG);
+        CHECK_INT(r.body_len, i == 1 ? 0 : BIG);
+        if (i == 1) {
+            CHECK_STR(r.body, "");
+        }
         fc_http_free(&r);
     }
     CHECK_INT(s_opens, 1);
@@ -703,7 +804,9 @@ static void script_continuation(int fd)
     uint8_t b[64];
     size_t n = hpack_put_field(b, 8, "200", 0);
     size_t m = n + hpack_put_field(b + n, 28, "2", 0);
-    srv_send(fd, F_HEADERS, 0, s_req.sid, b, 3);
+    srv_send(fd, F_HEADERS, 0, s_req.sid, NULL, 0);
+    srv_send(fd, F_CONTINUATION, 0, s_req.sid, b, 3);
+    srv_send(fd, F_CONTINUATION, 0, s_req.sid, NULL, 0);
     srv_send(fd, F_CONTINUATION, 0, s_req.sid, b + 3, n - 3);
     srv_send(fd, F_CONTINUATION, FL_END_HEADERS, s_req.sid, b + n, m - n);
     /* Padded DATA: 1 byte of length, the data, 4 bytes of padding. */
@@ -752,9 +855,32 @@ static void script_stream(int fd)
         }
         srv_headers(fd, r.sid, 200, NULL, NULL, 0);
         srv_send(fd, F_DATA, 0, r.sid, chunk, 1500);
-        srv_send(fd, F_DATA, FL_END_STREAM, r.sid, chunk, 1500);
+        srv_send(fd, F_DATA, 0, r.sid, chunk, 1500);
+        srv_send(fd, F_DATA, FL_END_STREAM, r.sid, NULL, 0);
     }
     srv_drain(fd);
+}
+
+static int slow_download(const void *data, size_t len, void *ctx)
+{
+    *(size_t *)ctx += len;
+    __atomic_fetch_add(&s_elapsed_ms, 1000, __ATOMIC_RELAXED);
+    return 0;
+}
+
+static void a_progressing_download_outlasts_the_initial_deadline(void)
+{
+    serve(script_stream);
+    fc_http_target_t t = target(NULL);
+    t.timeout_s = 5;
+    size_t bytes = 0;
+    int status;
+    long total;
+    CHECK_INT(fc_http_get_stream(&t, "/blob", slow_download, &bytes, &status, &total), 0);
+    CHECK_INT(bytes, 3000);
+    CHECK_INT(status, 200);
+    join_servers();
+    __atomic_store_n(&s_elapsed_ms, 0, __ATOMIC_RELAXED);
 }
 
 static void a_streamed_get_and_its_abort(void)
@@ -785,6 +911,35 @@ static void script_silent(int fd)
         srv_request(fd, &r);
     }
     srv_drain(fd);
+}
+
+static void script_interrupted_poll(int fd)
+{
+    req_t r;
+    if (srv_hello(fd) == 0 && srv_request(fd, &r) == 0 && srv_request(fd, &r) == 0) {
+        srv_headers(fd, r.sid, 204, NULL, NULL, FL_END_STREAM);
+    }
+    srv_drain(fd);
+}
+
+static int wake_poll(void) { return 1; }
+
+static void an_interrupted_poll_keeps_its_connection(void)
+{
+    serve(script_interrupted_poll);
+    fc_http_session_t *s = fc_http_session_new();
+    fc_http_target_t t = target(s);
+    t.interrupt_wait = wake_poll;
+    fc_http_response_t r;
+    CHECK_INT(fc_http_request(&t, "GET", "/poll", NULL, NULL, 0, &r), FC_HTTP_INTERRUPTED);
+    t.interrupt_wait = NULL;
+    CHECK_INT(fc_http_request(&t, "GET", "/next", NULL, NULL, 0, &r), 0);
+    CHECK_INT(r.status, 204);
+    fc_http_free(&r);
+    CHECK_INT(s_opens, 1);
+    CHECK(fc_http_session_close_idle(s));
+    fc_http_session_free(s);
+    join_servers();
 }
 
 static void a_silent_server_times_out(void)
@@ -1000,6 +1155,7 @@ static void an_idle_grpc_stream_leaves_the_connection_alone(void)
     fc_http_free(&resp);
     fc_http_stream_t *st = fc_http_stream_open(&t, GRPC_PATH, "application/grpc", GRPC_HEADERS);
     CHECK(st != NULL);
+    CHECK(!fc_http_session_close_idle(s));
     char b[16];
     CHECK_INT(fc_http_stream_read(st, b, sizeof(b), 1500), 0); /* longer than timeout_s: nothing, still open */
     CHECK_INT(fc_http_request(&t, "GET", "/x", NULL, NULL, 0, &resp), 0);
@@ -1119,6 +1275,53 @@ static void the_pool_serves_receive_buffers_only(void)
     CHECK_INT(now, 0);
 }
 
+static void *short_rx_buffer;
+static void *other_tls_alloc;
+
+static void *allocate_tls_on_another_thread(void *arg)
+{
+    (void)arg;
+    return fc_tls_calloc(1, SHORT_TLS_RX_BYTES);
+}
+
+/* Stand in for ESP-IDF's one calloc in esp_mbedtls_add_rx_buffer. */
+int __real_esp_mbedtls_add_rx_buffer(mbedtls_ssl_context *ssl)
+{
+    (void)ssl;
+    if (fail_short_tls_alloc) {
+        pthread_t other;
+        CHECK_INT(pthread_create(&other, NULL, allocate_tls_on_another_thread, NULL), 0);
+        CHECK_INT(pthread_join(other, &other_tls_alloc), 0);
+    }
+    short_rx_buffer = fc_tls_calloc(1, SHORT_TLS_RX_BYTES);
+    return short_rx_buffer != NULL ? 0 : MBEDTLS_ERR_SSL_ALLOC_FAILED;
+}
+
+static void a_fragmented_heap_borrows_the_slot_only_for_the_short_rx_record(void)
+{
+    CHECK_INT(fc_tls_pool_init(), 0);
+    CHECK_INT(__wrap_esp_mbedtls_add_rx_buffer(NULL), 0);
+    CHECK_INT(fc_tls_pool_give(short_rx_buffer), 0); /* a short record normally uses the heap */
+    fc_tls_free(short_rx_buffer);
+    fail_short_tls_alloc = 1;
+    CHECK(fc_tls_calloc(1, SHORT_TLS_RX_BYTES) == NULL); /* same size outside the SDK RX path */
+    CHECK_INT(__wrap_esp_mbedtls_add_rx_buffer(NULL), 0);
+    CHECK(other_tls_alloc == NULL);
+    unsigned char *borrowed = short_rx_buffer;
+    CHECK_INT(borrowed[SHORT_TLS_RX_BYTES - 1], 0);
+    borrowed[SHORT_TLS_RX_BYTES - 1] = 123;
+    CHECK_INT(__wrap_esp_mbedtls_add_rx_buffer(NULL), MBEDTLS_ERR_SSL_ALLOC_FAILED); /* slot busy */
+    fc_tls_free(borrowed);
+    CHECK_INT(__wrap_esp_mbedtls_add_rx_buffer(NULL), 0);
+    CHECK(short_rx_buffer == borrowed);
+    CHECK_INT(borrowed[SHORT_TLS_RX_BYTES - 1], 0);
+    fc_tls_free(short_rx_buffer);
+    void *full = fc_tls_pool_take(1, FC_TLS_POOL_MIN);
+    CHECK(full == borrowed);
+    fc_tls_free(full);
+    fail_short_tls_alloc = 0;
+}
+
 int main(void)
 {
     signal(SIGPIPE, SIG_IGN); /* a write to a closed test server must fail, not kill */
@@ -1128,12 +1331,16 @@ int main(void)
     RUN(hpack_decodes_a_response_with_huffman);
     RUN(a_get_returns_status_and_body);
     RUN(a_put_sends_its_body_and_reads_a_challenge);
+    RUN(a_status_put_drains_the_device_without_a_response_buffer);
     RUN(flow_control_keeps_a_kept_connection_going);
     RUN(two_threads_share_one_connection);
     RUN(goaway_sends_the_request_again);
     RUN(a_lost_connection_is_retried_a_reset_is_not);
+    RUN(header_fragments_use_only_the_needed_heap);
     RUN(header_blocks_span_frames);
     RUN(a_streamed_get_and_its_abort);
+    RUN(a_progressing_download_outlasts_the_initial_deadline);
+    RUN(an_interrupted_poll_keeps_its_connection);
     RUN(a_silent_server_times_out);
     RUN(an_oversized_frame_is_refused);
     RUN(a_new_certificate_opens_a_new_connection);
@@ -1142,5 +1349,6 @@ int main(void)
     RUN(an_idle_grpc_stream_leaves_the_connection_alone);
     RUN(a_flooded_or_let_go_stream_ends);
     RUN(the_pool_serves_receive_buffers_only);
+    RUN(a_fragmented_heap_borrows_the_slot_only_for_the_short_rx_record);
     return TEST_RESULT();
 }

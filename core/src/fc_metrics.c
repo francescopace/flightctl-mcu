@@ -17,17 +17,34 @@
 /* ---- the apps' values --------------------------------------------------------------- */
 
 typedef struct {
-    char app[32];
     char name[FC_METRIC_NAME_MAX + 1];
-    int kind;
+    uint8_t len, kind;
     double value;
     uint64_t start_ns; /* a counter's start: when the app first added to it */
 } app_metric_t;
 
+typedef struct app_metrics {
+    struct app_metrics *next;
+    unsigned count;
+    app_metric_t metrics[FC_METRICS_PER_APP];
+    char app[]; /* the owning app's name, in the same allocation */
+} app_metrics_t;
+
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
-/* Taken on the heap by the first app that sends a metric: a device whose apps
- * send none keeps the RAM. */
-static app_metric_t *s_apps;
+static app_metrics_t *s_apps;
+
+/* Under s_lock: the link to this app, or where it can be added. */
+static app_metrics_t **app_link(const char *app)
+{
+    app_metrics_t **link = &s_apps;
+    for (unsigned i = 0; i < FC_MAX_APPS; i++) {
+        if (*link == NULL || strcmp((*link)->app, app) == 0) {
+            return link;
+        }
+        link = &(*link)->next;
+    }
+    return NULL;
+}
 
 static uint64_t now_ns(void)
 {
@@ -38,8 +55,9 @@ static uint64_t now_ns(void)
 
 int fc_metrics_app_set(const char *app, const char *name, size_t nlen, int kind, double value)
 {
+    size_t app_len = strlen(app);
     if (nlen == 0 || nlen > FC_METRIC_NAME_MAX || (kind != 0 && kind != 1) || !isfinite(value) ||
-        (kind == 1 && value < 0) || strlen(app) >= sizeof(s_apps[0].app)) {
+        (kind == 1 && value < 0) || app_len == 0 || app_len > FC_APP_NAME_MAX) {
         return FC_HW_EINVAL;
     }
     for (size_t i = 0; i < nlen; i++) {
@@ -50,41 +68,45 @@ int fc_metrics_app_set(const char *app, const char *name, size_t nlen, int kind,
         }
     }
     pthread_mutex_lock(&s_lock);
-    if (s_apps == NULL && (s_apps = calloc(FC_METRICS_APPS_MAX, sizeof(*s_apps))) == NULL) {
+    app_metrics_t **link = app_link(app);
+    if (link == NULL) {
         pthread_mutex_unlock(&s_lock);
         return FC_HW_ENOSPC;
     }
-    app_metric_t *m = NULL, *free_slot = NULL;
-    int of_app = 0;
-    for (int i = 0; i < FC_METRICS_APPS_MAX; i++) {
-        app_metric_t *e = &s_apps[i];
-        if (e->app[0] == '\0') {
-            free_slot = free_slot ? free_slot : e;
-        } else if (strcmp(e->app, app) == 0) {
-            of_app++;
-            if (strlen(e->name) == nlen && memcmp(e->name, name, nlen) == 0) {
-                m = e;
-            }
+    app_metrics_t *group = *link;
+    if (group == NULL) {
+        group = malloc(sizeof(*group) + app_len + 1);
+        if (group == NULL) {
+            pthread_mutex_unlock(&s_lock);
+            return FC_HW_ENOSPC;
         }
+        group->next = NULL;
+        group->count = 0;
+        memcpy(group->app, app, app_len + 1);
+        *link = group;
     }
-    int rc = 0;
-    if (m == NULL) {
-        if (of_app >= FC_METRICS_PER_APP || free_slot == NULL) {
-            rc = FC_HW_ENOSPC;
-        } else {
-            m = free_slot;
-            snprintf(m->app, sizeof(m->app), "%s", app);
+    unsigned i = 0;
+    while (i < group->count && (group->metrics[i].len != nlen || memcmp(group->metrics[i].name, name, nlen) != 0)) {
+        i++;
+    }
+    int rc = FC_HW_ENOSPC;
+    if (i < FC_METRICS_PER_APP) {
+        app_metric_t *m = &group->metrics[i];
+        if (i == group->count) {
             memcpy(m->name, name, nlen);
             m->name[nlen] = '\0';
-            m->kind = kind;
-            m->value = 0;
+            m->len = (uint8_t)nlen;
+            m->kind = (uint8_t)kind;
             m->start_ns = now_ns();
+            m->value = 0;
+            group->count++;
         }
-    } else if (m->kind != kind) {
-        rc = FC_HW_EINVAL; /* a gauge stays a gauge */
-    }
-    if (rc == 0) {
-        m->value = kind == 1 ? m->value + value : value;
+        if (m->kind == kind) {
+            m->value = kind == 1 ? m->value + value : value;
+            rc = 0;
+        } else {
+            rc = FC_HW_EINVAL;
+        }
     }
     pthread_mutex_unlock(&s_lock);
     return rc;
@@ -93,30 +115,41 @@ int fc_metrics_app_set(const char *app, const char *name, size_t nlen, int kind,
 void fc_metrics_app_drop(const char *app)
 {
     pthread_mutex_lock(&s_lock);
-    for (int i = 0; s_apps != NULL && i < FC_METRICS_APPS_MAX; i++) {
-        if (strcmp(s_apps[i].app, app) == 0) {
-            memset(&s_apps[i], 0, sizeof(s_apps[i]));
-        }
+    app_metrics_t **link = app_link(app);
+    if (link != NULL && *link != NULL) {
+        app_metrics_t *removed = *link;
+        *link = removed->next;
+        free(removed);
     }
     pthread_mutex_unlock(&s_lock);
+}
+
+int fc_metrics_app_count(void)
+{
+    int n = 0;
+    pthread_mutex_lock(&s_lock);
+    for (const app_metrics_t *group = s_apps; group != NULL; group = group->next) {
+        n += group->count;
+    }
+    pthread_mutex_unlock(&s_lock);
+    return n;
 }
 
 int fc_metrics_app_points(fc_metric_point_t *out, int max)
 {
     int n = 0;
     pthread_mutex_lock(&s_lock);
-    for (int i = 0; s_apps != NULL && i < FC_METRICS_APPS_MAX && n < max; i++) {
-        const app_metric_t *m = &s_apps[i];
-        if (m->app[0] == '\0') {
-            continue;
+    for (const app_metrics_t *group = s_apps; group != NULL && n < max; group = group->next) {
+        for (unsigned i = 0; i < group->count && n < max; i++) {
+            const app_metric_t *m = &group->metrics[i];
+            fc_metric_point_t *p = &out[n++];
+            memset(p, 0, sizeof(*p));
+            snprintf(p->name, sizeof(p->name), "app.%s.%s", group->app, m->name);
+            p->unit = "";
+            p->sum = m->kind == 1;
+            p->d = m->value;
+            p->start_ns = m->start_ns;
         }
-        fc_metric_point_t *p = &out[n++];
-        memset(p, 0, sizeof(*p));
-        snprintf(p->name, sizeof(p->name), "app.%.31s.%.32s", m->app, m->name);
-        p->unit = "";
-        p->sum = m->kind == 1;
-        p->d = m->value;
-        p->start_ns = m->start_ns;
     }
     pthread_mutex_unlock(&s_lock);
     return n;

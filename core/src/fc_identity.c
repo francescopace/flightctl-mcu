@@ -130,6 +130,10 @@ static int write_csr(mbedtls_pk_context *pk, const char *name, char **out)
     *out = malloc(2048); /* an RSA-4096 CSR is about 1.7 KB */
     if (*out != NULL && mbedtls_x509write_csr_set_subject_name(&csr, subject) == 0 &&
         mbedtls_x509write_csr_pem(&csr, (unsigned char *)*out, 2048) == 0) {
+        char *compact = realloc(*out, strlen(*out) + 1);
+        if (compact != NULL) {
+            *out = compact;
+        }
         rc = 0;
     } else {
         fc_port_log(FC_LOG_ERROR, "CSR generation failed");

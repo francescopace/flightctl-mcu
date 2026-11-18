@@ -10,7 +10,8 @@
  * the agent's (the spec's long-poll and the status over one HTTP/2
  * connection), closed while a registry download has its turn
  * (fc_oci_set_turn). So there is one block. Where TLS buffers are sized to
- * each record (ESP-IDF's dynamic buffers), only full-size records take it.
+ * each record (ESP-IDF's dynamic buffers), a shorter receive record can
+ * borrow a free slot if its ordinary heap allocation fails.
  *
  * A port routes mbedTLS's allocations here: ESP-IDF with
  * CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC (esp_mbedtls_mem_calloc), Zephyr with
@@ -29,6 +30,13 @@
 #define FC_TLS_POOL_SLOT_SIZE (17 * 1024)
 #define FC_TLS_POOL_MIN 16384
 
+#ifdef FC_TLS_POOL_PORT_STORAGE
+/* A port can supply storage for the pool's fixed-size receive buffers.
+ * Each block must be released through its matching allocator. */
+void *fc_tls_pool_storage_alloc(void);
+void fc_tls_pool_storage_free(void *ptr);
+#endif
+
 /* Reserves the slot, once; called at the agent's start, before the apps. */
 int fc_tls_pool_init(void);
 /* A zeroed slot for n * size bytes, or NULL (not a receive buffer, or none free). */
@@ -38,6 +46,10 @@ int fc_tls_pool_give(void *p);
 /* calloc and free with the pool first, the C heap otherwise. */
 void *fc_tls_calloc(size_t n, size_t size);
 void fc_tls_free(void *p);
+#if defined(FC_IDF_DYNAMIC_TLS_RX)
+/* True only while this task is allocating a dynamic TLS receive record. */
+int fc_idf_allocating_tls_rx(void);
+#endif
 /* fc_tls_pool_extra(1) reserves the second block now (0, or -1: no room
  * for it, the connection's buffer will come from the heap); (0) gives it
  * back to the heap, at once if free, otherwise when it is. */

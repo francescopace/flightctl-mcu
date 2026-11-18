@@ -6,8 +6,37 @@
  * And the Logs tab of Flight Control's UI: the commands it sends, built here
  * as its deviceLogCommandBuilder.ts builds them, answered from the log in RAM.
  */
+#include <errno.h>
+#include <pthread.h>
+
+static int fail_console_thread;
+static void *session_thread(void *arg);
+static pthread_mutex_t return_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t return_cond = PTHREAD_COND_INITIALIZER;
+static int observe_return, thread_returned;
+
+static void *observe_session_return(void *arg)
+{
+    void *ret = session_thread(arg);
+    pthread_mutex_lock(&return_lock);
+    thread_returned = 1;
+    pthread_cond_signal(&return_cond);
+    pthread_mutex_unlock(&return_lock);
+    return ret;
+}
+
+static int create_console_thread(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg)
+{
+    if (fail_console_thread) {
+        return EAGAIN;
+    }
+    return pthread_create(thread, attr, observe_return ? observe_session_return : start, arg);
+}
+
+#define pthread_create create_console_thread
 #define NO_USER_S 1 /* the tests do not wait a minute */
 #include "../../core/src/fc_console.c"
+#undef pthread_create
 
 #include "port_stub.h"
 #include "test.h"
@@ -20,6 +49,7 @@ struct fc_http_stream {
 
 static pthread_mutex_t f_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct fc_http_stream f_streams[4];
+static int f_fail_open;
 static int f_opened, f_closed, f_ended, f_server_gone;
 static char f_headers[512];
 static uint8_t f_out[16384]; /* what the device sent */
@@ -31,6 +61,11 @@ fc_http_stream_t *fc_http_stream_open(const fc_http_target_t *t, const char *pat
                                       const char *const *headers)
 {
     pthread_mutex_lock(&f_lock);
+    if (f_fail_open) {
+        f_fail_open = 0;
+        pthread_mutex_unlock(&f_lock);
+        return NULL;
+    }
     size_t n = (size_t)snprintf(f_headers, sizeof(f_headers), "%s %s", path, content_type);
     for (const char *const *h = headers; h[0] != NULL; h += 2) {
         n += (size_t)snprintf(f_headers + n, sizeof(f_headers) - n, " %s=%s", h[0], h[1]);
@@ -221,6 +256,28 @@ static void one_command_runs_and_exits(void)
     CHECK(strchr(sent(CH_STDOUT), '\r') == NULL); /* no terminal: plain newlines */
 }
 
+/* Return the runner's stack even when this is the last console request. */
+static void completed_console_can_be_joined_without_a_new_session(void)
+{
+    reset();
+    CHECK(!fc_console_finished());
+    observe_return = 1;
+    thread_returned = 0;
+    CHECK_INT(session("last", "{\"command\": {\"command\": \"status\"}, " V5 "}"), 2);
+    observe_return = 0;
+    CHECK(wait_closed(1));
+    pthread_mutex_lock(&return_lock);
+    while (!thread_returned) {
+        pthread_cond_wait(&return_cond, &return_lock);
+    }
+    pthread_mutex_unlock(&return_lock);
+    CHECK(fc_console_finished());
+    fc_console_stop();
+    CHECK(!fc_console_finished());
+    CHECK_INT(__atomic_load_n(&s_thread_state, __ATOMIC_ACQUIRE), CONSOLE_IDLE);
+    CHECK_INT(f_opened, 1);
+}
+
 static void an_unknown_command_fails_with_127(void)
 {
     reset();
@@ -229,6 +286,20 @@ static void an_unknown_command_fails_with_127(void)
     CHECK(strstr(sent(CH_STDOUT), "uptime: not a command of this device") != NULL);
     CHECK_STR(sent(CH_ERROR), "{\"metadata\":{},\"status\":\"Failure\",\"reason\":\"NonZeroExitCode\","
                               "\"details\":{\"causes\":[{\"reason\":\"ExitCode\",\"message\":\"127\"}]},\"code\":127}");
+}
+
+static void a_thread_start_failure_reaches_the_console_client(void)
+{
+    reset();
+    fail_console_thread = 1;
+    session("no-thread", "{\"command\": {\"command\": \"status\"}, " V5 "}");
+    fail_console_thread = 0;
+    CHECK_INT(f_closed, 1);
+    CHECK_INT(f_ended, 1);
+    CHECK_STR(sent(CH_STDOUT), "could not start the console thread\n");
+    CHECK(strstr(sent(CH_ERROR), "\"code\":1}") != NULL);
+    CHECK_INT(session("no-thread", "{" V5 "}"), 1);
+    CHECK_INT(f_opened, 1);
 }
 
 static void a_terminal_gets_a_prompt_and_line_editing(void)
@@ -251,6 +322,10 @@ static void a_terminal_gets_a_prompt_and_line_editing(void)
 static void a_session_seen_is_not_run_again_even_after_a_restart(void)
 {
     reset();
+    f_fail_open = 1;
+    session("s4", "{\"command\": {\"command\": \"help\"}, " V5 "}");
+    CHECK_INT(f_opened, 0);
+    CHECK(stub_kv(KV_SEEN) == NULL);
     session("s4", "{\"command\": {\"command\": \"help\"}, " V5 "}");
     CHECK(wait_closed(1));
     CHECK_INT(session("s4", "{\"command\": {\"command\": \"help\"}, " V5 "}"), 1); /* listed, */
@@ -780,7 +855,9 @@ static void the_ring_drops_its_oldest_lines(void)
 int main(void)
 {
     RUN(one_command_runs_and_exits);
+    RUN(completed_console_can_be_joined_without_a_new_session);
     RUN(an_unknown_command_fails_with_127);
+    RUN(a_thread_start_failure_reaches_the_console_client);
     RUN(a_terminal_gets_a_prompt_and_line_editing);
     RUN(a_session_seen_is_not_run_again_even_after_a_restart);
     RUN(many_stale_sessions_are_not_opened_again);

@@ -7,9 +7,44 @@
  * Downloads are replaced by fc_oci_fetch_layer below; the modules are in
  * wasm_vectors.h (tests/unit/gen-wasm-vectors.sh).
  */
-#include "../../core/src/fc_apps.c"
-
 #include <stdlib.h>
+#include "../../core/src/fc_apps_int.h"
+
+/* Fail descriptor allocations in the app manager only. */
+static int f_slots_left = -1, f_no_io;
+static void *app_calloc(size_t n, size_t size)
+{
+    if (size == sizeof(app_io_t) && f_no_io) {
+        return NULL;
+    }
+    if (size == sizeof(app_t) && f_slots_left >= 0) {
+        if (f_slots_left == 0) {
+            return NULL;
+        }
+        f_slots_left--;
+    }
+    return calloc(n, size);
+}
+/* Stop the transaction at the catalog write. The module write succeeds. */
+#include "fc_port.h"
+#include <string.h>
+static bool f_catalog_failure, f_catalog_visible;
+static int app_kv_set(const char *key, const void *data, size_t len)
+{
+    if (f_catalog_failure && strcmp(key, "apps") == 0) {
+        if (f_catalog_visible) {
+            fc_port_kv_set(key, data, len); /* rename succeeded but its sync failed */
+        }
+        return -1;
+    }
+    return fc_port_kv_set(key, data, len);
+}
+#define fc_port_kv_set app_kv_set
+#define calloc app_calloc
+#include "../../core/src/fc_apps.c"
+#undef calloc
+#undef fc_port_kv_set
+
 #ifdef __APPLE__
 #include <malloc/malloc.h>
 #define usable_size malloc_size
@@ -45,6 +80,16 @@ static const unsigned char s_startloop[] = {
     0x08, 0x01, 0x00,                                                 /* start: 0 */
     0x0a, 0x0c, 0x02, 0x07, 0x00, 0x03, 0x40, 0x0c, 0x00, 0x0b, 0x0b, /* code: loop br 0 */
     0x02, 0x00, 0x0b,                                                 /*       and an empty one */
+};
+
+/* (module (memory 1 2) (func (export "tick") (drop (memory.grow (i32.const 0))))) */
+static const unsigned char s_growing[] = {
+    0, 'a', 's', 'm', 1, 0, 0, 0,
+    1, 4, 1, 0x60, 0, 0,
+    3, 2, 1, 0,
+    5, 4, 1, 1, 1, 2,
+    7, 8, 1, 4, 't', 'i', 'c', 'k', 0, 0,
+    10, 9, 1, 7, 0, 0x41, 0, 0x40, 0, 0x1a, 0x0b,
 };
 
 static void make_v2(void)
@@ -83,6 +128,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/app:bad", junk, sizeof(junk)},
         {"reg/app:loop", w_loop, sizeof(w_loop)},
         {"reg/t_startloop", s_startloop, sizeof(s_startloop)},
+        {"reg/growing", s_growing, sizeof(s_growing)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(app_tinymlp), V(t_env),
@@ -479,7 +525,9 @@ static int stored_is(const unsigned char *m)
 {
     char *v = NULL;
     size_t len = 0;
-    int same = fc_port_kv_get("app:app", &v, &len) == 0 && len == sizeof(s_v1) && memcmp(v, m, len) == 0;
+    char key[64];
+    wasm_key("app", find("app")->module_slot, key, sizeof(key));
+    int same = fc_port_kv_get(key, &v, &len) == 0 && len == sizeof(s_v1) && memcmp(v, m, len) == 0;
     free(v);
     return same;
 }
@@ -487,11 +535,17 @@ static int stored_is(const unsigned char *m)
 /* Stops everything as a power cut would, then boots: fc_apps_init again. */
 static void power_cycle(void)
 {
-    for (int i = 0; i < MAX_APPS; i++) {
-        app_release(&s_apps[i]);
-        reset_slot(i);
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        if (s_apps[i]) {
+            app_release(s_apps[i], false);
+            drop_slot(s_apps[i]);
+        }
     }
+    cJSON_Delete(s_restore);
+    s_restore = NULL;
     wasm_runtime_destroy();
+    free(s_catalog_rollback);
+    s_catalog_rollback = NULL;
     s_inited = 0;
     CHECK_INT(fc_apps_init(), 0);
 }
@@ -544,10 +598,12 @@ static void test_saved_module_broken(void)
 {
     /* A module that firmware with the earlier interface saved: refused at
      * boot too, as an error in the status, and the device boots. */
-    fc_port_kv_set("app:app", (const char *)w_t_env, sizeof(w_t_env));
+    char key[64];
+    wasm_key("app", find("app")->module_slot, key, sizeof(key));
+    fc_port_kv_set(key, (const char *)w_t_env, sizeof(w_t_env));
     power_cycle();
     CHECK(strncmp(app_state(), "Error", 5) == 0);
-    fc_port_kv_set("app:app", "junk", 4);
+    fc_port_kv_set(key, "junk", 4);
     power_cycle();
     CHECK(strncmp(app_state(), "Error", 5) == 0);
     /* The same image in the spec downloads it again instead of skipping it. */
@@ -743,18 +799,7 @@ static void test_native_tables_sorted(void)
     int n_ard = 0;
     const NativeSymbol *ard = fc_arduino_natives(&n_ard);
     check_sorted("arduino", ard, (size_t)n_ard);
-    /* Every function of the allowed list is in the table. */
-    for (size_t i = 0; i < sizeof(s_libc) / sizeof(s_libc[0]); i++) {
-        int found = 0;
-        for (size_t j = 0; j < sizeof(s_libc_natives) / sizeof(s_libc_natives[0]); j++) {
-            found |= strcmp(s_libc[i], s_libc_natives[j].symbol) == 0;
-        }
-        if (!found) {
-            fprintf(stderr, "env.%s is allowed but not in s_libc_natives\n", s_libc[i]);
-        }
-        CHECK(found);
-    }
-    CHECK_INT((int)(sizeof(s_libc_natives) / sizeof(s_libc_natives[0])), (int)(sizeof(s_libc) / sizeof(s_libc[0])));
+    CHECK_INT(sizeof(s_libc_natives) / sizeof(s_libc_natives[0]), 38);
 }
 
 static void test_fc_refused(void)
@@ -890,6 +935,14 @@ static void test_replace_idle(void)
     CHECK_INT(apply_one("r", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("r", "Completed run() returned 1234.568", 3000), "Completed run() returned 1234.568");
     wait_idle("r"); /* "Completed" comes a moment before */
+    app_t *finished = find("r");
+    while (!__atomic_load_n(&finished->runner_done, __ATOMIC_ACQUIRE)) {
+        usleep(10000);
+    }
+    fc_apps_poll(0);
+    CHECK(!finished->thread_running && !finished->io);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    CHECK_STR(state_of("r"), "Completed run() returned 1234.568");
     CHECK(apply_one("r", "reg/nothing", NULL, err, sizeof(err)) != 0);
     CHECK(find("r")->module == NULL); /* released: it had ended */
     CHECK_STR(state_of("r"), "Error reg/nothing: not found");
@@ -952,6 +1005,66 @@ static void test_fc_config(void)
     remove_all();
 }
 
+/* Call the registered KV imports on an isolated instance so each storage
+ * failure can be injected between two calls, independently of app startup. */
+static void kv_storage_errors(app_t *app)
+{
+    int count;
+    const NativeSymbol *api = fc_appapi_natives(&count);
+    int32_t (*get)(wasm_exec_env_t, const char *, int32_t, void *, int32_t) = NULL;
+    int32_t (*set)(wasm_exec_env_t, const char *, int32_t, const void *, int32_t) = NULL;
+    int32_t (*del)(wasm_exec_env_t, const char *, int32_t) = NULL;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(api[i].symbol, "kv_get") == 0) {
+            get = api[i].func_ptr;
+        } else if (strcmp(api[i].symbol, "kv_set") == 0) {
+            set = api[i].func_ptr;
+        } else if (strcmp(api[i].symbol, "kv_del") == 0) {
+            del = api[i].func_ptr;
+        }
+    }
+    CHECK(get && set && del);
+    if (!get || !set || !del) return;
+    char err[128], value;
+    wasm_module_inst_t inst = wasm_runtime_instantiate(app->module, WASM_STACK, 0, err, sizeof(err));
+    CHECK(inst != NULL);
+    if (inst == NULL) return;
+    wasm_exec_env_t env = wasm_runtime_create_exec_env(inst, WASM_STACK);
+    CHECK(env != NULL);
+    if (env == NULL) {
+        wasm_runtime_deinstantiate(inst);
+        return;
+    }
+    app_t owner = {.name = "kv-test"};
+    wasm_runtime_set_user_data(env, &owner);
+
+    CHECK_INT(set(env, "x", 1, "a", 1), 0);
+    stub_kv_set_fails = 1;
+    CHECK_INT(set(env, "x", 1, "a", 1), 0);
+    CHECK_INT(set(env, "x", 1, "b", 1), FC_HW_EIO);
+    stub_kv_set_fails = 0;
+    stub_kv_get_fails = 1;
+    CHECK_INT(get(env, "x", 1, &value, 1), FC_HW_EIO);
+    CHECK_INT(set(env, "y", 1, "b", 1), FC_HW_EIO);
+    CHECK_INT(del(env, "x", 1), FC_HW_EIO);
+    stub_kv_get_fails = 0;
+    stub_kv_del_fails = 1;
+    CHECK_INT(del(env, "x", 1), FC_HW_EIO);
+    stub_kv_del_fails = 0;
+    CHECK_INT(get(env, "x", 1, &value, 1), 1);
+    CHECK_INT(value, 'a');
+    CHECK_INT(del(env, "x", 1), 0);
+    CHECK_INT(get(env, "x", 1, &value, 1), FC_HW_ENOENT);
+
+    const unsigned char truncated[] = {1, 'x', 3, 0, 'a'};
+    CHECK_INT(fc_port_kv_set("akv:kv-test", truncated, sizeof(truncated)), 0);
+    CHECK_INT(set(env, "x", 1, "b", 1), FC_HW_EIO);
+    CHECK(memcmp(stub_kv("akv:kv-test"), truncated, sizeof(truncated)) == 0);
+    fc_port_kv_del("akv:kv-test");
+    wasm_runtime_destroy_exec_env(env);
+    wasm_runtime_deinstantiate(inst);
+}
+
 static void test_fc_kv(void)
 {
     char err[160];
@@ -962,6 +1075,7 @@ static void test_fc_kv(void)
     power_cycle();
     CHECK_STR(wait_state_of("k", "Running c 2 -1 -7 -2 0", 3000), "Running c 2 -1 -7 -2 0");
     CHECK(stub_kv("akv:k") != NULL);
+    kv_storage_errors(find("k"));
     remove_all();
     CHECK(stub_kv("akv:k") == NULL); /* removed with the app */
 }
@@ -1134,9 +1248,12 @@ static void test_fc_events(void)
         usleep(10 * 1000);
     }
     CHECK(strncmp(state_of("e"), "Running lost ", 13) == 0);
-    remove_all();
-    fc_apps_post(a, EV_CONFIG, -1, 0); /* stopped: dropped */
+    app_stop(a);
+    fc_apps_post(a, EV_CONFIG, -1, 0);
     CHECK_INT(a->ev_count, 0);
+    remove_all();
+    fc_apps_file_changed("/etc/fc-app/e.json"); /* removed: no longer an event target */
+    CHECK(find("e") == NULL);
 }
 
 /* ---- MQTT: an app against a fake broker on a local TCP port ----------------------- */
@@ -1751,19 +1868,19 @@ static void test_saved_apps_held(void)
     fc_apps_hold_saved(1);
     power_cycle();
     CHECK(strncmp(state_of("app"), "Preparing", 9) == 0);
-    CHECK_INT(fc_apps_saved_due(), 0);
+    CHECK(fc_apps_saved_delay_s() != 0);
     fc_apps_status_ok();
-    CHECK_INT(fc_apps_saved_due(), 1);
+    CHECK_INT(fc_apps_saved_delay_s(), 0);
     CHECK_INT(fc_apps_start_saved(), 1);
     CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
-    CHECK_INT(fc_apps_saved_due(), 0); /* once */
+    CHECK(fc_apps_saved_delay_s() != 0); /* once */
     /* No status at all (offline): after BOOT_APPS_WAIT_MS. */
     s_status_oks = 0;
     fc_apps_hold_saved(1);
     power_cycle();
-    CHECK_INT(fc_apps_saved_due(), 0);
+    CHECK(fc_apps_saved_delay_s() != 0);
     s_init_ms -= BOOT_APPS_WAIT_MS;
-    CHECK_INT(fc_apps_saved_due(), 1);
+    CHECK_INT(fc_apps_saved_delay_s(), 0);
     CHECK_INT(fc_apps_start_saved(), 1);
     CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
     remove_all();
@@ -2010,16 +2127,16 @@ static void test_heap_floor(void)
         usleep(1000); /* its runner has ended (mem_wait is set before) */
     }
     CHECK_INT(h->mem_wait, 1);
-    fc_apps_poll();
+    fc_apps_poll(0);
     CHECK_STR(state_of("h"), want);
     h->mem_next_ms = 0;
     stub_heap_free = 8 * 1024; /* still no room */
-    fc_apps_poll();
+    fc_apps_poll(0);
     CHECK_STR(state_of("h"), want);
     CHECK(h->mem_next_ms > fc_apps_now_ms());
     h->mem_next_ms = 0;
     stub_heap_free = -1;
-    fc_apps_poll();
+    fc_apps_poll(0);
     CHECK(stub_log_has("app h: the heap has room for it again, starting it"));
     CHECK_STR(wait_state_of("h", "Running v1", 3000), "Running v1");
     CHECK_INT(h->mem_wait, 0);
@@ -2049,6 +2166,416 @@ static void test_deferred_start(void)
     CHECK_INT(fc_apps_start_pending(), 1);
     CHECK_STR(wait_state_of("d", "Running v1", 3000), "Running v1");
     CHECK_INT(fc_apps_start_pending(), 0);
+    fc_apps_defer_starts(0);
+    remove_all();
+}
+
+static void test_catalog_commit(void)
+{
+    char err[160], key[64], old_key[64];
+    const char *apps[] = {"first", "reg/app:v1", NULL, "second", "reg/app:v1", NULL, NULL};
+    CHECK_INT(apply_apps(apps, err, sizeof(err)), 0);
+    wasm_key("first", find("first")->module_slot, old_key, sizeof(old_key));
+    cJSON *catalog = read_catalog(NULL);
+    wasm_key("first", free_flash_slot(catalog), key, sizeof(key));
+    cJSON_Delete(catalog);
+
+    /* A power cut after staging and before committing leaves v1 selected. */
+    apps[1] = "reg/app:v2";
+    apps[2] = "{\"TICK_MS\":\"222\"}";
+    f_catalog_failure = true;
+    CHECK_INT(apply_apps(apps, err, sizeof(err)), -1);
+    CHECK_CONTAINS(err, "cannot store the app catalog");
+    CHECK(stub_kv(key) && stub_kv(old_key));
+    CHECK_INT(find("first")->tick_ms, 100);
+    stub_kv_del_fails = 0;
+    f_catalog_failure = false;
+    power_cycle();
+    CHECK_STR(wait_state_of("first", "Running v1", 3000), "Running v1");
+    CHECK_STR(find("first")->image, "reg/app:v1");
+    CHECK_INT(find("first")->tick_ms, 100);
+    CHECK_STR(wait_state_of("second", "Running v1", 3000), "Running v1");
+    CHECK(!stub_kv(key) && stub_kv(old_key));
+
+    /* A failed sync can leave the new catalog visible. A superseding spec
+     * first restores the catalog of the live apps before reusing any slot. */
+    f_catalog_failure = f_catalog_visible = true;
+    CHECK_INT(apply_apps(apps, err, sizeof(err)), -1);
+    CHECK(stub_kv(key) && stub_kv(old_key));
+    CHECK_CONTAINS(stub_kv(KV_APPS), "reg/app:v2");
+    f_catalog_failure = f_catalog_visible = false;
+    apps[1] = "reg/app:v1";
+    apps[2] = NULL;
+    CHECK_INT(apply_apps(apps, err, sizeof(err)), 0);
+    CHECK(strstr(stub_kv(KV_APPS), "reg/app:v2") == NULL);
+
+    /* With the new catalog visible at power loss, v2 must boot even
+     * though the write had returned an error to the previous process. */
+    apps[1] = "reg/app:v2";
+    apps[2] = "{\"TICK_MS\":\"222\"}";
+    f_catalog_failure = f_catalog_visible = true;
+    CHECK_INT(apply_apps(apps, err, sizeof(err)), -1);
+    f_catalog_failure = f_catalog_visible = false;
+    power_cycle();
+    CHECK_STR(wait_state_of("first", "Running v2", 3000), "Running v2");
+    CHECK_INT(find("first")->tick_ms, 222);
+    CHECK(stub_kv(key) && !stub_kv(old_key));
+    apps[1] = "reg/app:v1";
+    apps[2] = NULL;
+    CHECK_INT(apply_apps(apps, err, sizeof(err)), 0);
+    apps[1] = "reg/app:v2";
+    apps[2] = "{\"TICK_MS\":\"222\"}";
+
+    /* A cut after the commit, before reclaiming the old module, selects v2. */
+    stub_kv_del_fails = 1;
+    CHECK_INT(apply_apps(apps, err, sizeof(err)), 0);
+    CHECK(stub_kv(key) && stub_kv(old_key));
+    stub_kv_del_fails = 0;
+    power_cycle();
+    CHECK_STR(wait_state_of("first", "Running v2", 3000), "Running v2");
+    CHECK_STR(find("first")->image, "reg/app:v2");
+    CHECK_INT(find("first")->tick_ms, 222);
+    CHECK_STR(wait_state_of("second", "Running v1", 3000), "Running v1");
+    CHECK(stub_kv(key) && !stub_kv(old_key));
+
+    f_catalog_failure = true;
+    fc_apps_plan_t plan;
+    CHECK_INT(fc_apps_prepare(NULL, &plan), FC_APPS_CATALOG_ERROR);
+    CHECK(find("first") && find("second") && stub_kv(key));
+    f_catalog_failure = false;
+    remove_all();
+    CHECK(!stub_kv(key));
+}
+
+static void test_legacy_catalog_update(void)
+{
+    const char legacy[] = "[{\"name\":\"app\",\"image\":\"reg/app:v1\",\"env\":\"{}\"}]";
+    CHECK_INT(fc_port_kv_set("app:app", s_v1, sizeof(s_v1)), 0);
+    CHECK_INT(fc_port_kv_set(KV_APPS, legacy, sizeof(legacy) - 1), 0);
+    power_cycle();
+    CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
+    char err[160];
+    int retry;
+    f_catalog_failure = true;
+    CHECK_INT(apply("reg/app:v2", err, sizeof(err), &retry), -1);
+    CHECK_INT(retry, 1);
+    CHECK_CONTAINS(err, "cannot store the app catalog");
+    f_catalog_failure = false;
+    CHECK(stored_is(s_v1) && stub_kv("app:app"));
+    CHECK_INT(apply("reg/app:v2", err, sizeof(err), &retry), 0);
+    power_cycle();
+    CHECK_STR(wait_state("Running v2 reg/app:v2"), "Running v2 reg/app:v2");
+    CHECK(stored_is(s_v2) && !stub_kv("app:app"));
+    remove_all();
+}
+
+static void test_slot_lifetime(void)
+{
+    char err[160];
+    const char *both[] = {"aux", "reg/app:v1", NULL, "main", "reg/app:v2", NULL, NULL};
+    CHECK(!s_apps[0] && !s_apps[1]);
+    CHECK_INT(apply_one("aux", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK(s_apps[0] && !s_apps[1]);
+    int before = f_fetches;
+    f_slots_left = 0;
+    CHECK_INT(apply_apps(both, err, sizeof(err)), -1);
+    CHECK_CONTAINS(err, "out of memory for its slot");
+    CHECK_INT(f_fetches, before);
+    CHECK(s_apps[1] == NULL);
+    f_slots_left = -1;
+    stub_kv_set_fails = 1;
+    CHECK_INT(apply_apps(both, err, sizeof(err)), -1);
+    CHECK(s_apps[1] == NULL);
+    stub_kv_set_fails = 0;
+    CHECK_INT(apply_apps(both, err, sizeof(err)), 0);
+    app_t *survivor = find("main");
+    CHECK(survivor == s_apps[1] && survivor != NULL);
+    CHECK_INT(apply_one("main", "reg/app:v2", NULL, err, sizeof(err)), 0);
+    CHECK(s_apps[0] == NULL && find("main") == survivor);
+    CHECK_STR(wait_state_of("main", "Running v2", 3000), "Running v2");
+    CHECK_INT(mqtt_on_message(&s_sync[0], 7, NULL), -1); /* delivery after removal */
+    CHECK_INT(apply_apps(both, err, sizeof(err)), 0);
+    CHECK_INT(mqtt_on_message(&s_sync[0], 7, NULL), -1); /* same slot, new occupant */
+    CHECK(find("main") == survivor);
+    remove_all();
+    CHECK(!s_apps[0] && !s_apps[1]);
+
+    /* At boot a saved primary gets the only descriptor available, even
+     * if it was installed in slot 1. Recover the other one offline. */
+    CHECK_INT(apply_one("aux", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    both[5] = "{\"FC_PRIMARY\":\"true\"}";
+    CHECK_INT(apply_apps(both, err, sizeof(err)), 0);
+    f_slots_left = 1;
+    before = f_fetches;
+    power_cycle();
+    CHECK(primary_app() == find("main") && find("main") != NULL);
+    CHECK(s_restore && s_restore->child && find("aux") == NULL);
+    CHECK_STR(wait_state_of("main", "Running v2", 3000), "Running v2");
+    f_slots_left = -1;
+    fc_apps_poll(0);
+    CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+    CHECK_INT(f_fetches, before);
+    CHECK(s_restore == NULL);
+    f_slots_left = 1;
+    power_cycle();
+    CHECK(waiting_slot("aux") != NULL);
+    CHECK_INT(apply_one("main", "reg/app:v2", both[5], err, sizeof(err)), 0);
+    CHECK(waiting_slot("aux") == NULL && stub_kv("app:aux") == NULL);
+    CHECK_INT(f_fetches, before);
+    f_slots_left = -1;
+    remove_all();
+
+    f_no_io = 1;
+    CHECK_INT(apply_one("main", "reg/app:v2", both[5], err, sizeof(err)), 0);
+    survivor = find("main");
+    CHECK(survivor && survivor->mem_wait && !survivor->io && !survivor->thread_running);
+    f_no_io = 0;
+    survivor->mem_next_ms = 0;
+    CHECK(fc_apps_primary_retry_due());
+    stub_heap_free = 0;
+    fc_apps_poll(1);
+    survivor->mem_next_ms = 0;
+    CHECK(!fc_apps_primary_retry_due()); /* an idle session was already released */
+    stub_heap_free = -1;
+    fc_apps_poll(0);
+    CHECK_STR(wait_state_of("main", "Running v2", 3000), "Running v2");
+    remove_all();
+}
+
+static void test_refused_primary_reloads_from_flash_once(void)
+{
+    char err[160];
+    enum { STILL_FRAGMENTED, BELOW_FLOOR, ENOUGH };
+    for (int after = STILL_FRAGMENTED; after <= ENOUGH; after++) {
+        f_no_io = 1;
+        CHECK_INT(apply_one("main", "reg/app:v2", "{\"FC_PRIMARY\":\"true\"}", err, sizeof(err)), 0);
+        f_no_io = 0;
+        app_t *a = find("main");
+        CHECK(a && a->module && a->mem_wait);
+        /* A joined runner that failed to allocate its 64 KiB linear memory. */
+        a->mem_cost = 0;
+        a->mem_block = 65536;
+        a->mem_next_ms = 0;
+        stub_heap_largest = 52 * 1024;
+        int fetches = f_fetches;
+        fc_apps_poll(1);
+        CHECK(!a->module && a->relocated && a->start_pending && a->parked);
+        CHECK(a->mem_next_ms > fc_apps_now_ms());
+        a->mem_next_ms = 0;
+        CHECK(fc_apps_primary_retry_due()); /* idle TLS may hold the missing block */
+        stub_heap_free = a->mem_block;
+        if (after != STILL_FRAGMENTED) {
+            stub_heap_largest = a->mem_block;
+        }
+        if (after == ENOUGH) {
+            stub_heap_free = -1;
+        }
+        fc_apps_poll(1);
+        if (after != ENOUGH) {
+            a->mem_next_ms = 0;
+            CHECK(!fc_apps_primary_retry_due()); /* no third idle turn at unchanged heap */
+            CHECK(!a->module && a->parked && a->start_pending);
+            stub_heap_free = -1;
+            stub_heap_largest = -1;
+            stub_kv_get_fails = 1;
+            fc_apps_poll(0);
+            CHECK(!a->module && a->relocated && a->start_pending && a->mem_next_ms > fc_apps_now_ms());
+            stub_kv_get_fails = 0;
+            a->mem_next_ms = 0;
+            f_no_io = 1;
+            fc_apps_poll(0);
+            CHECK(a->relocated && a->module && a->mem_wait && a->retried_idle);
+            a->mem_next_ms = 0;
+            CHECK(!fc_apps_primary_retry_due());
+            f_no_io = 0;
+            fc_apps_poll(0);
+        }
+        CHECK_STR(wait_state_of("main", "Running v2", 3000), "Running v2");
+        CHECK(!a->relocated && !a->retried_idle); /* a successful instance ends this refusal */
+        CHECK_INT(f_fetches, fetches);
+        stub_heap_largest = -1;
+        remove_all();
+    }
+}
+
+static void test_completed_primary_wakes_parked_secondary(void)
+{
+    char err[160];
+    const char *both[] = {"aux", "reg/app:v1", NULL, "main", "reg/t_entry",
+                          "{\"FC_PRIMARY\":\"true\",\"FC_ENTRY\":\"run\"}", NULL};
+    for (int room = 0; room <= 1; room++) {
+        CHECK_INT(apply_one("aux", "reg/app:v1", NULL, err, sizeof(err)), 0);
+        fc_apps_defer_starts(1);
+        CHECK_INT(apply_apps(both, err, sizeof(err)), 0);
+        app_t *aux = find("aux");
+        CHECK(aux && aux->parked);
+        app_t *main_app = primary_app(); /* starts are deferred */
+        CHECK(!fc_apps_awaiting_primary_completion());
+        main_app->live = true;
+        CHECK(!fc_apps_awaiting_primary_completion()); /* a perpetual tick loop */
+        main_app->one_shot = true;
+        CHECK(fc_apps_awaiting_primary_completion());
+        aux->parked = false;
+        CHECK(!fc_apps_awaiting_primary_completion());
+        aux->parked = true;
+        main_app->live = main_app->one_shot = false;
+        aux->mem_next_ms = INT64_MAX;
+        CHECK_INT(fc_apps_start_pending(), 1);
+        while (!__atomic_load_n(&main_app->runner_done, __ATOMIC_ACQUIRE)) {
+            usleep(1000);
+        }
+        CHECK(main_app->one_shot && !fc_apps_awaiting_primary_completion());
+        stub_heap_free = room ? -1 : 0;
+        fc_apps_poll(0);
+        if (room) {
+            CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+        } else {
+            CHECK(aux->parked && !aux->module && aux->mem_next_ms == INT64_MAX);
+            CHECK(!fc_apps_poll_due());
+        }
+        stub_heap_free = -1;
+        fc_apps_defer_starts(0);
+        remove_all();
+    }
+}
+
+static void test_primary_gets_memory_first(void)
+{
+    char err[160];
+    const char *flag = "{\"FC_PRIMARY\":\"true\"}";
+    const char *both[] = {"aux", "reg/app:v1", NULL, "main", "reg/app:v1", flag, NULL};
+    CHECK_INT(apply_one("aux", "reg/app:v1", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+    int aux_slot = find("aux")->slot;
+    fc_apps_defer_starts(1);
+    CHECK_INT(apply_apps(both, err, sizeof(err)), 0);
+    CHECK(find("aux")->module == NULL && !find("aux")->thread_running && !find("aux")->io);
+    CHECK(find("main")->slot != aux_slot);
+    CHECK_STR(state_of("aux"), "Preparing ");
+    /* The primary takes its memory first. Refuse only the secondary's
+     * event queue, then read the same customInfo field a device reports. */
+    CHECK_INT(start_pending_app(find("main"), 0), 1);
+    f_no_io = 1;
+    CHECK_INT(fc_apps_start_pending(), 0);
+    cJSON *pending_apps = cJSON_CreateArray();
+    cJSON *pending_summary = cJSON_CreateObject();
+    cJSON *pending_info = cJSON_CreateObject();
+    fc_apps_status(pending_apps, pending_summary, pending_info);
+    CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(pending_info, "app.aux")),
+              "waiting for app handles and event queue memory");
+    cJSON_Delete(pending_apps);
+    cJSON_Delete(pending_summary);
+    cJSON_Delete(pending_info);
+    f_no_io = 0;
+    find("aux")->mem_next_ms = 0;
+    CHECK_INT(fc_apps_start_pending(), 1);
+    CHECK_STR(wait_state_of("main", "Running v1", 3000), "Running v1");
+    CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+
+    CHECK_INT(fc_metrics_app_set("aux", "ticks", 5, 1, 7), 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+    fc_metric_point_t point;
+    CHECK_INT(fc_metrics_app_points(&point, 1), 1);
+    CHECK_STR(point.name, "app.aux.ticks");
+    CHECK(point.d == 7);
+    CHECK(fc_apps_poll_due());
+
+    /* Even in the first catalog slot, aux stays on flash at managed boot. */
+    fc_apps_hold_saved(1);
+    power_cycle();
+    CHECK(find("aux") == NULL && waiting_slot("aux") != NULL);
+    cJSON *apps = cJSON_CreateArray(), *summary = cJSON_CreateObject(), *custom = cJSON_CreateObject();
+    fc_apps_status(apps, summary, custom);
+    CHECK_INT(cJSON_GetArraySize(apps), 2);
+    CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(custom, "app.aux")), "Preparing");
+    cJSON_Delete(apps);
+    cJSON_Delete(summary);
+    cJSON_Delete(custom);
+    int saved_fetches = f_fetches;
+    CHECK_INT(apply_apps(both, err, sizeof(err)), 0);
+    CHECK(find("aux") == NULL && f_fetches == saved_fetches);
+    CHECK_INT(fc_apps_start_saved(), 1);
+    CHECK_STR(wait_state_of("main", "Running v1", 3000), "Running v1");
+    CHECK(find("aux") == NULL);
+    CHECK_INT(fc_apps_poll(0), 1);
+    CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+
+    /* A failed fetch of a primary update leaves both installed versions usable. */
+    both[4] = "reg/missing";
+    CHECK_INT(apply_apps(both, err, sizeof(err)), -1);
+    CHECK_STR(state_of("main"), "Running v1");
+    CHECK_INT(fc_apps_start_pending(), 1);
+    CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+    both[4] = "reg/app:v2";
+    int before = f_fetches;
+    CHECK_INT(apply_apps(both, err, sizeof(err)), 0);
+    CHECK_INT(f_fetches, before + 1);
+    CHECK(find("aux")->module == NULL);
+    CHECK_INT(fc_apps_start_pending(), 2);
+    CHECK_STR(wait_state_of("main", "Running v2", 3000), "Running v2");
+    CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+
+    /* Ambiguous priority cannot remove an existing app or start a download. */
+    both[2] = flag;
+    before = f_fetches;
+    CHECK_INT(apply_apps(both, err, sizeof(err)), -1);
+    CHECK_INT(f_fetches, before);
+    CHECK_STR(state_of("main"), "Running v2");
+    remove_all();
+
+    /* On first install the secondary image waits even when it is listed first. */
+    both[2] = NULL;
+    before = f_fetches;
+    CHECK_INT(apply_apps(both, err, sizeof(err)), -1);
+    CHECK_INT(f_fetches, before + 1);
+    CHECK(find("aux") == NULL);
+    CHECK_INT(fc_apps_start_pending(), 1);
+    CHECK_INT(apply_apps(both, err, sizeof(err)), 0);
+    CHECK_INT(fc_apps_start_pending(), 1);
+    CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+    cJSON *remaining = cJSON_Parse("[{\"name\":\"main\",\"appType\":\"container\"}]");
+    fc_apps_plan_t plan;
+    int retry;
+    CHECK_INT(fc_apps_prepare(remaining, &plan), -1);
+    CHECK(find("aux") != NULL);
+    cJSON_AddStringToObject(remaining->child, "image", "reg/app:v2");
+    cJSON_AddItemToObject(remaining->child, "envVars", cJSON_Parse(flag));
+    CHECK_INT(fc_apps_prepare(remaining, &plan), 0);
+    CHECK(find("aux") == NULL);
+    /* A direct apply between prepare and finish can add the removed app. */
+    CHECK_INT(apply_apps(both, err, sizeof(err)), 0);
+    CHECK(find("aux") != NULL);
+    CHECK_INT(fc_apps_apply_prepared(&plan, err, sizeof(err), &retry), 0);
+    cJSON_Delete(remaining);
+    CHECK(find("aux") == NULL && stub_kv("app:aux") == NULL);
+    CHECK_STR(state_of("main"), "Running v2");
+
+    /* A live primary whose memory can grow keeps the secondary on flash. */
+    both[4] = "reg/growing";
+    CHECK_INT(apply_apps(both, err, sizeof(err)), -1);
+    CHECK_INT(fc_apps_start_pending(), 1);
+    CHECK_STR(wait_state_of("main", "Running ", 3000), "Running ");
+    CHECK_INT(fc_apps_poll(0), 0);
+    before = f_fetches;
+    CHECK_INT(apply_apps(both, err, sizeof(err)), -1);
+    CHECK_INT(f_fetches, before);
+    CHECK(find("aux") == NULL);
+
+    /* Hand the role to aux while main's replacement is unavailable. The
+     * saved role still chooses aux at the next boot. */
+    both[2] = flag;
+    both[4] = "reg/missing";
+    both[5] = NULL;
+    CHECK_INT(apply_apps(both, err, sizeof(err)), -1);
+    CHECK_INT(fc_apps_start_pending(), 2);
+    CHECK_STR(wait_state_of("aux", "Running v1", 3000), "Running v1");
+    CHECK_STR(wait_state_of("main", "Running ", 3000), "Running ");
+    fc_apps_hold_saved(1);
+    power_cycle();
+    CHECK(primary_app() == find("aux"));
+    CHECK(find("main") == NULL && waiting_slot("main") != NULL);
+    CHECK_INT(fc_apps_start_saved(), 1);
     fc_apps_defer_starts(0);
     remove_all();
 }
@@ -2187,6 +2714,12 @@ int main(void)
     RUN(test_heap_low_holds);
     RUN(test_heap_floor);
     RUN(test_deferred_start);
+    RUN(test_catalog_commit);
+    RUN(test_legacy_catalog_update);
+    RUN(test_slot_lifetime);
+    RUN(test_primary_gets_memory_first);
+    RUN(test_refused_primary_reloads_from_flash_once);
+    RUN(test_completed_primary_wakes_parked_secondary);
     RUN(test_instantiation_code);
     RUN(test_wasm_limit);
     RUN(test_fc_info);

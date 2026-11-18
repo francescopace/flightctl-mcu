@@ -15,10 +15,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "fc_apps.h"
 #include "fc_http.h"
 
 #define FC_METRICS_PER_APP 8  /* FC_MAX_METRICS of fc_app.h */
-#define FC_METRICS_APPS_MAX 32 /* every app's together */
+#define FC_METRICS_APPS_MAX (FC_MAX_APPS * FC_METRICS_PER_APP) /* every app's together */
 #define FC_METRIC_NAME_MAX 32
 #define FC_METRICS_EXPORT_PATH "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export"
 
@@ -41,6 +42,9 @@ typedef struct {
     uint64_t start_ns;    /* a sum's start */
 } fc_metric_point_t;
 
+/* Current series count, for sizing an export. A series added between this
+ * count and the bounded copy may first appear in the next export. */
+int fc_metrics_app_count(void);
 /* The apps' values as points ("app.<app>.<name>"): how many were put in out. */
 int fc_metrics_app_points(fc_metric_point_t *out, int max);
 

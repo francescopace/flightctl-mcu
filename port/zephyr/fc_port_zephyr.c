@@ -12,6 +12,9 @@
 
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/fatal.h>
+#ifdef CONFIG_MCUBOOT_IMG_MANAGER
+#include <zephyr/dfu/mcuboot.h>
+#endif
 #include <zephyr/fs/fs.h>
 #include <zephyr/fs/littlefs.h>
 #include <zephyr/kernel.h>
@@ -188,7 +191,11 @@ int fc_port_zephyr_init(void)
 static int read_file(const char *path, char **out, size_t *len)
 {
     struct fs_dirent st;
-    if (fs_stat(path, &st) != 0 || st.type != FS_DIR_ENTRY_FILE) {
+    int rc = fs_stat(path, &st);
+    if (rc == -ENOENT) {
+        return FC_KV_MISSING;
+    }
+    if (rc != 0 || st.type != FS_DIR_ENTRY_FILE) {
         return -1;
     }
     struct fs_file_t f;
@@ -260,10 +267,11 @@ int fc_port_kv_set(const char *key, const void *data, size_t len)
 static int remove_file(const char *p)
 {
     struct fs_dirent st;
-    if (fs_stat(p, &st) != 0) {
-        return 0; /* not there: LittleFS would log an error for the unlink */
+    int rc = fs_stat(p, &st);
+    if (rc != 0) {
+        return rc == -ENOENT ? 0 : -1;
     }
-    int rc = fs_unlink(p);
+    rc = fs_unlink(p);
     return rc == 0 || rc == -ENOENT ? 0 : -1;
 }
 
@@ -285,7 +293,7 @@ int fc_port_write_file(const char *path, const void *data, size_t len)
 int fc_port_read_file(const char *path, char **out, size_t *len)
 {
     char p[FILE_PATH_MAX];
-    return file_path(FILE_DIR, path, p, sizeof(p)) == 0 ? read_file(p, out, len) : -1;
+    return file_path(FILE_DIR, path, p, sizeof(p)) == 0 && read_file(p, out, len) == 0 ? 0 : -1;
 }
 
 int fc_port_remove_file(const char *path)
@@ -311,6 +319,11 @@ void fc_kernel_heap_stats(size_t *total, size_t *free_now)
 void fc_heap_stats(size_t *total, size_t *free_now, size_t *free_min)
 {
     *total = *free_now = *free_min = 0;
+}
+
+long fc_port_heap_largest(void)
+{
+    return -1;
 }
 #endif
 
@@ -364,6 +377,10 @@ void fc_port_custom_info(void *obj)
 #if defined(CONFIG_MCUBOOT_IMG_MANAGER)
     /* The running image's: no update below it is installed. */
     char num[12];
+    uint8_t active = boot_fetch_active_slot();
+    if (active == PARTITION_ID(slot0_partition) || active == PARTITION_ID(slot1_partition)) {
+        cJSON_AddStringToObject((cJSON *)obj, "bootSlot", active == PARTITION_ID(slot0_partition) ? "slot0" : "slot1");
+    }
     snprintf(num, sizeof(num), "%u", (unsigned)fc_zephyr_security_counter(PARTITION_ID(slot0_partition)));
     cJSON_AddStringToObject((cJSON *)obj, "secureVersion", num);
 #endif
@@ -376,11 +393,6 @@ long fc_port_heap_watch(int start)
 #else
     return -1;
 #endif
-}
-
-long fc_port_heap_largest(void)
-{
-    return -1; /* sys_heap does not tell */
 }
 
 long fc_port_heap_low(void)
@@ -419,6 +431,11 @@ void fc_port_metrics(void *obj)
     fc_heap_stats(&total, &free_now, &free_min);
     snprintf(num, sizeof(num), "%u", (unsigned)free_min);
     cJSON_AddStringToObject((cJSON *)obj, "memMinFreeBytes", num);
+    long largest = fc_port_heap_largest();
+    if (largest >= 0) {
+        snprintf(num, sizeof(num), "%ld", largest);
+        cJSON_AddStringToObject((cJSON *)obj, "memInternalLargestBlock", num);
+    }
 #if K_HEAP_MEM_POOL_SIZE > 0 && defined(CONFIG_SYS_HEAP_RUNTIME_STATS)
     /* The kernel heap, apart from the C heap above: the threads' stacks
      * (the agent's and each app's) come from it, and the WiFi driver's. */
@@ -432,6 +449,8 @@ void fc_port_metrics(void *obj)
     }
 #endif
 }
+
+void fc_port_background_compute(void) {}
 
 long fc_port_stack_unused(void)
 {
@@ -455,7 +474,13 @@ void fc_port_reboot(void)
  * kept in RAM that a restart does not clear, in the record and the text the
  * ESP-IDF port uses too (fc_fatal.h), and said at the next boot: the console
  * may be gone before a message gets out. */
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+/* MCUboot clears part of the application's DRAM .noinit as its own BSS.
+ * RTC slow memory survives this reboot and is outside MCUboot's DRAM. */
+static fc_fatal_t s_fatal __attribute__((section(".rtc_noinit.fc_fatal")));
+#else
 static __noinit fc_fatal_t s_fatal;
+#endif
 
 #ifdef FC_XTENSA_BACKTRACE
 /* A return address as a pc: the window bits replaced with the code region's,
@@ -603,7 +628,6 @@ const char *fc_port_fw_platform(void)
  * next boot, swaps the slots, and swaps them back at the boot after that
  * unless the image was confirmed. */
 #include <zephyr/dfu/flash_img.h>
-#include <zephyr/dfu/mcuboot.h>
 
 #include "fc_crypto.h"
 

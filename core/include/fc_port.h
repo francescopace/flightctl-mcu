@@ -41,7 +41,9 @@ typedef enum {
 } fc_log_level_t;
 
 /* Persistent key/value storage. fc_port_kv_get allocates *out (NUL terminated,
- * caller frees). Return 0 on success, -1 if missing or on error. */
+ * caller frees). Get returns FC_KV_MISSING for an absent key. All operations
+ * return 0 on success and -1 on storage errors. Delete is idempotent. */
+#define FC_KV_MISSING (-2)
 int fc_port_kv_get(const char *key, char **out, size_t *len);
 int fc_port_kv_set(const char *key, const void *data, size_t len);
 int fc_port_kv_del(const char *key);
@@ -63,6 +65,10 @@ void fc_port_metrics(void *obj);
  * or -1 when the port cannot tell. The agent reports the lowest it saw for
  * each of its threads and the apps' (customInfo stackMinFreeBytes). */
 long fc_port_stack_unused(void);
+
+/* Schedule an unbounded compute entry alongside the idle task on ports whose
+ * watchdog needs idle CPU time. Called only on its dedicated runner. */
+void fc_port_background_compute(void);
 
 /* The largest block the heap could give now, in bytes, or -1 when the port
  * cannot tell. An app whose memory does not fit says it in its error. */

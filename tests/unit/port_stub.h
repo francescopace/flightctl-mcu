@@ -31,6 +31,7 @@ extern int stub_ota_pending_verify; /* 1: booted a new image not confirmed yet *
 extern int stub_hwkey_bits;       /* > 0: a "hardware" key store, for RSA keys of this size or FC_HWKEY_ECDSA_P256 */
 extern int stub_hwkey_seal_fails; /* 1: sealing fails */
 extern int stub_hwkey_seals;      /* keys sealed since stub_reset */
+extern int stub_kv_get_fails, stub_kv_del_fails;
 extern int stub_kv_set_fails;     /* 1: fc_port_kv_set fails, as a full or broken flash would */
 
 /* A new ECDSA P-256 key pair in `pk` (initialized here), for a test to sign with. */

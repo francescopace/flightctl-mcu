@@ -3,6 +3,7 @@
  * Key/value pairs and config files live under the data directory.
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,11 +48,13 @@ int fc_port_kv_get(const char *key, char **out, size_t *len)
     kv_path(key, p, sizeof(p));
     FILE *f = fopen(p, "rb");
     if (f == NULL) {
+        return errno == ENOENT ? FC_KV_MISSING : -1;
+    }
+    long n;
+    if (fseek(f, 0, SEEK_END) != 0 || (n = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
         return -1;
     }
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
     char *buf = malloc((size_t)n + 1);
     if (buf == NULL || fread(buf, 1, (size_t)n, f) != (size_t)n) {
         free(buf);
@@ -67,24 +70,45 @@ int fc_port_kv_get(const char *key, char **out, size_t *len)
 
 int fc_port_kv_set(const char *key, const void *data, size_t len)
 {
-    char p[600], tmp[610];
+    char p[600], tmp[624];
     kv_path(key, p, sizeof(p));
-    snprintf(tmp, sizeof(tmp), "%s.tmp", p);
-    FILE *f = fopen(tmp, "wb");
-    if (f == NULL) {
+    snprintf(tmp, sizeof(tmp), "%s.tmp.XXXXXX", p);
+    int dir = open(s_data_dir, O_RDONLY | O_DIRECTORY);
+    if (dir < 0) {
         return -1;
     }
-    int ok = fwrite(data, 1, len, f) == len;
-    ok = (fclose(f) == 0) && ok;
-    chmod(tmp, 0600);
-    return ok && rename(tmp, p) == 0 ? 0 : -1;
+    int fd = mkstemp(tmp); /* a private 0600 file, unique to this writer */
+    FILE *f = fd >= 0 ? fdopen(fd, "wb") : NULL;
+    int ok = 0;
+    if (f != NULL) {
+        ok = fwrite(data, 1, len, f) == len && fflush(f) == 0 && fsync(fd) == 0;
+        ok = fclose(f) == 0 && ok;
+    } else if (fd >= 0) {
+        close(fd);
+    }
+    if (ok) {
+        ok = rename(tmp, p) == 0 && fsync(dir) == 0;
+    }
+    if (!ok && fd >= 0) {
+        unlink(tmp);
+    }
+    close(dir);
+    return ok ? 0 : -1;
 }
 
 int fc_port_kv_del(const char *key)
 {
     char p[600];
     kv_path(key, p, sizeof(p));
-    return unlink(p) == 0 || errno == ENOENT ? 0 : -1;
+    int dir = open(s_data_dir, O_RDONLY | O_DIRECTORY);
+    if (dir < 0) {
+        return -1;
+    }
+    /* A process restart can see a renamed catalog before its directory
+     * sync completed. Make the selection durable before reclaiming data. */
+    int ok = fsync(dir) == 0 && (unlink(p) == 0 || errno == ENOENT) && fsync(dir) == 0;
+    close(dir);
+    return ok ? 0 : -1;
 }
 
 /* Bytes in the files under `dir`. */
@@ -212,6 +236,8 @@ long fc_port_heap_low(void)
 }
 
 
+void fc_port_background_compute(void) {}
+
 long fc_port_stack_unused(void)
 {
     return -1;
@@ -240,7 +266,7 @@ int fc_port_read_file(const char *path, char **out, size_t *len)
 {
     char key[300];
     file_key(path, key);
-    return fc_port_kv_get(key, out, len);
+    return fc_port_kv_get(key, out, len) == 0 ? 0 : -1;
 }
 
 int fc_port_remove_file(const char *path)

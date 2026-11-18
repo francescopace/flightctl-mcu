@@ -34,7 +34,7 @@ Every interval, one `ExportMetricsServiceRequest` (OTLP over gRPC), with the res
 |---|---|---|
 | `device.memory.free` (By) | `device_memory_free_bytes` | every port |
 | `device.memory.min_free` (By) | `device_memory_min_free_bytes` | ESP-IDF, Zephyr |
-| `device.memory.internal.free`, `.largest_block` (By) | `device_memory_internal_free_bytes`... | ESP-IDF |
+| `device.memory.internal.free`, `.largest_block` (By) | `device_memory_internal_free_bytes`... | ESP-IDF reports both. Zephyr with the agent’s C heap also reports the largest block. |
 | `device.memory.kernel.free`, `.min_free` (By) | `device_memory_kernel_free_bytes`... | Zephyr |
 | `device.network.io` (By, counter), `direction` transmit or receive | `device_network_io_bytes_total` | every port: the agent's TLS traffic |
 | `device.tls.handshakes` (counter) | `device_tls_handshakes_total` | every port |
@@ -56,9 +56,11 @@ Counters start at boot (or, for an app's, when the app first adds to it). A devi
 
 ## Memory
 
+The export reserves one point per active app series, plus 15 slots for device and exporter metrics. On ESP32-C6 the point array takes 2,160 B with no app series and 4,464 B with all 16. A series first published while the snapshot is being collected can appear in the next export.
+
 The export opens a TLS connection of its own beside the agent's, for a few seconds, and closes it. It is made only when all of these hold:
 
-- the heap's largest free block is at least 24 KB, where the port can tell (not on Zephyr);
+- the heap's largest free block is at least 24 KB, on ESP-IDF and on Zephyr builds using the agent’s C heap;
 - the free heap is at least 20 KB above what the device keeps for the agent (40 KB by default, [APPS.md](APPS.md#size-and-limits)): 60 KB by default;
 - nothing else is under way: no download or pull, no status due, no firmware being verified, no spec being applied, no handshake with an app's MQTT broker, no decommissioning.
 
@@ -66,7 +68,8 @@ Otherwise the export is skipped, counted in `device.metrics.skipped` (a skip for
 
 ## Limits
 
-- 8 metrics per app, 32 for all the apps together; an app's metrics go when the app is removed or updated.
+- The first metric an app publishes allocates room for its eight metrics. An installed app that publishes none uses no heap for metrics. A board-map restart preserves the app’s counters. Removal, replacement and parking for primary-app memory release its series.
+- The exported name includes the full app name (up to 47 bytes) and metric name (up to 32 bytes). Two publishing apps can export up to 16 metrics per interval.
 - A gauge or a counter, as a number (a double); no histograms.
 - The device's own metrics are fixed by the firmware.
-- Checked against Flight Control 1.4.0 with the simulated device, on the classic ESP32, C3, C5, C6 and S3 (ESP-IDF) and on the ESP32-S3 with Zephyr: the certificate approved by the server at once, the device's metrics in the gateway's Prometheus exporter with its `device_id`, and the `trend` app's (`app_trend_temp_c`) from the C6. The unit tests check the request byte for byte against what OpenTelemetry's own protobuf classes write, and an app's `fc_metric`. The heap during the exports, per board, is in [RESULTS.md](RESULTS.md#ram): where an app and MQTT leave little heap, an export can fail for want of memory or be skipped. On Zephyr only the free-heap condition applies; not yet checked on the board. Not tried with the device key in hardware (the ECDSA or Digital Signature peripheral), which must sign the gateway's certificate request too.
+- Checked against Flight Control 1.4.0 with the simulated device, on the classic ESP32, C3, C5, C6 and S3 (ESP-IDF) and on the ESP32-S3 with Zephyr: the certificate approved by the server at once, the device's metrics in the gateway's Prometheus exporter with its `device_id`, and the `trend` app's (`app_trend_temp_c`) from the C6. The unit tests check the request byte for byte against what OpenTelemetry's own protobuf classes write, and an app's `fc_metric`. The heap during the exports, per board, is in [RESULTS.md](RESULTS.md#ram): where an app and MQTT leave little heap, an export can fail for want of memory or be skipped. Zephyr builds with the agent’s C heap report free bytes and the largest contiguous block separately. The ESP32-S3 N8R8 software-crypto build can export while MQTT is connected using TLS receive records in PSRAM and 32 POSIX mutexes. Not tried with the device key in hardware (the ECDSA or Digital Signature peripheral), which must sign the gateway's certificate request too.

@@ -155,6 +155,18 @@ static int count_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_
 #define TLS_HEAP_CALLOC(n, size) calloc((n), (size))
 #endif
 
+#ifndef FC_TLS_POOL_PORT_STORAGE
+static void *fc_tls_pool_storage_alloc(void)
+{
+    return TLS_HEAP_CALLOC(1, FC_TLS_POOL_SLOT_SIZE);
+}
+
+static void fc_tls_pool_storage_free(void *ptr)
+{
+    free(ptr);
+}
+#endif
+
 static pthread_mutex_t s_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned char *s_slot[FC_TLS_POOL_MAX]; /* each its own block; the extra one may be NULL */
 static int s_pool_used[FC_TLS_POOL_MAX];
@@ -166,7 +178,7 @@ int fc_tls_pool_init(void)
     int rc = 0;
     pthread_mutex_lock(&s_pool_lock);
     for (int i = 0; i < FC_TLS_POOL_SLOTS; i++) {
-        if (s_slot[i] == NULL && (s_slot[i] = TLS_HEAP_CALLOC(1, FC_TLS_POOL_SLOT_SIZE)) == NULL) {
+        if (s_slot[i] == NULL && (s_slot[i] = fc_tls_pool_storage_alloc()) == NULL) {
             rc = -1;
         }
     }
@@ -191,15 +203,9 @@ int fc_tls_pool_init(void)
     return rc;
 }
 
-void *fc_tls_pool_take(size_t n, size_t size)
+/* Caller checked the size against the slot. */
+static void *tls_pool_take_bytes(size_t total)
 {
-    if (size != 0 && n > SIZE_MAX / size) {
-        return NULL;
-    }
-    size_t total = n * size;
-    if (total < FC_TLS_POOL_MIN || total > FC_TLS_POOL_SLOT_SIZE) {
-        return NULL;
-    }
     unsigned char *p = NULL;
     int any = 0, first = 0, short_first = 0;
     pthread_mutex_lock(&s_pool_lock);
@@ -233,6 +239,15 @@ void *fc_tls_pool_take(size_t n, size_t size)
     return p;
 }
 
+void *fc_tls_pool_take(size_t n, size_t size)
+{
+    if (size != 0 && n > SIZE_MAX / size) {
+        return NULL;
+    }
+    size_t total = n * size;
+    return total >= FC_TLS_POOL_MIN && total <= FC_TLS_POOL_SLOT_SIZE ? tls_pool_take_bytes(total) : NULL;
+}
+
 int fc_tls_pool_give(void *p)
 {
     int mine = 0;
@@ -254,7 +269,7 @@ int fc_tls_pool_give(void *p)
         }
     }
     pthread_mutex_unlock(&s_pool_lock);
-    free(drop);
+    fc_tls_pool_storage_free(drop);
     return mine;
 }
 
@@ -266,7 +281,7 @@ int fc_tls_pool_extra(int on)
     pthread_mutex_lock(&s_pool_lock);
     if (on) {
         s_pool_release = 0;
-        if (s_slot[i] == NULL && (s_slot[i] = TLS_HEAP_CALLOC(1, FC_TLS_POOL_SLOT_SIZE)) == NULL) {
+        if (s_slot[i] == NULL && (s_slot[i] = fc_tls_pool_storage_alloc()) == NULL) {
             rc = -1;
         }
     } else if (s_slot[i] != NULL) {
@@ -278,7 +293,7 @@ int fc_tls_pool_extra(int on)
         }
     }
     pthread_mutex_unlock(&s_pool_lock);
-    free(drop);
+    fc_tls_pool_storage_free(drop);
     if (rc != 0) {
         fc_port_log(FC_LOG_WARN, "no room for a second TLS buffer (%d KB): it will come from the heap",
                     FC_TLS_POOL_SLOT_SIZE / 1024);
@@ -286,10 +301,23 @@ int fc_tls_pool_extra(int on)
     return rc;
 }
 
+static unsigned s_tls_alloc_failures;
+
 void *fc_tls_calloc(size_t n, size_t size)
 {
     void *p = fc_tls_pool_take(n, size);
-    return p != NULL ? p : TLS_HEAP_CALLOC(n, size);
+    if (p == NULL) {
+        p = TLS_HEAP_CALLOC(n, size);
+#if defined(FC_IDF_DYNAMIC_TLS_RX)
+        if (p == NULL && n == 1 && size > 0 && size < FC_TLS_POOL_MIN && fc_idf_allocating_tls_rx()) {
+            p = tls_pool_take_bytes(size);
+        }
+#endif
+        if (p == NULL && n && size) {
+            __atomic_fetch_add(&s_tls_alloc_failures, 1, __ATOMIC_RELAXED);
+        }
+    }
+    return p;
 }
 
 void fc_tls_free(void *p)
@@ -833,11 +861,12 @@ typedef struct stream {
     long content_length;
     char *www_authenticate;
     uint8_t *hblock;     /* header block being assembled */
-    size_t hlen;
+    uint16_t hlen, hcap; /* MAX_HEADER_BLOCK bounds both */
     /* The body: kept (buffered request) or handed on (streamed GET). */
     fc_http_data_cb on_data;
     void *ctx;
     int aborted;         /* on_data asked to stop */
+    int discard_200_body;
     char *body;
     size_t body_len, body_cap;
     long long got;       /* body bytes */
@@ -1260,9 +1289,19 @@ static int conn_tls_open(conn_t *c, const fc_http_target_t *t)
     struct timeval tv = {.tv_sec = SEND_TIMEOUT_S};
     setsockopt(c->net.fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     mbedtls_ssl_set_bio(&c->ssl, &c->net, count_send, NULL, count_recv_timeout);
+    unsigned failures = __atomic_load_n(&s_tls_alloc_failures, __ATOMIC_RELAXED);
     while ((rc = mbedtls_ssl_handshake(&c->ssl)) != 0) {
         if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) {
-            log_mbedtls("handshake", rc);
+            if (failures != __atomic_load_n(&s_tls_alloc_failures, __ATOMIC_RELAXED)) {
+                fc_port_log(FC_LOG_WARN, "TLS allocation failed during handshake (TLS error -0x%04x)", (unsigned)-rc);
+            } else {
+                log_mbedtls("handshake", rc);
+            }
+            long largest = fc_port_heap_largest();
+            if (largest >= 0) {
+                fc_port_log(FC_LOG_WARN, "TLS handshake failed (free %ld B, largest %ld B)", fc_port_heap_free_now(),
+                            largest);
+            }
             /* All bits set: the handshake failed before the certificate
              * was verified, so there is nothing to tell. */
             uint32_t flags = mbedtls_ssl_get_verify_result(&c->ssl);
@@ -1510,10 +1549,10 @@ static int on_data(conn_t *c, uint32_t sid, uint8_t flags, size_t len)
                 s->aborted = 1;
                 failed = 1;
             }
-        } else if (s->body_len + k > FC_HTTP_MAX_RESPONSE) {
+        } else if (s->got > FC_HTTP_MAX_RESPONSE) {
             fc_port_log(FC_LOG_WARN, "response too large");
             failed = 1;
-        } else {
+        } else if (!s->discard_200_body || s->status != 200) {
             if (s->body_len + k + 1 > s->body_cap) {
                 size_t cap = s->body_cap ? s->body_cap : 1024;
                 while (cap < s->body_len + k + 1) {
@@ -1553,6 +1592,36 @@ static int on_data(conn_t *c, uint32_t sid, uint8_t flags, size_t len)
         pthread_cond_broadcast(&c->cond);
         pthread_mutex_unlock(&c->lock);
     }
+    return 0;
+}
+
+/* A short response takes exactly its fragment size. Geometric growth keeps
+ * the copying bounded when a peer splits a block over many small frames. */
+static int read_header_fragment(conn_t *c, stream_t *s, size_t len)
+{
+    if (len == 0) {
+        return 0;
+    }
+    size_t need = s->hlen + len;
+    if (need > s->hcap) {
+        size_t cap = 2u * s->hcap;
+        if (cap < need) {
+            cap = need;
+        }
+        if (cap > MAX_HEADER_BLOCK) {
+            cap = MAX_HEADER_BLOCK;
+        }
+        uint8_t *buf = realloc(s->hblock, cap);
+        if (buf == NULL) {
+            return -1;
+        }
+        s->hblock = buf;
+        s->hcap = (uint16_t)cap;
+    }
+    if (read_exact(c, s->hblock + s->hlen, len) != 0) {
+        return -1;
+    }
+    s->hlen = (uint16_t)need;
     return 0;
 }
 
@@ -1641,15 +1710,8 @@ static int on_headers(conn_t *c, uint8_t type, uint32_t sid, uint8_t flags, size
     pthread_mutex_unlock(&c->lock);
 
     int rc = 0;
-    if (s != NULL && s->hlen + left <= MAX_HEADER_BLOCK) {
-        if (s->hblock == NULL) {
-            s->hblock = malloc(MAX_HEADER_BLOCK);
-        }
-        if (s->hblock == NULL || read_exact(c, s->hblock + s->hlen, left) != 0) {
-            rc = -1;
-        } else {
-            s->hlen += left;
-        }
+    if (s != NULL && left <= (size_t)MAX_HEADER_BLOCK - s->hlen) {
+        rc = read_header_fragment(c, s, left);
     } else {
         if (s != NULL) {
             fc_port_log(FC_LOG_WARN, "http2: response headers over %d bytes", MAX_HEADER_BLOCK);
@@ -1674,7 +1736,7 @@ static int on_headers(conn_t *c, uint8_t type, uint32_t sid, uint8_t flags, size
                 rc = on_header_block(c, s, s->hblock, s->hlen, s->end_with_headers);
                 free(s->hblock);
                 s->hblock = NULL;
-                s->hlen = 0;
+                s->hlen = s->hcap = 0;
             }
         } else {
             c->cont_id = sid;
@@ -1733,24 +1795,19 @@ static int on_settings(conn_t *c, uint8_t flags, uint32_t sid, size_t len)
  * began by `deadline`, -1 when the connection is no longer usable. */
 static int read_frame(conn_t *c, long long deadline)
 {
-    for (;;) {
-        pthread_mutex_lock(&c->lock);
-        int dead = c->dead;
-        pthread_mutex_unlock(&c->lock);
-        if (dead) {
-            return -1;
-        }
-        long long left = deadline - now_ms();
-        if (left <= 0) {
-            return 1;
-        }
-        int w = c->tp->wait(c, left < SLICE_MS ? (int)left : SLICE_MS);
-        if (w < 0) {
-            return -1;
-        }
-        if (w > 0) {
-            break;
-        }
+    pthread_mutex_lock(&c->lock);
+    int dead = c->dead;
+    pthread_mutex_unlock(&c->lock);
+    if (dead) {
+        return -1;
+    }
+    long long left = deadline - now_ms();
+    if (left <= 0) {
+        return 1;
+    }
+    int w = c->tp->wait(c, left < SLICE_MS ? (int)left : SLICE_MS);
+    if (w <= 0) {
+        return w < 0 ? -1 : 1;
     }
     uint8_t h[9];
     if (read_exact(c, h, sizeof(h)) != 0) {
@@ -1848,14 +1905,22 @@ static int read_frame(conn_t *c, long long deadline)
  * thread does. Returns 0, or -1 if the connection is lost or nothing came
  * for s by its deadline (the connection is then given up: a server that
  * went silent is a connection that is gone). */
-static int wait_core(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *), long long deadline, int kill)
+static int wait_core(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *), const long long *fixed_deadline,
+                     int (*interrupt_wait)(void))
 {
     while (!done(c, s)) {
         if (c->dead) {
             return -1;
         }
-        if (now_ms() >= deadline) {
-            if (!kill) {
+        if (interrupt_wait && !s->status && interrupt_wait()) {
+            return FC_HTTP_INTERRUPTED;
+        }
+        /* Request timeouts measure silence on this stream. DATA or HEADERS
+         * may have refreshed it while another thread was the reader. */
+        long long deadline = fixed_deadline ? *fixed_deadline : s->deadline;
+        long long left = deadline - now_ms();
+        if (left <= 0) {
+            if (fixed_deadline) {
                 return 1;
             }
             conn_kill_locked(c, "timeout");
@@ -1874,7 +1939,6 @@ static int wait_core(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *), 
             }
             continue;
         }
-        long long left = deadline - now_ms();
         if (left > SLICE_MS) {
             left = SLICE_MS;
         }
@@ -1893,7 +1957,7 @@ static int wait_core(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *), 
 
 static int wait_until(conn_t *c, stream_t *s, int (*done)(conn_t *, stream_t *))
 {
-    return wait_core(c, s, done, s->deadline, 1);
+    return wait_core(c, s, done, NULL, NULL);
 }
 
 static int is_over(conn_t *c, stream_t *s)
@@ -2048,6 +2112,7 @@ static void stream_close(conn_t *c, stream_t *s)
     pthread_mutex_unlock(&c->lock);
     free(s->hblock);
     s->hblock = NULL;
+    s->hlen = s->hcap = 0;
 }
 
 /* One request on c. Returns 0 when a response arrived (s->status), -1 on
@@ -2056,6 +2121,7 @@ static int exchange(conn_t *c, stream_t *s, const fc_http_target_t *t, const cha
                     const char *content_type, const char *body, size_t body_len)
 {
     int has_body = body != NULL && body_len > 0;
+    s->discard_200_body = t->discard_200_body;
     size_t hlen;
     uint8_t *hb = header_block(t, method, path, content_type, body_len, has_body || content_type != NULL, &hlen);
     if (hb == NULL) {
@@ -2074,14 +2140,18 @@ static int exchange(conn_t *c, stream_t *s, const fc_http_target_t *t, const cha
         return -1;
     }
     pthread_mutex_lock(&c->lock);
-    rc = wait_until(c, s, is_over);
+    rc = wait_core(c, s, is_over, NULL, t->interrupt_wait);
     int ok = rc == 0 && s->state == S_DONE;
+    int reset = !ok && s->state == S_OPEN;
     pthread_mutex_unlock(&c->lock);
-    if (!ok && s->state == S_OPEN) {
+    if (reset) {
         /* Given up by this side (timeout): the server must stop too. */
         send_u32(c, F_RST_STREAM, s->id, E_CANCEL);
     }
     stream_close(c, s);
+    if (rc == FC_HTTP_INTERRUPTED) {
+        return rc;
+    }
     return ok ? 0 : -1;
 }
 
@@ -2120,6 +2190,26 @@ void fc_http_session_close(fc_http_session_t *s)
         session_drop_locked(s);
         pthread_mutex_unlock(&s->lock);
     }
+}
+
+int fc_http_session_close_idle(fc_http_session_t *s)
+{
+    if (s == NULL) {
+        return 1;
+    }
+    pthread_mutex_lock(&s->lock);
+    conn_t *c = s->conn;
+    int idle = 1;
+    if (c != NULL) {
+        pthread_mutex_lock(&c->lock);
+        idle = c->refs == 1;
+        pthread_mutex_unlock(&c->lock);
+        if (idle) {
+            session_drop_locked(s);
+        }
+    }
+    pthread_mutex_unlock(&s->lock);
+    return idle;
 }
 
 void fc_http_session_free(fc_http_session_t *s)
@@ -2194,8 +2284,8 @@ static int request(const fc_http_target_t *t, const char *method, const char *pa
         s->timeout_s = t->timeout_s > 0 ? t->timeout_s : 30;
         int rc = exchange(c, s, t, method, path, content_type, body, body_len);
         conn_put(c);
-        if (rc == 0) {
-            return 0;
+        if (rc == 0 || rc == FC_HTTP_INTERRUPTED) {
+            return rc;
         }
         if (!s->retryable || s->aborted || attempt == 1) {
             return -1;
@@ -2219,10 +2309,11 @@ int fc_http_request(const fc_http_target_t *t, const char *method, const char *p
     resp->status = -1;
     stream_t s;
     memset(&s, 0, sizeof(s));
-    if (request(t, method, path, content_type, body, body_len, &s) != 0) {
+    int rc = request(t, method, path, content_type, body, body_len, &s);
+    if (rc != 0) {
         free(s.body);
         free(s.www_authenticate);
-        return -1;
+        return rc;
     }
     resp->status = s.status;
     resp->www_authenticate = s.www_authenticate;
@@ -2348,7 +2439,7 @@ int fc_http_stream_write(fc_http_stream_t *st, const void *data, size_t len, int
     }
     do {
         pthread_mutex_lock(&c->lock);
-        int rc = wait_core(c, s, has_room, deadline, 0);
+        int rc = wait_core(c, s, has_room, &deadline, NULL);
         if (rc != 0 || s->state != S_OPEN || c->retired) {
             pthread_mutex_unlock(&c->lock);
             return -1;
@@ -2386,7 +2477,8 @@ int fc_http_stream_read(fc_http_stream_t *st, void *buf, size_t cap, int timeout
     conn_t *c = st->c;
     stream_t *s = &st->s;
     pthread_mutex_lock(&c->lock);
-    int rc = wait_core(c, s, readable, now_ms() + timeout_ms, 0);
+    long long deadline = now_ms() + timeout_ms;
+    int rc = wait_core(c, s, readable, &deadline, NULL);
     int n = 0;
     if (s->ring_len > 0) {
         size_t k = cap < s->ring_len ? cap : s->ring_len;

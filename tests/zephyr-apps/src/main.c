@@ -183,10 +183,46 @@ static void run(const char *name, const char *image, const char *env, const char
     show_log(from, name);
 }
 
+#ifndef CONFIG_COMMON_LIBC_MALLOC
+/* A nearly full heap, then many chunks with their own headers: previously
+ * the boot low was computed from the two different layouts and wrapped. */
+static void check_heap_low(void)
+{
+    size_t total, now, low;
+    long largest = fc_port_heap_largest();
+    CHECK(largest > 64);
+    if (largest <= 64) {
+        return;
+    }
+    void *large = malloc((size_t)largest - 32);
+    CHECK(large != NULL);
+    fc_heap_stats(&total, &now, &low);
+    size_t previous_low = low;
+    free(large);
+
+    void *pieces[32];
+    fc_heap_watch(1);
+    for (size_t i = 0; i < 32; i++) {
+        pieces[i] = malloc(24);
+        CHECK(pieces[i] != NULL);
+    }
+    fc_heap_stats(&total, &now, &low);
+    CHECK(low <= previous_low && low <= now);
+    long watch = fc_heap_watch(0);
+    CHECK(watch >= 0 && (size_t)watch <= now);
+    for (size_t i = 0; i < 32; i++) {
+        free(pieces[i]);
+    }
+}
+#endif
+
 int main(void)
 {
     static fc_hw_t hw;
     CHECK(fc_port_zephyr_init() == 0);
+#ifndef CONFIG_COMMON_LIBC_MALLOC
+    check_heap_low();
+#endif
     fc_hw_zephyr_fill(&hw);
     hw.sensor_read = fake_sensor;
     hw.led_open = fake_led_open;

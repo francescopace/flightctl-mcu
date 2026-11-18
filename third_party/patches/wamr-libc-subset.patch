@@ -1,0 +1,82 @@
+flightctl-mcu: retain only the wrappers used by libc_init in fc_apps.c.
+
+--- a/core/iwasm/libraries/libc-builtin/libc_builtin_wrapper.c
++++ b/core/iwasm/libraries/libc-builtin/libc_builtin_wrapper.c
+@@ -388,6 +388,9 @@
+ }
+ #endif
+
++/* The firmware's export table selects a subset of these upstream wrappers. */
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wunused-function"
+ static int
+ printf_wrapper(wasm_exec_env_t exec_env, const char *format, _va_list va_args)
+ {
+@@ -991,6 +994,8 @@
+
+     return os_time_get_boot_us() * 1000;
+ }
++
++#pragma GCC diagnostic pop
+
+ #if WASM_ENABLE_SPEC_TEST != 0
+ static void
+@@ -1043,14 +1043,8 @@
+
+ /* flightctl-mcu: const, in flash; not registered by WAMR (wasm_native.c). */
+ static const NativeSymbol native_symbols_libc_builtin[] = {
+-    REG_NATIVE_FUNC(printf, "($*)i"),
+     REG_NATIVE_FUNC(sprintf, "($$*)i"),
+     REG_NATIVE_FUNC(snprintf, "(*~$*)i"),
+-    { "vprintf", printf_wrapper, "($*)i", NULL },
+-    { "vsprintf", sprintf_wrapper, "($$*)i", NULL },
+-    { "vsnprintf", snprintf_wrapper, "(*~$*)i", NULL },
+-    REG_NATIVE_FUNC(puts, "($)i"),
+-    REG_NATIVE_FUNC(putchar, "(i)i"),
+     REG_NATIVE_FUNC(memcmp, "(**~)i"),
+     REG_NATIVE_FUNC(memcpy, "(**~)i"),
+     REG_NATIVE_FUNC(memmove, "(**~)i"),
+@@ -1059,43 +1053,11 @@
+     REG_NATIVE_FUNC(strcmp, "($$)i"),
+     REG_NATIVE_FUNC(strcpy, "(*$)i"),
+     REG_NATIVE_FUNC(strlen, "($)i"),
+-    REG_NATIVE_FUNC(strncmp, "(**~)i"),
+-    REG_NATIVE_FUNC(strncpy, "(**~)i"),
+-    REG_NATIVE_FUNC(malloc, "(i)i"),
+-    REG_NATIVE_FUNC(realloc, "(ii)i"),
+-    REG_NATIVE_FUNC(calloc, "(ii)i"),
+-    REG_NATIVE_FUNC(strdup, "($)i"),
+-    /* clang may introduce __strdup */
+-    REG_NATIVE_FUNC(_strdup, "($)i"),
+-    REG_NATIVE_FUNC(free, "(*)"),
+-    REG_NATIVE_FUNC(atoi, "($)i"),
+-    REG_NATIVE_FUNC(exit, "(i)"),
+-    REG_NATIVE_FUNC(strtol, "($*i)i"),
+-    REG_NATIVE_FUNC(strtoul, "($*i)i"),
+     REG_NATIVE_FUNC(memchr, "(*ii)i"),
+     REG_NATIVE_FUNC(strncasecmp, "($$i)i"),
+     REG_NATIVE_FUNC(strspn, "($$)i"),
+     REG_NATIVE_FUNC(strcspn, "($$)i"),
+     REG_NATIVE_FUNC(strstr, "($$)i"),
+-    REG_NATIVE_FUNC(isupper, "(i)i"),
+-    REG_NATIVE_FUNC(isalpha, "(i)i"),
+-    REG_NATIVE_FUNC(isspace, "(i)i"),
+-    REG_NATIVE_FUNC(isgraph, "(i)i"),
+-    REG_NATIVE_FUNC(isprint, "(i)i"),
+-    REG_NATIVE_FUNC(isdigit, "(i)i"),
+-    REG_NATIVE_FUNC(isxdigit, "(i)i"),
+-    REG_NATIVE_FUNC(tolower, "(i)i"),
+-    REG_NATIVE_FUNC(toupper, "(i)i"),
+-    REG_NATIVE_FUNC(isalnum, "(i)i"),
+-    REG_NATIVE_FUNC(emscripten_memcpy_big, "(**~)i"),
+-    REG_NATIVE_FUNC(abort, "(i)"),
+-    REG_NATIVE_FUNC(abortStackOverflow, "(i)"),
+-    REG_NATIVE_FUNC(nullFunc_X, "(i)"),
+-    REG_NATIVE_FUNC(__cxa_allocate_exception, "(i)i"),
+-    REG_NATIVE_FUNC(__cxa_begin_catch, "(*)"),
+-    REG_NATIVE_FUNC(__cxa_throw, "(**i)"),
+-    REG_NATIVE_FUNC(clock_gettime, "(i*)i"),
+-    REG_NATIVE_FUNC(clock, "()I"),
+ };
+
+ #if WASM_ENABLE_SPEC_TEST != 0

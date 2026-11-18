@@ -51,6 +51,12 @@ if [[ ! -d "$DIR/.git" ]]; then
   git clone --depth 1 --branch "$WAMR_TAG" https://github.com/bytecodealliance/wasm-micro-runtime "$DIR"
 fi
 for p in "$HERE"/patches/wamr-*.patch; do
+  # The libc subset changes the context immediately following the const
+  # table declaration. Check the earlier patch's actual edits in that tree.
+  if [[ ${p##*/} == wamr-const-natives.patch ]] &&
+     git -C "$DIR" apply --reverse --check -C0 "$p" 2>/dev/null; then
+    continue
+  fi
   if git -C "$DIR" apply --reverse --check "$p" 2>/dev/null; then
     continue # already applied
   fi

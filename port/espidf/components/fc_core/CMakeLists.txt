@@ -37,6 +37,11 @@ endif()
 # The firmware's security variant, read from an update before it is installed
 # (fc_port_espidf.c): unreferenced, so kept explicitly.
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u fc_fw_desc")
+if(CONFIG_MBEDTLS_DYNAMIC_BUFFER)
+    target_sources(${COMPONENT_LIB} PRIVATE ${ROOT}/port/espidf/fc_tls_record.c)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE FC_IDF_DYNAMIC_TLS_RX=1)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_mbedtls_add_rx_buffer" "-u __wrap_esp_mbedtls_add_rx_buffer")
+endif()
 # WASM apps' linear memories in blocks of their own size (fc_wasm_mem.c).
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=os_mmap" "-u __wrap_os_mmap"
                       "-Wl,--wrap=os_munmap" "-u __wrap_os_munmap" "-Wl,--wrap=os_mremap" "-u __wrap_os_mremap")

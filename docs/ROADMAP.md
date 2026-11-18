@@ -10,26 +10,24 @@ Chips ([support levels](DEVICES.md#support-levels)):
 
 Checks not made yet:
 
-- [ ] The rest of HTTP/2 on the boards ([REGISTRY.md](REGISTRY.md)):
-  - a certificate renewal over it;
-  - the traffic it saves or costs ([RESULTS.md](RESULTS.md#idle-traffic) has HTTP/1.1's only).
+- [ ] Run the CI end-to-end suite on the next published revision with the app, TLS and console changes. Verify the initial OTA slot, the confirmed slot after update and the slot retained after rollback. See [Testing](TESTING.md).
+- [ ] Collect a matching C3 idle window without stale console annotations to compare HTTP/2 traffic with the HTTP/1.1 figures in [RESULTS.md](RESULTS.md#idle-traffic).
 - [ ] z30 or later on the Zephyr ESP32-S3 without PSRAM, flashed over USB: z28 cannot update itself over the air there (368 bytes of C heap at the lowest). Then on it: MQTT beside a metrics export, the idle traffic over HTTP/2, and the watchdog of a stuck agent ([ZEPHYR.md](ZEPHYR.md#on-an-esp32-s3)).
 - [ ] The core's own WiFi provisioning on an ESP-IDF board: it passes in the emulator only ([PROVISIONING.md](PROVISIONING.md)).
-- [ ] `lastFatalError` after a real crash on the ESP32-S3 with Zephyr: the code is on the board but has never run on Xtensa ([RESULTS.md](RESULTS.md#a-crash-in-the-status)).
 
 What an app can do and hold:
 
-- [ ] A large app's memory on the classic ESP32 and the C5, every time: CoreMark runs on all five chips, but the classic ESP32 refuses one swap in three and the C5 leaves the agent too little heap for its status ([RESULTS.md](RESULTS.md#coremark)).
-- [ ] Apps the spec removes, stopped and freed before the device writes the spec's config and downloads its firmware: a C3 holding two apps, 39 KB free, could not download a new firmware (the registry's manifest, `HTTP -1`, every 30 s), the apps being removed only after it.
+- [ ] Reduce transient C5 status failures under CoreMark load. Five PUT attempts failed during the ten-swap recovery test. Identify the remaining allocation or write failures and verify the result with the same workload. [CoreMark measurements](RESULTS.md#coremark).
+- [ ] On a provisioned S3-mini, repeat the cold boot with a growable primary and 400 s of withheld management responses. Compare secondary start and heap with the fixed-size primary.
+- [ ] Repeat the C6's seven-entry board-map test with the original apps to account for the remaining heap difference.
+- [ ] On a provisioned C3, verify the console thread failure reaches the remote client and determine why the earlier board opened a session after the client timed out.
 - [ ] CoreMark slower and less even on the C5 and C6 since v3.12 than with the same `-Os` firmware before it. Not explained yet ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] CoreMark with Zephyr on an ESP32-S3 without PSRAM: it runs only from the N8R8's PSRAM, and the C heap is about 20 KB short ([RESULTS.md](RESULTS.md#coremark)).
-- [ ] The app interface for 1.0 ([APPS.md](APPS.md)):
-  - GPIO interrupts, and I2C, SPI, UART, ADC and PWM with devices wired to them, on a board; on Zephyr also a board that names its hardware in the devicetree, and RS-485;
-  - the 1 s limit of a call in the device's functions, on a board (unit tests only);
-  - the app's stack with the C library, measured on Xtensa.
-- [ ] MQTT for the apps ([APPS.md](APPS.md#mqtt)):
-  - on the C3 with an app using MQTT, the first metrics exports after a restart fail for want of memory, the heap down to 6 to 10 KB ([RESULTS.md](RESULTS.md#ram));
-  - on the boards: the connection kept through a download, and MQTT with Zephyr beside a metrics export on the ESP32-S3, with z29's wait for heap.
+- [ ] Verify GPIO interrupts and I2C, SPI, UART, ADC and PWM with wired devices. On Zephyr, verify devicetree hardware names on a board and implement and verify RS-485 driver-enable control. See [APPS.md](APPS.md).
+
+### Firmware reliability and footprint
+
+- [ ] Measure the peak heap of the variable-sized metrics export on a provisioned C3 with MQTT active after a restart. Capture the largest free block before instantiation, the minimum free heap during each export and any failed or skipped early exports. See [RAM measurements](RESULTS.md#ram).
 
 ## Blocked on Flight Control
 

@@ -67,7 +67,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     json[size - 1] = '\0';
     if (data[0] & 1) {
         snprintf(a.csr_name, sizeof(a.csr_name), "fuzzdevice-0000");
-        handle_csr(&a, json);
+        handle_csr(&a, data[0] & 2 ? CERT_TELEMETRY : CERT_MANAGEMENT, json);
     } else {
         /* A spec may ask for decommissioning: that only marks it (the wipe
          * waits for a status accepted, and there is no server here). */

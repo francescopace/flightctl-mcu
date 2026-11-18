@@ -5,7 +5,7 @@ Flight Control's console reaches the device as it reaches a Linux one: `flightct
 | Command | What it gives |
 |---|---|
 | `help` | the commands |
-| `status` | the device's name, system, memory, storage, and its `customInfo` (heap, firmware, network) |
+| `status` | the device's name, system, memory, storage, and its `customInfo` (heap, firmware, active boot slot where available, network) |
 | `apps` | the WASM apps, their status and the state each reports |
 | `log` | the device's log: the last 50 lines, or `-n N`; `-p err` (or `warning`, `info`) and above; `-f` follows it until Ctrl-C |
 | `reboot` | restarts the device, once the session has ended |
@@ -64,6 +64,8 @@ For this, the console takes the little of a shell's that the tab sends: quotes, 
 Flight Control puts the session in the device's rendered spec (`spec.consoles`), and the device opens a gRPC stream for it, `flightctl.v1.RouterService/Stream`, on the agent's own HTTP/2 connection: the agent endpoint serves gRPC on the same port, so the console costs no TLS connection of its own. The server joins it to the user's side. The bytes on it are Kubernetes' remote command protocol (`v5.channel.k8s.io`): stdin comes in, stdout and the exit status go out.
 
 While a session is listed, the server answers the spec's long-poll at once with the version the device has; the device then only handles the console, and waits 5 s before asking again. It remembers the last 64 sessions it opened (a 32-bit hash of each), across restarts, so a `reboot` is not asked again after the restart and a session still listed is never opened twice, and a session nobody joins within a minute ends (Flight Control 1.4 keeps listing a session whose user left before the device came: [limitation 15](FLIGHTCTL-LIMITATIONS.md#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)); while only such sessions are listed, the device asks for its spec every 15 s instead of 5. Of what the server sends then, only the list of sessions is parsed, not the whole spec.
+
+If the device cannot open the stream, it can retry the same listed session. Once it opens the stream, it remembers the session ID before running the command. If the console thread cannot start, the client receives a diagnostic and a non-zero exit status. The agent joins the finished thread and releases its stack even if nobody opens another session. On an instrumented ESP32-C6 this reclaimed 8,304 B. [RAM measurements](RESULTS.md#ram)
 
 ## Limits
 

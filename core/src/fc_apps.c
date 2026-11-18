@@ -107,9 +107,11 @@ static int s_call_budget = FC_APP_CALL_BUDGET;
 #define KV_APPS         "apps"
 #define APP_CONFIG_DIR  "/etc/fc-app/"
 
-static app_t s_apps[MAX_APPS];
-static pthread_mutex_t s_ev_lock[MAX_APPS];
-static pthread_cond_t s_ev_cond[MAX_APPS];
+/* The slot identities and their event locks outlive callbacks. Descriptors
+ * only exist for installed apps. Mutations hold s_lifecycle (or boot runs
+ * alone); s_lock protects publication and readers on other threads. */
+static app_t *s_apps[FC_MAX_APPS];
+static app_sync_t s_sync[FC_MAX_APPS];
 const fc_hw_t *g_fc_hw;
 static char s_device[96];
 
@@ -128,7 +130,45 @@ static void set_stop(app_t *a, int v)
     __atomic_store_n(&a->stop, v, __ATOMIC_RELEASE);
 }
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
+/* The spec, saved starts and a primary restarting after a trap can all
+ * stop or unload another slot. Never wait for this lock from a runner
+ * being joined by its owner. */
+static pthread_mutex_t s_lifecycle = PTHREAD_MUTEX_INITIALIZER;
+static unsigned s_list_revision; /* detects an intervening apply after early pruning */
 static int s_inited;
+static int s_poll_event;       /* runner to spec thread */
+static int64_t s_poll_retry;   /* monotonic milliseconds, spec thread only */
+static void park_secondary(const char *primary_name, bool keep_metrics);
+static void app_release(app_t *a, bool keep_metrics);
+static int load_saved(app_t *a);
+static int mem_room(const app_t *a);
+static size_t wasm_limit(void);
+static int run_pending(int boot_only);
+static void restore_slots(const char *only);
+static const char *saved_primary_name(void);
+static cJSON *s_restore; /* saved entries waiting for the primary or for descriptor memory */
+
+static app_t *primary_app(void)
+{
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        if (s_apps[i] && s_apps[i]->primary) {
+            return s_apps[i];
+        }
+    }
+    return NULL;
+}
+
+static int admits_secondary(app_t *primary)
+{
+    if (primary == NULL) {
+        return 1;
+    }
+    pthread_mutex_lock(&s_lock);
+    int ready = (primary->live && !primary->can_grow) || strcmp(primary->status, "Completed") == 0;
+    pthread_mutex_unlock(&s_lock);
+    return ready;
+}
+
 
 static void set_status(app_t *a, const char *status, const char *error)
 {
@@ -136,6 +176,9 @@ static void set_status(app_t *a, const char *status, const char *error)
     int changed = strcmp(a->status, status) != 0 || strcmp(a->error, error ? error : "") != 0;
     snprintf(a->status, sizeof(a->status), "%s", status);
     snprintf(a->error, sizeof(a->error), "%s", error ? error : "");
+    if (strcmp(status, "Preparing") == 0) {
+        a->state[0] = '\0'; /* the previous instance no longer supplies customInfo */
+    }
     pthread_mutex_unlock(&s_lock);
     if (changed) {
         fc_agent_notify_status();
@@ -219,38 +262,38 @@ int fc_apps_post_locked(app_t *a, int32_t type, int32_t handle, int32_t value, f
     }
     /* An edge replaces the one still queued for the same GPIO. */
     for (int k = 0; type == EV_GPIO && k < a->ev_count; k++) {
-        app_event_t *e = &a->ev[(a->ev_head + k) % APP_EVENTS];
+        app_event_t *e = &a->io->ev[(a->ev_head + k) % APP_EVENTS];
         if (e->type == EV_GPIO && e->handle == handle) {
             e->value = value;
             return 0;
         }
     }
     if (a->ev_count == APP_EVENTS) {
-        fc_mqtt_msg_free(a->ev[a->ev_head].msg); /* back to the shared pool */
+        fc_mqtt_msg_free(a->io->ev[a->ev_head].msg); /* back to the shared pool */
         a->ev_head = (a->ev_head + 1) % APP_EVENTS;
         a->ev_count--;
         a->ev_lost++;
     }
-    a->ev[(a->ev_head + a->ev_count) % APP_EVENTS] = (app_event_t){(int8_t)type, (int8_t)handle, value, msg};
+    a->io->ev[(a->ev_head + a->ev_count) % APP_EVENTS] = (app_event_t){(int8_t)type, (int8_t)handle, value, msg};
     a->ev_count++;
-    pthread_cond_signal(a->ev_cond);
+    pthread_cond_signal(&a->sync->cond);
     return 0;
 }
 
 void fc_apps_post(app_t *a, int32_t type, int32_t handle, int32_t value)
 {
-    pthread_mutex_lock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
     fc_apps_post_locked(a, type, handle, value, NULL);
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
 }
 
 void fc_apps_drop_events(app_t *a, int (*keep)(const app_event_t *e, int arg), int arg)
 {
     int kept = 0;
     for (int k = 0; k < a->ev_count; k++) {
-        app_event_t e = a->ev[(a->ev_head + k) % APP_EVENTS];
+        app_event_t e = a->io->ev[(a->ev_head + k) % APP_EVENTS];
         if (keep != NULL && keep(&e, arg)) {
-            a->ev[(a->ev_head + kept) % APP_EVENTS] = e;
+            a->io->ev[(a->ev_head + kept) % APP_EVENTS] = e;
             kept++;
         } else {
             fc_mqtt_msg_free(e.msg);
@@ -267,18 +310,18 @@ void fc_apps_drop_events(app_t *a, int (*keep)(const app_event_t *e, int arg), i
 static int next_event(app_t *a, app_event_t *e)
 {
     int got = 1;
-    pthread_mutex_lock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
     if (a->ev_lost > 0) {
         *e = (app_event_t){EV_OVERFLOW, -1, a->ev_lost, NULL};
         a->ev_lost = 0;
     } else if (a->ev_count > 0) {
-        *e = a->ev[a->ev_head];
+        *e = a->io->ev[a->ev_head];
         a->ev_head = (a->ev_head + 1) % APP_EVENTS;
         a->ev_count--;
     } else {
         got = 0;
     }
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
     return got;
 }
 
@@ -301,18 +344,18 @@ static void wait_event(app_t *a, int64_t until)
         ts.tv_sec++;
         ts.tv_nsec -= 1000000000;
     }
-    pthread_mutex_lock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
     if (a->ev_count == 0 && a->ev_lost == 0 && !stopping(a)) {
-        pthread_cond_timedwait(a->ev_cond, a->ev_lock, &ts);
+        pthread_cond_timedwait(&a->sync->cond, &a->sync->lock, &ts);
     }
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
 }
 
 static void wake(app_t *a)
 {
-    pthread_mutex_lock(a->ev_lock);
-    pthread_cond_broadcast(a->ev_cond);
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
+    pthread_cond_broadcast(&a->sync->cond);
+    pthread_mutex_unlock(&a->sync->lock);
 }
 
 /* ---- apps that crash the device as they start --------------------------------
@@ -618,23 +661,6 @@ static const NativeSymbol s_env_natives[] = { /* const: see s_libc_natives */
  * serial port only); strtol and strtoul take a NULL endptr (WAMR's would
  * write at the app's address 0); abort takes no argument, as C's; strncmp
  * and strncpy, atoi, ctype and the math are the device's own (below). */
-static const char *const s_libc[] = {
-    "memcmp", "memcpy", "memmove", "memset", "memchr", "strchr", "strcmp", "strcpy", "strlen", "strncmp",
-    "strncpy", "strncasecmp", "strrchr", "strspn", "strcspn", "strstr", "sprintf", "snprintf", "printf", "puts",
-    "putchar", "atoi", "strtol", "strtoul", "isalnum", "isalpha", "isdigit", "isgraph", "isprint",
-    "isspace", "isupper", "isxdigit", "tolower", "toupper", "abort", "expf", "logf", "tanhf",
-};
-
-static int libc_function(const char *name)
-{
-    for (size_t i = 0; i < sizeof(s_libc) / sizeof(s_libc[0]); i++) {
-        if (strcmp(name, s_libc[i]) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
 #if WASM_ENABLE_LIBC_BUILTIN
 uint32_t get_libc_builtin_export_apis(NativeSymbol **p_libc_builtin_apis);
 
@@ -645,7 +671,7 @@ static wa_snprintf_t s_wa_snprintf;
 static void out_flush(app_t *a)
 {
     if (a->out_len > 0) {
-        fc_port_log(FC_LOG_INFO, "app %s: %.*s", a->name, a->out_len, a->out);
+        fc_port_log(FC_LOG_INFO, "app %s: %.*s", a->name, a->out_len, a->io->out);
         a->out_len = 0;
     }
 }
@@ -662,8 +688,8 @@ static void out_put(app_t *a, const char *s, size_t n)
             out_flush(a);
             continue;
         }
-        a->out[a->out_len++] = s[i];
-        if (a->out_len == (int)sizeof(a->out)) {
+        a->io->out[a->out_len++] = s[i];
+        if (a->out_len == (int)sizeof(a->io->out)) {
             out_flush(a);
         }
     }
@@ -895,51 +921,66 @@ static float env_tanhf(wasm_exec_env_t env, float x)
     LIBC_TIMED(float, tanhf(x));
 }
 
-/* Every function an app may import from env but clock_ms (s_libc), in
- * strcmp order of the names: const, in flash, as WAMR does not sort a table
- * in order (third_party/patches/wamr-const-natives.patch; test_apps.c checks
- * the order). WAMR registers none of its own. */
+/* Keep the registered symbols in strcmp order so WAMR can use flash.
+ * A build without libc keeps only the names for import diagnostics. */
+#define LIBC_NATIVE(name, sig) {#name, (void *)env_##name, sig, NULL}
 static const NativeSymbol s_libc_natives[] = {
-    {"abort", (void *)env_abort, "()", NULL},
-    {"atoi", (void *)env_atoi, "($)i", NULL},
-    {"expf", (void *)env_expf, "(f)f", NULL},
-    {"isalnum", (void *)env_isalnum, "(i)i", NULL},
-    {"isalpha", (void *)env_isalpha, "(i)i", NULL},
-    {"isdigit", (void *)env_isdigit, "(i)i", NULL},
-    {"isgraph", (void *)env_isgraph, "(i)i", NULL},
-    {"isprint", (void *)env_isprint, "(i)i", NULL},
-    {"isspace", (void *)env_isspace, "(i)i", NULL},
-    {"isupper", (void *)env_isupper, "(i)i", NULL},
-    {"isxdigit", (void *)env_isxdigit, "(i)i", NULL},
-    {"logf", (void *)env_logf, "(f)f", NULL},
-    {"memchr", (void *)env_memchr, "(*ii)i", NULL},
-    {"memcmp", (void *)env_memcmp, "(**~)i", NULL},
-    {"memcpy", (void *)env_memcpy, "(**~)i", NULL},
-    {"memmove", (void *)env_memmove, "(**~)i", NULL},
-    {"memset", (void *)env_memset, "(*ii)i", NULL},
-    {"printf", (void *)env_printf, "($*)i", NULL},
-    {"putchar", (void *)env_putchar, "(i)i", NULL},
-    {"puts", (void *)env_puts, "($)i", NULL},
-    {"snprintf", (void *)env_snprintf, "(*~$*)i", NULL},
-    {"sprintf", (void *)env_sprintf, "($$*)i", NULL},
-    {"strchr", (void *)env_strchr, "($i)i", NULL},
-    {"strcmp", (void *)env_strcmp, "($$)i", NULL},
-    {"strcpy", (void *)env_strcpy, "(*$)i", NULL},
-    {"strcspn", (void *)env_strcspn, "($$)i", NULL},
-    {"strlen", (void *)env_strlen, "($)i", NULL},
-    {"strncasecmp", (void *)env_strncasecmp, "($$i)i", NULL},
-    {"strncmp", (void *)env_strncmp, "($$i)i", NULL},
-    {"strncpy", (void *)env_strncpy, "(*$i)i", NULL},
-    {"strrchr", (void *)env_strrchr, "($i)i", NULL},
-    {"strspn", (void *)env_strspn, "($$)i", NULL},
-    {"strstr", (void *)env_strstr, "($$)i", NULL},
-    {"strtol", (void *)env_strtol, "($ii)i", NULL},
-    {"strtoul", (void *)env_strtoul, "($ii)i", NULL},
-    {"tanhf", (void *)env_tanhf, "(f)f", NULL},
-    {"tolower", (void *)env_tolower, "(i)i", NULL},
-    {"toupper", (void *)env_toupper, "(i)i", NULL},
+#else
+#define LIBC_NATIVE(name, sig) {#name}
+static const struct { const char *symbol; } s_libc_natives[] = {
+#endif
+    LIBC_NATIVE(abort, "()"),
+    LIBC_NATIVE(atoi, "($)i"),
+    LIBC_NATIVE(expf, "(f)f"),
+    LIBC_NATIVE(isalnum, "(i)i"),
+    LIBC_NATIVE(isalpha, "(i)i"),
+    LIBC_NATIVE(isdigit, "(i)i"),
+    LIBC_NATIVE(isgraph, "(i)i"),
+    LIBC_NATIVE(isprint, "(i)i"),
+    LIBC_NATIVE(isspace, "(i)i"),
+    LIBC_NATIVE(isupper, "(i)i"),
+    LIBC_NATIVE(isxdigit, "(i)i"),
+    LIBC_NATIVE(logf, "(f)f"),
+    LIBC_NATIVE(memchr, "(*ii)i"),
+    LIBC_NATIVE(memcmp, "(**~)i"),
+    LIBC_NATIVE(memcpy, "(**~)i"),
+    LIBC_NATIVE(memmove, "(**~)i"),
+    LIBC_NATIVE(memset, "(*ii)i"),
+    LIBC_NATIVE(printf, "($*)i"),
+    LIBC_NATIVE(putchar, "(i)i"),
+    LIBC_NATIVE(puts, "($)i"),
+    LIBC_NATIVE(snprintf, "(*~$*)i"),
+    LIBC_NATIVE(sprintf, "($$*)i"),
+    LIBC_NATIVE(strchr, "($i)i"),
+    LIBC_NATIVE(strcmp, "($$)i"),
+    LIBC_NATIVE(strcpy, "(*$)i"),
+    LIBC_NATIVE(strcspn, "($$)i"),
+    LIBC_NATIVE(strlen, "($)i"),
+    LIBC_NATIVE(strncasecmp, "($$i)i"),
+    LIBC_NATIVE(strncmp, "($$i)i"),
+    LIBC_NATIVE(strncpy, "(*$i)i"),
+    LIBC_NATIVE(strrchr, "($i)i"),
+    LIBC_NATIVE(strspn, "($$)i"),
+    LIBC_NATIVE(strstr, "($$)i"),
+    LIBC_NATIVE(strtol, "($ii)i"),
+    LIBC_NATIVE(strtoul, "($ii)i"),
+    LIBC_NATIVE(tanhf, "(f)f"),
+    LIBC_NATIVE(tolower, "(i)i"),
+    LIBC_NATIVE(toupper, "(i)i"),
 };
+#undef LIBC_NATIVE
 
+static int libc_function(const char *name)
+{
+    for (size_t i = 0; i < sizeof(s_libc_natives) / sizeof(s_libc_natives[0]); i++) {
+        if (strcmp(name, s_libc_natives[i].symbol) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+#if WASM_ENABLE_LIBC_BUILTIN
 /* After wasm_runtime_full_init: WAMR's own functions, which the ones here
  * call, from its table. */
 static void libc_init(void)
@@ -1320,9 +1361,9 @@ long fc_apps_stack_unused(void)
 {
     long low = -1;
     pthread_mutex_lock(&s_lock);
-    for (int i = 0; i < MAX_APPS; i++) {
-        const app_t *a = &s_apps[i];
-        long n = a->used && a->thread_running ? __atomic_load_n(&a->stack_unused, __ATOMIC_RELAXED) : -1;
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        const app_t *a = s_apps[i];
+        long n = a ? __atomic_load_n(&a->stack_unused, __ATOMIC_RELAXED) : -1;
         if (n >= 0 && (low < 0 || n < low)) {
             low = n;
         }
@@ -1337,10 +1378,10 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
     wasm_function_inst_t tick = wasm_runtime_lookup_function(inst, "tick");
     wasm_function_inst_t on_event = wasm_runtime_lookup_function(inst, "on_event");
     a->inst = inst;
-    pthread_mutex_lock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
     fc_apps_drop_events(a, NULL, 0);
     a->accepting = 1;
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
     fc_appapi_load_config(a);
     /* An app that starts with the broker there hears it, as one that was
      * running when it came. */
@@ -1382,7 +1423,7 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
         }
         int64_t until = now + 100;
         for (int i = 0; ok && i < APP_HANDLES; i++) {
-            app_handle_t *h = &a->h[i];
+            app_handle_t *h = &a->io->h[i];
             if (h->kind != H_TIMER || h->fired) {
                 continue;
             }
@@ -1427,10 +1468,10 @@ static void run_fc(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env)
             wait_event(a, until);
         }
     }
-    pthread_mutex_lock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
     a->accepting = 0;
     fc_apps_drop_events(a, NULL, 0);
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
     fc_appapi_close_all(a);
     a->inst = NULL;
 }
@@ -1507,6 +1548,7 @@ static int run_entry(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env, con
     fc_port_log(FC_LOG_INFO, "app %s running %s() (%s)", a->name, name, a->image);
     uint32_t argv[2] = {0, 0};
     a->call_start_ms = fc_apps_now_ms();
+    fc_port_background_compute();
     a->unlimited = 1; /* the device's functions too (fc_apps_native_time) */
     int ok = arm_call(a, env, -1) && wasm_runtime_call_wasm(env, f, 0, argv);
     if (!ok) {
@@ -1544,10 +1586,15 @@ static void instantiation_hook(wasm_exec_env_t env, bool begin)
 {
     wasm_module_t m = wasm_runtime_get_module(wasm_runtime_get_module_inst(env));
     app_t *a = NULL;
-    for (int i = 0; i < MAX_APPS && a == NULL; i++) {
-        a = s_apps[i].used && s_apps[i].module == m ? &s_apps[i] : NULL; /* each app has its own module */
+    pthread_mutex_lock(&s_lock);
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        if (s_apps[i] && s_apps[i]->module == m && pthread_equal(pthread_self(), s_apps[i]->thread)) {
+            a = s_apps[i]; /* Our runner is joined before its slot is freed. */
+            break;
+        }
     }
-    if (a == NULL || !pthread_equal(pthread_self(), a->thread)) {
+    pthread_mutex_unlock(&s_lock);
+    if (a == NULL) {
         return;
     }
     if (begin) {
@@ -1622,12 +1669,16 @@ static void *runner(void *arg)
          * opened again, a 64 KB memory no longer fitted on an ESP32-C5. */
         int short_of_heap;
         wasm_module_inst_t inst = instantiate(a, ebuf, sizeof(ebuf), &short_of_heap);
-        __atomic_store_n(&a->made, 1, __ATOMIC_RELEASE);
         if (inst == NULL && (short_of_heap || strstr(ebuf, "allocate") != NULL)) {
+            if (a->primary && a->start_why && strcmp(a->start_why, "memory") == 0) {
+                fc_port_log(FC_LOG_INFO, "app %s: memory retry before the agent settles: %s (%ld B free, largest %ld B)",
+                            a->name, ebuf, fc_port_heap_free(), fc_port_heap_largest());
+            }
             /* Made while the spec is applied, whose memory (the parsed
              * spec, the status after it) may be in the way: once more when
              * the agent is done. On an ESP32-C5 a restart for new env vars
              * found 58 KB in one piece, and 76 KB five seconds later. */
+            __atomic_store_n(&a->made, 1, __ATOMIC_RELEASE);
             wait_quiet(a);
             if (!stopping(a)) {
                 inst = instantiate(a, ebuf, sizeof(ebuf), &short_of_heap);
@@ -1637,9 +1688,21 @@ static void *runner(void *arg)
             heap_note_begin(a);
         }
         wasm_exec_env_t env = inst ? wasm_runtime_create_exec_env(inst, WASM_STACK) : NULL;
+        const char *entry = env ? entry_of(a, inst) : NULL;
         pthread_mutex_lock(&s_lock);
-        a->live = inst != NULL;
+        a->live = env != NULL;
+        a->one_shot = entry != NULL;
+        if (a->live) {
+            a->relocated = false;
+            a->retried_idle = false;
+        }
+        wasm_memory_inst_t memory = inst && a->primary ? wasm_runtime_get_default_memory(inst) : NULL;
+        a->can_grow = memory && wasm_memory_get_cur_page_count(memory) < wasm_memory_get_max_page_count(memory);
+        if (a->primary && a->live && !a->can_grow) {
+            __atomic_store_n(&s_poll_event, 1, __ATOMIC_RELEASE);
+        }
         pthread_mutex_unlock(&s_lock);
+        __atomic_store_n(&a->made, 1, __ATOMIC_RELEASE);
         if (inst == NULL || env == NULL) {
             const char *why = inst == NULL ? ebuf : "exec env: out of memory";
             /* Out of memory: how much would fit, to compare with what the
@@ -1691,7 +1754,6 @@ static void *runner(void *arg)
                 pthread_mutex_unlock(&s_lock);
                 goto done;
             }
-            const char *entry = entry_of(a, inst);
             if (entry != NULL) {
                 /* Run once: when the agent is quiet (wait_quiet). */
                 wait_quiet(a);
@@ -1735,12 +1797,25 @@ static void *runner(void *arg)
                 pthread_mutex_lock(&s_lock);
                 a->restarts++;
                 pthread_mutex_unlock(&s_lock);
+                if (a->primary) {
+                    while (!stopping(a)) {
+                        if (pthread_mutex_trylock(&s_lifecycle) == 0) {
+                            if (!stopping(a)) {
+                                park_secondary(a->name, false);
+                            }
+                            pthread_mutex_unlock(&s_lifecycle);
+                            break;
+                        }
+                        usleep(20 * 1000);
+                    }
+                }
             }
         }
     }
 done:
     wasm_runtime_destroy_thread_env();
     __atomic_store_n(&a->runner_done, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_poll_event, 1, __ATOMIC_RELEASE);
     return NULL;
 }
 
@@ -1764,10 +1839,53 @@ static void *hold_but_stack(void)
     return hold;
 }
 
+/* Small, long-lived allocations should leave the largest block for WASM. */
+static void *alloc_app_state(size_t size)
+{
+    void *hold = fc_heap_hold(0);
+    void *p = calloc(1, size);
+    if (hold != NULL) {
+        fc_heap_unhold(hold);
+        if (p == NULL) {
+            p = calloc(1, size);
+        }
+    }
+    return p;
+}
+
+/* The runner and hardware callbacks have ended. MQTT can still deliver an
+ * old subscription ID, so detach the buffers under the slot's event lock. */
+static void release_io(app_t *a)
+{
+    pthread_mutex_lock(&a->sync->lock);
+    app_io_t *io = a->io;
+    a->io = NULL;
+    pthread_mutex_unlock(&a->sync->lock);
+    free(io);
+}
+
 static void app_start(app_t *a, const char *why)
 {
     if (a->module == NULL) {
         return; /* the status already says why */
+    }
+    if (!a->relocated) {
+        a->retried_idle = false;
+    }
+    if (a->io == NULL) {
+        app_io_t *io = alloc_app_state(sizeof(*io));
+        if (!io) {
+            a->mem_wait = 1;
+            a->mem_cost = sizeof(*io);
+            a->mem_block = 0;
+            a->mem_next_ms = fc_apps_now_ms() + MEM_RETRY_MS;
+            a->start_pending = NULL;
+            set_status(a, "Preparing", "waiting for app handles and event queue memory");
+            return;
+        }
+        pthread_mutex_lock(&a->sync->lock);
+        a->io = io;
+        pthread_mutex_unlock(&a->sync->lock);
     }
     set_stop(a, 0);
     a->start_why = why;
@@ -1805,8 +1923,23 @@ static void app_start(app_t *a, const char *why)
     }
     if (!a->thread_running) {
         pthread_attr_destroy(&a->thread_attr);
+        release_io(a);
+        a->mem_wait = sized;
+        a->mem_cost = sizeof(*a->io);
+        a->mem_block = THREAD_STACK;
+        a->mem_next_ms = fc_apps_now_ms() + MEM_RETRY_MS;
+        fc_port_log(FC_LOG_WARN, "app %s: cannot start thread (free %ld B, largest %ld B)", a->name,
+                    fc_port_heap_free_now(), fc_port_heap_largest());
         set_status(a, "Error", "cannot start thread");
     }
+}
+
+static void join_runner(app_t *a)
+{
+    pthread_join(a->thread, NULL);
+    pthread_attr_destroy(&a->thread_attr);
+    a->thread_running = 0;
+    __atomic_store_n(&a->stack_unused, -1L, __ATOMIC_RELAXED);
 }
 
 static void app_stop(app_t *a)
@@ -1823,11 +1956,11 @@ static void app_stop(app_t *a)
 #endif
         pthread_mutex_unlock(&s_lock);
         wake(a);
-        pthread_join(a->thread, NULL);
-        pthread_attr_destroy(&a->thread_attr);
-        a->thread_running = 0;
+        join_runner(a);
     }
+    release_io(a);
     a->mem_wait = 0; /* after the join: its runner may set it until it ends */
+    a->relocated = false;
     run_low_end(a);
     set_status(a, "Stopped", NULL);
 }
@@ -1848,25 +1981,21 @@ void fc_apps_hold_saved(int on)
     s_hold_saved = on;
 }
 
-int fc_apps_saved_due(void)
+int fc_apps_saved_delay_s(void)
 {
     if (!s_hold_saved) {
-        return 0;
+        return -1;
     }
-    return __atomic_load_n(&s_status_oks, __ATOMIC_RELAXED) > 0 || fc_apps_now_ms() - s_init_ms >= BOOT_APPS_WAIT_MS;
+    int64_t left = s_init_ms + BOOT_APPS_WAIT_MS - fc_apps_now_ms();
+    return __atomic_load_n(&s_status_oks, __ATOMIC_RELAXED) > 0 || left <= 0 ? 0 : (int)((left + 999) / 1000);
 }
 
 int fc_apps_start_saved(void)
 {
-    int n = 0;
+    pthread_mutex_lock(&s_lifecycle);
     s_hold_saved = 0;
-    for (int i = 0; i < MAX_APPS; i++) {
-        app_t *a = &s_apps[i];
-        if (a->used && a->start_pending == BOOT_WHY) {
-            app_start(a, BOOT_WHY);
-            n++;
-        }
-    }
+    int n = run_pending(1);
+    pthread_mutex_unlock(&s_lifecycle);
     return n;
 }
 
@@ -1911,16 +2040,111 @@ static void start_or_defer(app_t *a, const char *why)
     set_status(a, "Preparing", NULL);
 }
 
-int fc_apps_start_pending(void)
+static void park_app(app_t *a, const char *why, int64_t retry_at, bool keep_metrics)
 {
-    int n = 0;
-    for (int i = 0; i < MAX_APPS; i++) {
-        app_t *a = &s_apps[i];
-        if (a->used && a->start_pending != NULL) {
-            app_start(a, a->start_pending);
-            n++;
+    char detail[sizeof(a->error)] = "";
+    if (retry_at) {
+        /* The start failed and its runner, if any, has been joined. Save
+         * the allocation error before app_stop changes the status. */
+        pthread_mutex_lock(&s_lock);
+        snprintf(detail, sizeof(detail), "%s", a->error);
+        pthread_mutex_unlock(&s_lock);
+    }
+    app_release(a, keep_metrics);
+    guard_forget(a->name, 0);
+    a->parked = true;
+    a->start_pending = why;
+    a->mem_next_ms = retry_at;
+    set_status(a, why ? "Preparing" : "Completed", detail);
+}
+
+/* Board-map restarts preserve the secondary’s counters; a primary update
+ * or memory retry can reclaim them even if it is already parked. */
+static void park_secondary(const char *primary_name, bool keep_metrics)
+{
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        app_t *a = s_apps[i];
+        if (!a || strcmp(a->name, primary_name) == 0) {
+            continue;
+        }
+        if (a->module == NULL) {
+            if (!keep_metrics) {
+                fc_metrics_app_drop(a->name);
+            }
+        } else {
+            pthread_mutex_lock(&s_lock);
+            int completed = strcmp(a->status, "Completed") == 0;
+            pthread_mutex_unlock(&s_lock);
+            park_app(a, completed ? NULL : "after primary", 0, keep_metrics);
         }
     }
+}
+
+static int start_pending_app(app_t *a, int boot_only)
+{
+    const char *why = a->start_pending;
+    if (why == NULL || (boot_only && why != BOOT_WHY) || (s_hold_saved && why == BOOT_WHY)) {
+        return 0;
+    }
+    if (a->module == NULL) {
+        if (a->mem_next_ms > fc_apps_now_ms()) {
+            return 0;
+        }
+        if (a->relocated && !mem_room(a)) {
+            a->mem_next_ms = fc_apps_now_ms() + MEM_RETRY_MS;
+            return 0;
+        }
+        int rc = load_saved(a);
+        if (rc != 0) {
+            if (rc > 0) {
+                a->mem_next_ms = fc_apps_now_ms() + MEM_RETRY_MS;
+            } else {
+                a->start_pending = NULL;
+                a->parked = false;
+            }
+            return 0;
+        }
+    }
+    a->parked = false;
+    app_start(a, why);
+    if (!a->thread_running && a->mem_wait && !a->primary && primary_app() != NULL) {
+        park_app(a, "memory", fc_apps_now_ms() + MEM_RETRY_MS, false);
+        return 0;
+    }
+    return 1;
+}
+
+static int run_pending(int boot_only)
+{
+    int started = 0;
+    const char *name = saved_primary_name();
+    if (name != NULL) {
+        restore_slots(name);
+        if (primary_app() == NULL) {
+            return 0;
+        }
+    }
+    app_t *primary = primary_app();
+    if (primary != NULL) {
+        started += start_pending_app(primary, boot_only);
+        if ((boot_only && s_defer_starts) || !admits_secondary(primary)) {
+            return started;
+        }
+    }
+    restore_slots(NULL);
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        if (s_apps[i] && s_apps[i] != primary) {
+            started += start_pending_app(s_apps[i], boot_only);
+        }
+    }
+    return started;
+}
+
+int fc_apps_start_pending(void)
+{
+    pthread_mutex_lock(&s_lifecycle);
+    int n = run_pending(0);
+    pthread_mutex_unlock(&s_lifecycle);
     return n;
 }
 
@@ -1933,7 +2157,8 @@ static int mem_room(const app_t *a)
     long largest = fc_port_heap_largest(), free_now = fc_port_heap_free();
     long stack = THREAD_STACK + THREAD_SLACK;
     if (a->mem_cost > 0) {
-        return free_now < 0 || free_now >= a->mem_cost + stack + s_heap_floor;
+        return (largest < 0 || largest >= a->mem_block) &&
+               (free_now < 0 || free_now >= a->mem_cost + stack + s_heap_floor);
     }
     long block = a->mem_block > 0 ? a->mem_block : a->mem_largest >= 0 ? a->mem_largest + 4096 : 0;
     if (largest >= 0 && largest < block) {
@@ -1942,25 +2167,97 @@ static int mem_room(const app_t *a)
     return free_now < 0 || free_now >= block + stack + s_heap_floor;
 }
 
-void fc_apps_poll(void)
+/* A refusal gets an idle TLS turn. Unloading the module changes heap
+ * layout. If it still cannot start, measure that new layout once more
+ * without TLS: TLS itself may be occupying the required contiguous block. */
+int fc_apps_primary_retry_due(void)
 {
+    pthread_mutex_lock(&s_lifecycle);
+    app_t *a = primary_app();
+    int due = a && (!a->thread_running || __atomic_load_n(&a->runner_done, __ATOMIC_ACQUIRE)) &&
+              !a->retried_idle && fc_apps_now_ms() >= a->mem_next_ms &&
+              (a->mem_wait || (a->relocated && a->parked && a->start_pending));
+    pthread_mutex_unlock(&s_lifecycle);
+    return due;
+}
+
+int fc_apps_poll_due(void)
+{
+    return __atomic_load_n(&s_poll_event, __ATOMIC_ACQUIRE) ||
+           (s_poll_retry && fc_apps_now_ms() >= s_poll_retry);
+}
+
+/* While waiting for a stale console annotation, check the completion event
+ * more often only when a one-shot can give the heap back to a waiting app. */
+int fc_apps_awaiting_primary_completion(void)
+{
+    pthread_mutex_lock(&s_lifecycle);
+    app_t *primary = primary_app();
+    pthread_mutex_lock(&s_lock);
+    int one_shot = primary && primary->live && primary->one_shot;
+    pthread_mutex_unlock(&s_lock);
+    int waiting = one_shot && s_restore != NULL;
+    for (int i = 0; one_shot && !waiting && i < FC_MAX_APPS; i++) {
+        app_t *a = s_apps[i];
+        waiting = a && a != primary && a->parked && a->start_pending;
+    }
+    pthread_mutex_unlock(&s_lifecycle);
+    return waiting;
+}
+
+int fc_apps_poll(int idle_released)
+{
+    __atomic_exchange_n(&s_poll_event, 0, __ATOMIC_ACQUIRE);
+    s_poll_retry = 0;
+    pthread_mutex_lock(&s_lifecycle);
+    bool restoring = s_restore != NULL;
+    bool primary_completed = false;
+    app_t *primary = primary_app();
     int64_t now = fc_apps_now_ms();
-    for (int i = 0; i < MAX_APPS; i++) {
-        app_t *a = &s_apps[i];
-        if (!a->used || !a->mem_wait || a->module == NULL || now < a->mem_next_ms) {
+    if (idle_released && primary && primary->relocated && primary->parked && !primary->module) {
+        primary->retried_idle = true;
+        fc_port_log(FC_LOG_INFO, "app %s: retrying its saved module (%ld bytes free, largest %ld)",
+                    primary->name, fc_port_heap_free(), fc_port_heap_largest());
+    }
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        app_t *a = s_apps[i];
+        if (!a || (a->thread_running && !__atomic_load_n(&a->runner_done, __ATOMIC_ACQUIRE))) {
             continue;
-        }
-        if (a->thread_running && __atomic_load_n(&a->runner_done, __ATOMIC_ACQUIRE)) {
-            /* Its thread's stack back in the heap before the heap is read. */
-            pthread_join(a->thread, NULL);
-            pthread_attr_destroy(&a->thread_attr);
-            a->thread_running = 0;
         }
         if (a->thread_running) {
+            join_runner(a);
+            release_io(a);
+            if (a == primary && strcmp(a->status, "Completed") == 0) {
+                primary_completed = true;
+            }
+        }
+        if (!a->module || !a->mem_wait || (primary && a != primary && !admits_secondary(primary))) {
             continue;
         }
+        if (primary && a != primary) {
+            park_app(a, "memory", now + MEM_RETRY_MS, false);
+            continue;
+        }
+        if (now < a->mem_next_ms) {
+            continue;
+        }
+        if (a == primary) {
+            a->retried_idle |= idle_released;
+            park_secondary(a->name, false);
+        }
         if (!mem_room(a)) {
-            a->mem_next_ms = now + MEM_RETRY_MS;
+            if (a == primary && idle_released && a->mem_block > 0 && !a->relocated) {
+                /* The loaded module can itself divide the heap. It has no
+                 * running instance. Let its blocks coalesce before loading
+                 * the same committed module once more from flash. */
+                fc_port_log(FC_LOG_INFO, "app %s: unloading its module after memory refusal (%ld bytes free, largest %ld)",
+                            a->name, fc_port_heap_free(), fc_port_heap_largest());
+                park_app(a, "memory", now, true);
+                a->relocated = true;
+                a->retried_idle = false;
+            } else {
+                a->mem_next_ms = now + MEM_RETRY_MS;
+            }
             continue;
         }
         long largest = fc_port_heap_largest();
@@ -1972,41 +2269,72 @@ void fc_apps_poll(void)
         }
         app_start(a, "memory");
     }
+    if (primary_completed) {
+        /* Finishing a one-shot releases its linear memory. A secondary
+         * parked for insufficient heap can recheck on this event once. */
+        for (int i = 0; i < FC_MAX_APPS; i++) {
+            app_t *a = s_apps[i];
+            if (a && a != primary && a->parked && a->start_pending && a->mem_next_ms > now && mem_room(a)) {
+                a->mem_next_ms = now;
+            }
+        }
+    }
+    if ((primary || restoring) && !s_hold_saved) {
+        run_pending(0);
+    }
+    int ready = saved_primary_name() == NULL && admits_secondary(primary_app());
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        app_t *a = s_apps[i];
+        if (a && (a == primary || ready) &&
+            (!a->thread_running || __atomic_load_n(&a->runner_done, __ATOMIC_ACQUIRE)) &&
+            (a->mem_wait || a->start_pending) && a->mem_next_ms > 0 &&
+            (!s_poll_retry || a->mem_next_ms < s_poll_retry)) {
+            s_poll_retry = a->mem_next_ms;
+        }
+    }
+    pthread_mutex_unlock(&s_lifecycle);
+    return ready;
 }
 
 /* Stops the app and unloads its module (after the runner is joined). */
-static void app_release(app_t *a)
+static void app_release(app_t *a, bool keep_metrics)
 {
     app_stop(a);
-    fc_metrics_app_drop(a->name);
-    if (a->module != NULL) {
-        wasm_runtime_unload(a->module);
-        a->module = NULL;
+    if (!keep_metrics) {
+        fc_metrics_app_drop(a->name);
+    }
+    pthread_mutex_lock(&s_lock);
+    wasm_module_t module = a->module;
+    a->module = NULL;
+    pthread_mutex_unlock(&s_lock);
+    if (module != NULL) {
+        wasm_runtime_unload(module);
     }
 }
 
 /* ---- env vars ---------------------------------------------------------------- */
 
-/* envVars.FC_ENTRY, or "". */
-static void entry_from_env(const char *json, char *out, size_t len)
+static const char *env_value(const cJSON *env, const char *key)
 {
-    cJSON *o = cJSON_Parse(json ? json : "{}");
-    const char *e = cJSON_GetStringValue(cJSON_GetObjectItem(o, "FC_ENTRY"));
-    snprintf(out, len, "%s", e ? e : "");
-    cJSON_Delete(o);
+    const char *s = cJSON_GetStringValue(cJSON_GetObjectItem(env, key));
+    return s ? s : "";
+}
+
+static int is_primary(const cJSON *env)
+{
+    return strcmp(env_value(env, "FC_PRIMARY"), "true") == 0;
 }
 
 /* Takes the app's envVars (JSON) and what the device reads in them. */
-static void set_env(app_t *a, const char *json)
+static void set_env(app_t *a, char *json, const cJSON *env)
 {
     free(a->env_json);
-    a->env_json = strdup(json ? json : "{}");
-    a->allow[0] = '\0';
-    cJSON *o = cJSON_Parse(a->env_json);
-    const char *allow = cJSON_GetStringValue(cJSON_GetObjectItem(o, "FC_ALLOW"));
-    snprintf(a->allow, sizeof(a->allow), "%s", allow ? allow : "");
-    cJSON_Delete(o);
-    entry_from_env(a->env_json, a->entry, sizeof(a->entry));
+    a->env_json = json;
+    pthread_mutex_lock(&s_lock); /* mqtt_on_link reads the grants */
+    snprintf(a->allow, sizeof(a->allow), "%s", env_value(env, "FC_ALLOW"));
+    pthread_mutex_unlock(&s_lock);
+    snprintf(a->entry, sizeof(a->entry), "%s", env_value(env, "FC_ENTRY"));
+    a->primary = is_primary(env);
 }
 
 static char *env_of(const cJSON *app)
@@ -2017,78 +2345,383 @@ static char *env_of(const cJSON *app)
 
 /* ---- persistence ----------------------------------------------------------- */
 
-static void wasm_key(const char *name, char *out, size_t len)
+/* Two resident apps share a third flash slot while replacing one module.
+ * Catalogs from earlier firmware have no moduleSlot and use app:<name>. */
+#define FLASH_SLOTS (FC_MAX_APPS + 1)
+
+static int module_slot(const cJSON *entry)
 {
-    snprintf(out, len, "app:%s", name);
+    const cJSON *slot = cJSON_GetObjectItem(entry, "moduleSlot");
+    return cJSON_IsNumber(slot) ? slot->valueint : 0;
 }
 
-static void save_list(void)
+static void wasm_key(const char *name, int slot, char *out, size_t len)
 {
-    cJSON *list = cJSON_CreateArray();
-    for (int i = 0; i < MAX_APPS; i++) {
-        app_t *a = &s_apps[i];
-        if (!a->used) {
-            continue;
-        }
-        cJSON *o = cJSON_CreateObject();
-        cJSON_AddStringToObject(o, "name", a->name);
-        cJSON_AddStringToObject(o, "image", a->image);
-        cJSON_AddStringToObject(o, "digest", a->digest);
-        cJSON_AddNumberToObject(o, "tick_ms", a->tick_ms);
-        /* Apps start before the device reaches the server: what they may
-         * open must be known without the spec. */
-        cJSON_AddStringToObject(o, "env", a->env_json ? a->env_json : "{}");
-        cJSON_AddItemToArray(list, o);
+    if (slot) {
+        snprintf(out, len, "wasm.%d", slot);
+    } else {
+        snprintf(out, len, "app:%s", name);
     }
-    char *s = cJSON_PrintUnformatted(list);
-    cJSON_Delete(list);
-    if (s) {
-        fc_port_kv_set(KV_APPS, s, strlen(s));
+}
+
+static void delete_module(const char *name, int slot)
+{
+    char key[64];
+    wasm_key(name, slot, key, sizeof(key));
+    if (fc_port_kv_del(key) != 0) {
+        fc_port_log(FC_LOG_WARN, "cannot reclaim app module %s", key);
+    }
+}
+
+/* A storage error can arrive after the catalog rename. Leave both modules
+ * intact. Before applying another spec, make the running catalog durable
+ * again. After a reboot the catalog actually on flash is authoritative. */
+static char *s_catalog_rollback;
+
+static int recover_catalog(void)
+{
+    if (!s_catalog_rollback) {
+        return 0;
+    }
+    if (fc_port_kv_set(KV_APPS, s_catalog_rollback, strlen(s_catalog_rollback)) != 0) {
+        return -1;
+    }
+    free(s_catalog_rollback);
+    s_catalog_rollback = NULL;
+    return 0;
+}
+
+static cJSON *read_catalog(char **previous)
+{
+    char *s = NULL;
+    size_t len = 0;
+    int rc = fc_port_kv_get(KV_APPS, &s, &len);
+    if (rc == FC_KV_MISSING) {
+        s = strdup("[]");
+    }
+    cJSON *list = s ? cJSON_Parse(s) : NULL;
+    if (!cJSON_IsArray(list)) {
+        cJSON_Delete(list);
+        list = NULL;
+    }
+    if (list && previous) {
+        *previous = s;
+    } else {
         free(s);
     }
+    return list;
+}
+
+static int write_catalog(const cJSON *list, char **previous)
+{
+    char *s = cJSON_PrintUnformatted(list);
+    if (!s) {
+        return -1;
+    }
+    int rc = fc_port_kv_set(KV_APPS, s, strlen(s));
+    free(s);
+    if (rc != 0) {
+        s_catalog_rollback = *previous;
+        *previous = NULL;
+    }
+    return rc;
+}
+
+static bool flash_slot_used(const cJSON *list, int slot)
+{
+    const cJSON *o;
+    cJSON_ArrayForEach(o, list) {
+        if (module_slot(o) == slot) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int free_flash_slot(const cJSON *list)
+{
+    for (int slot = 1; slot <= FLASH_SLOTS; slot++) {
+        if (!flash_slot_used(list, slot)) {
+            return slot;
+        }
+    }
+    return -1;
+}
+
+/* The old entry and bytes stay selected through every failure before the
+ * catalog commit. Keep the catalog's other entries, including parked apps
+ * that have no descriptor. Called with s_lifecycle held. */
+static int persist_app(const char *name, const char *image, const char *digest, int tick,
+                       const char *env, bool primary, unsigned char *code, size_t len,
+                       uint8_t *slot_out, char *err, size_t err_len)
+{
+    char *previous = NULL;
+    cJSON *list = read_catalog(&previous);
+    cJSON *old = NULL, *o;
+    cJSON_ArrayForEach(o, list) {
+        if (strcmp(env_value(o, "name"), name) == 0) {
+            old = o;
+        } else if (primary) {
+            cJSON *role = cJSON_GetObjectItem(o, "primary");
+            if (cJSON_IsTrue(role)) {
+                cJSON_SetBoolValue(role, 0);
+            }
+        }
+    }
+    int old_slot = old ? module_slot(old) : -1;
+    int slot = code ? free_flash_slot(list) : old_slot;
+    int rc = -1;
+    bool module_write_failed = false;
+    if (!list || slot < 0 || (!old && cJSON_GetArraySize(list) >= FC_MAX_APPS)) {
+        goto done;
+    }
+    cJSON *next = cJSON_CreateObject();
+    if (!next || !cJSON_AddStringToObject(next, "name", name) || !cJSON_AddStringToObject(next, "image", image) ||
+        !cJSON_AddStringToObject(next, "digest", digest) || !cJSON_AddNumberToObject(next, "tick_ms", tick) ||
+        !cJSON_AddBoolToObject(next, "primary", primary) || !cJSON_AddStringToObject(next, "env", env) ||
+        !cJSON_AddNumberToObject(next, "moduleSlot", slot)) {
+        cJSON_Delete(next);
+        goto done;
+    }
+    if (old) {
+        cJSON_ReplaceItemViaPointer(list, old, next);
+    } else {
+        cJSON_AddItemToArray(list, next);
+    }
+    bool staged = code != NULL;
+    if (staged) {
+        char key[64];
+        wasm_key(name, slot, key, sizeof(key));
+        if (fc_port_kv_set(key, code, len) != 0) {
+            module_write_failed = true;
+            goto done;
+        }
+        free(code);
+        code = NULL;
+    }
+    rc = write_catalog(list, &previous);
+    if (rc == 0) {
+        *slot_out = slot;
+        if (staged && old_slot >= 0) {
+            delete_module(name, old_slot);
+        }
+    }
+done:
+    if (module_write_failed) {
+        snprintf(err, err_len, "app %s: cannot store the module (%u bytes)", name, (unsigned)len);
+    } else if (rc != 0) {
+        snprintf(err, err_len, "app %s: cannot store the app catalog", name);
+    }
+    cJSON_Delete(list);
+    free(previous);
+    free(code);
+    return rc;
 }
 
 static app_t *find(const char *name)
 {
-    for (int i = 0; i < MAX_APPS; i++) {
-        if (s_apps[i].used && strcmp(s_apps[i].name, name) == 0) {
-            return &s_apps[i];
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        if (s_apps[i] && strcmp(s_apps[i]->name, name) == 0) {
+            return s_apps[i];
         }
     }
     return NULL;
 }
 
-/* A clean slot; its event lock and condition stay the slot's. */
-static void reset_slot(int i)
+static int free_slot(int reserved)
 {
-    app_t *a = &s_apps[i];
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        if (s_apps[i] == NULL && reserved-- == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Publish only after the caller has filled in the app's identity. */
+static app_t *new_slot(int i)
+{
+    app_t *a = alloc_app_state(sizeof(*a));
+    if (a != NULL) {
+        a->slot = i;
+        a->stack_unused = -1;
+        a->sync = &s_sync[i];
+    }
+    return a;
+}
+
+/* Called after app_release joined its runner and closed every handle. */
+static void drop_slot(app_t *a)
+{
+    pthread_mutex_lock(&s_lock);
+    s_apps[a->slot] = NULL;
+    pthread_mutex_unlock(&s_lock);
     free(a->env_json);
-    memset(a, 0, sizeof(*a));
-    a->slot = i;
-    a->ev_lock = &s_ev_lock[i];
-    a->ev_cond = &s_ev_cond[i];
-}
-
-static app_t *alloc_slot(void)
-{
-    for (int i = 0; i < MAX_APPS; i++) {
-        if (!s_apps[i].used) {
-            reset_slot(i);
-            return &s_apps[i];
-        }
-    }
-    return NULL;
+    free(a);
 }
 
 /* Loads a module and checks it is an app this firmware runs. */
 static wasm_module_t load_app(unsigned char *code, size_t len, const char *entry, char *ebuf, size_t elen)
 {
+    /* Place the module's pieces around the largest block. Leave that
+     * block available for linear memory when loading from flash or OCI. */
+    run_low_end(NULL);
+    void *hold = fc_heap_hold(0);
     wasm_module_t m = load_module(code, len, ebuf, elen);
+    if (hold != NULL) {
+        fc_heap_unhold(hold);
+        if (m == NULL) {
+            m = load_module(code, len, ebuf, elen);
+        }
+    }
     if (m != NULL && check_module(m, entry, ebuf, elen) != 0) {
         wasm_runtime_unload(m);
         m = NULL;
     }
     return m;
+}
+
+static int load_saved(app_t *a)
+{
+    char key[64], ebuf[96] = "cannot read the saved module";
+    char *code = NULL;
+    size_t len = 0;
+    size_t limit = !a->primary && primary_app() ? wasm_limit() : SIZE_MAX;
+    if (limit == 0) {
+        return 1;
+    }
+    wasm_key(a->name, a->module_slot, key, sizeof(key));
+    void *hold = a->relocated ? fc_heap_hold(0) : NULL;
+    int read_rc = fc_port_kv_get(key, &code, &len);
+    if (hold != NULL) {
+        fc_heap_unhold(hold);
+        if (read_rc == -1) {
+            read_rc = fc_port_kv_get(key, &code, &len);
+        }
+    }
+    if (read_rc == 0) {
+        if (len > limit) {
+            free(code);
+            return 1;
+        }
+        guard_begin(a->name, a->image, a->env_json, 1);
+        wasm_module_t module = load_app((unsigned char *)code, len, a->entry, ebuf, sizeof(ebuf));
+        pthread_mutex_lock(&s_lock);
+        a->module = module;
+        pthread_mutex_unlock(&s_lock);
+        guard_loaded();
+        free(code);
+    }
+    if (a->module == NULL) {
+        guard_forget(a->name, 0);
+        if ((a->relocated && read_rc == -1) ||
+            ((limit != SIZE_MAX || a->relocated) && (strstr(ebuf, "allocate") || strstr(ebuf, "out of memory")))) {
+            return 1;
+        }
+        set_status(a, "Error", ebuf);
+        return -1;
+    }
+    return 0;
+}
+
+static void restore_slot(app_t *a, const cJSON *o)
+{
+    const char *name = env_value(o, "name");
+    const char *image = env_value(o, "image");
+    snprintf(a->name, sizeof(a->name), "%s", name);
+    snprintf(a->image, sizeof(a->image), "%s", image);
+    snprintf(a->digest, sizeof(a->digest), "%s", env_value(o, "digest"));
+    a->module_slot = module_slot(o);
+    const cJSON *tick = cJSON_GetObjectItem(o, "tick_ms");
+    a->tick_ms = cJSON_IsNumber(tick) && tick->valueint >= 10 && tick->valueint <= 60000 ? tick->valueint : 100;
+    cJSON *saved_env = cJSON_GetObjectItem(o, "env");
+    char *json = cJSON_IsString(saved_env) ? saved_env->valuestring : strdup("{}");
+    if (cJSON_IsString(saved_env)) {
+        saved_env->valuestring = NULL; /* transfer the catalog string to the slot */
+    }
+    cJSON *env = cJSON_Parse(json);
+    if (env == NULL) {
+        free(json);
+        set_status(a, "Error", "cannot read saved env vars");
+        return;
+    }
+    set_env(a, json, env);
+    const cJSON *role = cJSON_GetObjectItem(o, "primary");
+    if (cJSON_IsBool(role)) {
+        a->primary = cJSON_IsTrue(role);
+    }
+    cJSON_Delete(env);
+    if (guard_is_bad(a->name, a->image, a->env_json)) {
+        /* Kept, so the status says why; the spec does not start it again. */
+        set_status(a, "Error", GUARD_ERROR);
+        return;
+    }
+    a->start_pending = BOOT_WHY;
+    set_status(a, "Preparing", NULL);
+}
+
+/* Keep an entry in the catalog if allocating its descriptor failed. It can
+ * still be removed by a spec, and the next poll can restore it offline. */
+static const cJSON *waiting_slot(const char *name)
+{
+    const cJSON *o;
+    cJSON_ArrayForEach(o, s_restore) {
+        if (strcmp(env_value(o, "name"), name) == 0) {
+            return o;
+        }
+    }
+    return NULL;
+}
+
+static const char *saved_primary_name(void)
+{
+    const cJSON *o;
+    cJSON_ArrayForEach(o, s_restore) {
+        if (cJSON_IsTrue(cJSON_GetObjectItem(o, "primary"))) {
+            return env_value(o, "name");
+        }
+    }
+    return NULL;
+}
+
+static void restore_slots(const char *only)
+{
+    if (!s_restore) {
+        return;
+    }
+    bool single = only != NULL;
+    for (cJSON *o = s_restore->child, *next; o != NULL; o = next) {
+        next = o->next;
+        const char *name = env_value(o, "name");
+        if (only && strcmp(name, only) != 0) {
+            continue;
+        }
+        int i = free_slot(0);
+        app_t *a = NULL;
+        if (*name && strlen(name) < sizeof(s_apps[0]->name) && *env_value(o, "image") && i >= 0 && !find(name)) {
+            a = new_slot(i);
+            if (a == NULL) {
+                break;
+            }
+            restore_slot(a, o);
+        }
+        pthread_mutex_lock(&s_lock);
+        if (a) {
+            s_apps[i] = a;
+        }
+        cJSON_DetachItemViaPointer(s_restore, o);
+        pthread_mutex_unlock(&s_lock);
+        cJSON_Delete(o);
+        if (single) {
+            break;
+        }
+    }
+    pthread_mutex_lock(&s_lock);
+    if (s_restore->child == NULL) {
+        cJSON_Delete(s_restore);
+        s_restore = NULL;
+    }
+    pthread_mutex_unlock(&s_lock);
 }
 
 int fc_apps_init(void)
@@ -2099,21 +2732,22 @@ int fc_apps_init(void)
     s_init_ms = fc_apps_now_ms();
     static int sync_inited;
     if (!sync_inited) {
-        for (int i = 0; i < MAX_APPS; i++) {
-            pthread_mutex_init(&s_ev_lock[i], NULL);
-            pthread_cond_init(&s_ev_cond[i], NULL);
+        for (int i = 0; i < FC_MAX_APPS; i++) {
+            pthread_mutex_init(&s_sync[i].lock, NULL);
+            pthread_cond_init(&s_sync[i].cond, NULL);
         }
         sync_inited = 1;
     }
-    for (int i = 0; i < MAX_APPS; i++) {
-        s_apps[i].slot = i;
-        s_apps[i].ev_lock = &s_ev_lock[i];
-        s_apps[i].ev_cond = &s_ev_cond[i];
+    s_restore = read_catalog(NULL);
+    if (!s_restore) {
+        return -1;
     }
     RuntimeInitArgs init;
     memset(&init, 0, sizeof(init));
     init.mem_alloc_type = Alloc_With_System_Allocator;
     if (!wasm_runtime_full_init(&init)) {
+        cJSON_Delete(s_restore);
+        s_restore = NULL;
         fc_port_log(FC_LOG_ERROR, "WAMR init failed");
         return -1;
     }
@@ -2128,65 +2762,38 @@ int fc_apps_init(void)
                                       sizeof(s_env_natives) / sizeof(s_env_natives[0]));
     libc_init();
     fc_board_load(g_fc_hw);
+    s_list_revision++;
     s_inited = 1;
     guard_boot();
 
-    char *saved = NULL;
-    size_t len = 0;
-    if (fc_port_kv_get(KV_APPS, &saved, &len) != 0) {
-        return 0;
+    /* Reclaim staging bytes left by loss of power on either side of a
+     * catalog commit. Never touch a slot referenced by a saved app. */
+    for (int slot = 1; slot <= FLASH_SLOTS; slot++) {
+        if (!flash_slot_used(s_restore, slot)) {
+            delete_module(NULL, slot);
+        }
     }
-    cJSON *list = cJSON_Parse(saved);
-    free(saved);
-    const cJSON *o;
-    cJSON_ArrayForEach(o, list) {
-        const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(o, "name"));
-        app_t *a = name ? alloc_slot() : NULL;
-        if (a == NULL) {
-            continue;
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, s_restore) {
+        if (module_slot(entry)) {
+            delete_module(env_value(entry, "name"), 0);
         }
-        char key[64];
-        wasm_key(name, key, sizeof(key));
-        char *code = NULL;
-        size_t code_len = 0;
-        if (fc_port_kv_get(key, &code, &code_len) != 0) {
-            continue;
-        }
-        a->used = 1;
-        snprintf(a->name, sizeof(a->name), "%s", name);
-        snprintf(a->image, sizeof(a->image), "%s", cJSON_GetStringValue(cJSON_GetObjectItem(o, "image")));
-        snprintf(a->digest, sizeof(a->digest), "%s", cJSON_GetStringValue(cJSON_GetObjectItem(o, "digest")));
-        a->tick_ms = (int)cJSON_GetNumberValue(cJSON_GetObjectItem(o, "tick_ms"));
-        set_env(a, cJSON_GetStringValue(cJSON_GetObjectItem(o, "env")));
-        if (guard_is_bad(a->name, a->image, a->env_json)) {
-            /* Kept, so the status says why; the spec does not start it again. */
-            free(code);
-            set_status(a, "Error", GUARD_ERROR);
-            continue;
-        }
-        char ebuf[96];
-        guard_begin(a->name, a->image, a->env_json, 1);
-        a->module = load_app((unsigned char *)code, code_len, a->entry, ebuf, sizeof(ebuf));
-        guard_loaded();
-        free(code);
-        if (a->module == NULL) {
-            /* Shown in the status; the next spec downloads the image again. */
-            guard_forget(a->name, 0);
-            fc_port_log(FC_LOG_WARN, "app %s: cannot load the saved module: %s", a->name, ebuf);
-            set_status(a, "Error", ebuf);
-            continue;
-        }
-        if (s_hold_saved) {
-            /* Its memory is taken once the agent is up (fc_apps_start_saved). */
-            fc_port_log(FC_LOG_INFO, "saved app %s (%s): starts once Flight Control is reached", a->name, a->image);
-            a->start_pending = BOOT_WHY;
-            set_status(a, "Preparing", NULL);
-            continue;
-        }
-        fc_port_log(FC_LOG_INFO, "starting saved app %s (%s)", a->name, a->image);
-        app_start(a, BOOT_WHY);
     }
-    cJSON_Delete(list);
+    /* Leave a saved secondary in the catalog until the primary has its
+     * instance. This works regardless of the order at the last shutdown. */
+    restore_slots(saved_primary_name());
+    /* Legacy specs load modules before the network. With a primary, only
+     * its module may occupy the heap before its instance has its memory. */
+    app_t *primary = primary_app();
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        app_t *a = s_apps[i];
+        if (s_hold_saved && a && a->start_pending && (!primary || a == primary) && load_saved(a) != 0) {
+            a->start_pending = NULL;
+        }
+    }
+    if (!s_hold_saved) {
+        fc_apps_start_saved();
+    }
     return 0;
 }
 
@@ -2238,17 +2845,7 @@ static int fetch_module(const char *image, const char *entry, unsigned char **ou
         return -1;
     }
     char ebuf[96];
-    /* What WAMR keeps of the module (functions, the interpreter's code,
-     * many pieces) goes around the largest block (fc_heap_hold.h). */
-    run_low_end(NULL); /* the module's pieces are not the agent's */
-    void *hold = fc_heap_hold(0);
     *module = load_app(*out, *len, entry, ebuf, sizeof(ebuf));
-    if (*module == NULL && hold != NULL) {
-        fc_heap_unhold(hold);
-        hold = NULL;
-        *module = load_app(*out, *len, entry, ebuf, sizeof(ebuf));
-    }
-    fc_heap_unhold(hold);
     if (*module == NULL) {
         snprintf(err, err_len, "%s: not a loadable WASM module: %s", image, ebuf);
         free(*out);
@@ -2258,180 +2855,382 @@ static int fetch_module(const char *image, const char *entry, unsigned char **ou
     return 0;
 }
 
-int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *retry)
+static int spec_contains(const cJSON *applications, const char *name)
+{
+    const cJSON *app;
+    cJSON_ArrayForEach(app, applications) {
+        if (strcmp(env_value(app, "name"), name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void forget_saved(const char *name, int slot)
+{
+    fc_port_log(FC_LOG_INFO, "removing app %s", name);
+    guard_forget(name, 1);
+    char key[64];
+    delete_module(name, slot);
+    fc_appapi_kv_key(name, key, sizeof(key));
+    fc_port_kv_del(key);
+}
+
+static int remove_absent(const cJSON *applications)
+{
+    bool absent = false;
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        absent |= s_apps[i] && !spec_contains(applications, s_apps[i]->name);
+    }
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, s_restore) {
+        absent |= !spec_contains(applications, env_value(entry, "name"));
+    }
+    if (!absent) {
+        return 0;
+    }
+    char *previous = NULL;
+    cJSON *list = read_catalog(&previous);
+    if (!list) {
+        return -1;
+    }
+    for (cJSON *o = list->child, *next; o; o = next) {
+        next = o->next;
+        if (!spec_contains(applications, env_value(o, "name"))) {
+            cJSON_Delete(cJSON_DetachItemViaPointer(list, o));
+        }
+    }
+    int rc = write_catalog(list, &previous);
+    free(previous);
+    cJSON_Delete(list);
+    if (rc != 0) {
+        return -1;
+    }
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        app_t *a = s_apps[i];
+        if (a && !spec_contains(applications, a->name)) {
+            app_release(a, false);
+            forget_saved(a->name, a->module_slot);
+            drop_slot(a);
+        }
+    }
+    for (cJSON *o = s_restore ? s_restore->child : NULL, *next; o; o = next) {
+        next = o->next;
+        const char *name = env_value(o, "name");
+        if (!spec_contains(applications, name)) {
+            forget_saved(name, module_slot(o));
+            pthread_mutex_lock(&s_lock);
+            cJSON_DetachItemViaPointer(s_restore, o);
+            pthread_mutex_unlock(&s_lock);
+            cJSON_Delete(o);
+        }
+    }
+    return 0;
+}
+
+static int apply_app(const cJSON *app, const cJSON *primary, char *err, size_t err_len, int *retry)
+{
+    const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(app, "name"));
+    const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(app, "appType"));
+    const char *image = cJSON_GetStringValue(cJSON_GetObjectItem(app, "image"));
+    if (name == NULL || type == NULL || strcmp(type, "container") != 0 || image == NULL) {
+        snprintf(err, err_len, "app %s: only container apps with a WASM image are supported",
+                 name ? name : "?");
+        return -1;
+    }
+    app_t *a = find(name);
+    int tick = tick_ms_of(app);
+    char *env = env_of(app);
+    if (env == NULL) {
+        snprintf(err, err_len, "app %s: out of memory reading envVars", name);
+        *retry = 1;
+        return -1;
+    }
+    const cJSON *waiting = waiting_slot(name);
+    if (waiting != NULL) {
+        if (primary && app != primary && !admits_secondary(primary_app())) {
+            if (strcmp(image, env_value(waiting, "image")) == 0 &&
+                strcmp(env, env_value(waiting, "env")) == 0) {
+                free(env); /* This exact version is already installed. */
+                return 0;
+            }
+            goto wait_primary;
+        }
+        restore_slots(name);
+        a = find(name);
+        if (a == NULL) {
+            goto no_slot_memory;
+        }
+    }
+    if (guard_is_bad(name, image, env)) {
+        /* Neither downloaded nor loaded again: an error in the status,
+         * not retried until the image, the env vars or the firmware
+         * change. A version that runs, if any, keeps running. */
+        snprintf(err, err_len, "app %s: %s", name, GUARD_ERROR);
+        int slot = free_slot(cJSON_GetArraySize(s_restore));
+        if (a == NULL && slot >= 0 && (a = new_slot(slot)) != NULL) {
+            pthread_mutex_lock(&s_lock);
+            s_apps[a->slot] = a;
+            snprintf(a->name, sizeof(a->name), "%s", name);
+            snprintf(a->image, sizeof(a->image), "%s", image);
+            pthread_mutex_unlock(&s_lock);
+            set_env(a, env, cJSON_GetObjectItem(app, "envVars"));
+            env = NULL;
+        }
+        if (a != NULL && a->module == NULL) {
+            set_status(a, "Error", GUARD_ERROR);
+        }
+        free(env);
+        return -1;
+    }
+    /* Same image: nothing to do, unless its saved module failed to load
+     * at boot, in which case it is downloaded again. */
+    int same_image = a && strcmp(a->image, image) == 0 && (a->module || a->start_pending || a->parked);
+    int same_env = a && a->primary == (app == primary) && strcmp(env, a->env_json ? a->env_json : "{}") == 0;
+    if (app == primary && !(same_image && same_env)) {
+        park_secondary(name, false);
+    }
+    if (same_image) {
+        if (!same_env) {
+            if (persist_app(name, image, a->digest, tick, env, app == primary, NULL, 0,
+                            &a->module_slot, err, err_len) != 0) {
+                free(env);
+                *retry = 1;
+                return -1;
+            }
+            /* What it may open, or how often it ticks: start again. */
+            fc_port_log(FC_LOG_INFO, "app %s: new env vars, restarting it", a->name);
+            app_stop(a);
+            set_env(a, env, cJSON_GetObjectItem(app, "envVars"));
+            env = NULL;
+            a->tick_ms = tick;
+            if (a->module != NULL) {
+                guard_begin(a->name, a->image, a->env_json, 0);
+                start_or_defer(a, "new env vars");
+            } else {
+                a->start_pending = "new env vars";
+                set_status(a, "Preparing", NULL);
+            }
+        }
+        free(env);
+        return 0;
+    }
+    /* Let the primary take its block with the spec freed. The next poll
+     * delivers the secondary image, preserving a stored older version. */
+    if (primary && app != primary && !admits_secondary(primary_app())) {
+        goto wait_primary;
+    }
+    int slot = a ? a->slot : free_slot(cJSON_GetArraySize(s_restore));
+    if (slot < 0) {
+        snprintf(err, err_len, "app %s: too many apps (max %d)", name, FC_MAX_APPS);
+        free(env);
+        return -1;
+    }
+    bool installed = a != NULL;
+    if (!installed && (a = new_slot(slot)) == NULL) {
+        goto no_slot_memory;
+    }
+    /* A version with no instance (it could not start, waits to restart,
+     * waits to run once, or ran to its end) is released before the new
+     * one is loaded: kept, it would split the heap's largest block, where
+     * the new module goes, and a 64 KB linear memory then no longer fit
+     * on a classic ESP32 (it failed at every restart until the app was
+     * removed and given again). One that runs keeps running until the
+     * new one is ready. */
+    if (a->module != NULL) {
+        pthread_mutex_lock(&s_lock);
+        int idle = !a->live;
+        pthread_mutex_unlock(&s_lock);
+        if (idle) {
+            fc_port_log(FC_LOG_INFO, "app %s: not running, released before %s is loaded", name, image);
+            app_release(a, false);
+        }
+    }
+    unsigned char *code = NULL;
+    size_t len = 0;
+    wasm_module_t module = NULL;
+    char digest[72], ferr[160];
+    guard_begin(name, image, env, 1); /* a module that crashes as it loads is this app's */
+    const char *entry = env_value(cJSON_GetObjectItem(app, "envVars"), "FC_ENTRY");
+    int f = fetch_module(image, entry, &code, &len, &module, digest, sizeof(digest), ferr, sizeof(ferr));
+    guard_loaded();
+    if (f != 0) {
+        guard_forget(name, 0);
+        snprintf(err, err_len, "app %s: %s", name, ferr);
+        if (!installed) {
+            free(a);
+        } else if (a->module == NULL) {
+            set_status(a, "Error", ferr); /* nothing runs: say why */
+        }
+        if (f < 0) {
+            *retry = 1;
+        }
+        free(env);
+        return -1; /* the running version, if any, keeps running */
+    }
+    if (persist_app(name, image, digest, tick, env, app == primary, code, len,
+                    &a->module_slot, err, err_len) != 0) {
+        fc_port_log(FC_LOG_WARN, "%s", err);
+        if (!installed) {
+            free(a);
+        } else if (a->module == NULL) {
+            set_status(a, "Error", err);
+        }
+        guard_forget(name, 0);
+        wasm_runtime_unload(module);
+        free(env);
+        *retry = 1;
+        return -1; /* the running version, if any, keeps running */
+    }
+    if (installed) {
+        fc_port_log(FC_LOG_INFO, "updating app %s: %s -> %s", name, a->image, image);
+        app_release(a, false);
+    } else {
+        fc_port_log(FC_LOG_INFO, "installing app %s (%s, %u bytes)", name, image, (unsigned)len);
+    }
+    pthread_mutex_lock(&s_lock);
+    s_apps[a->slot] = a;
+    snprintf(a->name, sizeof(a->name), "%s", name);
+    snprintf(a->image, sizeof(a->image), "%s", image);
+    snprintf(a->digest, sizeof(a->digest), "%s", digest);
+    a->state[0] = '\0';
+    a->restarts = 0;
+    a->module = module;
+    pthread_mutex_unlock(&s_lock);
+    a->parked = false;
+    a->tick_ms = tick;
+    set_env(a, env, cJSON_GetObjectItem(app, "envVars"));
+    start_or_defer(a, "install");
+    return 0;
+
+wait_primary:
+    snprintf(err, err_len, "app %s: waiting for the primary app's memory", name);
+    if (*retry == 0) {
+        *retry = FC_APPS_WAIT_PRIMARY;
+    }
+    free(env);
+    return -1;
+
+no_slot_memory:
+    snprintf(err, err_len, "app %s: out of memory for its slot", name);
+    *retry = 1;
+    free(env);
+    return -1;
+}
+
+/* Validate the names before they decide which saved apps get removed. */
+static int check_list(const cJSON *apps, const cJSON **primary)
+{
+    *primary = NULL;
+    if (apps != NULL && !cJSON_IsArray(apps)) {
+        return -1;
+    }
+    const cJSON *app;
+    cJSON_ArrayForEach(app, apps) {
+        const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(app, "name"));
+        const char *type = env_value(app, "appType");
+        if (name == NULL || !*name || strlen(name) >= sizeof(s_apps[0]->name) || !*type ||
+            (strcmp(type, "container") == 0 && !*env_value(app, "image"))) {
+            return -1;
+        }
+        if (is_primary(cJSON_GetObjectItem(app, "envVars"))) {
+            if (*primary != NULL) {
+                return -1;
+            }
+            *primary = app;
+        }
+        for (const cJSON *other = apps->child; other != app; other = other->next) {
+            if (strcmp(name, env_value(other, "name")) == 0) {
+                return -1;
+            }
+        }
+    }
+    return 0;
+}
+
+int fc_apps_prepare(const cJSON *applications, fc_apps_plan_t *plan)
+{
+    if (check_list(applications, &plan->primary) != 0) {
+        return -1;
+    }
+    pthread_mutex_lock(&s_lifecycle);
+    plan->applications = applications;
+    plan->revision = s_list_revision;
+    int rc = recover_catalog();
+    if (s_inited && rc == 0) {
+        rc = remove_absent(applications);
+    }
+    pthread_mutex_unlock(&s_lifecycle);
+    return rc == 0 ? 0 : FC_APPS_CATALOG_ERROR;
+}
+
+static int apply_list(const cJSON *applications, const fc_apps_plan_t *plan, char *err, size_t err_len, int *retry)
 {
     *retry = 0;
     if (!s_inited) {
         snprintf(err, err_len, "WASM runtime not available");
         return -1;
     }
-    int rc = 0, changed = 0;
-
-    /* Stop apps that are no longer in the spec. */
-    for (int i = 0; i < MAX_APPS; i++) {
-        app_t *a = &s_apps[i];
-        int keep = 0;
-        const cJSON *app;
+    const cJSON *primary, *app;
+    if (plan != NULL) {
+        primary = plan->primary;
+    } else if (check_list(applications, &primary) != 0) {
+        snprintf(err, err_len, "invalid application list");
+        return -1;
+    }
+    pthread_mutex_lock(&s_lifecycle);
+    if (recover_catalog() != 0 ||
+        ((plan == NULL || plan->revision != s_list_revision) && remove_absent(applications) != 0)) {
+        snprintf(err, err_len, "cannot store the app catalog");
+        *retry = 1;
+        pthread_mutex_unlock(&s_lifecycle);
+        return -1;
+    }
+    s_list_revision++;
+    int rc = primary ? apply_app(primary, primary, err, err_len, retry) : 0;
+    if (primary && rc == 0) {
+        /* A handover takes effect even if the other app's new image fails
+         * to download. Its old image and env remain restartable. */
+        const char *name = env_value(primary, "name");
+        for (int i = 0; i < FC_MAX_APPS; i++) {
+            app_t *old = s_apps[i];
+            if (old && old->primary && strcmp(old->name, name) != 0) {
+                old->primary = false; /* joined by park_secondary */
+            }
+        }
+        const cJSON *pending;
+        cJSON_ArrayForEach(pending, s_restore) {
+            cJSON *role = cJSON_GetObjectItem(pending, "primary");
+            if (cJSON_IsTrue(role)) {
+                cJSON_SetBoolValue(role, 0);
+            }
+        }
+    }
+    if (rc == 0) {
         cJSON_ArrayForEach(app, applications) {
-            const char *n = cJSON_GetStringValue(cJSON_GetObjectItem(app, "name"));
-            keep |= a->used && n && strcmp(n, a->name) == 0;
-        }
-        if (a->used && !keep) {
-            fc_port_log(FC_LOG_INFO, "removing app %s", a->name);
-            app_release(a);
-            guard_forget(a->name, 1);
-            char key[64];
-            wasm_key(a->name, key, sizeof(key));
-            fc_port_kv_del(key);
-            fc_appapi_kv_key(a->name, key, sizeof(key));
-            fc_port_kv_del(key);
-            pthread_mutex_lock(&s_lock);
-            a->used = 0;
-            pthread_mutex_unlock(&s_lock);
-            changed = 1;
+            if (app != primary && apply_app(app, primary, err, err_len, retry) != 0) {
+                rc = -1;
+                if (s_catalog_rollback) {
+                    break;
+                }
+            }
         }
     }
-
-    const cJSON *app;
-    cJSON_ArrayForEach(app, applications) {
-        const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(app, "name"));
-        const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(app, "appType"));
-        const char *image = cJSON_GetStringValue(cJSON_GetObjectItem(app, "image"));
-        if (name == NULL || type == NULL || strcmp(type, "container") != 0 || image == NULL) {
-            snprintf(err, err_len, "app %s: only container apps with a WASM image are supported",
-                     name ? name : "?");
-            rc = -1;
-            continue;
-        }
-        app_t *a = find(name);
-        int tick = tick_ms_of(app);
-        char *env = env_of(app);
-        if (guard_is_bad(name, image, env)) {
-            /* Neither downloaded nor loaded again: an error in the status,
-             * not retried until the image, the env vars or the firmware
-             * change. A version that runs, if any, keeps running. */
-            snprintf(err, err_len, "app %s: %s", name, GUARD_ERROR);
-            rc = -1;
-            if (a == NULL && (a = alloc_slot()) != NULL) {
-                pthread_mutex_lock(&s_lock);
-                a->used = 1;
-                snprintf(a->name, sizeof(a->name), "%s", name);
-                snprintf(a->image, sizeof(a->image), "%s", image);
-                pthread_mutex_unlock(&s_lock);
-                set_env(a, env);
-            }
-            if (a != NULL && a->module == NULL) {
-                set_status(a, "Error", GUARD_ERROR);
-            }
-            free(env);
-            continue;
-        }
-        /* Same image: nothing to do, unless its saved module failed to load
-         * at boot, in which case it is downloaded again. */
-        if (a != NULL && strcmp(a->image, image) == 0 && a->module != NULL) {
-            if (env != NULL && strcmp(env, a->env_json ? a->env_json : "{}") != 0) {
-                /* What it may open, or how often it ticks: start again. */
-                fc_port_log(FC_LOG_INFO, "app %s: new env vars, restarting it", a->name);
-                app_stop(a);
-                set_env(a, env);
-                a->tick_ms = tick;
-                guard_begin(a->name, a->image, a->env_json, 0);
-                start_or_defer(a, "new env vars");
-                changed = 1;
-            }
-            free(env);
-            continue;
-        }
-        /* A version with no instance (it could not start, waits to restart,
-         * waits to run once, or ran to its end) is released before the new
-         * one is loaded: kept, it would split the heap's largest block, where
-         * the new module goes, and a 64 KB linear memory then no longer fit
-         * on a classic ESP32 (it failed at every restart until the app was
-         * removed and given again). One that runs keeps running until the
-         * new one is ready. */
-        if (a != NULL && a->module != NULL) {
-            pthread_mutex_lock(&s_lock);
-            int idle = !a->live;
-            pthread_mutex_unlock(&s_lock);
-            if (idle) {
-                fc_port_log(FC_LOG_INFO, "app %s: not running, released before %s is loaded", name, image);
-                app_release(a);
-            }
-        }
-        unsigned char *code = NULL;
-        size_t len = 0;
-        wasm_module_t module = NULL;
-        char digest[72], ferr[160];
-        guard_begin(name, image, env, 1); /* a module that crashes as it loads is this app's */
-        char entry[sizeof(a->entry)];
-        entry_from_env(env, entry, sizeof(entry));
-        int f = fetch_module(image, entry, &code, &len, &module, digest, sizeof(digest), ferr, sizeof(ferr));
-        guard_loaded();
-        if (f != 0) {
-            guard_forget(name, 0);
-            snprintf(err, err_len, "app %s: %s", name, ferr);
-            if (a != NULL && a->module == NULL) {
-                set_status(a, "Error", ferr); /* nothing runs: say why */
-            }
-            *retry |= f < 0;
-            rc = -1;
-            free(env);
-            continue; /* the running version, if any, keeps running */
-        }
-        if (a == NULL && (a = alloc_slot()) == NULL) {
-            snprintf(err, err_len, "app %s: too many apps (max %d)", name, MAX_APPS);
-            guard_forget(name, 0);
-            wasm_runtime_unload(module);
-            free(code);
-            free(env);
-            rc = -1;
-            continue;
-        }
-        /* Stored before the running version is stopped: an app that cannot be
-         * stored would run until the next reboot and then be gone. A failed
-         * write leaves the old module in place on both ports. */
-        char key[64];
-        wasm_key(name, key, sizeof(key));
-        int stored = fc_port_kv_set(key, code, len) == 0;
-        free(code); /* from here on only the loaded module is kept */
-        if (!stored) {
-            snprintf(err, err_len, "app %s: cannot store the module (%u bytes)", name, (unsigned)len);
-            fc_port_log(FC_LOG_WARN, "%s", err);
-            if (a->module == NULL) {
-                set_status(a, "Error", "cannot store the module");
-            }
-            guard_forget(name, 0);
-            wasm_runtime_unload(module);
-            free(env);
-            *retry = 1;
-            rc = -1;
-            continue; /* the running version, if any, keeps running */
-        }
-        if (a->used) {
-            fc_port_log(FC_LOG_INFO, "updating app %s: %s -> %s", name, a->image, image);
-            app_release(a);
-        } else {
-            fc_port_log(FC_LOG_INFO, "installing app %s (%s, %u bytes)", name, image, (unsigned)len);
-        }
-        pthread_mutex_lock(&s_lock);
-        a->used = 1;
-        snprintf(a->name, sizeof(a->name), "%s", name);
-        snprintf(a->image, sizeof(a->image), "%s", image);
-        snprintf(a->digest, sizeof(a->digest), "%s", digest);
-        a->state[0] = '\0';
-        a->restarts = 0;
-        pthread_mutex_unlock(&s_lock);
-        a->module = module;
-        a->tick_ms = tick;
-        set_env(a, env);
-        free(env);
-        start_or_defer(a, "install");
-        changed = 1;
+    if (!s_defer_starts) {
+        run_pending(0);
     }
-    if (changed) {
-        save_list();
-    }
+    pthread_mutex_unlock(&s_lifecycle);
     return rc;
+}
+
+int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *retry)
+{
+    return apply_list(applications, NULL, err, err_len, retry);
+}
+
+int fc_apps_apply_prepared(const fc_apps_plan_t *plan, char *err, size_t err_len, int *retry)
+{
+    return apply_list(plan->applications, plan, err, err_len, retry);
 }
 
 /* ---- config files ------------------------------------------------------------ */
@@ -2450,42 +3249,75 @@ void fc_apps_file_changed(const char *path)
         return;
     }
     if (strcmp(path, FC_BOARD_PATH) == 0) {
+        pthread_mutex_lock(&s_lifecycle);
         /* The map changes only while no app runs. */
-        int restart[MAX_APPS] = {0};
-        for (int i = 0; i < MAX_APPS; i++) {
-            app_t *a = &s_apps[i];
-            if (a->used && a->thread_running) {
-                app_stop(a);
-                restart[i] = 1;
+        int restart[FC_MAX_APPS] = {0};
+        for (int i = 0; i < FC_MAX_APPS; i++) {
+            app_t *a = s_apps[i];
+            if (a && a->thread_running) {
+                pthread_mutex_lock(&s_lock);
+                int completed = strcmp(a->status, "Completed") == 0;
+                pthread_mutex_unlock(&s_lock);
+                if (completed) {
+                    join_runner(a);
+                    release_io(a);
+                } else {
+                    app_stop(a);
+                    restart[i] = 1;
+                }
             }
+        }
+        app_t *primary = primary_app();
+        if (primary && restart[primary->slot]) {
+            park_secondary(primary->name, true);
         }
         fc_board_load(g_fc_hw);
         fc_port_log(FC_LOG_INFO, "new board map%s", restart[0] || restart[1] ? ": restarting the apps" : "");
-        for (int i = 0; i < MAX_APPS; i++) {
+        for (int i = 0; i < FC_MAX_APPS; i++) {
             if (restart[i]) {
-                app_start(&s_apps[i], "new board map");
+                s_apps[i]->start_pending = "new board map";
             }
         }
+        run_pending(0);
+        pthread_mutex_unlock(&s_lifecycle);
         return;
     }
     size_t dl = strlen(APP_CONFIG_DIR), pl = strlen(path);
     if (pl > dl + 5 && strncmp(path, APP_CONFIG_DIR, dl) == 0 && strcmp(path + pl - 5, ".json") == 0) {
-        char name[48];
+        char name[FC_APP_NAME_MAX + 1];
         snprintf(name, sizeof(name), "%.*s", (int)(pl - dl - 5), path + dl);
+        pthread_mutex_lock(&s_lock);
         app_t *a = find(name);
         if (a != NULL) {
             fc_apps_post(a, EV_CONFIG, -1, 0);
         }
+        pthread_mutex_unlock(&s_lock);
     }
+}
+
+static void report_app(cJSON *apps, cJSON *custom, const char *name, const char *status,
+                       int up, int restarts, const char *state)
+{
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "name", name);
+    cJSON_AddStringToObject(o, "appType", "container");
+    cJSON_AddStringToObject(o, "status", status);
+    cJSON_AddStringToObject(o, "ready", up ? "1/1" : "0/1");
+    cJSON_AddNumberToObject(o, "restarts", restarts);
+    cJSON_AddBoolToObject(o, "embedded", 0);
+    cJSON_AddItemToArray(apps, o);
+    char key[64];
+    snprintf(key, sizeof(key), "app.%s", name);
+    cJSON_AddStringToObject(custom, key, state);
 }
 
 void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
 {
     int n = 0, running = 0, errors = 0, completed = 0;
     pthread_mutex_lock(&s_lock);
-    for (int i = 0; i < MAX_APPS; i++) {
-        app_t *a = &s_apps[i];
-        if (!a->used) {
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        app_t *a = s_apps[i];
+        if (!a) {
             continue;
         }
         n++;
@@ -2493,17 +3325,13 @@ void fc_apps_status(cJSON *apps, cJSON *summary, cJSON *custom_info)
         running += up;
         errors += strcmp(a->status, "Error") == 0;
         completed += strcmp(a->status, "Completed") == 0; /* ran to its end: not degraded */
-        cJSON *o = cJSON_CreateObject();
-        cJSON_AddStringToObject(o, "name", a->name);
-        cJSON_AddStringToObject(o, "appType", "container");
-        cJSON_AddStringToObject(o, "status", a->status);
-        cJSON_AddStringToObject(o, "ready", up ? "1/1" : "0/1");
-        cJSON_AddNumberToObject(o, "restarts", a->restarts);
-        cJSON_AddBoolToObject(o, "embedded", 0);
-        cJSON_AddItemToArray(apps, o);
-        char key[64];
-        snprintf(key, sizeof(key), "app.%s", a->name);
-        cJSON_AddStringToObject(custom_info, key, a->error[0] ? a->error : a->state[0] ? a->state : a->status);
+        report_app(apps, custom_info, a->name, a->status, up, a->restarts,
+                   a->error[0] ? a->error : a->state[0] ? a->state : a->status);
+    }
+    const cJSON *o;
+    cJSON_ArrayForEach(o, s_restore) {
+        report_app(apps, custom_info, env_value(o, "name"), "Preparing", 0, 0, "Preparing");
+        n++;
     }
     pthread_mutex_unlock(&s_lock);
     const char *st = n == 0 ? "NoApplications" : errors ? (running ? "Degraded" : "Error")
@@ -2562,19 +3390,38 @@ static void mqtt_connect_end(void)
 /* The link came or went: FC_EV_NET to the apps that may use it. */
 static void mqtt_on_link(int up)
 {
-    for (int i = 0; i < MAX_APPS; i++) {
-        app_t *a = &s_apps[i];
-        if (a->used && fc_appapi_allowed(a, "mqtt")) {
+    pthread_mutex_lock(&s_lock);
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        app_t *a = s_apps[i];
+        if (a && fc_appapi_allowed(a, "mqtt")) {
             fc_apps_post(a, EV_NET, -1, up ? 1 : 0);
         }
     }
+    pthread_mutex_unlock(&s_lock);
+}
+
+/* A delivery may already be in flight when an app unsubscribes. The
+ * owner's slot lock has a permanent address; subscription IDs carry a
+ * generation, so a new occupant cannot receive a previous app's message. */
+static int mqtt_on_message(void *owner, int sub, fc_mqtt_msg_t *m)
+{
+    int rc = -1;
+    pthread_mutex_lock(&s_lock);
+    for (int i = 0; i < FC_MAX_APPS; i++) {
+        if (owner == &s_sync[i] && s_apps[i] != NULL) {
+            rc = fc_appapi_mqtt_message(s_apps[i], sub, m);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&s_lock);
+    return rc;
 }
 
 void fc_apps_mqtt_hooks(int (*agent_idle)(int claim), void (*agent_connected)(void))
 {
     s_agent_idle = agent_idle;
     s_agent_connected = agent_connected;
-    fc_mqtt_hooks_t h = {.on_message = fc_appapi_mqtt_message,
+    fc_mqtt_hooks_t h = {.on_message = mqtt_on_message,
                          .on_link = mqtt_on_link,
                          .may_connect = mqtt_may_connect,
                          .connect_end = mqtt_connect_end};

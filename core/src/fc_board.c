@@ -11,9 +11,7 @@
 #include "cJSON.h"
 #include "fc_port.h"
 
-/* Allocated at the first load, never freed: entries are found by pointer.
- * On the heap, not in static RAM, where the Zephyr build for the ESP32-S3
- * has no room left for its 2.9 KB. */
+/* Entries stay at a stable address until the apps stop for a map change. */
 static fc_board_entry_t *s_map;
 static int s_count;
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -407,16 +405,21 @@ void fc_board_load(const fc_hw_t *hw)
         build(hw, NULL, map, &count, err, sizeof(err));
     }
     free(fleet);
-    pthread_mutex_lock(&s_lock);
-    if (s_map == NULL) {
-        s_map = map; /* the first map: kept as it is */
+    if (count == 0) {
+        free(map);
         map = NULL;
     } else {
-        memcpy(s_map, map, FC_BOARD_MAX * sizeof(*map));
+        fc_board_entry_t *compact = realloc(map, (size_t)count * sizeof(*map));
+        if (compact != NULL) {
+            map = compact;
+        }
     }
+    pthread_mutex_lock(&s_lock);
+    fc_board_entry_t *old = s_map;
+    s_map = map;
     s_count = count;
     pthread_mutex_unlock(&s_lock);
-    free(map);
+    free(old);
 }
 
 fc_board_entry_t *fc_board_find(const char *name, size_t nlen)

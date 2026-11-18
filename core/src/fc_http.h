@@ -20,7 +20,12 @@ typedef struct {
     int timeout_s;        /* no frame for the request for this long: it fails, with its connection */
     fc_http_session_t *session; /* NULL: a connection for this request alone */
     int connect_timeout_s; /* >0: the TCP connect gives up after this long; 0: the system's (a minute or more) */
+    int (*interrupt_wait)(void); /* Optional lock-free check while waiting for response headers. */
+    int discard_200_body; /* fc_http_request drains an HTTP 200 body and returns an empty string. */
 } fc_http_target_t;
+
+/* The caller interrupted its own request. Other streams keep their connection. */
+#define FC_HTTP_INTERRUPTED (-2)
 
 typedef struct {
     int status;   /* HTTP status, or -1 on transport error */
@@ -35,6 +40,8 @@ fc_http_session_t *fc_http_session_new(void);
 /* Lets go of the connection: requests still on it finish, and the last one
  * closes it. The session can still be used. */
 void fc_http_session_close(fc_http_session_t *s);
+/* Release the TLS heap only if no request or console is using it. */
+int fc_http_session_close_idle(fc_http_session_t *s);
 /* Closes it and frees it. */
 void fc_http_session_free(fc_http_session_t *s);
 

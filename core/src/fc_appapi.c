@@ -64,13 +64,13 @@ static int lookup(app_t *a, const char *name, int32_t nlen, int kind, fc_board_e
 static int new_handle(app_t *a, int kind)
 {
     for (int i = 0; i < APP_HANDLES; i++) {
-        if (a->h[i].kind == H_FREE) {
-            uint32_t serial = a->h[i].serial + 1;
-            pthread_mutex_lock(a->ev_lock);
-            memset(&a->h[i], 0, sizeof(a->h[i]));
-            a->h[i].kind = kind;
-            a->h[i].serial = serial;
-            pthread_mutex_unlock(a->ev_lock);
+        if (a->io->h[i].kind == H_FREE) {
+            uint32_t serial = a->io->h[i].serial + 1;
+            pthread_mutex_lock(&a->sync->lock);
+            memset(&a->io->h[i], 0, sizeof(a->io->h[i]));
+            a->io->h[i].kind = kind;
+            a->io->h[i].serial = serial;
+            pthread_mutex_unlock(&a->sync->lock);
             return i;
         }
     }
@@ -79,7 +79,7 @@ static int new_handle(app_t *a, int kind)
 
 static app_handle_t *handle(app_t *a, int32_t h, int kind)
 {
-    return h >= 0 && h < APP_HANDLES && a->h[h].kind == kind ? &a->h[h] : NULL;
+    return h >= 0 && h < APP_HANDLES && a->io->h[h].kind == kind ? &a->io->h[h] : NULL;
 }
 
 /* ---- state, log, info --------------------------------------------------- */
@@ -194,7 +194,7 @@ static int32_t fc_timer_start(wasm_exec_env_t env, int32_t ms, int32_t periodic)
     }
     int n = 0;
     for (int i = 0; i < APP_HANDLES; i++) {
-        n += a->h[i].kind == H_TIMER;
+        n += a->io->h[i].kind == H_TIMER;
     }
     if (n >= APP_TIMERS) {
         return FC_HW_ENOSPC;
@@ -203,9 +203,9 @@ static int32_t fc_timer_start(wasm_exec_env_t env, int32_t ms, int32_t periodic)
     if (h < 0) {
         return h;
     }
-    a->h[h].period_ms = ms;
-    a->h[h].periodic = periodic != 0;
-    a->h[h].due_ms = fc_apps_now_ms() + ms;
+    a->io->h[h].period_ms = ms;
+    a->io->h[h].periodic = periodic != 0;
+    a->io->h[h].due_ms = fc_apps_now_ms() + ms;
     return h;
 }
 
@@ -282,61 +282,47 @@ void fc_appapi_kv_key(const char *app_name, char *out, size_t len)
 
 typedef struct {
     unsigned char *data;
-    size_t len;
+    size_t len, used;
+    size_t at, vlen; /* at == len when the requested key is absent */
 } kv_rec_t;
 
-static void kv_load(const app_t *a, kv_rec_t *r)
+/* Validate the whole record before a writer may replace it. Quota counts
+ * key and value bytes, excluding the entry that set would replace. */
+static int kv_load(const app_t *a, const char *k, size_t klen, kv_rec_t *r)
 {
-    char key[64];
+    char key[64], *data = NULL;
     fc_appapi_kv_key(a->name, key, sizeof(key));
-    char *v = NULL;
-    r->data = NULL;
-    r->len = 0;
-    if (fc_port_kv_get(key, &v, &r->len) == 0) {
-        r->data = (unsigned char *)v;
+    *r = (kv_rec_t){0};
+    int rc = fc_port_kv_get(key, &data, &r->len);
+    if (rc != 0) {
+        return rc == FC_KV_MISSING ? 0 : FC_HW_EIO;
     }
-}
-
-/* Finds key in the record: offset of its entry, or -1. *vlen and *voff give
- * the value; *elen the whole entry. Stops at a malformed record. */
-static long kv_find(const kv_rec_t *r, const char *k, int32_t klen, size_t *voff, size_t *vlen, size_t *elen)
-{
+    r->data = (unsigned char *)data;
+    r->at = r->len;
     size_t off = 0;
-    while (off + 1 <= r->len) {
+    while (off < r->len) {
         size_t kl = r->data[off];
-        if (off + 1 + kl + 2 > r->len) {
+        size_t header = 3 + kl;
+        if (kl == 0 || kl > APP_KV_KEY || header > r->len - off) {
             break;
         }
-        size_t vl = r->data[off + 1 + kl] | (size_t)r->data[off + 2 + kl] << 8;
-        size_t el = 1 + kl + 2 + vl;
-        if (off + el > r->len) {
+        size_t vl = r->data[off + header - 2] | (size_t)r->data[off + header - 1] << 8;
+        if (vl > r->len - off - header) {
             break;
         }
-        if (kl == (size_t)klen && memcmp(r->data + off + 1, k, kl) == 0) {
-            *voff = off + 1 + kl + 2;
-            *vlen = vl;
-            *elen = el;
-            return (long)off;
+        if (kl == klen && memcmp(r->data + off + 1, k, kl) == 0 && r->at == r->len) {
+            r->at = off;
+            r->vlen = vl;
+        } else {
+            r->used += kl + vl;
         }
-        off += el;
+        off += header + vl;
     }
-    return -1;
-}
-
-/* Bytes the app uses: keys and values. */
-static size_t kv_used(const kv_rec_t *r)
-{
-    size_t off = 0, used = 0;
-    while (off + 1 <= r->len) {
-        size_t kl = r->data[off];
-        if (off + 1 + kl + 2 > r->len) {
-            break;
-        }
-        size_t vl = r->data[off + 1 + kl] | (size_t)r->data[off + 2 + kl] << 8;
-        used += kl + vl;
-        off += 1 + kl + 2 + vl;
+    if (off == r->len) {
+        return 0;
     }
-    return used;
+    free(r->data);
+    return FC_HW_EIO;
 }
 
 static int kv_store(const app_t *a, const unsigned char *data, size_t len)
@@ -344,8 +330,7 @@ static int kv_store(const app_t *a, const unsigned char *data, size_t len)
     char key[64];
     fc_appapi_kv_key(a->name, key, sizeof(key));
     if (len == 0) {
-        fc_port_kv_del(key);
-        return 0;
+        return fc_port_kv_del(key) == 0 ? 0 : FC_HW_EIO;
     }
     return fc_port_kv_set(key, data, len) == 0 ? 0 : FC_HW_EIO;
 }
@@ -362,13 +347,14 @@ static int32_t fc_kv_get(wasm_exec_env_t env, const char *k, int32_t klen, void 
         return FC_HW_EINVAL;
     }
     kv_rec_t r;
-    kv_load(a, &r);
-    size_t voff, vlen, elen;
+    if (kv_load(a, k, (size_t)klen, &r) != 0) {
+        return FC_HW_EIO;
+    }
     int32_t rc = FC_HW_ENOENT;
-    if (kv_find(&r, k, klen, &voff, &vlen, &elen) >= 0) {
-        rc = (size_t)cap < vlen ? FC_HW_ENOSPC : (int32_t)vlen;
+    if (r.at != r.len) {
+        rc = cap < 0 || (size_t)cap < r.vlen ? FC_HW_ENOSPC : (int32_t)r.vlen;
         if (rc >= 0) {
-            memcpy(buf, r.data + voff, vlen);
+            memcpy(buf, r.data + r.at + 3 + klen, r.vlen);
         }
     }
     free(r.data);
@@ -378,32 +364,36 @@ static int32_t fc_kv_get(wasm_exec_env_t env, const char *k, int32_t klen, void 
 static int32_t fc_kv_set(wasm_exec_env_t env, const char *k, int32_t klen, const void *v, int32_t len)
 {
     app_t *a = app_of(env);
-    if (!valid_kv_key(klen) || len > APP_KV_QUOTA) {
-        return valid_kv_key(klen) ? FC_HW_ENOSPC : FC_HW_EINVAL;
+    if (!valid_kv_key(klen) || len < 0) {
+        return FC_HW_EINVAL;
+    }
+    if (len > APP_KV_QUOTA) {
+        return FC_HW_ENOSPC;
     }
     kv_rec_t r;
-    kv_load(a, &r);
-    size_t voff, vlen, elen;
-    long at = kv_find(&r, k, klen, &voff, &vlen, &elen);
-    size_t used = kv_used(&r) - (at >= 0 ? (size_t)klen + vlen : 0);
-    if (used + (size_t)klen + (size_t)len > APP_KV_QUOTA) {
+    if (kv_load(a, k, (size_t)klen, &r) != 0) {
+        return FC_HW_EIO;
+    }
+    if (r.used + (size_t)klen + (size_t)len > APP_KV_QUOTA) {
         free(r.data);
         return FC_HW_ENOSPC;
     }
-    size_t keep = r.len - (at >= 0 ? elen : 0);
-    unsigned char *out = malloc(keep + 1 + (size_t)klen + 2 + (size_t)len);
+    size_t header = 3 + (size_t)klen;
+    size_t old = r.at == r.len ? 0 : header + r.vlen;
+    if (old && r.vlen == (size_t)len && memcmp(r.data + r.at + header, v, r.vlen) == 0) {
+        free(r.data);
+        return 0;
+    }
+    size_t n = r.len - old;
+    unsigned char *out = malloc(n + header + (size_t)len);
     if (out == NULL) {
         free(r.data);
         return FC_HW_EIO;
     }
-    size_t n = 0;
-    if (at >= 0) {
-        memcpy(out, r.data, (size_t)at);
-        memcpy(out + at, r.data + at + elen, r.len - (size_t)at - elen);
-    } else if (r.len > 0) {
-        memcpy(out, r.data, r.len);
+    if (r.data != NULL) {
+        memcpy(out, r.data, r.at);
+        memcpy(out + r.at, r.data + r.at + old, n - r.at);
     }
-    n = keep;
     out[n++] = (unsigned char)klen;
     memcpy(out + n, k, (size_t)klen);
     n += (size_t)klen;
@@ -424,12 +414,13 @@ static int32_t fc_kv_del(wasm_exec_env_t env, const char *k, int32_t klen)
         return FC_HW_EINVAL;
     }
     kv_rec_t r;
-    kv_load(a, &r);
-    size_t voff, vlen, elen;
-    long at = kv_find(&r, k, klen, &voff, &vlen, &elen);
+    if (kv_load(a, k, (size_t)klen, &r) != 0) {
+        return FC_HW_EIO;
+    }
     int rc = FC_HW_ENOENT;
-    if (at >= 0) {
-        memmove(r.data + at, r.data + at + elen, r.len - (size_t)at - elen);
+    if (r.at != r.len) {
+        size_t elen = 3 + (size_t)klen + r.vlen;
+        memmove(r.data + r.at, r.data + r.at + elen, r.len - r.at - elen);
         rc = kv_store(a, r.data, r.len - elen);
     }
     free(r.data);
@@ -450,7 +441,7 @@ static int not_of_handle(const app_event_t *e, int i)
 
 static void close_handle(app_t *a, int i)
 {
-    app_handle_t *h = &a->h[i];
+    app_handle_t *h = &a->io->h[i];
     const fc_hw_t *hw = g_fc_hw;
     if (h->kind == H_GPIO) {
         int pin = fc_board_pin(h->res);
@@ -484,25 +475,25 @@ static void close_handle(app_t *a, int i)
         }
         fc_board_release(h->res);
     } else if (h->kind == H_MQTT) {
-        fc_mqtt_unsubscribe(a, h->port); /* no message for it from now on */
+        fc_mqtt_unsubscribe(a->sync, h->port); /* no message for it from now on */
     }
     /* Events of this handle still queued are dropped with it. */
-    pthread_mutex_lock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
     uint32_t serial = h->serial;
     memset(h, 0, sizeof(*h));
     h->serial = serial;
     fc_apps_drop_events(a, not_of_handle, i);
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
 }
 
 void fc_appapi_close_all(app_t *a)
 {
     for (int i = 0; i < APP_HANDLES; i++) {
-        if (a->h[i].kind != H_FREE) {
+        if (a->io->h[i].kind != H_FREE) {
             close_handle(a, i);
         }
     }
-    fc_mqtt_drop_owner(a);
+    fc_mqtt_drop_owner(a->sync);
     cJSON_Delete(a->config);
     a->config = NULL;
 }
@@ -510,7 +501,7 @@ void fc_appapi_close_all(app_t *a)
 static int32_t fc_close(wasm_exec_env_t env, int32_t h)
 {
     app_t *a = app_of(env);
-    if (h < 0 || h >= APP_HANDLES || a->h[h].kind == H_FREE) {
+    if (h < 0 || h >= APP_HANDLES || a->io->h[h].kind == H_FREE) {
         return FC_HW_EINVAL;
     }
     close_handle(a, h);
@@ -547,15 +538,15 @@ static int32_t fc_gpio_open(wasm_exec_env_t env, const char *name, int32_t nlen,
         hw->gpio_write(fc_board_pin(e), logical(e, 0)); /* starts inactive */
     }
     if ((rc = hw->gpio_setup(fc_board_pin(e), mode)) != 0) {
-        a->h[h].kind = H_FREE;
+        a->io->h[h].kind = H_FREE;
         fc_board_release(e);
         return rc < 0 ? rc : FC_HW_EIO;
     }
     if (out && hw->gpio_write) {
         hw->gpio_write(fc_board_pin(e), logical(e, 0));
     }
-    a->h[h].res = e;
-    a->h[h].mode = mode;
+    a->io->h[h].res = e;
+    a->io->h[h].mode = mode;
     return h;
 }
 
@@ -590,14 +581,14 @@ static void gpio_edge(void *arg)
     app_irq_ctx_t *c = arg;
     app_t *a = c->app;
     int64_t now = fc_apps_now_ms();
-    pthread_mutex_lock(a->ev_lock);
-    app_handle_t *h = &a->h[c->handle];
+    pthread_mutex_lock(&a->sync->lock);
+    app_handle_t *h = &a->io->h[c->handle];
     int ok = a->accepting && h->kind == H_GPIO && h->irq && now - h->last_edge_ms >= h->debounce_ms;
     fc_board_entry_t *res = h->res;
     if (ok) {
         h->last_edge_ms = now;
     }
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
     if (ok) {
         int v = g_fc_hw->gpio_read ? g_fc_hw->gpio_read(fc_board_pin(res)) : 0;
         fc_apps_post(a, EV_GPIO, c->handle, v < 0 ? 0 : logical(res, v));
@@ -617,18 +608,18 @@ static int32_t fc_gpio_irq(wasm_exec_env_t env, int32_t h, int32_t edge, int32_t
     }
     /* Logical edges: an active-low pin rises when the level falls. */
     int hw_edge = g->res->active_low && (edge == 1 || edge == 2) ? 3 - edge : edge;
-    pthread_mutex_lock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
     g->irq = edge != 0;
     g->debounce_ms = debounce_ms;
     g->last_edge_ms = -1000000;
-    pthread_mutex_unlock(a->ev_lock);
-    a->irq_ctx[h].app = a;
-    a->irq_ctx[h].handle = h;
-    int rc = g_fc_hw->gpio_irq(fc_board_pin(g->res), hw_edge, edge ? gpio_edge : NULL, edge ? &a->irq_ctx[h] : NULL);
+    pthread_mutex_unlock(&a->sync->lock);
+    a->io->irq_ctx[h].app = a;
+    a->io->irq_ctx[h].handle = h;
+    int rc = g_fc_hw->gpio_irq(fc_board_pin(g->res), hw_edge, edge ? gpio_edge : NULL, edge ? &a->io->irq_ctx[h] : NULL);
     if (rc != 0) {
-        pthread_mutex_lock(a->ev_lock);
+        pthread_mutex_lock(&a->sync->lock);
         g->irq = 0;
-        pthread_mutex_unlock(a->ev_lock);
+        pthread_mutex_unlock(&a->sync->lock);
     }
     return rc;
 }
@@ -652,12 +643,12 @@ static int32_t fc_led_open(wasm_exec_env_t env, const char *name, int32_t nlen)
     int h = new_handle(a, H_LED);
     if (h < 0 || (rc = g_fc_hw->led_open(&e->led)) != 0) {
         if (h >= 0) {
-            a->h[h].kind = H_FREE;
+            a->io->h[h].kind = H_FREE;
         }
         fc_board_release(e);
         return h < 0 ? h : rc < 0 ? rc : FC_HW_EIO;
     }
-    a->h[h].res = e;
+    a->io->h[h].res = e;
     return h;
 }
 
@@ -732,12 +723,12 @@ static int32_t open_entry(app_t *a, const char *name, int32_t nlen, int kind, in
     }
     int port = opener(e, arg);
     if (port < 0) {
-        a->h[h].kind = H_FREE;
+        a->io->h[h].kind = H_FREE;
         fc_board_release(e);
         return port;
     }
-    a->h[h].res = e;
-    a->h[h].port = port;
+    a->io->h[h].res = e;
+    a->io->h[h].port = port;
     return h;
 }
 
@@ -866,11 +857,11 @@ static int32_t fc_spi_transfer(wasm_exec_env_t env, int32_t h, int32_t tx, int32
 void fc_appapi_end_call(app_t *a)
 {
     for (int i = 0; i < APP_HANDLES; i++) {
-        if (a->h[i].kind == H_SPI && a->h[i].kept) {
+        if (a->io->h[i].kind == H_SPI && a->io->h[i].kept) {
             if (g_fc_hw->spi_release) {
-                g_fc_hw->spi_release(a->h[i].port);
+                g_fc_hw->spi_release(a->io->h[i].port);
             }
-            a->h[i].kept = 0;
+            a->io->h[i].kept = 0;
         }
     }
 }
@@ -882,13 +873,13 @@ static void uart_data(void *arg, int n)
 {
     app_irq_ctx_t *c = arg;
     app_t *a = c->app;
-    pthread_mutex_lock(a->ev_lock);
-    app_handle_t *h = &a->h[c->handle];
+    pthread_mutex_lock(&a->sync->lock);
+    app_handle_t *h = &a->io->h[c->handle];
     int post = a->accepting && h->kind == H_UART && !h->ev_pending;
     if (post) {
         h->ev_pending = 1;
     }
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
     if (post) {
         fc_apps_post(a, EV_UART, c->handle, n);
     }
@@ -917,17 +908,17 @@ static int32_t fc_uart_open(wasm_exec_env_t env, const char *name, int32_t nlen,
         fc_board_release(e);
         return h;
     }
-    a->irq_ctx[h].app = a;
-    a->irq_ctx[h].handle = h;
-    a->h[h].res = e;
+    a->io->irq_ctx[h].app = a;
+    a->io->irq_ctx[h].handle = h;
+    a->io->h[h].res = e;
     int port = hw->uart_open(&e->bus, baud > 0 ? baud : e->bus.baud > 0 ? e->bus.baud : 115200, format, uart_data,
-                             &a->irq_ctx[h]);
+                             &a->io->irq_ctx[h]);
     if (port < 0) {
-        a->h[h].kind = H_FREE;
+        a->io->h[h].kind = H_FREE;
         fc_board_release(e);
         return port;
     }
-    a->h[h].port = port;
+    a->io->h[h].port = port;
     return h;
 }
 
@@ -955,9 +946,9 @@ static int32_t fc_uart_read(wasm_exec_env_t env, int32_t h, void *b, int32_t cap
         return FC_HW_EINVAL;
     }
     /* What comes after this read raises FC_EV_UART again. */
-    pthread_mutex_lock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
     u->ev_pending = 0;
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
     if (cap == 0) {
         return 0;
     }
@@ -1010,34 +1001,33 @@ static int32_t app_mqtt_subscribe(wasm_exec_env_t env, int32_t scope, const char
         return h;
     }
     int64_t t0 = fc_apps_now_us();
-    int sub = fc_mqtt_subscribe(a, a->name, scope, t, (size_t)tl, qos);
+    int sub = fc_mqtt_subscribe(a->sync, a->name, scope, t, (size_t)tl, qos);
     fc_apps_native_time(env, a, t0);
     if (sub < 0) {
-        pthread_mutex_lock(a->ev_lock);
-        a->h[h].kind = H_FREE;
-        pthread_mutex_unlock(a->ev_lock);
+        pthread_mutex_lock(&a->sync->lock);
+        a->io->h[h].kind = H_FREE;
+        pthread_mutex_unlock(&a->sync->lock);
         return sub;
     }
-    pthread_mutex_lock(a->ev_lock);
-    a->h[h].port = sub; /* fc_appapi_mqtt_message looks for it under this lock */
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_lock(&a->sync->lock);
+    a->io->h[h].port = sub; /* fc_appapi_mqtt_message looks for it under this lock */
+    pthread_mutex_unlock(&a->sync->lock);
     return h;
 }
 
-int fc_appapi_mqtt_message(void *owner, int sub, fc_mqtt_msg_t *m)
+int fc_appapi_mqtt_message(app_t *a, int sub, fc_mqtt_msg_t *m)
 {
-    app_t *a = owner;
-    size_t plen;
-    fc_mqtt_msg_payload(m, &plen);
     int rc = -1;
-    pthread_mutex_lock(a->ev_lock);
-    for (int i = 0; i < APP_HANDLES; i++) {
-        if (a->h[i].kind == H_MQTT && a->h[i].port == sub) {
+    pthread_mutex_lock(&a->sync->lock);
+    for (int i = 0; a->accepting && i < APP_HANDLES; i++) {
+        if (a->io->h[i].kind == H_MQTT && a->io->h[i].port == sub) {
+            size_t plen;
+            fc_mqtt_msg_payload(m, &plen);
             rc = fc_apps_post_locked(a, EV_MQTT, i, (int32_t)plen, m);
             break;
         }
     }
-    pthread_mutex_unlock(a->ev_lock);
+    pthread_mutex_unlock(&a->sync->lock);
     return rc;
 }
 

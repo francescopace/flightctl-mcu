@@ -10,6 +10,7 @@
 #include "fc_console.h"
 
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -157,6 +158,7 @@ typedef struct {
     int status_urgent;      /* the agent's own change: report soon */
     int status_dirty;       /* an app or the firmware changed something */
     char rendered_version[32]; /* last version applied without errors */
+    int waiting_primary; /* poll for a new spec until this one can finish */
     char attempted_version[32]; /* last version received (knownRenderedVersion) */
     char os_image[256];
     char os_digest[80];
@@ -178,6 +180,7 @@ typedef struct {
     char *metrics;          /* counters for customInfo, as a JSON object (status thread) */
     time_t metrics_at;
     int metrics_reads;
+    bool checked_legacy_metrics; /* spec thread, after the first complete config */
     /* Decommissioning: requested by the spec thread, carried on by the
      * status thread. decom_reported is the step in the last status built. */
     int decom;
@@ -266,7 +269,8 @@ static fc_http_target_t enrollment_target(const agent_t *a, int timeout_s)
  * connection. The certificate is copied: a renewal on the status thread may
  * replace and free it while a long-poll is still running. */
 static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, const char *method, const char *path,
-                        const char *content_type, const char *body, size_t body_len, fc_http_response_t *r)
+                        const char *content_type, const char *body, size_t body_len, fc_http_response_t *r,
+                        int (*interrupt_wait)(void), int discard_200_body)
 {
     fc_http_target_t t = enrollment_target(a, timeout_s);
     pthread_mutex_lock(&a->lock);
@@ -281,6 +285,8 @@ static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, cons
     t.key_pem = a->id.key_pem;
     t.hw_key = a->id.hw_key;
     t.session = sess;
+    t.interrupt_wait = interrupt_wait;
+    t.discard_200_body = discard_200_body;
     int rc = fc_http_request(&t, method, path, content_type, body, body_len, r);
     free(cert);
     return rc;
@@ -370,6 +376,14 @@ static const char *jmember(const char *p, const char *key)
     return NULL;
 }
 
+static int same_rendered_version(const char *json, const char *known)
+{
+    const char *v = jmember(jmember(jmember(json, "metadata"), "annotations"), RENDERED_ANNOTATION);
+    const char *end = v && *v == '"' ? jstr_end(v) : NULL;
+    size_t n = strlen(known);
+    return n && end && (size_t)(end - v - 2) == n && !memchr(v + 1, '\\', n) && !memcmp(v + 1, known, n);
+}
+
 /* The spec's console sessions (fc_console.c), on the agent's connection.
  * Returns 1 if the spec is the one applied already: only a console made the
  * server answer, and nothing is to be applied. Only the list of sessions is
@@ -381,13 +395,6 @@ static int consoles(agent_t *a, const char *json, const char *known)
     const char *end = at != NULL && *at == '[' ? jskip(at) : NULL;
     if (end == NULL || *jws(at + 1) == ']') {
         return 0;
-    }
-    char version[32] = "";
-    const char *v = jmember(jmember(jmember(json, "metadata"), "annotations"), RENDERED_ANNOTATION);
-    const char *v_end = v != NULL && *v == '"' ? jstr_end(v) : NULL;
-    if (v_end != NULL && (size_t)(v_end - v - 2) < sizeof(version) && memchr(v, '\\', (size_t)(v_end - v)) == NULL) {
-        memcpy(version, v + 1, (size_t)(v_end - v - 2));
-        version[v_end - v - 2] = '\0';
     }
     cJSON *list = cJSON_ParseWithLength(at, (size_t)(end - at));
     int same = 0;
@@ -403,7 +410,7 @@ static int consoles(agent_t *a, const char *json, const char *known)
             t.session = a->sess;
             int listed = fc_console_sync(list, &t);
             a->console_quiet = listed == 1;
-            same = listed && version[0] && known[0] && strcmp(version, known) == 0;
+            same = listed && same_rendered_version(json, known);
             free(cert);
         }
     }
@@ -739,7 +746,8 @@ static int put_status(agent_t *a)
     char path[128];
     snprintf(path, sizeof(path), API "/devices/%s/status", a->id.name);
     fc_http_response_t r;
-    int rc = mgmt_request(a, a->sess, 60, "PUT", path, "application/json", body, strlen(body), &r);
+    /* Flight Control returns the whole Device. Only an error body is used. */
+    int rc = mgmt_request(a, a->sess, 60, "PUT", path, "application/json", body, strlen(body), &r, NULL, 1);
     free(body);
     if (rc != 0) {
         return -1;
@@ -839,6 +847,41 @@ static void turn_hold(agent_t *a)
     pthread_mutex_unlock(&a->lock);
 }
 
+/* A refused primary retries in the spec thread. Keep a new status handshake
+ * from occupying the block just released by closing idle management TLS
+ * until the runner has tried its instance. An active network request keeps
+ * its turn, and an open console keeps its stream. */
+static int poll_apps(agent_t *a)
+{
+    if (!fc_apps_primary_retry_due()) {
+        return fc_apps_poll(0);
+    }
+    pthread_mutex_lock(&a->lock);
+    int hold = !a->downloading && !a->putting && !a->status_urgent && !a->exporting &&
+               !a->mqtt_connecting && !a->verifying && !a->starting_saved && a->decom == DECOM_NONE;
+    if (hold) {
+        a->downloading = 1;
+    }
+    pthread_mutex_unlock(&a->lock);
+    int released = 0;
+    if (hold) {
+        long free_before = fc_port_heap_free(), largest_before = fc_port_heap_largest();
+        released = fc_http_session_close_idle(a->sess);
+        if (released) {
+            fc_port_log(FC_LOG_INFO, "primary retry with idle TLS closed: free %ld to %ld B, largest %ld to %ld B",
+                        free_before, fc_port_heap_free(), largest_before, fc_port_heap_largest());
+        }
+    }
+    int ready = fc_apps_poll(released);
+    if (hold) {
+        pthread_mutex_lock(&a->lock);
+        a->downloading = 0;
+        pthread_cond_signal(&a->status_wake);
+        pthread_mutex_unlock(&a->lock);
+    }
+    return ready;
+}
+
 /* A spec is about to be applied: no export and no handshake for the apps'
  * broker starts from now on (both see `applying`), and one under way ends
  * first. Parsing a spec, writing its files and starting its apps take the
@@ -849,7 +892,10 @@ static void apply_begin(agent_t *a)
     pthread_mutex_lock(&a->lock);
     a->applying = 1;
     struct timespec until = {.tv_sec = time(NULL) + TURN_WAIT_S};
-    while ((a->exporting || a->mqtt_connecting || a->starting_saved) && time(NULL) < until.tv_sec) {
+    while (a->starting_saved) {
+        pthread_cond_wait(&a->status_sent, &a->lock);
+    }
+    while ((a->exporting || a->mqtt_connecting) && time(NULL) < until.tv_sec) {
         pthread_cond_timedwait(&a->status_sent, &a->lock, &until);
     }
     pthread_mutex_unlock(&a->lock);
@@ -859,6 +905,7 @@ static void apply_end(agent_t *a)
 {
     pthread_mutex_lock(&a->lock);
     a->applying = 0;
+    pthread_cond_signal(&a->status_wake);
     pthread_mutex_unlock(&a->lock);
 }
 
@@ -936,16 +983,26 @@ static time_t x509_epoch(const mbedtls_x509_time *t)
     return (time_t)days * 86400 + t->hour * 3600 + t->min * 60 + t->sec;
 }
 
+typedef enum { CERT_MANAGEMENT, CERT_TELEMETRY } cert_role_t;
+
+static int gateway_subject(const mbedtls_x509_crt *crt, const char *device)
+{
+    char subject[128], expected[80];
+    snprintf(expected, sizeof(expected), "CN=otel-%s", device);
+    return mbedtls_x509_dn_gets(subject, sizeof(subject), &crt->subject) >= 0 && strcmp(subject, expected) == 0;
+}
+
 /* Checks that a PEM certificate is for this device's key, and returns when
  * its renewal is due and when it expires. */
-static int cert_info(const agent_t *a, const char *pem, time_t *renew_at, time_t *not_after)
+static int cert_info(const agent_t *a, cert_role_t role, const char *pem, time_t *renew_at, time_t *not_after)
 {
     mbedtls_x509_crt crt;
     mbedtls_x509_crt_init(&crt);
     char name[64];
     int rc = -1;
     if (mbedtls_x509_crt_parse(&crt, (const unsigned char *)pem, strlen(pem) + 1) == 0 &&
-        fc_identity_name_of(&crt.pk, name, sizeof(name)) == 0 && strcmp(name, a->id.name) == 0) {
+        fc_identity_name_of(&crt.pk, name, sizeof(name)) == 0 && strcmp(name, a->id.name) == 0 &&
+        (role == CERT_MANAGEMENT || gateway_subject(&crt, name))) {
         time_t nb = x509_epoch(&crt.valid_from), na = x509_epoch(&crt.valid_to);
         *not_after = na;
         *renew_at = nb + (na - nb) * CERT_RENEW_AT_PERCENT / 100;
@@ -966,126 +1023,157 @@ static void log_cert(const char *what, time_t renew_at, time_t not_after)
     fc_port_log(FC_LOG_INFO, "%s: valid until %s, renewal from %s", what, na, ra);
 }
 
-/* Reads a CertificateSigningRequest answer. Returns 1 if a new certificate
- * was installed, 0 if still pending, -1 if the request failed. */
-static int handle_csr(agent_t *a, const char *json)
+/* Pending (0), refused or unreadable (-1), or an allocated certificate (1). */
+static int csr_certificate(const char *json, const char *name, char **pem, size_t *len)
 {
     cJSON *csr = cJSON_Parse(json);
-    const cJSON *status = cJSON_GetObjectItem(csr, "status");
-    const cJSON *cond;
+    const cJSON *status = cJSON_GetObjectItem(csr, "status"), *cond;
     int result = 0;
     cJSON_ArrayForEach(cond, cJSON_GetObjectItem(status, "conditions")) {
         const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(cond, "type"));
         const char *st = cJSON_GetStringValue(cJSON_GetObjectItem(cond, "status"));
         if (type && st && strcmp(st, "True") == 0 && (strcmp(type, "Denied") == 0 || strcmp(type, "Failed") == 0)) {
-            fc_port_log(FC_LOG_WARN, "certificate renewal %s %s: %s", a->csr_name, type,
-                        cJSON_GetStringValue(cJSON_GetObjectItem(cond, "message")));
+            const char *message = cJSON_GetStringValue(cJSON_GetObjectItem(cond, "message"));
+            fc_port_log(FC_LOG_WARN, "certificate request %s %s: %s", name, type, message ? message : "");
             result = -1;
+            break;
         }
     }
-    const char *b64 = cJSON_GetStringValue(cJSON_GetObjectItem(status, "certificate"));
-    if (result == 0 && b64 != NULL && b64[0]) {
-        size_t len = strlen(b64), olen = 0;
-        unsigned char *pem = malloc(len + 1);
-        time_t renew_at, not_after;
-        if (pem == NULL ||
-            mbedtls_base64_decode(pem, len, &olen, (const unsigned char *)b64, len) != 0) {
-            result = -1;
-        } else {
-            pem[olen] = '\0';
-            if (cert_info(a, (char *)pem, &renew_at, &not_after) != 0) {
-                fc_port_log(FC_LOG_WARN, "certificate renewal %s: certificate is not for this device", a->csr_name);
-                result = -1;
-            } else {
-                /* Stored first: after a reboot the device starts with it. */
-                if (fc_port_kv_set(KV_MGMT_CERT, (char *)pem, olen) != 0) {
-                    fc_port_log(FC_LOG_WARN, "could not store the renewed certificate");
-                }
-                pthread_mutex_lock(&a->lock);
-                free(a->mgmt_cert_pem);
-                a->mgmt_cert_pem = (char *)pem;
-                pem = NULL;
-                a->cert_renew_at = renew_at;
-                a->cert_not_after = not_after;
-                pthread_mutex_unlock(&a->lock);
-                log_cert("management certificate renewed", renew_at, not_after);
+    const unsigned char *b64 = (const unsigned char *)cJSON_GetStringValue(cJSON_GetObjectItem(status, "certificate"));
+    if (result == 0 && b64 && *b64) {
+        size_t n = strlen((const char *)b64);
+        result = -1;
+        if (mbedtls_base64_decode(NULL, 0, len, b64, n) == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
+            *pem = malloc(*len + 1);
+            if (*pem && mbedtls_base64_decode((unsigned char *)*pem, *len, len, b64, n) == 0) {
+                (*pem)[*len] = '\0';
                 result = 1;
             }
         }
-        free(pem);
     }
     cJSON_Delete(csr);
     return result;
 }
 
-/* Creates the renewal request, or polls the one already created. */
-static int request_renewal(agent_t *a)
+static int handle_csr(agent_t *a, cert_role_t role, const char *json)
 {
-    fc_http_response_t r; /* requests on the status thread's connection */
-    int rc;
-    if (a->csr_name[0] == '\0') {
+    const int gateway = role == CERT_TELEMETRY;
+    const char *name = gateway ? a->otel_csr_name : a->csr_name;
+    char *pem = NULL;
+    size_t len = 0;
+    int result = csr_certificate(json, name, &pem, &len);
+    if (result != 1) {
+        free(pem);
+        return result;
+    }
+    time_t renew_at, not_after;
+    if (cert_info(a, role, pem, &renew_at, &not_after) != 0) {
+        fc_port_log(FC_LOG_WARN, "certificate request %s: certificate does not match", name);
+        free(pem);
+        return -1;
+    }
+    if (fc_port_kv_set(gateway ? KV_OTEL_CERT : KV_MGMT_CERT, pem, len) != 0) {
+        fc_port_log(FC_LOG_WARN, "could not store certificate for %s", name);
+    }
+    if (gateway) {
+        free(a->otel_cert_pem);
+        a->otel_cert_pem = pem;
+        a->otel_renew_at = renew_at;
+        a->otel_not_after = not_after;
+    } else {
+        pthread_mutex_lock(&a->lock);
+        free(a->mgmt_cert_pem);
+        a->mgmt_cert_pem = pem;
+        a->cert_renew_at = renew_at;
+        a->cert_not_after = not_after;
+        pthread_mutex_unlock(&a->lock);
+    }
+    log_cert(gateway ? "Telemetry Gateway certificate" : "management certificate renewed", renew_at, not_after);
+    return 1;
+}
+
+/* All variable fields here are generated locally: the name is a device ID
+ * with a random hex suffix, the signer a protocol constant, the CSR Base64.
+ * None needs JSON escaping. Encode directly into the request body. */
+static char *csr_body(const char *name, const char *signer, const char *pem)
+{
+    static const char prefix[] = "{\"apiVersion\":\"v1beta1\",\"kind\":\"CertificateSigningRequest\","
+                                 "\"metadata\":{\"name\":\"%s\"},\"spec\":{\"signerName\":\"%s\","
+                                 "\"usages\":[\"clientAuth\",\"CA:false\"],\"request\":\"";
+    static const char end[] = "\"}}";
+    size_t plen = strlen(pem), blen = 0;
+    if (mbedtls_base64_encode(NULL, 0, &blen, (const unsigned char *)pem, plen) != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
+        return NULL;
+    }
+    size_t cap = sizeof(prefix) + strlen(name) + strlen(signer) + blen + sizeof(end);
+    char *body = malloc(cap);
+    if (body != NULL) {
+        int off = snprintf(body, cap, prefix, name, signer);
+        if (off < 0 || (size_t)off + blen + sizeof(end) > cap ||
+            mbedtls_base64_encode((unsigned char *)body + off, blen, &blen, (const unsigned char *)pem, plen) != 0) {
+            free(body);
+            return NULL;
+        }
+        memcpy(body + off + blen, end, sizeof(end));
+    }
+    return body;
+}
+
+/* Create or poll the outstanding request for this signer. A failed poll
+ * transport leaves its name intact so the next round polls the same CSR. */
+static int request_cert(agent_t *a, cert_role_t role)
+{
+    int gateway = role == CERT_TELEMETRY;
+    char *name = gateway ? a->otel_csr_name : a->csr_name;
+    fc_http_response_t r;
+    if (*name == '\0') {
+        char cn[80], *generated = NULL;
+        snprintf(cn, sizeof(cn), "%s%s", gateway ? "otel-" : "", a->id.name);
+        if (gateway && fc_identity_csr(&a->id, cn, &generated) != 0) {
+            fc_port_log(FC_LOG_WARN, "metrics: no certificate request with the device key");
+            return -1;
+        }
         unsigned char rnd[4];
         fc_random(rnd, sizeof(rnd));
-        snprintf(a->csr_name, sizeof(a->csr_name), "%s-%02x%02x%02x%02x", a->id.name, rnd[0], rnd[1], rnd[2],
-                 rnd[3]);
-        size_t plen = strlen(a->id.csr_pem), blen = 0;
-        mbedtls_base64_encode(NULL, 0, &blen, (const unsigned char *)a->id.csr_pem, plen);
-        char *b64 = malloc(blen);
-        if (b64 == NULL ||
-            mbedtls_base64_encode((unsigned char *)b64, blen, &blen, (const unsigned char *)a->id.csr_pem, plen) != 0) {
-            free(b64);
-            a->csr_name[0] = '\0';
-            return -1;
-        }
-        cJSON *csr = cJSON_CreateObject();
-        cJSON_AddStringToObject(csr, "apiVersion", "v1beta1");
-        cJSON_AddStringToObject(csr, "kind", "CertificateSigningRequest");
-        cJSON_AddStringToObject(cJSON_AddObjectToObject(csr, "metadata"), "name", a->csr_name);
-        cJSON *spec = cJSON_AddObjectToObject(csr, "spec");
-        cJSON_AddStringToObject(spec, "request", b64);
-        cJSON_AddStringToObject(spec, "signerName", RENEWAL_SIGNER);
-        cJSON *usages = cJSON_AddArrayToObject(spec, "usages");
-        cJSON_AddItemToArray(usages, cJSON_CreateString("clientAuth"));
-        cJSON_AddItemToArray(usages, cJSON_CreateString("CA:false"));
-        char *body = cJSON_PrintUnformatted(csr);
-        cJSON_Delete(csr);
-        free(b64);
+        snprintf(name, gateway ? sizeof(a->otel_csr_name) : sizeof(a->csr_name), "%s-%02x%02x%02x%02x",
+                 cn, rnd[0], rnd[1], rnd[2], rnd[3]);
+        char *body = csr_body(name, gateway ? OTEL_SIGNER : RENEWAL_SIGNER, gateway ? generated : a->id.csr_pem);
+        free(generated);
         if (body == NULL) {
-            fc_port_log(FC_LOG_WARN, "certificate renewal: out of memory");
-            a->csr_name[0] = '\0';
+            *name = '\0';
             return -1;
         }
-        fc_port_log(FC_LOG_INFO, "renewing the management certificate (%s)", a->csr_name);
-        rc = mgmt_request(a, a->sess, 60, "POST", API "/certificatesigningrequests", "application/json", body,
-                          strlen(body), &r);
+        fc_port_log(FC_LOG_INFO, "requesting certificate (%s)", name);
+        int rc = mgmt_request(a, a->sess, 60, "POST", API "/certificatesigningrequests", "application/json", body,
+                              strlen(body), &r, NULL, 0);
         free(body);
         if (rc != 0) {
-            a->csr_name[0] = '\0';
+            *name = '\0';
             return -1;
         }
         if (r.status != 200 && r.status != 201) {
-            fc_port_log(FC_LOG_WARN, "certificate renewal: HTTP %d %s", r.status, r.body);
+            fc_port_log(FC_LOG_WARN, "certificate request %s: HTTP %d %s", name, r.status, r.body);
             fc_http_free(&r);
-            a->csr_name[0] = '\0';
+            *name = '\0';
             return -1;
         }
     } else {
         char path[160];
-        snprintf(path, sizeof(path), API "/certificatesigningrequests/%s", a->csr_name);
-        if (mgmt_request(a, a->sess, 60, "GET", path, NULL, NULL, 0, &r) != 0) {
-            return 0; /* network trouble: poll again */
+        snprintf(path, sizeof(path), API "/certificatesigningrequests/%s", name);
+        if (mgmt_request(a, a->sess, 60, "GET", path, NULL, NULL, 0, &r, NULL, 0) != 0) {
+            return 0;
         }
         if (r.status != 200) {
-            fc_port_log(FC_LOG_WARN, "certificate renewal %s: HTTP %d", a->csr_name, r.status);
+            fc_port_log(FC_LOG_WARN, "certificate request %s: HTTP %d", name, r.status);
             fc_http_free(&r);
-            a->csr_name[0] = '\0';
+            *name = '\0';
             return -1;
         }
     }
-    rc = handle_csr(a, r.body);
+    int rc = handle_csr(a, role, r.body);
     fc_http_free(&r);
     if (rc != 0) {
-        a->csr_name[0] = '\0';
+        *name = '\0';
     }
     return rc;
 }
@@ -1118,7 +1206,7 @@ static void renew_cert_if_due(agent_t *a)
     if (a->cert_renew_at == 0 || now < a->cert_renew_at || now < a->cert_next_try) {
         return;
     }
-    int rc = request_renewal(a);
+    int rc = request_cert(a, CERT_MANAGEMENT);
     if (rc == 0) {
         a->cert_next_try = now + RETRY_DELAY_S;
     } else if (rc < 0) {
@@ -1179,145 +1267,6 @@ static int metrics_config(metrics_cfg_t *c)
     return rc;
 }
 
-/* The gateway's certificate: for this device's key, with the CN the gateway
- * takes the device's ID from. 0 when it is, and sets when it is renewed. */
-static int otel_cert_ok(agent_t *a, const char *pem, time_t *renew_at, time_t *not_after)
-{
-    if (cert_info(a, pem, renew_at, not_after) != 0) {
-        return -1;
-    }
-    char cn[80];
-    snprintf(cn, sizeof(cn), "CN=otel-%s", a->id.name);
-    mbedtls_x509_crt crt;
-    mbedtls_x509_crt_init(&crt);
-    char subject[128] = "";
-    if (mbedtls_x509_crt_parse(&crt, (const unsigned char *)pem, strlen(pem) + 1) == 0) {
-        mbedtls_x509_dn_gets(subject, sizeof(subject), &crt.subject);
-    }
-    mbedtls_x509_crt_free(&crt);
-    return strcmp(subject, cn) == 0 ? 0 : -1;
-}
-
-/* The gateway's CertificateSigningRequest as the server answers it: 1 once
- * its certificate is stored (under KV_OTEL_CERT only), 0 while pending, -1
- * when it failed or the certificate is not this device's for the gateway. */
-static int handle_otel_csr(agent_t *a, const char *json)
-{
-    cJSON *csr = cJSON_Parse(json);
-    const cJSON *status = cJSON_GetObjectItem(csr, "status"), *cond;
-    int result = 0;
-    cJSON_ArrayForEach(cond, cJSON_GetObjectItem(status, "conditions")) {
-        const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(cond, "type"));
-        const char *st = cJSON_GetStringValue(cJSON_GetObjectItem(cond, "status"));
-        if (type && st && strcmp(st, "True") == 0 && (strcmp(type, "Denied") == 0 || strcmp(type, "Failed") == 0)) {
-            fc_port_log(FC_LOG_WARN, "metrics: certificate request %s %s: %s", a->otel_csr_name, type,
-                        cJSON_GetStringValue(cJSON_GetObjectItem(cond, "message")));
-            result = -1;
-        }
-    }
-    const char *b64 = cJSON_GetStringValue(cJSON_GetObjectItem(status, "certificate"));
-    if (result == 0 && b64 != NULL && b64[0]) {
-        size_t len = strlen(b64), olen = 0;
-        unsigned char *pem = malloc(len + 1);
-        time_t renew_at, not_after;
-        if (pem == NULL || mbedtls_base64_decode(pem, len, &olen, (const unsigned char *)b64, len) != 0) {
-            result = -1;
-        } else {
-            pem[olen] = '\0';
-            if (otel_cert_ok(a, (char *)pem, &renew_at, &not_after) != 0) {
-                fc_port_log(FC_LOG_WARN, "metrics: the certificate is not this device's for the gateway");
-                result = -1;
-            } else {
-                fc_port_kv_set(KV_OTEL_CERT, (char *)pem, olen);
-                free(a->otel_cert_pem);
-                a->otel_cert_pem = (char *)pem;
-                pem = NULL;
-                a->otel_renew_at = renew_at;
-                a->otel_not_after = not_after;
-                log_cert("Telemetry Gateway certificate", renew_at, not_after);
-                result = 1;
-            }
-        }
-        free(pem);
-    }
-    cJSON_Delete(csr);
-    return result;
-}
-
-/* Asks for the gateway's certificate, or polls the request: 1 once it is
- * stored, 0 while pending, -1 when it failed. Its own request, its own key in
- * storage: the management certificate is never touched. */
-static int request_otel_cert(agent_t *a)
-{
-    fc_http_response_t r;
-    if (a->otel_csr_name[0] == '\0') {
-        char cn[80], *csr_pem = NULL;
-        snprintf(cn, sizeof(cn), "otel-%s", a->id.name);
-        if (fc_identity_csr(&a->id, cn, &csr_pem) != 0) {
-            fc_port_log(FC_LOG_WARN, "metrics: no certificate request with the device key");
-            return -1;
-        }
-        unsigned char rnd[4];
-        fc_random(rnd, sizeof(rnd));
-        snprintf(a->otel_csr_name, sizeof(a->otel_csr_name), "%s-%02x%02x%02x%02x", cn, rnd[0], rnd[1], rnd[2], rnd[3]);
-        size_t plen = strlen(csr_pem), blen = 0;
-        mbedtls_base64_encode(NULL, 0, &blen, (const unsigned char *)csr_pem, plen);
-        char *b64 = malloc(blen);
-        cJSON *csr = cJSON_CreateObject();
-        char *body = NULL;
-        if (b64 != NULL && csr != NULL &&
-            mbedtls_base64_encode((unsigned char *)b64, blen, &blen, (const unsigned char *)csr_pem, plen) == 0) {
-            cJSON_AddStringToObject(csr, "apiVersion", "v1beta1");
-            cJSON_AddStringToObject(csr, "kind", "CertificateSigningRequest");
-            cJSON_AddStringToObject(cJSON_AddObjectToObject(csr, "metadata"), "name", a->otel_csr_name);
-            cJSON *spec = cJSON_AddObjectToObject(csr, "spec");
-            cJSON_AddStringToObject(spec, "request", b64);
-            cJSON_AddStringToObject(spec, "signerName", OTEL_SIGNER);
-            cJSON *usages = cJSON_AddArrayToObject(spec, "usages");
-            cJSON_AddItemToArray(usages, cJSON_CreateString("clientAuth"));
-            cJSON_AddItemToArray(usages, cJSON_CreateString("CA:false"));
-            body = cJSON_PrintUnformatted(csr);
-        }
-        cJSON_Delete(csr);
-        free(b64);
-        free(csr_pem);
-        if (body == NULL) {
-            a->otel_csr_name[0] = '\0';
-            return -1;
-        }
-        fc_port_log(FC_LOG_INFO, "metrics: asking for the Telemetry Gateway's certificate (%s)", a->otel_csr_name);
-        int rc = mgmt_request(a, a->sess, 60, "POST", API "/certificatesigningrequests", "application/json", body,
-                              strlen(body), &r);
-        free(body);
-        if (rc != 0 || (r.status != 200 && r.status != 201)) {
-            if (rc == 0) {
-                fc_port_log(FC_LOG_WARN, "metrics: certificate request: HTTP %d %s", r.status, r.body);
-                fc_http_free(&r);
-            }
-            a->otel_csr_name[0] = '\0';
-            return -1;
-        }
-    } else {
-        char path[200];
-        snprintf(path, sizeof(path), API "/certificatesigningrequests/%s", a->otel_csr_name);
-        if (mgmt_request(a, a->sess, 60, "GET", path, NULL, NULL, 0, &r) != 0) {
-            return 0;
-        }
-        if (r.status != 200) {
-            fc_port_log(FC_LOG_WARN, "metrics: certificate request %s: HTTP %d", a->otel_csr_name, r.status);
-            fc_http_free(&r);
-            a->otel_csr_name[0] = '\0';
-            return -1;
-        }
-    }
-    int result = handle_otel_csr(a, r.body);
-    fc_http_free(&r);
-    if (result != 0) {
-        a->otel_csr_name[0] = '\0';
-    }
-    return result;
-}
-
 /* The certificate, from storage or asked for: 0 when there is one to use. */
 static int otel_cert(agent_t *a, time_t now)
 {
@@ -1325,7 +1274,7 @@ static int otel_cert(agent_t *a, time_t now)
         char *pem = NULL;
         size_t len = 0;
         if (fc_port_kv_get(KV_OTEL_CERT, &pem, &len) == 0 && pem != NULL) {
-            if (otel_cert_ok(a, pem, &a->otel_renew_at, &a->otel_not_after) == 0) {
+            if (cert_info(a, CERT_TELEMETRY, pem, &a->otel_renew_at, &a->otel_not_after) == 0) {
                 a->otel_cert_pem = pem;
             } else {
                 free(pem); /* an older key's: asked for again */
@@ -1334,7 +1283,7 @@ static int otel_cert(agent_t *a, time_t now)
     }
     int due = a->otel_cert_pem == NULL || now >= a->otel_renew_at;
     if (due && now >= a->otel_next_try) {
-        int rc = request_otel_cert(a);
+        int rc = request_cert(a, CERT_TELEMETRY);
         if (rc == 0) {
             a->otel_next_try = now + RETRY_DELAY_S;
         } else if (rc < 0) {
@@ -1494,7 +1443,8 @@ static void metrics_tick(agent_t *a)
     struct timespec mono;
     clock_gettime(CLOCK_MONOTONIC, &mono);
     uint64_t now_ns = (uint64_t)now * 1000000000ull, boot_ns = (uint64_t)(now - mono.tv_sec) * 1000000000ull;
-    int max = (int)DEVICE_POINTS + FC_METRICS_APPS_MAX;
+    int max = (int)DEVICE_POINTS + fc_metrics_app_count();
+    int stretch = fc_heap_low_begin(); /* include point collection and encoding as well as the send */
     fc_metric_point_t *pts = malloc((size_t)max * sizeof(*pts));
     uint8_t *msg = NULL;
     long len = -1;
@@ -1508,7 +1458,6 @@ static void metrics_tick(agent_t *a)
     free(pts);
     int rc = -1;
     if (len > 0) {
-        int stretch = fc_heap_low_begin(); /* a TLS handshake's hold left out (fc_heap_hold.h) */
         fc_http_target_t t = {
             .host = mc.host,
             .port = mc.port,
@@ -1520,13 +1469,13 @@ static void metrics_tick(agent_t *a)
             .connect_timeout_s = METRICS_TIMEOUT_S,
         };
         rc = fc_metrics_send(&t, msg, (size_t)len);
-        long low = fc_heap_low_end(stretch, NULL);
-        if (low >= 0 && (a->export_low < 0 || low < a->export_low - 1024)) {
-            fc_port_log(FC_LOG_INFO, "metrics: %s; internal heap at its lowest %ld bytes during the export",
-                        rc == 0 ? "sent" : "not sent", low);
-        }
-        a->export_low = low;
     }
+    long low = fc_heap_low_end(stretch, NULL);
+    if (low >= 0 && (a->export_low < 0 || low < a->export_low - 1024)) {
+        fc_port_log(FC_LOG_INFO, "metrics: %s; internal heap at its lowest %ld bytes during the export",
+                    rc == 0 ? "sent" : "not sent", low);
+    }
+    a->export_low = low;
     free(msg);
     metrics_done(a);
     if (rc == 0) {
@@ -1592,6 +1541,7 @@ static void *status_thread(void *arg)
     agent_t *a = arg;
     int interval = a->cfg->status_interval_s > 0 ? a->cfg->status_interval_s : 60;
     time_t last_ok = time(NULL), last_put = 0;
+    int retry_status_s = 0;
     __atomic_store_n(&s_status_ok_mono, mono_s(), __ATOMIC_RELAXED);
     /* The first status lists the saved apps: they start once this thread
      * runs (fc_agent_run). */
@@ -1605,7 +1555,18 @@ static void *status_thread(void *arg)
          * app change (grouped), or a certificate renewal. */
         pthread_mutex_lock(&a->lock);
         while (last_put != 0) {
-            time_t due = last_put + (a->verifying ? RETRY_DELAY_S : interval);
+            int saved_delay = fc_apps_saved_delay_s();
+            if (saved_delay == 0 && !a->applying && !a->downloading && a->turn_depth == 0) {
+                a->starting_saved = 1;
+                pthread_mutex_unlock(&a->lock);
+                fc_apps_start_saved();
+                pthread_mutex_lock(&a->lock);
+                a->starting_saved = 0;
+                pthread_cond_broadcast(&a->status_sent);
+                a->status_urgent = 1;
+                continue;
+            }
+            time_t due = last_put + (a->verifying ? RETRY_DELAY_S : retry_status_s ? retry_status_s : interval);
             if (a->status_urgent && last_put + STATUS_MIN_GAP_S < due) {
                 due = last_put + STATUS_MIN_GAP_S;
             } else if (a->status_dirty && last_put + NOTIFY_MIN_GAP_S < due) {
@@ -1643,6 +1604,9 @@ static void *status_thread(void *arg)
                 break;
             }
             struct timespec until = {.tv_sec = sample >= 0 && now + (sample - mono) < due ? now + (sample - mono) : due};
+            if (saved_delay > 0 && now + saved_delay < until.tv_sec) {
+                until.tv_sec = now + saved_delay;
+            }
             if (a->metrics_next < until.tv_sec) {
                 until.tv_sec = a->metrics_next;
             }
@@ -1684,6 +1648,7 @@ static void *status_thread(void *arg)
         pthread_mutex_unlock(&a->lock);
         last_put = time(NULL);
         if (ok) {
+            retry_status_s = 0;
             last_ok = last_put;
             __atomic_store_n(&s_status_ok_mono, mono_s(), __ATOMIC_RELAXED);
             fc_apps_status_ok();
@@ -1691,26 +1656,17 @@ static void *status_thread(void *arg)
             a->status_once = 1;
             pthread_mutex_unlock(&a->lock);
         } else {
-            fc_port_log(FC_LOG_WARN, "status update failed, retrying");
+            if (!retry_status_s) {
+                retry_status_s = RETRY_DELAY_S < interval ? RETRY_DELAY_S : interval;
+            } else if (retry_status_s <= interval / 2) {
+                retry_status_s *= 2;
+            } else {
+                retry_status_s = interval;
+            }
+            fc_port_log(FC_LOG_WARN, "status update failed (free %ld B, largest %ld B), retry in %d s",
+                        fc_port_heap_free_now(), fc_port_heap_largest(), a->verifying ? RETRY_DELAY_S : retry_status_s);
             if (!decommissioning) {
                 reenroll_if_expired(a);
-            }
-        }
-        /* The saved apps, once Flight Control was reached (or after a while
-         * without it, fc_apps_saved_due): not beside a spec being applied,
-         * which waits for them (apply_begin). */
-        if (fc_apps_saved_due()) {
-            pthread_mutex_lock(&a->lock);
-            int go = !a->applying && !a->downloading && a->turn_depth == 0;
-            a->starting_saved = go;
-            pthread_mutex_unlock(&a->lock);
-            if (go) {
-                fc_apps_start_saved();
-                pthread_mutex_lock(&a->lock);
-                a->starting_saved = 0;
-                pthread_cond_broadcast(&a->status_sent);
-                pthread_mutex_unlock(&a->lock);
-                request_status(a);
             }
         }
     }
@@ -1736,6 +1692,22 @@ static void percent_decode(char *s)
         }
     }
     *out = '\0';
+}
+
+static void config_file_changed(agent_t *a, const char *path)
+{
+    fc_apps_file_changed(path);
+    if (strcmp(path, FC_MQTT_CONFIG) == 0 || strcmp(path, FC_MQTT_CA_FILE) == 0) {
+        a->mqtt_poke = 1;
+    }
+    if (strcmp(path, METRICS_CONFIG) == 0) {
+        /* A new gateway, or a corrected one: tried now, not after the
+         * backoff the old one earned. */
+        pthread_mutex_lock(&a->lock);
+        a->metrics_poke = 1;
+        pthread_cond_signal(&a->status_wake);
+        pthread_mutex_unlock(&a->lock);
+    }
 }
 
 static int apply_inline_file(agent_t *a, const cJSON *file, char *err, size_t err_len)
@@ -1782,21 +1754,11 @@ static int apply_inline_file(agent_t *a, const cJSON *file, char *err, size_t er
     } else if (a->cfg->on_config_file != NULL && a->cfg->on_config_file(path, data, len, a->cfg->app_ctx) != 0) {
         snprintf(err, err_len, "%s: rejected by application", path);
         rc = -1;
-    } else if ((rc = fc_port_write_file(path, data, len)) != 0) {
+    } else if (!same && (rc = fc_port_write_file(path, data, len)) != 0) {
         snprintf(err, err_len, "%s: write failed", path);
     } else if (!same) {
-        fc_apps_file_changed(path);
-        if (strcmp(path, FC_MQTT_CONFIG) == 0 || strcmp(path, FC_MQTT_CA_FILE) == 0) {
-            a->mqtt_poke = 1;
-        }
-        if (strcmp(path, METRICS_CONFIG) == 0) {
-            /* A new gateway, or a corrected one: tried now, not after the
-             * backoff the old one earned. */
-            pthread_mutex_lock(&a->lock);
-            a->metrics_poke = 1;
-            pthread_cond_signal(&a->status_wake);
-            pthread_mutex_unlock(&a->lock);
-        }
+        fc_port_log(FC_LOG_INFO, "config: wrote %s", path);
+        config_file_changed(a, path);
     }
     free(buf);
     return rc;
@@ -1817,43 +1779,116 @@ static int path_listed(const char *list, const char *path)
     return 0;
 }
 
-/* Removes the config files the previous spec gave and this one (`now`, its
- * paths one per line) does not, then remembers `now`. A device that never
- * kept the list (before v3.14) removes nothing the first time. */
-static void remove_dropped_files(agent_t *a, const char *now)
+typedef struct {
+    char *text;
+    size_t len, cap;
+} path_list_t;
+
+static int add_path(path_list_t *list, const char *path)
 {
-    char *before = NULL;
-    size_t len = 0;
-    if (fc_port_kv_get(KV_CONFIG_FILES, &before, &len) == 0) {
-        for (char *l = before; l != NULL && *l;) {
-            char *end = strchr(l, '\n');
-            if (end != NULL) {
-                *end = '\0';
+    if (path_listed(list->text, path)) {
+        return 0;
+    }
+    size_t n = strlen(path);
+    size_t need = list->len + n + 2;
+    if (need > list->cap) {
+        size_t cap = need > 2 * list->cap ? need : 2 * list->cap;
+        char *room = realloc(list->text, cap);
+        if (room == NULL) {
+            return -1;
+        }
+        list->text = room;
+        list->cap = cap;
+    }
+    memcpy(list->text + list->len, path, n);
+    list->len += n;
+    list->text[list->len++] = '\n';
+    list->text[list->len] = '\0';
+    return 1;
+}
+
+/* Record new paths before their files are written. If power or a removal
+ * fails, the next spec still knows which files it owns. Only a complete
+ * inline configuration can retire files. */
+static int apply_files(agent_t *a, const cJSON *config, char *err, size_t err_len)
+{
+    path_list_t owned = {0}, desired = {0};
+    int rc = fc_port_kv_get(KV_CONFIG_FILES, &owned.text, &owned.len);
+    if (rc != 0 && rc != FC_KV_MISSING) {
+        goto storage_error;
+    }
+    owned.cap = owned.text ? owned.len + 1 : 0;
+    size_t previous_len = owned.len;
+    const cJSON *provider, *file;
+    cJSON_ArrayForEach(provider, config) {
+        const cJSON *files = cJSON_GetObjectItem(provider, "inline");
+        if (!cJSON_IsArray(files)) {
+            const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(provider, "name"));
+            snprintf(err, err_len, "config provider %s: only inline providers are supported", name ? name : "?");
+            continue;
+        }
+        cJSON_ArrayForEach(file, files) {
+            const char *path = cJSON_GetStringValue(cJSON_GetObjectItem(file, "path"));
+            if (!path || !*path || strchr(path, '\n') || !cJSON_IsString(cJSON_GetObjectItem(file, "content"))) {
+                snprintf(err, err_len, "invalid inline file path or content");
+                goto done;
             }
-            if (*l && !path_listed(now, l)) {
-                if (fc_port_remove_file(l) == 0) {
-                    fc_port_log(FC_LOG_INFO, "config: removed %s", l);
-                    fc_apps_file_changed(l);
-                    if (strcmp(l, FC_MQTT_CONFIG) == 0 || strcmp(l, FC_MQTT_CA_FILE) == 0) {
-                        a->mqtt_poke = 1;
-                    }
-                    if (strcmp(l, METRICS_CONFIG) == 0) {
-                        pthread_mutex_lock(&a->lock);
-                        a->metrics_poke = 1;
-                        pthread_cond_signal(&a->status_wake);
-                        pthread_mutex_unlock(&a->lock);
-                    }
-                } else {
-                    fc_port_log(FC_LOG_WARN, "config: could not remove %s", l);
-                }
+            if (add_path(&desired, path) < 0 || add_path(&owned, path) < 0) {
+                goto storage_error;
             }
-            l = end ? end + 1 : NULL;
         }
     }
-    if (before == NULL || strcmp(before, now) != 0) {
-        fc_port_kv_set(KV_CONFIG_FILES, now, strlen(now));
+    if (owned.len != previous_len && fc_port_kv_set(KV_CONFIG_FILES, owned.text, owned.len) != 0) {
+        goto storage_error;
     }
-    free(before);
+    cJSON_ArrayForEach(provider, config) {
+        const cJSON *files = cJSON_GetObjectItem(provider, "inline");
+        if (cJSON_IsArray(files)) {
+            cJSON_ArrayForEach(file, files) {
+                apply_inline_file(a, file, err, err_len);
+            }
+        }
+    }
+    if (err[0]) {
+        goto done;
+    }
+    if (!a->checked_legacy_metrics && !path_listed(owned.text, METRICS_CONFIG)) {
+        /* The fleet gateway predates the catalog. No other untracked paths
+         * have known ownership. Removal is idempotent on every port. */
+        if (fc_port_remove_file(METRICS_CONFIG) != 0) {
+            goto storage_error;
+        }
+        pthread_mutex_lock(&a->lock);
+        a->metrics_poke = 1;
+        pthread_cond_signal(&a->status_wake);
+        pthread_mutex_unlock(&a->lock);
+    }
+    a->checked_legacy_metrics = true;
+    if (owned.len != desired.len) {
+        char *next;
+        for (char *line = strtok_r(owned.text, "\n", &next); line; line = strtok_r(NULL, "\n", &next)) {
+            if (!path_listed(desired.text, line)) {
+                if (fc_port_remove_file(line) != 0) {
+                    goto storage_error;
+                }
+                fc_port_log(FC_LOG_INFO, "config: removed %s", line);
+                config_file_changed(a, line);
+            }
+        }
+        if (fc_port_kv_set(KV_CONFIG_FILES, desired.text ? desired.text : "", desired.len) != 0) {
+            goto storage_error;
+        }
+    }
+done:
+    free(owned.text);
+    free(desired.text);
+    return 0;
+
+storage_error:
+    snprintf(err, err_len, "cannot reconcile stored config files");
+    free(owned.text);
+    free(desired.text);
+    return -1;
 }
 
 /* spec.resources, kept in storage so that the monitors are the fleet's
@@ -1910,53 +1945,29 @@ static int apply_rendered(agent_t *a, const char *json)
         return 0;
     }
 
+    const cJSON *applications = cJSON_GetObjectItem(spec, "applications");
+    fc_apps_plan_t plan;
+    const cJSON *config = cJSON_GetObjectItem(spec, "config");
+    int bad_config = config != NULL && !cJSON_IsArray(config);
+    int prepared = !cJSON_IsObject(spec) || bad_config ? -1 : fc_apps_prepare(applications, &plan);
+    if (prepared != 0) {
+        int retry_catalog = prepared == FC_APPS_CATALOG_ERROR;
+        const char *reason = retry_catalog ? "cannot store the app catalog" :
+                             bad_config ? "spec.config must be an array" : "invalid spec or application list";
+        fc_port_log(FC_LOG_WARN, "rendered device: %s", reason);
+        pthread_mutex_lock(&a->lock);
+        a->waiting_primary = 0;
+        snprintf(a->update_error, sizeof(a->update_error), "%s", reason);
+        if (version != NULL && !retry_catalog) {
+            snprintf(a->attempted_version, sizeof(a->attempted_version), "%s", version);
+        }
+        pthread_mutex_unlock(&a->lock);
+        cJSON_Delete(dev);
+        return retry_catalog || version == NULL;
+    }
     apply_resources(cJSON_GetObjectItem(spec, "resources"), err, sizeof(err));
 
-    /* The paths this spec gives, to remove those it no longer does. Not
-     * known when a provider is not inline: then nothing is removed. */
-    size_t paths_cap = 256, paths_len = 0;
-    char *paths = calloc(1, paths_cap);
-    int paths_known = paths != NULL;
-    const cJSON *provider;
-    cJSON_ArrayForEach(provider, cJSON_GetObjectItem(spec, "config")) {
-        const cJSON *inline_files = cJSON_GetObjectItem(provider, "inline");
-        const char *pname = cJSON_GetStringValue(cJSON_GetObjectItem(provider, "name"));
-        if (!cJSON_IsArray(inline_files)) {
-            snprintf(err, sizeof(err), "config provider %s: only inline providers are supported",
-                     pname ? pname : "?");
-            paths_known = 0;
-            continue;
-        }
-        const cJSON *file;
-        cJSON_ArrayForEach(file, inline_files) {
-            const char *fpath = cJSON_GetStringValue(cJSON_GetObjectItem(file, "path"));
-            if (paths_known && fpath != NULL && fpath[0] && !path_listed(paths, fpath)) {
-                size_t n = strlen(fpath);
-                char *room = paths;
-                if (paths_len + n + 2 > paths_cap) {
-                    paths_cap = 2 * (paths_len + n + 2);
-                    room = realloc(paths, paths_cap);
-                }
-                if (room == NULL) {
-                    paths_known = 0; /* the old buffer is freed below */
-                } else {
-                    paths = room;
-                    memcpy(paths + paths_len, fpath, n);
-                    paths_len += n;
-                    paths[paths_len++] = '\n';
-                    paths[paths_len] = '\0';
-                }
-            }
-            if (apply_inline_file(a, file, err, sizeof(err)) == 0) {
-                fc_port_log(FC_LOG_INFO, "config: wrote %s",
-                            cJSON_GetStringValue(cJSON_GetObjectItem(file, "path")));
-            }
-        }
-    }
-    if (paths_known) {
-        remove_dropped_files(a, paths);
-    }
-    free(paths);
+    int retry_files = apply_files(a, config, err, sizeof(err)) != 0;
     if (a->mqtt_poke) {
         /* A new broker, a new CA, or none: once both files are written. */
         a->mqtt_poke = 0;
@@ -1973,7 +1984,7 @@ static int apply_rendered(agent_t *a, const char *json)
      * password may be among them. */
     const char *image = cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(spec, "os"), "image"));
     char prev_rendered[32], new_digest[80] = "";
-    int reboot = 0, retry = 0;
+    int reboot = 0, retry = retry_files;
     pthread_mutex_lock(&a->lock);
     /* "0" never matches a server version, so even a first update is not
      * reported as done before the new image is confirmed. */
@@ -2015,7 +2026,7 @@ static int apply_rendered(agent_t *a, const char *json)
     if (!reboot && !retry) {
         char aerr[160] = "";
         turn_hold(a);
-        if (fc_apps_apply(cJSON_GetObjectItem(spec, "applications"), aerr, sizeof(aerr), &retry) != 0 && !err[0]) {
+        if (fc_apps_apply_prepared(&plan, aerr, sizeof(aerr), &retry) != 0 && !err[0]) {
             snprintf(err, sizeof(err), "%s", aerr);
         }
         a->apps_held = 1; /* the hold ends once they are started (start_apps) */
@@ -2030,7 +2041,8 @@ static int apply_rendered(agent_t *a, const char *json)
      * A spec whose firmware reboots the device is not applied yet: its apps
      * come after the reboot, when the new firmware asks for it again (from
      * the version before it). */
-    if (version != NULL && !retry && !reboot) {
+    a->waiting_primary = retry == FC_APPS_WAIT_PRIMARY;
+    if (version != NULL && (!retry || a->waiting_primary) && !reboot) {
         snprintf(a->attempted_version, sizeof(a->attempted_version), "%s", version);
         if (!err[0]) {
             snprintf(a->rendered_version, sizeof(a->rendered_version), "%s", version);
@@ -2064,7 +2076,7 @@ static int apply_rendered(agent_t *a, const char *json)
         fc_port_log(FC_LOG_INFO, "spec %s applied", version ? version : "?");
     }
     cJSON_Delete(dev);
-    return retry;
+    return retry == 1;
 }
 
 /* The apps the spec installed or changed are started here, once the spec,
@@ -2097,16 +2109,31 @@ static void wait_confirmed(agent_t *a)
     pthread_mutex_unlock(&a->lock);
 }
 
+static int spec_work_due(void)
+{
+    return fc_console_finished() || fc_apps_poll_due();
+}
+
 static void *spec_thread(void *arg)
 {
     agent_t *a = arg;
     time_t quiet_since = 0; /* only sessions seen before listed, since then */
     spec_taken();
     for (;;) {
+        if (fc_console_finished()) {
+            fc_console_stop();
+        }
         if (a->mqtt_retry) {
             a->mqtt_retry = fc_mqtt_configure(a->id.name) == -2;
         }
-        fc_apps_poll(); /* an app short of heap, when the heap has room again */
+        if (poll_apps(a) && a->waiting_primary) {
+            /* Ask for the pending spec again. While the primary needed
+             * the heap, knownRenderedVersion still admitted newer specs. */
+            pthread_mutex_lock(&a->lock);
+            a->attempted_version[0] = '\0';
+            a->waiting_primary = 0;
+            pthread_mutex_unlock(&a->lock);
+        }
         char known[32];
         long stack = fc_port_stack_unused();
         pthread_mutex_lock(&a->lock);
@@ -2115,14 +2142,22 @@ static void *spec_thread(void *arg)
                  a->attempted_version[0] ? a->attempted_version : a->rendered_version);
         pthread_mutex_unlock(&a->lock);
 
+        /* Repeated local wakeups can outlast a whole server poll. Read the
+         * current version then, so only a real response feeds the watchdog. */
+        int refresh = known[0] && fc_agent_spec_age() >= SPEC_POLL_TIMEOUT_S;
         char path[192];
-        if (known[0]) {
+        if (known[0] && !refresh) {
             snprintf(path, sizeof(path), API "/devices/%s/rendered?knownRenderedVersion=%s", a->id.name, known);
         } else {
             snprintf(path, sizeof(path), API "/devices/%s/rendered", a->id.name);
         }
         fc_http_response_t r;
-        if (mgmt_request(a, a->sess, SPEC_POLL_TIMEOUT_S, "GET", path, NULL, NULL, 0, &r) != 0) {
+        int rc = mgmt_request(a, a->sess, SPEC_POLL_TIMEOUT_S, "GET", path, NULL, NULL, 0, &r,
+                              known[0] && !refresh ? spec_work_due : NULL, 0);
+        if (rc == FC_HTTP_INTERRUPTED) {
+            continue;
+        }
+        if (rc != 0) {
             sleep(RETRY_DELAY_S);
             continue;
         }
@@ -2135,10 +2170,24 @@ static void *spec_thread(void *arg)
             } else if (quiet_since == 0) {
                 quiet_since = now;
             }
-            sleep(quiet_since != 0 && now - quiet_since >= CONSOLE_STALE_AFTER_S ? CONSOLE_STALE_POLL_S : CONSOLE_POLL_S);
+            int delay = quiet_since != 0 && now - quiet_since >= CONSOLE_STALE_AFTER_S
+                            ? CONSOLE_STALE_POLL_S : CONSOLE_POLL_S;
+            /* A completed console worker or one-shot can release memory
+             * for another app before the next network poll. */
+            int check_workers = !a->console_quiet || fc_apps_awaiting_primary_completion();
+            while (delay > 0 && !spec_work_due()) {
+                int step = check_workers ? 1 : delay;
+                sleep(step);
+                delay -= step;
+            }
             continue;
         }
         quiet_since = 0;
+        if (refresh && r.status == 200 && same_rendered_version(r.body, known)) {
+            spec_taken();
+            fc_http_free(&r);
+            continue;
+        }
         if (r.status == 200) {
             wait_confirmed(a);
             apply_begin(a);
@@ -2301,7 +2350,7 @@ int fc_agent_apps_start(const fc_agent_config_t *cfg)
 {
     /* The TLS buffers before any app takes the heap: a port may start the
      * apps before the network. The saved apps are loaded now, and started
-     * once the agent is up (fc_apps_saved_due, status thread). */
+     * once the agent is up (fc_apps_saved_delay_s, status thread). */
     fc_tls_pool_init();
     fc_apps_set_hw(cfg->hw);
     fc_apps_hold_saved(1);
@@ -2359,7 +2408,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
             return -1;
         }
     }
-    if (cert_info(&a, a.mgmt_cert_pem, &a.cert_renew_at, &a.cert_not_after) == 0) {
+    if (cert_info(&a, CERT_MANAGEMENT, a.mgmt_cert_pem, &a.cert_renew_at, &a.cert_not_after) == 0) {
         log_cert("management certificate", a.cert_renew_at, a.cert_not_after);
     } else {
         fc_port_log(FC_LOG_WARN, "cannot read the management certificate: it will not be renewed");

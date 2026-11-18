@@ -376,7 +376,8 @@ done
 echo "device: $DEVICE"
 printf 'devices:\n  - name: %s\n    labels:\n      stage: emu\n' "$DEVICE" > "$WORK/allowlist.yaml"
 tools/auto-approve/auto-approve.py "$WORK/allowlist.yaml"
-wait_for 120 "device Online (debug build)" "st.get('summary', {}).get('status') == 'Online' and not ci.get('firmwareVersion', '').endswith('-release')"
+wait_for 120 "debug build Online in the first OTA slot" \
+  "st.get('summary', {}).get('status') == 'Online' and ci.get('bootSlot') == 'ota_0' and not ci.get('firmwareVersion', '').endswith('-release')"
 if [[ "$SECURE" == 1 ]]; then
   wait_for 30 "chip reports Secure Boot and flash encryption (release)" \
     "ci.get('secureBoot') == 'true' and ci.get('flashEncryption') == 'release'"
@@ -397,8 +398,8 @@ fi
 
 log "signed release build over the air, signed app"
 apply_fleet "release.$TAG" "v2.$TAG"
-wait_for 300 "release build confirmed, app running" \
-  "ci.get('firmwareVersion', '').endswith('-release') and upd.get('status') == 'UpToDate' and apps and apps[0]['status'] == 'Running'"
+wait_for 300 "release build confirmed in the second OTA slot, app running" \
+  "ci.get('firmwareVersion', '').endswith('-release') and ci.get('bootSlot') == 'ota_1' and upd.get('status') == 'UpToDate' and apps and apps[0]['status'] == 'Running'"
 # UpToDate is enough: the device reports the new version only once the new
 # image is confirmed (and the release build does not log at INFO level).
 # The firmware and the app came in one spec: the firmware first, the app
@@ -477,8 +478,8 @@ if [[ "$ROLLBACK" == 1 ]]; then
   [[ -f "port/espidf/build-$CHIP$SUFFIX-$BROKEN_V/flightctl_mcu_fw.bin" ]] || fail "no port/espidf/build-$CHIP$SUFFIX-$BROKEN_V"
   tools/fw-push.py --variant "${SUFFIX#-}${SUFFIX:+-}$BROKEN_V" "$REGISTRY/flightctl-mcu/fw:broken.$TAG" "$CHIP" >/dev/null
   apply_fleet "broken.$TAG" "v2.$TAG"
-  wait_for 480 "back on the release build, update reported as failed" \
-    "ci.get('firmwareVersion', '').endswith('-release') and 'rolled back' in upd.get('info', '')"
+  wait_for 480 "back in the confirmed release slot, update reported as failed" \
+    "ci.get('firmwareVersion', '').endswith('-release') and ci.get('bootSlot') == 'ota_1' and 'rolled back' in upd.get('info', '')"
   # The broken build has no delta: it came whole.
   wait_for 30 "an image without a delta came whole" \
     "(st.get('os') or {}).get('lastDelta', {}).get('outcome') == 'NotUsed'"

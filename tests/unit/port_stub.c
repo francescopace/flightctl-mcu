@@ -28,7 +28,7 @@ int stub_verbose;
 int stub_hwkey_bits;
 int stub_hwkey_seal_fails;
 int stub_hwkey_seals;
-int stub_kv_set_fails;
+int stub_kv_set_fails, stub_kv_get_fails, stub_kv_del_fails;
 
 static entry_t *find(entry_t *t, const char *key, int create)
 {
@@ -83,7 +83,7 @@ void stub_reset(void)
     stub_hwkey_bits = 0;
     stub_hwkey_seal_fails = 0;
     stub_hwkey_seals = 0;
-    stub_kv_set_fails = 0;
+    stub_kv_set_fails = stub_kv_get_fails = stub_kv_del_fails = 0;
 }
 
 const char *stub_kv(const char *key)
@@ -100,9 +100,12 @@ const char *stub_file(const char *path)
 
 int fc_port_kv_get(const char *key, char **out, size_t *len)
 {
+    if (stub_kv_get_fails) {
+        return -1;
+    }
     entry_t *e = find(s_kv, key, 0);
     if (e == NULL) {
-        return -1;
+        return FC_KV_MISSING;
     }
     *out = malloc(e->len + 1);
     memcpy(*out, e->data, e->len + 1);
@@ -120,6 +123,9 @@ int fc_port_kv_set(const char *key, const void *data, size_t len)
 
 int fc_port_kv_del(const char *key)
 {
+    if (stub_kv_del_fails) {
+        return -1;
+    }
     entry_t *e = find(s_kv, key, 0);
     if (e != NULL) {
         free(e->data);
@@ -198,6 +204,8 @@ void fc_port_metrics(void *obj)
     cJSON_AddStringToObject((cJSON *)obj, "reads", n);
 }
 
+void fc_port_background_compute(void) {}
+
 long fc_port_stack_unused(void)
 {
     return stub_stack_unused;
@@ -223,6 +231,9 @@ int fc_port_read_file(const char *path, char **out, size_t *len)
 
 int fc_port_remove_file(const char *path)
 {
+    if (stub_kv_del_fails) {
+        return -1;
+    }
     entry_t *e = find(s_files, path, 0);
     if (e != NULL) {
         free(e->data);

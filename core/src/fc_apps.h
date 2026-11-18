@@ -8,13 +8,32 @@
 /* WASM applications (spec.applications, appType "container" whose image is a
  * WASM OCI artifact), run with WAMR, one thread per app. */
 
+#define FC_MAX_APPS 2
+#define FC_APP_NAME_MAX 47
+
 /* Starts the runtime, loads the board map and starts the apps saved by a
  * previous run, so they work before the network is up. */
 int fc_apps_init(void);
 
+typedef struct {
+    const cJSON *applications, *primary; /* borrowed from the rendered spec */
+    unsigned revision;
+} fc_apps_plan_t;
+
+/* Check the list and release omitted apps before config writes and OTA.
+ * Returns -1 for an invalid list, FC_APPS_CATALOG_ERROR for a storage failure. */
+#define FC_APPS_CATALOG_ERROR (-2)
+int fc_apps_prepare(const cJSON *applications, fc_apps_plan_t *plan);
+
+/* Retry a secondary installation when the primary has obtained its memory. */
+#define FC_APPS_WAIT_PRIMARY 2
+
 /* Reconciles the running apps with spec.applications (NULL: none). On error
- * `err` is set; *retry is 1 when the failure may be transient (download). */
+ * `err` is set. *retry is 1 for a transient download or FC_APPS_WAIT_PRIMARY
+ * when the spec can finish after the primary gets its memory. */
 int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *retry);
+/* Finish a successful prepare while its rendered spec is still alive. */
+int fc_apps_apply_prepared(const fc_apps_plan_t *plan, char *err, size_t err_len, int *retry);
 
 /* With `on`, the apps fc_apps_apply installs, updates or restarts for new env
  * vars are only made ready ("Preparing"), and fc_apps_start_pending starts
@@ -25,12 +44,12 @@ int fc_apps_apply(const cJSON *applications, char *err, size_t err_len, int *ret
 void fc_apps_defer_starts(int on);
 int fc_apps_start_pending(void);
 
-/* Between specs (the agent's spec thread, at each of its polls: a few
- * minutes apart at most, while nothing changes): an app whose instance did
- * not fit in the heap (no block for its memory, or the agent's floor) is
- * started again once the heap has room for it, looked at no more than every
- * 30 s. */
-void fc_apps_poll(void);
+/* The spec thread checks local app work before a long-poll. Runner changes
+ * interrupt that poll; memory refusals are checked on a 30-second timer. */
+int fc_apps_poll_due(void);
+int fc_apps_awaiting_primary_completion(void);
+int fc_apps_primary_retry_due(void);
+int fc_apps_poll(int idle_released); /* 1 when a secondary image can be loaded */
 
 /* The hardware the port gives to apps (may be NULL).
  * Set before fc_apps_init. */
@@ -61,12 +80,12 @@ int fc_apps_heap_agent(char *text, size_t len);
 long fc_apps_heap_floor(void);
 
 /* The apps saved by a previous run: with fc_apps_hold_saved(1) before
- * fc_apps_init they are loaded but not started ("Preparing") until
- * fc_apps_start_saved, which the agent calls once fc_apps_saved_due says so:
+ * fc_apps_init starts wait ("Preparing") until
+ * fc_apps_start_saved, which the agent calls once fc_apps_saved_delay_s returns zero:
  * a status accepted (fc_apps_status_ok), or none for 3 minutes. Their memory
  * is then taken with the heap at regime, under the floor's check. */
 void fc_apps_hold_saved(int on);
-int fc_apps_saved_due(void);
+int fc_apps_saved_delay_s(void); /* -1 if no saved start is held */
 int fc_apps_start_saved(void);
 /* Each accepted status: an app is past its start once one comes after it. */
 void fc_apps_status_ok(void);

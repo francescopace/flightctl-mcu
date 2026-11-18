@@ -49,7 +49,7 @@ typedef struct {
     uint32_t warned; /* pins already logged, bit PINS for any pin past them */
 } pins_t;
 
-static pins_t s_pins[MAX_APPS];
+static pins_t s_pins[FC_MAX_APPS];
 
 static pins_t *pins_of(wasm_exec_env_t env, app_t *a)
 {
@@ -107,7 +107,7 @@ static int pin_handle(app_t *a, pins_t *p, uint32_t pin)
     if (pin >= PINS || p->h[pin] < 0) {
         return -1;
     }
-    const app_handle_t *h = &a->h[p->h[pin]];
+    const app_handle_t *h = &a->io->h[p->h[pin]];
     return (h->kind == H_GPIO || h->kind == H_LED) && h->serial == p->serial[pin] ? p->h[pin] : -1;
 }
 
@@ -138,7 +138,7 @@ static void ard_pinMode(wasm_exec_env_t env, uint32_t pin, uint32_t mode)
         return;
     }
     p->h[pin] = (int8_t)h;
-    p->serial[pin] = a->h[h].serial;
+    p->serial[pin] = a->io->h[h].serial;
 }
 
 static void ard_digitalWrite(wasm_exec_env_t env, uint32_t pin, uint32_t value)
@@ -150,7 +150,7 @@ static void ard_digitalWrite(wasm_exec_env_t env, uint32_t pin, uint32_t value)
     pins_t *p = pins_of(env, a);
     int h = pin_handle(a, p, pin);
     int rc = FC_HW_EINVAL;
-    if (h >= 0 && a->h[h].kind == H_LED) {
+    if (h >= 0 && a->io->h[h].kind == H_LED) {
         int v = value ? LED_ON : 0;
         rc = fc_appapi_led_rgb(env, h, v, v, v);
     } else if (h >= 0) {
@@ -190,16 +190,16 @@ static void ard_delay(wasm_exec_env_t env, uint32_t ms)
     }
 }
 
-/* Into the app's line (a->out, as printf's): logged at each newline. */
+/* Into the app's line (a->io->out, as printf's): logged at each newline. */
 static void ard_print(wasm_exec_env_t env, const char *s, uint32_t len)
 {
     app_t *a = wasm_runtime_get_user_data(env);
     for (uint32_t i = 0; a != NULL && i < len; i++) {
         if (s[i] != '\n') {
-            a->out[a->out_len++] = s[i];
+            a->io->out[a->out_len++] = s[i];
         }
-        if (s[i] == '\n' || a->out_len == (int)sizeof(a->out)) {
-            fc_port_log(FC_LOG_INFO, "app %s: %.*s", a->name, a->out_len, a->out);
+        if (s[i] == '\n' || a->out_len == (int)sizeof(a->io->out)) {
+            fc_port_log(FC_LOG_INFO, "app %s: %.*s", a->name, a->out_len, a->io->out);
             a->out_len = 0;
         }
     }
