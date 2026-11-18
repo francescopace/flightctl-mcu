@@ -6,14 +6,14 @@ firmware=$(realpath "$2")
 runner=$(realpath "$(dirname "$0")/run.py")
 version=${ESP_EMU_VERSION:?set ESP_EMU_VERSION to the pinned release}
 base="https://github.com/espressif/esp-emulator/releases/download/v$version"
-emu="esp-emu-$version-x86_64-unknown-linux-gnu"
+emu="esp-emu-$version-$(uname -m)-unknown-linux-gnu"
 parts="esp-emu-$version-examples"
 temp=$(mktemp -d)
 trap 'rm -rf "$temp"' EXIT
 cd "$temp"
-curl -fsSLO "$base/SHA256SUMS"
+wget -nv "$base/SHA256SUMS"
 for name in "$emu" "$parts"; do
-    curl -fsSLO "$base/$name.tar.gz"
+    wget -nv "$base/$name.tar.gz"
     grep -F " $name.tar.gz" SHA256SUMS | sha256sum -c -
     tar xzf "$name.tar.gz"
 done
