@@ -206,7 +206,28 @@ The ESP32-C5 completed all ten swaps on a single boot at 9.022–11.156 iteratio
 
 All five failed C5 PUTs followed a hardware AES allocation failure during a TLS write. With small TLS allocations (up to 2 KiB, excluding receive records) placed preferentially in RTC FAST memory, an instrumented C5 repeated the same ten swaps. All ten passed CRC with no allocation refusal or reset. Across 41 status attempts, 39 returned HTTP 200 and two returned HTTP 429. The next retry was accepted, and no TLS write failed. The secondary resumed in 60–1,010 ms. Median CoreMark was 9.830 iterations/s, compared with 9.841 before the allocator change.
 
-A controlled comparison installed the identical 7,769 B wasm3 module three times per boot on one 160 MHz C6. The four release blocks were v3.10, v3.12, v3.12 and v3.10. Their median scores were 12.253, 11.983, 11.783 and 12.200 iterations/s respectively. All twelve runs passed. Across both boots v3.10 ranged from 12.189 to 12.264, and v3.12 from 10.911 to 12.204. The 7,502 instructions in the C6 fast bytecode interpreter dispatch retained the same opcodes and registers in both images. The linked address and some immediate operands differed. The source of the timing variation is still open.
+#### Memory placement on C5 and C6
+
+A controlled comparison installed the identical 7,769 B wasm3 module three times per boot on one 160 MHz C6. The four release blocks were v3.10, v3.12, v3.12 and v3.10. Their median scores were 12.253, 11.983, 11.783 and 12.200 iterations/s respectively. All twelve runs passed. Across both boots v3.10 ranged from 12.189 to 12.264, and v3.12 from 10.911 to 12.204. In the two releases the fast interpreter's dispatch had the same opcodes and registers on each chip (6,696 instructions on C5, 7,502 on C6). Its linked address and some immediate operands differed.
+
+On C5 and C6, v3.12 reserves the largest free heap block while WAMR loads a module and again while creating its thread. This keeps contiguous space for the app's linear memory. It can also place the interpreter's decoded bytecode or the thread's native stack in slower RTC FAST memory. The 64 KiB linear memory itself stayed in main SRAM in every instrumented run.
+
+With the same wasm3 module installed eight times per board on an instrumented v3.12, four loads held the largest free block and four left it available, in two A/B/B/A cycles. The thread used the usual v3.12 allocation policy throughout. Task time was sampled at the module's timing calls and includes interrupts charged to the running task.
+
+| Board | Largest block during module load | Installs with decoded bytecode in RTC | Iterations/s | Task ms/iteration |
+|---|---|---:|---:|---:|
+| C5 | Held | 4/4 (3,236–7,514 B) | 15.824–18.001 | 55.0–61.0 |
+| C5 | Available | 0/4 | 18.736–19.577 | 50.5–50.6 |
+| C6 | Held | 1/4 (2,328 B) | 11.604–12.074 | 82.1–85.2 |
+| C6 | Available | 0/4 | 11.763–11.797 | 83.9 |
+
+Capping both temporary reservations at 72 KiB for this 64 KiB app kept all decoded bytecode in main SRAM across four further installs per board. With the SDK's usual stack allocation, the C5 placed all four native stacks in RTC FAST memory (18.693–19.640 iterations/s) and the C6 placed all four in main SRAM (12.050–12.090).
+
+A final comparison kept the same cap and selected the heap for the native stack at task creation in main/RTC/RTC/main order. On the C6 the decoded bytecode stayed in main SRAM in all four installs. With the stack in main SRAM, CoreMark scored 12.047 and 12.088 iterations/s (81.9–82.1 task ms/iteration). With the stack in RTC FAST memory it scored 11.809 and 11.821 (83.7 task ms/iteration). These placements account for a repeatable part of the release difference. The original release runs did not record allocation addresses.
+
+On the C5 the same stack selection exposed the cost in contiguous RAM. Both main-SRAM stack requests left a largest block of 62 KiB and the module could not start. With the stack requested in RTC FAST memory, one install passed at 18.358 iterations/s with all decoded bytecode in main SRAM, and one was refused with a 64 KiB largest block. The v3.12 allocator needed 68 KiB for this module. The 72 KiB reservation cap was specific to the benchmark. A general placement policy still needs to accommodate other linear-memory sizes.
+
+#### Scores by board
 
 Iterations per second of [CoreMark](https://github.com/eembc/coremark) 1.0's two published WebAssembly builds, unmodified, on WAMR's fast interpreter ([APPS.md](APPS.md#modules-built-for-no-device)). ESP-IDF v3.14-rc12 built for size, swapped in for the `alarm` app; the 128 KB build with v3.13. Every run was valid (its CRCs right, a timed part of 10 s or more), with the agent connected and metrics sent every 30 s or none:
 
@@ -215,7 +236,7 @@ Iterations per second of [CoreMark](https://github.com/eembc/coremark) 1.0's two
 | Classic ESP32 (240 MHz) | 14.23 | does not fit: largest free block 64–76 KB | about 505 |
 | ESP32-C3 (160 MHz) | 14.21 | does not fit: largest free block 36–38 KB | about 409 |
 | ESP32-C6 (160 MHz) | 12.10 | 13.24–13.71 | |
-| ESP32-C5 (240 MHz) | 19.70; from 18.9 to 22.3 from one run to the next since v3.12, not explained yet | does not fit: largest free block 72 KB | |
+| ESP32-C5 (240 MHz) | 19.70 (18.9–22.3 across installs since v3.12) | does not fit: largest free block 72 KB | |
 | ESP32-S3 N4R2 (2 MB quad PSRAM) | 18.09 | 21.04–21.64, in PSRAM | about 614 |
 | ESP32-S3, PSRAM off | 18.88–18.95 (v3.10, built for speed) | does not fit: no internal block of 128 KB left once running | about 614 |
 | ESP32-S3 N8R8 with Zephyr, PSRAM disabled | 17.885 in internal DRAM (one run) | – | |

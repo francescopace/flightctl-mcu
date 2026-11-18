@@ -6,7 +6,7 @@ What is left before 1.0 and after it. What the agent does today is in the [READM
 
 What an app can do and hold:
 
-- [ ] CoreMark slower and less even on the C5 and C6 since v3.12 than with the same `-Os` firmware before it. Not explained yet ([RESULTS.md](RESULTS.md#coremark)).
+- [ ] Keep WAMR's decoded bytecode and app thread stack in main SRAM on C5 and C6 when there is room. Verify throughput and app admission across repeated installs with a fragmented heap. [CoreMark measurements](RESULTS.md#memory-placement-on-c5-and-c6)
 - [ ] Verify GPIO interrupts and I2C, SPI, UART, ADC and PWM with wired devices. On Zephyr, verify devicetree hardware names on a board and measure ESP32-S3 RS-485 driver-enable timing with a transceiver and a responding peer. See [APPS.md](APPS.md).
 
 ### Blocked on Flight Control
