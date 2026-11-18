@@ -79,6 +79,13 @@ void fc_agent_notify_status(void);
  * (fc_apps.c). 1 before the agent has started. */
 int fc_agent_busy(void);
 
+/* Seconds since the agent's last accepted status update (or since its status
+ * thread started), on a monotonic clock; -1 before it starts. For a watchdog
+ * outside the agent's threads: the agent restarts the device itself after
+ * STATUS_STALL_REBOOT_S, but only from its status thread, which a hung
+ * download or connection can hold. */
+long fc_agent_status_age(void);
+
 #ifdef __cplusplus
 }
 #endif

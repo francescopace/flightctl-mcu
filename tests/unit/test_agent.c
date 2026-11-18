@@ -763,6 +763,19 @@ static void metrics_and_pulls_take_turns(void)
     CHECK_INT(fc_agent_busy(), 1); /* not started: busy anyway */
 }
 
+/* The age of the last accepted status, for the port's watchdog: -1 before
+ * the status thread runs, then seconds on a monotonic clock. */
+static void the_status_age_is_monotonic(void)
+{
+    long long saved = s_status_ok_mono;
+    s_status_ok_mono = 0;
+    CHECK_INT(fc_agent_status_age(), -1);
+    s_status_ok_mono = mono_s() - 30;
+    long age = fc_agent_status_age();
+    CHECK(age >= 30 && age <= 31);
+    s_status_ok_mono = saved;
+}
+
 /* An export waits for room above the agent's floor: an app's memory may
  * leave the agent that and no more. */
 static void an_export_waits_for_room_above_the_floor(void)
@@ -1264,6 +1277,7 @@ int main(void)
     RUN(a_spec_waits_for_the_brokers_handshake);
     RUN(metrics_and_pulls_take_turns);
     RUN(an_export_waits_for_room_above_the_floor);
+    RUN(the_status_age_is_monotonic);
     RUN(an_export_waits_for_room_with_the_apps_checks_off);
     RUN(a_console_alone_is_not_applied_again);
     RUN(counters_are_read_again_only_when_due);

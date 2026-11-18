@@ -464,6 +464,31 @@ static void ota_guard(void *arg)
     }
 }
 
+/* A watchdog outside the agent's threads: no status update accepted for
+ * this long restarts the device. The agent does it itself after 10 minutes
+ * from its status thread, which a hung download or connection can hold: on
+ * an ESP32-C5 running two apps with 64 KB memories the device went silent
+ * for good (v3.14-rc10.1). Checked every minute on esp_timer's task. */
+#define STATUS_WATCHDOG_S 1800
+
+static void status_watchdog(void *arg)
+{
+    long age = fc_agent_status_age();
+    if (age > STATUS_WATCHDOG_S) {
+        ESP_LOGE(TAG, "no status update accepted for %ld s, the agent stuck: restarting", age);
+        esp_restart();
+    }
+}
+
+static void start_status_watchdog(void)
+{
+    const esp_timer_create_args_t args = {.callback = status_watchdog, .name = "status_wd"};
+    esp_timer_handle_t t;
+    if (esp_timer_create(&args, &t) == ESP_OK) {
+        esp_timer_start_periodic(t, 60ULL * 1000000);
+    }
+}
+
 static void start_ota_guard(void)
 {
     esp_ota_img_states_t st;
@@ -568,5 +593,6 @@ void app_main(void)
     /* The agent's spec loop runs on this task from here: at the priority of
      * its other thread and the apps', not the main task's (1). */
     vTaskPrioritySet(NULL, CONFIG_PTHREAD_TASK_PRIO_DEFAULT);
+    start_status_watchdog();
     fc_agent_run(&cfg);
 }

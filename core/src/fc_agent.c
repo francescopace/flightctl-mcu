@@ -1444,11 +1444,29 @@ static void metrics_tick(agent_t *a)
     }
 }
 
+/* When the last status update was accepted, in seconds of CLOCK_MONOTONIC;
+ * 0 before the status thread runs (fc_agent_status_age). */
+static long long s_status_ok_mono;
+
+static long long mono_s(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec + 1; /* never 0 */
+}
+
+long fc_agent_status_age(void)
+{
+    long long t = __atomic_load_n(&s_status_ok_mono, __ATOMIC_RELAXED);
+    return t == 0 ? -1 : (long)(mono_s() - t);
+}
+
 static void *status_thread(void *arg)
 {
     agent_t *a = arg;
     int interval = a->cfg->status_interval_s > 0 ? a->cfg->status_interval_s : 60;
     time_t last_ok = time(NULL), last_put = 0;
+    __atomic_store_n(&s_status_ok_mono, mono_s(), __ATOMIC_RELAXED);
     /* The first status lists the saved apps: they start once this thread
      * runs (fc_agent_run). */
     pthread_mutex_lock(&a->lock);
@@ -1541,6 +1559,7 @@ static void *status_thread(void *arg)
         last_put = time(NULL);
         if (ok) {
             last_ok = last_put;
+            __atomic_store_n(&s_status_ok_mono, mono_s(), __ATOMIC_RELAXED);
             pthread_mutex_lock(&a->lock);
             a->status_once = 1;
             pthread_mutex_unlock(&a->lock);
