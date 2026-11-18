@@ -289,7 +289,7 @@ static void test_tls_extra(void)
 /* ---- a fake broker ------------------------------------------------------------------------ */
 
 static pthread_mutex_t f_lock = PTHREAD_MUTEX_INITIALIZER;
-static int f_fd = -1, f_old_fd = -1, f_connects, f_links_up, f_links_down, f_refuse, f_ends;
+static int f_fd = -1, f_old_fd = -1, f_connects, f_links_up, f_links_down, f_refuse, f_refused, f_ends;
 typedef struct {
     void *owner;
     int sub;
@@ -325,6 +325,7 @@ static int f_on_message(void *owner, int sub, fc_mqtt_msg_t *m)
 {
     pthread_mutex_lock(&f_lock);
     if (f_refuse || f_ngot == 32) {
+        f_refused++;
         pthread_mutex_unlock(&f_lock);
         return -1;
     }
@@ -382,6 +383,21 @@ static int wait_for(int *v, int want, int ms)
         usleep(10000);
     }
     return locked(v) >= want;
+}
+
+/* The client acknowledges a message before it hands it to the app, and
+ * counts a drop after: the count is waited for, not read at once. */
+static int wait_dropped(unsigned long want)
+{
+    fc_mqtt_stats_t st;
+    for (int i = 0; i < 3000; i++) { /* 30 s at most, however slow the machine */
+        fc_mqtt_stats(&st);
+        if (st.dropped >= want) {
+            return 1;
+        }
+        usleep(10000);
+    }
+    return 0;
 }
 
 static int f_read(int fd, unsigned char *b, size_t n)
@@ -566,6 +582,7 @@ static void test_client(void)
     f_publish("flightctl/dev1/app1/in/big", big, FC_MQTT_MAX_PAYLOAD + 1, 1, 8);
     CHECK_INT(f_packet(pk, sizeof(pk), &n), 0x40);
     CHECK(n == 2 && pk[1] == 8);
+    CHECK(wait_dropped(1));
     fc_mqtt_stats(&st);
     CHECK_INT(st.dropped, 1);
     CHECK(stub_log_has("mqtt: 1 message(s) dropped, the last: a payload too large"));
@@ -573,11 +590,14 @@ static void test_client(void)
     pthread_mutex_lock(&f_lock);
     f_refuse = 1;
     pthread_mutex_unlock(&f_lock);
+    int refused = locked(&f_refused);
     f_publish("flightctl/dev1/app1/in/r", "r", 1, 1, 9);
     CHECK_INT(f_packet(pk, sizeof(pk), &n), 0x40);
+    CHECK(wait_for(&f_refused, refused + 1, 30000)); /* handed to the app after the PUBACK */
     pthread_mutex_lock(&f_lock);
     f_refuse = 0;
     pthread_mutex_unlock(&f_lock);
+    CHECK(wait_dropped(2));
     fc_mqtt_stats(&st);
     CHECK_INT(st.dropped, 2);
     for (int i = 0; i < 3; i++) {
@@ -599,6 +619,7 @@ static void test_client(void)
     usleep(100000);
     CHECK_INT(locked(&f_ngot), 5);
     CHECK(got(4)->owner == &b);
+    CHECK(wait_dropped(3));
     fc_mqtt_stats(&st);
     CHECK_INT(st.dropped, 3);
     for (int i = 0; i < 5; i++) {
