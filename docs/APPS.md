@@ -14,7 +14,7 @@ An app is a WebAssembly module that Flight Control deploys as a container applic
 | Chip sensors | `fc_sensor_read` (`die_temp`) | always |
 | Metrics | `fc_metric` | `metrics` |
 | MQTT | `fc_mqtt_publish/subscribe/topic`, `fc_event_data` | `mqtt` |
-| C library | `string.h`, `stdio.h` (`snprintf`, `printf` to the log), `stdlib.h`, `ctype.h` from [wasm-apps/sdk/libc](../wasm-apps/sdk/libc/) | always |
+| C library | `string.h`, `stdio.h` (`snprintf`, `printf` to the log), `stdlib.h` (with a `malloc` built into the app), `ctype.h`, `math.h` (`expf`, `logf`, `tanhf`) from [wasm-apps/sdk/libc](../wasm-apps/sdk/libc/) | always |
 | Arduino | `pinMode`, `digitalWrite`, `delay`, `millis`, `getPinLED`, `print` (import module `arduino`), for [wasm3-arduino's examples](#the-blink-of-wasm3-arduino) | a name in `FC_ALLOW` |
 
 MQTT is in the firmware from v3.14 ([MQTT](#mqtt)); an older firmware returns `FC_ENOTSUP` once it is granted, so an app written for it loads and can tell. What each port has is under [Ports](#ports).
@@ -191,7 +191,7 @@ On the boards, the `alarm` app opened `led0` with its pin from the firmware on t
 |---|---|
 | Apps per device | 2 |
 | Module | what the heap can load beside the agent: a quarter of the internal heap free less 32 KB, 64 KB at most (below) |
-| Linear memory | one 64 KB page, shrunk to what the module uses (see below); a module that does not export `__heap_base` and `__data_end` keeps all it declares, as does one whose `__data_end`, which WAMR rounds up to 16 bytes, is past its `__heap_base` |
+| Linear memory | one 64 KB page, shrunk to what the module uses (see below), the arena of its `malloc` included; a module that does not export `__heap_base` and `__data_end` keeps all it declares, as does one whose `__data_end`, which WAMR rounds up to 16 bytes, is past its `__heap_base` |
 | Open handles per app (GPIOs, LEDs, timers...) | 12 |
 | Timers per app | 4 |
 | Storage per app | 4 KB |
@@ -210,11 +210,11 @@ What the apps take must leave the agent the heap it needs to open its connection
 
 `fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `fc_config_double`, `fc_config_milli`, `FC_STR`). They are compiled into the app, so they can change without touching the interface. Build and push with `wasm-apps/build.sh <app> <version>`, and keep its link flags. Exporting `__heap_base` and `__data_end` lets WAMR shrink the WebAssembly memory page to what the module actually uses, without which an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses. Tail calls are the one feature beyond the MVP it has.
 
-An app that imports a function only a newer firmware has (the [C library](#the-c-library)'s `snprintf` came with v3.14, `strrchr` with v3.14-rc9) goes out in the same spec as that firmware. The device installs the firmware first, and once the new one is confirmed after its restart, applies the spec's apps with it. While the firmware's download is to be tried again, the apps stay as they are; a firmware refused or rolled back leaves them to the one that runs. Published alone to a fleet whose firmware lacks the function, the app is refused (`imports env.strrchr, which this firmware does not have`) and the version that runs is kept. A device on a firmware before v3.14-rc7 checks the apps first, and refuses the app and the firmware with it. On the five ESP-IDF chips, a fleet on v3.14-rc8 took v3.14-rc9 with `libccheck` in one spec, canary first, in about two minutes.
+An app that imports a function only a newer firmware has (the [C library](#the-c-library)'s `snprintf` came with v3.14, `strrchr` with v3.14-rc9, `expf`, `logf` and `tanhf` with v3.14-rc12) goes out in the same spec as that firmware. The device installs the firmware first, and once the new one is confirmed after its restart, applies the spec's apps with it. While the firmware's download is to be tried again, the apps stay as they are; a firmware refused or rolled back leaves them to the one that runs. Published alone to a fleet whose firmware lacks the function, the app is refused (`imports env.strrchr, which this firmware does not have`) and the version that runs is kept. A device on a firmware before v3.14-rc7 checks the apps first, and refuses the app and the firmware with it. On the five ESP-IDF chips, a fleet on v3.14-rc8 took v3.14-rc9 with `libccheck` in one spec, canary first, in about two minutes.
 
 ### The C library
 
-The firmware has a small C library for apps, part of the interface: WAMR's libc-builtin, of which an app may import these functions from `env`, declared in [wasm-apps/sdk/libc/](../wasm-apps/sdk/libc/) (`string.h`, `stdio.h`, `stdlib.h`, `ctype.h`):
+The firmware has a small C library for apps, part of the interface: WAMR's libc-builtin, of which an app may import these functions from `env`, declared in [wasm-apps/sdk/libc/](../wasm-apps/sdk/libc/) (`string.h`, `stdio.h`, `stdlib.h`, `ctype.h`, `math.h`):
 
 | Header | Functions |
 |---|---|
@@ -222,10 +222,15 @@ The firmware has a small C library for apps, part of the interface: WAMR's libc-
 | `stdio.h` | `snprintf`, `sprintf`, `printf`, `puts`, `putchar` |
 | `stdlib.h` | `atoi`, `strtol`, `strtoul`, `abort` |
 | `ctype.h` | `isalnum`, `isalpha`, `isdigit`, `isgraph`, `isprint`, `isspace`, `isupper`, `isxdigit`, `tolower`, `toupper` |
+| `math.h` | `expf`, `logf`, `tanhf` (from v3.14-rc12) |
 
 They run as native code, outside the app's instruction budget, and take nothing from the app's memory or the heap. A call into the app may spend at most a second in them, counted with the device's waits: the time each takes is added up, and the one that passes the second stops the app (`a call spent more than 1 s in the device's functions`), so a loop of `memset` or `strstr` over a large buffer cannot run on. The app's own instructions between them do not count there, only against the budget. A module run once (`FC_ENTRY`) has no such limit. A pointer or a length that leaves the app's memory stops the app, as a trap does; so does `abort()`. `printf`, `puts` and `putchar` write to the app's log at INFO, as `fc_log` does, a line at a time: a line longer than 96 characters is split, one `printf` writes at most 127, and a line without its newline is logged when the call into the app returns. The formats are C's (`%d`, `%ld`, `%u`, `%x`, `%s`, `%c`, `%f`, widths and precisions); each conversion is formatted by the firmware's own C library. On Zephyr that is picolibc, built with floating point for it (`CONFIG_PICOLIBC_IO_FLOAT`: 5.4 KB of flash on the ESP32-S3 and 4.7 KB on a Cortex-M3, no RAM); without it `%f` would print `*float*`. The library passes its tests on Zephyr too, on `native_sim` and on an emulated Cortex-M3 (`mps2/an385` in QEMU), with `trend` and `hwcheck` (`tests/zephyr-apps.sh`). In firmware the library costs 7.7 KB of flash on the ESP32-C3 and no static RAM beyond a 100-byte line buffer per app: its table of functions, as the `fc` one, is const, in flash.
 
-There is no `malloc` (an app has no heap in its memory), no `vsnprintf`, no math functions and no files. `build.sh` passes `-I wasm-apps/sdk/libc` and `--allow-undefined-file=wasm-apps/sdk/libc/libc.syms`, which lets the linker import exactly these functions, also when clang calls `memcpy` or `memset` itself (a struct copy, a zeroed array).
+`malloc`, `calloc`, `realloc` and `free` are in `stdlib.h`, but not the device's: a small allocator built into the app, over an arena in the app's own memory whose size the app gives once, at file scope: `FC_HEAP(4096);`. The arena is static data, so the device counts it with the app's memory before loading the app, and WAMR still shrinks the page to what the module uses; wasi-libc's `malloc` grows the memory instead (`memory.grow`), and a module that may grow keeps its whole 64 KB page. The allocator adds 0.3 KB of `.wasm` for `malloc` and `free`, 0.7 KB with `calloc` and `realloc`. Each block takes 4 bytes more than asked, rounded up to 8, and `malloc` gives NULL when no free block is large enough. An app that does not call it has neither its code nor the arena.
+
+Of `math.h` the device has `expf`, `logf` and `tanhf`, which emlearn's neural networks need ([tinymlp](#tinyml-with-emlearn)): native and timed as the others, 3.6 KB of flash on the ESP32-C3 and 2.5 KB on the ESP32-S3 with Zephyr, no RAM. Built into the app, musl's take 2.1 KB of `.wasm`, which takes 2.5 to 3.5 times as much heap as the module loads, and 0.6 KB of tables in the app's memory. An inference of `tinymlp`'s network takes 2,954 instructions of a call's budget with the device's, 5,465 with musl's. The others an app needs most are WebAssembly instructions, declared in `math.h` with no import: `sqrtf`, `fabsf`, `floorf`, `ceilf`, `truncf`, `rintf`, `nearbyintf`, `copysignf`, `fminf`, `fmaxf`, and the same for `double`. The device's results may differ from another C library's in the last bit.
+
+There is no `vsnprintf`, no other math function and no files. `build.sh` passes `-I wasm-apps/sdk/libc` and `--allow-undefined-file=wasm-apps/sdk/libc/libc.syms`, which lets the linker import exactly these functions, also when clang calls `memcpy` or `memset` itself (a struct copy, a zeroed array).
 
 ## Examples
 
@@ -246,6 +251,8 @@ On a chip without a temperature sensor both set their state to say so and stay i
 
 - [tinyml](../wasm-apps/tinyml/tinyml.c): a TinyML model from emlearn ([below](#tinyml-with-emlearn)). No grants needed. About 4.1 KB.
 
+- [tinymlp](../wasm-apps/tinymlp/tinymlp.c): the same with a small neural network ([below](#tinyml-with-emlearn)). No grants needed. It imports `expf`, `logf` and `tanhf`, so it needs v3.14-rc12. About 6.8 KB.
+
 ### TinyML with emlearn
 
 `tinyml` runs a random forest made with [emlearn](https://emlearn.readthedocs.io). It reads the last minute of `die_temp` (12 samples, 5 s apart) and says whether the temperature is `steady`, `warming`, `cooling` or `unstable` (swinging up and down), as `warming (52.4 C)`. `sample_ms` in `/etc/fc-app/<name>.json` changes the period; the model still reads the samples as 5 s apart, so 500 makes a minute pass in 6 s. Of its 4.1 KB of `.wasm`, the model (5 trees, 193 nodes) takes 1.6 KB; its memory is 1.2 KB. It imports only from `fc`. On the ESP32-C3, C5, C6 and S3 it said `steady`, and `warming` when the C3 warmed by 2 °C within a minute; the classic ESP32 has no temperature sensor, and the app says so.
@@ -258,7 +265,7 @@ The model is the C that emlearn writes ([model.h](../wasm-apps/tinyml/model.h)),
 
 `tests/unit/test_tinyml.c` checks on the host that the C features are those trained on, and that the C model gives the trees' majority vote on 200 test windows and around each threshold. `test_apps.c` runs the `.wasm` under WAMR.
 
-A neural network (emlearn's `eml_net.h`) also needs `expf`, `tanhf` and `logf`, which [the C library](#the-c-library) does not have. Built into the app from musl 1.2.5 they add 0.7, 0.7 and 0.9 KB of `.wasm`, 2.2 KB together, with no import.
+`tinymlp` does the same with a neural network, emlearn's `eml_net.h`: a multi-layer perceptron with the forest's three features in hundredths, hidden layers of 16 and 8 with `tanh`, and a softmax over the four classes, 236 parameters. It also says how sure it is, as `warming 97% (52.4 C)`. Its [train.py](../wasm-apps/tinymlp/train.py) trains it on `tinyml`'s data (0.990 of the test windows right) and writes [model.h](../wasm-apps/tinymlp/model.h) with emlearn's `method="loadable"`, and copies the four emlearn headers it includes, unmodified, next to it; `build.sh` puts the app's directory on the include path. The network needs `expf`, `logf` and `tanhf`, which the app imports from [the C library](#the-c-library). Of its 6.8 KB of `.wasm` the weights take 0.9 KB; its memory is 2.4 KB. `tests/unit/test_tinymlp.c` checks on the host that the C network gives scikit-learn's class on the 200 test windows; `test_apps.c` runs the `.wasm` under WAMR. Not yet run on a board.
 
 - [The blink of wasm3-arduino](../wasm-apps/arduino/fetch.sh), as published, not rebuilt ([below](#the-blink-of-wasm3-arduino)).
 

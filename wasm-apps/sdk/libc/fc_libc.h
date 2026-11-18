@@ -1,8 +1,8 @@
 /*
  * The C library functions the device has for apps (docs/APPS.md), imported
  * from the module "env". Included by this directory's string.h, stdio.h,
- * stdlib.h and ctype.h: build with -I wasm-apps/sdk/libc. Only these: no
- * malloc (an app has no heap), no math functions, no files.
+ * stdlib.h, ctype.h and math.h: build with -I wasm-apps/sdk/libc. Only
+ * these, and no files. malloc is the app's own (stdlib.h).
  */
 #pragma once
 #include <stddef.h>

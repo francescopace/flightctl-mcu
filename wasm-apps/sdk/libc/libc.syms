@@ -33,3 +33,6 @@ isxdigit
 tolower
 toupper
 abort
+expf
+logf
+tanhf

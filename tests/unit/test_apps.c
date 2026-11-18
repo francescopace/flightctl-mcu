@@ -85,9 +85,9 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/t_startloop", s_startloop, sizeof(s_startloop)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
-        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(t_env),
+        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(app_tinymlp), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
-        V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_ctorloop), V(t_ctorfc), V(t_mqtt),
+        V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_libcmath), V(t_malloc), V(t_ctorloop), V(t_ctorfc), V(t_mqtt),
         V(t_arduino), V(t_arduinotick), V(arduino_rust), V(arduino_cpp), V(arduino_assemblyscript), V(arduino_tinygo),
 #undef V
     };
@@ -682,6 +682,29 @@ static void test_libc_mixed(void)
     remove_all();
     s_call_budget = FC_APP_CALL_BUDGET;
     s_native_limit_us = (int64_t)APP_CALL_MS * 1000;
+}
+
+/* math.h: expf, logf and tanhf, the device's, give C's values within a few
+ * ulps and at the edges; the instructions too. */
+static void test_libc_math(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("f", "reg/t_libcmath", NULL, err, sizeof(err)), 0);
+    const char *want = "Running bad=0 3.8735";
+    CHECK_STR(wait_state_of("f", want, 3000), want);
+    remove_all();
+}
+
+/* stdlib.h's malloc, in the app's own memory: no import, and the device
+ * loads it as any app (WAMR still shrinks its memory, which has no
+ * memory.grow). The churn's counts are the module's, the same on any host. */
+static void test_malloc(void)
+{
+    char err[160];
+    CHECK_INT(apply_one("a", "reg/t_malloc", NULL, err, sizeof(err)), 0);
+    const char *want = "Running bad=0 allocs=1827 nulls=357";
+    CHECK_STR(wait_state_of("a", want, 3000), want);
+    remove_all();
 }
 
 static void test_fc_info(void)
@@ -1528,6 +1551,40 @@ static void test_tinyml(void)
     fc_port_remove_file("/etc/fc-app/ml.json");
 }
 
+/* tinymlp: emlearn's network, with the device's expf, logf and tanhf. The
+ * temperature as for tinyml; the state has the class and how sure the
+ * network is of it. */
+static void test_tinymlp(void)
+{
+    static const struct {
+        int32_t step;
+        const char *want;
+    } runs[] = {{0, "Running steady "}, {500, "Running warming "}, {-500, "Running cooling "}};
+    const char *cfg = "{\"sample_ms\": 20}";
+    fc_port_write_file("/etc/fc-app/mlp.json", cfg, strlen(cfg));
+    for (size_t r = 0; r < sizeof(runs) / sizeof(runs[0]); r++) {
+        char err[160];
+        __atomic_store_n(&f_temp, 41000, __ATOMIC_RELEASE);
+        __atomic_store_n(&f_temp_step, runs[r].step, __ATOMIC_RELEASE);
+        CHECK_INT(apply_one("mlp", "reg/app_tinymlp", NULL, err, sizeof(err)), 0);
+        const char *want = runs[r].want;
+        for (int i = 0; i < 3000 && strncmp(state_of("mlp"), want, strlen(want)) != 0; i++) {
+            usleep(10 * 1000);
+        }
+        const char *st = state_of("mlp");
+        CHECK_CONTAINS(st, want);
+        int pct = -1;
+        CHECK(sscanf(st + strlen(want), "%d%%", &pct) == 1 && pct > 25 && pct <= 100);
+        if (r == 0) {
+            CHECK_CONTAINS(st, "% (41.0 C)");
+        }
+        remove_all();
+    }
+    __atomic_store_n(&f_temp_step, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&f_temp, 41000, __ATOMIC_RELEASE);
+    fc_port_remove_file("/etc/fc-app/mlp.json");
+}
+
 
 static int gpio_level(int pin)
 {
@@ -2013,6 +2070,8 @@ int main(void)
     RUN(test_libc_oob);
     RUN(test_libc_loop);
     RUN(test_libc_mixed);
+    RUN(test_libc_math);
+    RUN(test_malloc);
     RUN(test_hold_leaves_room_for_the_stack);
     RUN(test_heap_low_holds);
     RUN(test_heap_floor);
@@ -2036,6 +2095,7 @@ int main(void)
     RUN(test_board_dt);
     RUN(test_example_apps);
     RUN(test_tinyml);
+    RUN(test_tinymlp);
     RUN(test_arduino);
     RUN(test_arduino_blink);
     power_cycle(); /* stops the threads; leaves nothing for the leak checker */

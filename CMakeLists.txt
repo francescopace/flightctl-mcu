@@ -149,6 +149,8 @@ if(FC_UNIT)
     fc_unit(test_fatal third_party/cjson/cJSON.c)
     fc_unit(test_log third_party/cjson/cJSON.c)
     fc_unit(test_tinyml third_party/cjson/cJSON.c)
+    fc_unit(test_tinymlp third_party/cjson/cJSON.c)
+    target_include_directories(test_tinymlp PRIVATE wasm-apps/tinymlp)
     fc_unit(test_mqtt core/src/fc_http.c third_party/cjson/cJSON.c)
     # The MQTT client against a real broker (tests/mqtt-broker.sh), not in ctest.
     add_executable(mqtt-broker-check EXCLUDE_FROM_ALL tests/unit/mqtt_broker_check.c tests/unit/port_stub.c

@@ -29,6 +29,7 @@
 #include "fc_apps.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -570,19 +571,21 @@ static const NativeSymbol s_env_natives[] = { /* const: see s_libc_natives */
 
 /* A small C library, in "env" as clang's wasm32 build imports it
  * (wasm-apps/sdk/libc/): WAMR's libc-builtin, of which an app may import only
- * the functions named here (check_env_import). Not malloc and the rest: an
- * app has no heap in its linear memory. The device registers them itself
+ * the functions named here (check_env_import). Not malloc and the rest: the
+ * app has its own (wasm-apps/sdk/libc/stdlib.h), in its linear memory. Of
+ * math.h only expf, logf and tanhf, which emlearn's networks need; the others
+ * an app needs most are WebAssembly instructions. The device registers them itself
  * (s_libc_natives), WAMR none: each that does work counts its time against
  * the call's limit in the device's functions (LIBC_TIMED); printf, puts and putchar write to the
  * app's log, a line at a time, as fc_log does at INFO (WAMR's write to the
  * serial port only); strtol and strtoul take a NULL endptr (WAMR's would
  * write at the app's address 0); abort takes no argument, as C's; strncmp
- * and strncpy, atoi and ctype are the device's own (below). */
+ * and strncpy, atoi, ctype and the math are the device's own (below). */
 static const char *const s_libc[] = {
     "memcmp", "memcpy", "memmove", "memset", "memchr", "strchr", "strcmp", "strcpy", "strlen", "strncmp",
     "strncpy", "strncasecmp", "strrchr", "strspn", "strcspn", "strstr", "sprintf", "snprintf", "printf", "puts",
     "putchar", "atoi", "strtol", "strtoul", "isalnum", "isalpha", "isdigit", "isgraph", "isprint",
-    "isspace", "isupper", "isxdigit", "tolower", "toupper", "abort",
+    "isspace", "isupper", "isxdigit", "tolower", "toupper", "abort", "expf", "logf", "tanhf",
 };
 
 static int libc_function(const char *name)
@@ -838,6 +841,23 @@ static int32_t env_toupper(wasm_exec_env_t env, int32_t c)
     return c >= 0 && c <= 255 ? toupper((unsigned char)c) : c;
 }
 
+/* The math, timed as the string functions are: native, outside the
+ * instruction budget, so a loop of them would otherwise not be stopped. */
+static float env_expf(wasm_exec_env_t env, float x)
+{
+    LIBC_TIMED(float, expf(x));
+}
+
+static float env_logf(wasm_exec_env_t env, float x)
+{
+    LIBC_TIMED(float, logf(x));
+}
+
+static float env_tanhf(wasm_exec_env_t env, float x)
+{
+    LIBC_TIMED(float, tanhf(x));
+}
+
 /* Every function an app may import from env but clock_ms (s_libc), in
  * strcmp order of the names: const, in flash, as WAMR does not sort a table
  * in order (third_party/patches/wamr-const-natives.patch; test_apps.c checks
@@ -845,6 +865,7 @@ static int32_t env_toupper(wasm_exec_env_t env, int32_t c)
 static const NativeSymbol s_libc_natives[] = {
     {"abort", (void *)env_abort, "()", NULL},
     {"atoi", (void *)env_atoi, "($)i", NULL},
+    {"expf", (void *)env_expf, "(f)f", NULL},
     {"isalnum", (void *)env_isalnum, "(i)i", NULL},
     {"isalpha", (void *)env_isalpha, "(i)i", NULL},
     {"isdigit", (void *)env_isdigit, "(i)i", NULL},
@@ -853,6 +874,7 @@ static const NativeSymbol s_libc_natives[] = {
     {"isspace", (void *)env_isspace, "(i)i", NULL},
     {"isupper", (void *)env_isupper, "(i)i", NULL},
     {"isxdigit", (void *)env_isxdigit, "(i)i", NULL},
+    {"logf", (void *)env_logf, "(f)f", NULL},
     {"memchr", (void *)env_memchr, "(*ii)i", NULL},
     {"memcmp", (void *)env_memcmp, "(**~)i", NULL},
     {"memcpy", (void *)env_memcpy, "(**~)i", NULL},
@@ -876,6 +898,7 @@ static const NativeSymbol s_libc_natives[] = {
     {"strstr", (void *)env_strstr, "($$)i", NULL},
     {"strtol", (void *)env_strtol, "($ii)i", NULL},
     {"strtoul", (void *)env_strtoul, "($ii)i", NULL},
+    {"tanhf", (void *)env_tanhf, "(f)f", NULL},
     {"tolower", (void *)env_tolower, "(i)i", NULL},
     {"toupper", (void *)env_toupper, "(i)i", NULL},
 };

@@ -32,14 +32,14 @@ What an app can do and hold:
 - [ ] CoreMark with Zephyr on an ESP32-S3 without PSRAM: it runs only on the N8R8, from its PSRAM. Without PSRAM it needs about 85 KB of the C heap (a 68 KB block for its memory, the module, the instance), and the agent alone leaves about 65 KB of the 114 KB, with 4 KB of the data region left at link: some 20 KB more would have to come from the kernel heap or the WiFi driver's buffers ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] Apps against [Toit](https://toit.io) and against WAMR's AOT mode, on the same ESP32-C6 ([COMPARISON.md](COMPARISON.md#tied-to-one-chip-vendor)). Toit publishes no figures against native code or WebAssembly. Three benchmarks:
   - Richards (method calls and pointers between objects), in Toit and in C built to `.wasm`;
-  - DeltaBlue (objects allocated and freed at every step), which also helps decide whether apps get `malloc`;
+  - DeltaBlue (objects allocated and freed at every step), with the app's own `malloc` ([APPS.md](APPS.md#the-c-library));
   - CoreMark in AOT, against the interpreter. AOT needs `wamrc`, a module per architecture, executable memory, and another way to stop an app than the instruction count.
 - [ ] wasm3-arduino's blink beside another app on the ESP32-C5: with v3.14-rc10.1 its 64 KB of memory left the device short of heap, and it stopped reporting ([APPS.md](APPS.md#the-blink-of-wasm3-arduino)). Left: the same on a firmware that refuses an app the heap cannot hold.
 - [ ] The app interface for 1.0 ([APPS.md](APPS.md)):
   - GPIO interrupts, and I2C, SPI, UART, ADC and PWM with devices wired to them, on a board; on Zephyr also a board that names its hardware in the devicetree, and RS-485;
   - the 1 s limit of a call in the device's functions, on a board (unit tests only);
   - the app's stack with the C library, measured on Xtensa;
-  - whether apps get `malloc` and the math functions.
+  - `expf`, `logf` and `tanhf`, and `tinymlp`, on a board (unit tests only).
 - [ ] MQTT for the apps ([APPS.md](APPS.md#mqtt)):
   - on the C3 with an app using MQTT, the first metrics exports after a restart fail for want of memory, the heap down to 6 to 10 KB ([RESULTS.md](RESULTS.md#ram));
   - on the boards: the connection kept through a download, and MQTT with Zephyr beside a metrics export: on the ESP32-S3 the two used up the C heap; the wait for heap that came after it is not yet tried there ([APPS.md](APPS.md#mqtt));
