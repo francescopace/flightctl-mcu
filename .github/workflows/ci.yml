@@ -22,6 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  ESP_EMU_VERSION: 1.1.0
   MBEDTLS_VERSION: v4.1.1
 
 jobs:
@@ -122,27 +123,19 @@ jobs:
         with:
           target: ${{ matrix.target }}
           profile: ${{ matrix.profile }}
-      - name: ESP32-S3 app hardware with virtual peripherals
-        if: matrix.target == 'esp32s3' && matrix.profile == 'plain'
+      - name: App hardware with virtual peripherals
+        if: (matrix.target == 'esp32s3' || matrix.target == 'esp32c3') && matrix.profile == 'plain'
         shell: bash
         env:
-          ESP_EMU_VERSION: 1.1.0
+          TARGET: ${{ matrix.target }}
         run: |
           . "$IDF_PATH/export.sh" >/dev/null
           export CCACHE_DIR="$PWD/.ccache" IDF_CCACHE_ENABLE=1 CCACHE_COMPILERCHECK=content
           cd tests/espidf-hw
-          idf.py -D IDF_TARGET=esp32s3 build merge-bin
-          cd build
-          base="https://github.com/espressif/esp-emulator/releases/download/v$ESP_EMU_VERSION"
-          emu="esp-emu-$ESP_EMU_VERSION-x86_64-unknown-linux-gnu"
-          parts="esp-emu-$ESP_EMU_VERSION-examples"
-          curl -fsSLO "$base/SHA256SUMS"
-          for name in "$emu" "$parts"; do
-            curl -fsSLO "$base/$name.tar.gz"
-            grep -F " $name.tar.gz" SHA256SUMS | sha256sum -c -
-            tar xzf "$name.tar.gz"
-          done
-          python3 ../run.py merged-binary.bin "$parts" --emulator "$PWD/$emu/esp-emu"
+          idf.py -D IDF_TARGET="$TARGET" build merge-bin
+          fixture=s3
+          if [[ "$TARGET" == esp32c3 ]]; then fixture=adc; fi
+          ./run-ci.sh "$fixture" build/merged-binary.bin
 
   zephyr:
     name: Zephyr (native_sim)
@@ -227,6 +220,15 @@ jobs:
       # Signed with a key made for this run: the build is checked, not released.
       - name: build
         run: BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 port/zephyr/build.sh
+      - name: WASM GPIO by devicetree name and fleet alias
+        shell: bash
+        run: |
+          root="$PWD"
+          cd third_party/zephyr-ws
+          export ZEPHYR_SDK_INSTALL_DIR="$root/third_party/zephyr-sdk"
+          west build -b esp32s3_devkitc/esp32s3/procpu -d "$root/build/button-s3" "$root/tests/zephyr-apps"
+          cd "$root"
+          tests/espidf-hw/run-ci.sh zephyr build/button-s3/zephyr/zephyr.bin
 
   # The end-to-end tests on this run's builds: skipped on the first attempt,
   # run by re-running this job once everything else has passed.

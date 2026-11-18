@@ -1,0 +1,8 @@
+/ {
+	fc-hw {
+		compatible = "flightctl,app-hw";
+		button {
+			gpios = <&gpio0 5 GPIO_ACTIVE_LOW>;
+		};
+	};
+};

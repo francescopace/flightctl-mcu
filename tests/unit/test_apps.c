@@ -1580,7 +1580,8 @@ static int f_dt_find(int kind, const char *name)
 static char *f_dt_defaults(void)
 {
     return strdup("{\"gpio\": {\"relay1\": {\"dt\": \"relay_node\", \"safe\": 0},"
-                  " \"button0\": {\"dt\": \"button_node\", \"active_low\": true}},"
+                  " \"button0\": {\"dt\": \"button_node\", \"active_low\": true}, "
+                  "\"spare_node\": {\"dt\": \"spare_node\", \"active_low\": true, \"safe\": 0}},"
                   " \"led\": {\"led0\": {\"dt\": \"led_node\"}}}");
 }
 
@@ -1601,6 +1602,17 @@ static void test_board_dt(void)
     CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"gpio\": {\"x\": {\"dt\": \"relay_node\"}}}", err, sizeof(err)),
               -1);
     CHECK(strstr(err, "both the devicetree's relay_node") != NULL);
+    /* A real Zephyr default uses the node's own name. Only that implicit
+     * name can be replaced; explicit duplicate grants are still rejected. */
+    const char *alias = "{\"gpio\":{\"pump\":{\"dt\":\"spare_node\"}}}";
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, alias, err, sizeof(err)), 0);
+    CHECK_INT(fc_port_write_file(FC_BOARD_PATH, alias, strlen(alias)), 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    fc_board_entry_t *pump = fc_board_find("pump", 4);
+    CHECK(pump && pump->dt_id == 6 && pump->active_low && pump->safe == 0);
+    CHECK(fc_board_find("spare_node", 10) == NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"gpio\":{\"x\":{\"dt\":\"spare_node\"},"
+                                "\"y\":{\"dt\":\"spare_node\"}}}", err, sizeof(err)), -1);
     /* The GPIO app on the nodes: relay1 is node 5, button0 node 9. */
     f_level[9] = 1;
     CHECK_INT(apply_one("g", "reg/t_gpio", "{\"FC_ALLOW\": \"relay1 button0 led0\"}", err, sizeof(err)), 0);
@@ -1608,7 +1620,7 @@ static void test_board_dt(void)
     CHECK_INT(f_read(5), 1);
     CHECK_INT(f_mode[9], FC_HW_GPIO_IN_PULLUP);
     /* An alias: the fleet moves relay1 to another node. */
-    const char *map = "{\"gpio\": {\"relay1\": {\"dt\": \"spare_node\", \"safe\": 0}}}";
+    const char *map = "{\"gpio\": {\"relay1\": {\"dt\": \"spare_node\", \"active_low\": false, \"safe\": 0}}}";
     CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, map, err, sizeof(err)), 0);
     fc_port_write_file(FC_BOARD_PATH, map, strlen(map));
     fc_apps_file_changed(FC_BOARD_PATH);

@@ -6,7 +6,8 @@
  * example apps that use it (trend, hwcheck), t_printf (%f at its deepest) and
  * the module "arduino" with wasm3-arduino's blink as published, and reports
  * the stack each app's thread has used. Built and run with
- * tests/zephyr-apps.sh. Prints "PASS" or "FAIL n" last.
+ * tests/zephyr-apps.sh. On ESP32-S3 the fixture runs t_button against
+ * an external virtual GPIO by its devicetree name and fleet alias.
  */
 #include "../../../core/src/fc_apps.c"
 
@@ -32,7 +33,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         size_t len;
     } reg[] = {
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
-        V(t_state), V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5),
+        V(t_button), V(t_state), V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5),
         V(t_libcloop), V(app_trend), V(app_hwcheck), V(t_printf), V(t_arduino), V(arduino_rust), V(arduino_cpp),
         V(arduino_assemblyscript), V(arduino_tinygo),
 #undef V
@@ -216,8 +217,58 @@ static void check_heap_low(void)
 }
 #endif
 
+#ifdef CONFIG_SOC_ESP32S3
+/* Run identical bytecode twice with the rendered fleet files and app grants.
+ * esp-emu presses and releases the same external button for each name. */
+static int button_cycle(const char *name)
+{
+    char config[64], env[80];
+    snprintf(config, sizeof(config), "{\"input\":\"%s\"}", name);
+    snprintf(env, sizeof(env), "{\"FC_ALLOW\":\"%s\",\"TICK_MS\":\"50\"}", name);
+    CHECK(fc_port_write_file("/etc/fc-app/probe.json", config, strlen(config)) == 0);
+    CHECK(apply_one("probe", "reg/t_button", env) == 0);
+    const char *states[] = {"Running released", "Running pressed", "Running released"};
+    const char *commands[] = {"press", "release"};
+    for (int i = 0; i < 3; i++) {
+        const char *actual = wait_state("probe", states[i], 30000);
+        if (strcmp(actual, states[i]) != 0) {
+            printk("BUTTON FAIL %s: expected %s, got %s\n", name, states[i], actual);
+            return -1;
+        }
+        if (i < 2) {
+            printk("BUTTON %s %s\n", name, commands[i]);
+        }
+    }
+    return apply_one(NULL, NULL, NULL);
+}
+
+static int check_button_names(void)
+{
+    static fc_hw_t hw;
+    CHECK(fc_port_zephyr_init() == 0);
+    fc_hw_zephyr_fill(&hw);
+    fc_apps_set_hw(&hw);
+    CHECK(fc_apps_init() == 0);
+    CHECK(button_cycle("button") == 0);
+    const char *map = "{\"gpio\":{\"fleet-button\":{\"dt\":\"button\"}}}";
+    char err[160] = "";
+    if (fc_apps_check_file(FC_BOARD_PATH, map, err, sizeof(err)) != 0) {
+        printk("BUTTON FAIL %s\n", err);
+        return -1;
+    }
+    CHECK(fc_port_write_file(FC_BOARD_PATH, map, strlen(map)) == 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    CHECK(button_cycle("fleet-button") == 0);
+    printk("BUTTON %s\n", s_fails ? "FAIL" : "PASS");
+    return s_fails ? -1 : 0;
+}
+#endif
+
 int main(void)
 {
+#ifdef CONFIG_SOC_ESP32S3
+    return check_button_names();
+#endif
     static fc_hw_t hw;
     CHECK(fc_port_zephyr_init() == 0);
 #ifndef CONFIG_COMMON_LIBC_MALLOC

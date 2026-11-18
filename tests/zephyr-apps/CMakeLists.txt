@@ -1,7 +1,8 @@
 # The apps' C library on Zephyr: the apps' runtime (core/src/fc_apps.c) with
 # the Zephyr port and its C library, as the firmware has them (port/zephyr's
 # prj.conf and board files), without the agent. Built and run with
-# tests/zephyr-apps.sh, on native_sim or mps2/an385 in QEMU.
+# tests/zephyr-apps.sh, on native_sim or mps2/an385 in QEMU. On ESP32-S3
+# the same runtime runs the virtual button fixture (docs/TESTING.md).
 cmake_minimum_required(VERSION 3.20)
 set(ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
 set(PORT ${ROOT}/port/zephyr)
@@ -14,6 +15,11 @@ endif()
 list(APPEND CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/prj.conf)
 if(EXISTS ${PORT}/boards/${FC_BOARD_FILE}.overlay)
     set(DTC_OVERLAY_FILE ${PORT}/boards/${FC_BOARD_FILE}.overlay)
+endif()
+if(BOARD STREQUAL "esp32s3_devkitc/esp32s3/procpu")
+    set(s3 esp32s3_devkitc_procpu)
+    list(APPEND CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/boards/${s3}.conf)
+    set(DTC_OVERLAY_FILE ${PORT}/boards/${s3}.overlay ${CMAKE_CURRENT_LIST_DIR}/boards/${s3}.overlay)
 endif()
 list(APPEND DTS_ROOT ${PORT})
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
@@ -28,10 +34,13 @@ if(CONFIG_ARCH_POSIX)
     else()
         set(WAMR_BUILD_TARGET "X86_64")
     endif()
+elseif(CONFIG_XTENSA)
+    set(WAMR_BUILD_TARGET "XTENSA")
+    target_include_directories(app PRIVATE ${ZEPHYR_BASE}/arch/xtensa/include)
 elseif(CONFIG_CPU_CORTEX_M)
     set(WAMR_BUILD_TARGET "THUMBV7EM")
 else()
-    message(FATAL_ERROR "tests/zephyr-apps: native_sim or a Cortex-M board")
+    message(FATAL_ERROR "tests/zephyr-apps: unsupported WAMR target")
 endif()
 # As port/zephyr/CMakeLists.txt.
 set(WAMR_BUILD_INTERP 1)

@@ -298,6 +298,14 @@ With ESP-IDF 6.0.3 and esp-emu 1.1.0, the ESP32-S3 app hardware drivers passed t
 
 The emulator has no ADC model for the S3. Electrical measurements on wired boards remain open, including RS-485 driver-enable timing and peer turnaround.
 
+### ESP32-C3 virtual ADC
+
+On esp-emu 1.1.0 on macOS and Linux with ESP-IDF 6.0.3, the production `adc_open`, `adc_read_mv` and `adc_close` driver used ADC1 on GPIO3. The virtual potentiometer started at 1,650 mV and the calibrated reading was **1,640 mV**. Moving it to 1,980 mV produced **1,962 mV** on the same open channel. These values describe the C3 calibration in the emulator. [ADC fixture](../tests/espidf-hw/main/adc.c)
+
+### Zephyr ESP32-S3 hardware names
+
+On Zephyr 4.5.0 in esp-emu 1.1.0 on macOS and Linux, a 445-byte WASM app opened the active-low button on GPIO5 by its devicetree name `button`. It reported released, pressed and released. Applying the fleet board map and granting only `fleet-button` produced the same three states with the same bytecode and pin. The fixture supplies the rendered fleet files and the app image locally, and runs the production board map, WAMR and Zephyr GPIO driver. [App source](../tests/zephyr-apps/wasm/t_button.c) · [Devicetree overlay](../tests/zephyr-apps/boards/esp32s3_devkitc_procpu.overlay)
+
 ### Apps on the boards
 
 The example apps ([APPS.md](APPS.md#examples)), with ESP-IDF unless the row says otherwise:
@@ -313,7 +321,7 @@ The example apps ([APPS.md](APPS.md#examples)), with ESP-IDF unless the row says
 | wasm3-arduino's blink, Rust build, beside `tinyml` | Ran for 45 minutes on the C3, C6 and S3. Refused on the C5 (`allocate linear memory failed (largest free block 52 KB)`) and on the classic ESP32 (`its memory would leave the agent 22 KB of heap, less than the 40 KB it needs`), the device reporting all along. |
 | wasm3-arduino's blink, C++ build, beside `alarm` | Ran on the C3, C6, S3 and the classic ESP32. The blink also runs on the host and on Zephyr's `native_sim`. |
 
-Zephyr `native_sim` passed eight hardware API tests covering devicetree names, GPIO, ADC, PWM, I²C, SPI, UART and RS-485. The RS-485 fixture held the driver-enable signal active while the FIFO was empty and the shift register was still sending. A link with an ESP32-S3 UART1 and a driver-enable GPIO used 377,248 of 380,672 B of DRAM, leaving 3,424 B. Electrical timing and peer turnaround remain unmeasured.
+Zephyr `native_sim` passed eight hardware API tests covering devicetree names, GPIO, ADC, PWM, I²C, SPI, UART and RS-485. The RS-485 fixture held the driver-enable signal active while the FIFO was empty and the shift register was still sending. At DE release, a simulated peer sent a three-byte reply (`00 52 ff`). The receive callback fired and the driver returned all three bytes in order. A link with an ESP32-S3 UART1 and a driver-enable GPIO used 377,248 of 380,672 B of DRAM, leaving 3,424 B. Electrical timing and peer turnaround remain unmeasured.
 
 On the Zephyr S3 N8R8, `mqttdemo` answered four distinct QoS 1 commands during reception of a 1,037,990 B signed firmware image. The largest encrypted TLS record observed during this transfer was 16,401 B. The broker retained one connection until the firmware reboot, and the new boot reported the expected digest.
 

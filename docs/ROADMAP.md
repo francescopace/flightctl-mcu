@@ -6,8 +6,8 @@ What is left before 1.0 and after it. What the agent does today is in the [READM
 
 What an app can do and hold:
 
-- [ ] Run a WASM app on a physical ESP32-S3 with wired devices. Verify GPIO interrupts and I2C, SPI and UART transfers. Measure ADC readings at known voltages and PWM period and pulse width. [Virtual wiring results](RESULTS.md#esp32-s3-virtual-wiring)
-- [ ] Verify that a Zephyr app can open a physical peripheral by its devicetree name and its fleet-configured alias. On the ESP32-S3, measure DE release relative to the final UART stop bit and the start of a responding RS-485 peer's reply. [Hardware names and RS-485](ZEPHYR.md#hardware-for-apps)
+- [ ] Run a WASM app on a physical ESP32-S3 with wired devices. Verify GPIO interrupts and I2C, SPI and UART transfers, measure ADC at known voltages, and capture PWM period and pulse width. On Zephyr, repeat the GPIO test using the devicetree name and the fleet alias. [Virtual wiring](RESULTS.md#esp32-s3-virtual-wiring) · [C3 ADC](RESULTS.md#esp32-c3-virtual-adc) · [Zephyr GPIO](RESULTS.md#zephyr-esp32-s3-hardware-names)
+- [ ] On an ESP32-S3 running Zephyr, capture UART TX, transceiver DE and a responding RS-485 peer's reply. Measure DE release relative to the last stop bit and the first reply bit. [RS-485 driver](ZEPHYR.md#hardware-for-apps)
 
 ### Blocked on Flight Control
 

@@ -179,6 +179,51 @@ static int needs_pin(int kind)
     return kind == FC_RES_GPIO || kind == FC_RES_LED || kind == FC_RES_ADC || kind == FC_RES_PWM;
 }
 
+/* The Zephyr port publishes each node under its own name. Move that
+ * implicit entry aside when the fleet names the node explicitly. Two
+ * explicit names for one node still reach check_pins and are rejected. */
+static int rename_dt_defaults(cJSON *fleet, fc_board_entry_t *map, int *count)
+{
+    int kept = 0;
+    for (int i = 0; i < *count; i++) {
+        const fc_board_entry_t *entry = &map[i];
+        int renamed = 0;
+        if (entry->dt_id >= 0 && strcmp(entry->name, entry->dt) == 0) {
+            cJSON *section = cJSON_GetObjectItemCaseSensitive(fleet, s_sections[entry->kind - 1].section);
+            if (!cJSON_IsObject(section)) {
+                section = NULL;
+            }
+            cJSON *alias;
+            cJSON_ArrayForEach(alias, section) {
+                const cJSON *dt = cJSON_GetObjectItemCaseSensitive(alias, "dt");
+                if (!cJSON_IsString(dt) || strcmp(dt->valuestring, entry->dt) != 0 ||
+                    strcmp(alias->string, entry->name) == 0) {
+                    continue;
+                }
+                renamed = 1;
+                if (entry->kind == FC_RES_GPIO) {
+                    if (entry->active_low && !cJSON_GetObjectItemCaseSensitive(alias, "active_low") &&
+                        !cJSON_AddBoolToObject(alias, "active_low", 1)) {
+                        return -1;
+                    }
+                    if (entry->safe >= 0 && !cJSON_GetObjectItemCaseSensitive(alias, "safe") &&
+                        !cJSON_AddNumberToObject(alias, "safe", entry->safe)) {
+                        return -1;
+                    }
+                }
+            }
+            if (cJSON_GetObjectItemCaseSensitive(section, entry->name)) {
+                renamed = 0;
+            }
+        }
+        if (!renamed) {
+            map[kept++] = map[i];
+        }
+    }
+    *count = kept;
+    return 0;
+}
+
 /* Adds the entries of a board map in JSON to map[0..*count), replacing those
  * with the same name. */
 static int merge(const fc_hw_t *hw, int check, const char *json, fc_board_entry_t *map, int *count, char *err,
@@ -187,6 +232,11 @@ static int merge(const fc_hw_t *hw, int check, const char *json, fc_board_entry_
     cJSON *doc = cJSON_Parse(json);
     if (!cJSON_IsObject(doc)) {
         snprintf(err, err_len, "not a JSON object");
+        cJSON_Delete(doc);
+        return -1;
+    }
+    if (check && hw && hw->dt_find && rename_dt_defaults(doc, map, count) != 0) {
+        snprintf(err, err_len, "out of memory");
         cJSON_Delete(doc);
         return -1;
     }
