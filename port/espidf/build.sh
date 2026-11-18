@@ -21,7 +21,7 @@
 # for development (WiFi, endpoint, labels) that a provisioned device overrides.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.0.3}"
+IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.1.1}"
 TARGET="${TARGET:-esp32s3}"
 VARIANT="${VARIANT:-}"
 BUILD_DIR="${BUILD_DIR:-build-$TARGET${VARIANT:+-$VARIANT}}"

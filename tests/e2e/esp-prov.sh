@@ -14,7 +14,7 @@
 # ESP-IDF; protobuf and cryptography must be installed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.0.3}"
+IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.1.1}"
 PROV_VERSION=1.4.0
 PROV_SHA256=6e81719e22a1485c3d617e8512a1eff356c333ab3ea0eae3222b2a88d9fd12ad
 BASE="$ROOT/build/esp-prov"

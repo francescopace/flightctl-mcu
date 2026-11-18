@@ -6,7 +6,7 @@ Notes for coding agents working in this repository. The code and `docs/` explain
 
 When the user requests a push, record the SHA of the final commit to publish. Run the checks below once in a temporary detached worktree at that SHA. Run these checks on an intermediate commit only if explicitly requested. If the cumulative diff from the remote tip contains only Markdown, files under `docs/` or the root `LICENSE`, skip builds and tests as CI does. Pass `--include-docs` if the user asks for the checks on a documentation-only push. After the applicable checks pass, push the selected SHA and remove the temporary worktree. Report the SHA and which checks passed. If fuzzing was requested, include the duration per target.
 
-The `tests` job in [the CI workflow](.github/workflows/ci.yml) builds the host provisioning executable before exercising it. For code changes, export `MBEDTLS_DIR` pointing to the directory containing `MbedTLSConfig.cmake` for the project's mbedTLS build. The optional local fuzz run on macOS uses Homebrew LLVM because Apple's clang lacks libFuzzer.
+The `tests` job in [the CI workflow](.github/workflows/ci.yml) builds the host provisioning executable before exercising it. For code changes, export `MBEDTLS_DIR` pointing to the directory containing `MbedTLSConfig.cmake` for the project's mbedTLS build. With `third_party/build-mbedtls-host.sh`, export `MBEDTLS_DIR="$PWD/build/mbedtls-install/lib/cmake/MbedTLS"` from the main checkout. The optional local fuzz run on macOS uses Homebrew LLVM because Apple's clang lacks libFuzzer.
 
 ```bash
 remote_tip=$(git rev-parse origin/main)  # after fetching the remote tip

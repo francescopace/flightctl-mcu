@@ -1,4 +1,4 @@
-/* Forced into WAMR 2.4.5's sources on ESP-IDF 6 (port/espidf/CMakeLists.txt):
+/* Forced into WAMR 2.4.6's sources on ESP-IDF 6 (port/espidf/CMakeLists.txt):
  * what its ESP-IDF port takes from newlib's headers without including them,
  * and picolibc does not give. Only its file access for WASI needs them,
  * which this firmware does not build in. */

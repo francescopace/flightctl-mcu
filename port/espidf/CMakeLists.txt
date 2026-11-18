@@ -21,12 +21,11 @@ if(fc_target)
     idf_build_set_property(DEPENDENCIES_LOCK "${CMAKE_CURRENT_LIST_DIR}/dependencies.lock.${fc_target}")
 endif()
 project(flightctl_mcu_fw)
-# What WAMR 2.4.5's ESP-IDF port needs to build on ESP-IDF 6 (GCC 15,
+# What WAMR 2.4.6's ESP-IDF port needs to build on ESP-IDF 6 (GCC 15,
 # picolibc), without touching its sources:
 # - wamr_idf6.h, forced into every file: the declarations it took from
 #   newlib's headers without including them;
-# - -Wno-format-security, which must go with the -Wno-format it sets (fixed in
-#   WAMR after 2.4.5);
+# - -Wno-format-security, which must go with the -Wno-format it sets;
 # - MALLOC_CAP_EXEC, which ESP-IDF 6 does not define while memory protection
 #   is on: executable memory is for AOT code, which this firmware does not
 #   run, and asking for it now fails as it did at run time.

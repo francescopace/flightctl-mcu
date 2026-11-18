@@ -1,6 +1,6 @@
 [![ci](https://github.com/francescopace/flightctl-mcu/actions/workflows/ci.yml/badge.svg)](https://github.com/francescopace/flightctl-mcu/actions/workflows/ci.yml)
 [![fuzz-nightly](https://github.com/francescopace/flightctl-mcu/actions/workflows/fuzz-nightly.yml/badge.svg)](https://github.com/francescopace/flightctl-mcu/actions/workflows/fuzz-nightly.yml)
-[![ESP-IDF 6.0](https://img.shields.io/badge/ESP--IDF-6.0-E7352C?logo=espressif&logoColor=white)](docs/DEPENDENCIES.md#esp-idf-port)
+[![ESP-IDF 6.1](https://img.shields.io/badge/ESP--IDF-6.1-E7352C?logo=espressif&logoColor=white)](docs/DEPENDENCIES.md#esp-idf-port)
 [![Zephyr 4.5](https://img.shields.io/badge/Zephyr-4.5-7929D2)](docs/DEPENDENCIES.md#zephyr-port)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
@@ -32,7 +32,7 @@ Here the microcontroller speaks the Flight Control agent API itself. That API is
 | Certificate renewal | Same key, renewed before the certificate expires |
 | `spec.config` | Files in the device's storage. The firmware can reject each one; a file the spec no longer gives is removed. |
 | `spec.os.image` | Firmware pulled from an OCI registry into the inactive OTA slot, after its cosign signature is checked. One index covers every chip, and an update can be a [delta](docs/DELTA-UPDATES.md). |
-| `spec.applications` | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) without a reboot |
+| `spec.applications` | A WebAssembly module packaged as an OCI artifact, run by [WAMR](https://github.com/wasm-micro-runtime/wasm-micro-runtime) without a reboot |
 | Registry credentials and CA (`auth.json`, `certs.d`) | The same files as on Linux, as config: TLS and a password to the [registry](docs/REGISTRY.md) |
 | Decommission | Key and certificate wiped; the device does not enroll again until its storage is erased |
 | `spec.resources` | CPU, heap and storage sampled against the fleet's alert rules, as the Linux agent does. Without rules, CPU and storage take the Linux defaults; the heap warns under 10% free, since the network stack holds most of it. |
@@ -115,7 +115,7 @@ The image is streamed into the inactive slot and checked against its sha256. The
 
 ## Where it runs
 
-On ESP-IDF 6.0 (the ESP32, S3, C3, C5 and C6, with Secure Boot, flash encryption and WiFi provisioning), on Zephyr 4.5 (the ESP32-S3, and an Arm Cortex-M3 on Ethernet in QEMU), and as a process on Linux or macOS, the simulated device of the tests. The same `.wasm` file runs on all of them, whatever the CPU. A device needs 384 KB of SRAM, 2 MB of flash and a TCP/IP network.
+On ESP-IDF 6.1 (the ESP32, S3, C3, C5 and C6, with Secure Boot, flash encryption and WiFi provisioning), on Zephyr 4.5 (the ESP32-S3, and an Arm Cortex-M3 on Ethernet in QEMU), and as a process on Linux or macOS, the simulated device of the tests. The same `.wasm` file runs on all of them, whatever the CPU. A device needs 384 KB of SRAM, 2 MB of flash and a TCP/IP network.
 
 The support levels, the boards tried and how to add a chip, a board or an RTOS are in [docs/DEVICES.md](docs/DEVICES.md).
 

@@ -30,7 +30,7 @@ image is the file given to zephyr.exe --flash=).
 The firmware is the same for every installation: change the credentials, not the build.
 The partition is generated with ESP-IDF's NVS partition generator: the pip package
 esp-idf-nvs-partition-gen when it is installed, else nvs_partition_gen.py in the espressif/idf
-image ($IDF_IMAGE, default espressif/idf:v6.0.3). It holds the enrollment key: treat the output
+image ($IDF_IMAGE, default espressif/idf:v6.1.1). It holds the enrollment key: treat the output
 like the key itself.
 """
 import argparse
@@ -43,7 +43,7 @@ import sys
 import tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-IDF_IMAGE = os.environ.get("IDF_IMAGE", "espressif/idf:v6.0.3")
+IDF_IMAGE = os.environ.get("IDF_IMAGE", "espressif/idf:v6.1.1")
 
 
 def partition(path=os.path.join(ROOT, "port", "espidf", "partitions.csv")):

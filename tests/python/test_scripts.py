@@ -283,7 +283,7 @@ class SbomTest(unittest.TestCase):
         by_name = {}
         for c in doc["components"]:
             by_name.setdefault(c["name"], []).append(c)
-        self.assertEqual([c["version"] for c in by_name["esp-idf"]], ["6.0.3"])  # once for both chips
+        self.assertEqual([c["version"] for c in by_name["esp-idf"]], ["6.1.1"])  # once for both chips
         self.assertEqual(by_name["mbedtls"][0]["cpe"], "cpe:2.3:a:trustedfirmware:mbed_tls:4.1.1:*:*:*:*:*:*:*")
         self.assertNotIn("network_provisioning", by_name)  # fc_prov.c instead
         for name in ("flightctl-mcu", "cJSON", "wasm-micro-runtime"):

@@ -7,10 +7,9 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 
-# mbedTLS 4.1, the long-term support branch that ESP-IDF 6.0 and Zephyr 4.5
-# have, or later. Its cryptography is PSA only (TF-PSA-Crypto).
-# macOS: brew install mbedtls
-find_package(MbedTLS 4.1 REQUIRED)
+# Match the mbedTLS release supplied by both device SDKs. The local install
+# comes from third_party/build-mbedtls-host.sh.
+find_package(MbedTLS 4.1.1 EXACT REQUIRED CONFIG HINTS "${CMAKE_CURRENT_SOURCE_DIR}/build/mbedtls-install")
 find_package(Threads REQUIRED)
 
 # WAMR (third_party/fetch-wamr.sh): fast interpreter only, no WASI/libc,

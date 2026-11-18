@@ -90,7 +90,7 @@ if(NOT CONFIG_COMMON_LIBC_MALLOC)
 endif()
 target_include_directories(app PRIVATE
     ${ROOT}/core/include ${ROOT}/core/src ${ROOT}/third_party/cjson ${ROOT}/port/zephyr)
-# WAMR 2.4.5's Zephyr port includes <autoconf.h> and <version.h>, which Zephyr
+# WAMR 2.4.6's Zephyr port includes <autoconf.h> and <version.h>, which Zephyr
 # generates under zephyr/ and no longer puts on the include path as they are.
 target_include_directories(app PRIVATE ${ZEPHYR_BINARY_DIR}/include/generated/zephyr)
 # On Xtensa the fatal error handler walks the stack with Zephyr's own

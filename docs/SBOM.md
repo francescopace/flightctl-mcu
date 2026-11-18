@@ -24,7 +24,7 @@ Another release's, or one made again: `tools/sbom.py --ref <registry>/flightctl-
 
 ## In Flight Control
 
-Flight Control 1.4 reads the vulnerabilities from Trustify (Helm values `vulnerabilityReporting.enabled: true`, `vulnerabilityReporting.trustify.endpoint`). Its client speaks Trustify 0.4's API (`/api/v2`): Trustify 0.5 and later moved it to `/api/v3`. For a test setup, `tools/trustify/up.sh` runs Trustify 0.4.12 next to the kind cluster and points Flight Control at it; then:
+Flight Control 1.4 reads the vulnerabilities from Trustify (Helm values `vulnerabilityReporting.enabled: true`, `vulnerabilityReporting.trustify.endpoint`). Its client speaks Trustify 0.4's API (`/api/v2`): Trustify 0.5 and later moved it to `/api/v3`. For a test setup, `tools/trustify/up.sh` runs Trustify 0.4.21 next to the kind cluster and points Flight Control at it; then:
 
 ```bash
 TRUSTIFY_URL=http://127.0.0.1:8095 tools/fw-push.py ...

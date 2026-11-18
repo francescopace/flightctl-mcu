@@ -7,7 +7,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-IMAGE=eclipse-mosquitto:2.0.22
+IMAGE=eclipse-mosquitto:2.1.4-alpine
 NAME=fc-mqtt-test-$$
 USER_NAME=fc
 PASS=s3cret-$$

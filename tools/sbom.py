@@ -34,7 +34,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WS = os.path.join(ROOT, "third_party", "zephyr-ws")
 
 # The mbedTLS each ESP-IDF release ships (components/mbedtls). docs/DEPENDENCIES.md.
-MBEDTLS_IN_ESP_IDF = {"5.5.6": "3.6.7", "6.0.3": "4.1.1"}
+MBEDTLS_IN_ESP_IDF = {"5.5.6": "3.6.7", "6.0.3": "4.1.1", "6.1.1": "4.1.1"}
 
 # Zephyr modules each board's image is built with, besides those of every build.
 ZEPHYR_COMMON = ("mbedtls", "tf-psa-crypto", "mcuboot", "littlefs", "picolibc", "zcbor")
@@ -94,7 +94,7 @@ def core_components():
         component("cJSON", cjson, f"pkg:github/davegamble/cjson@v{cjson}",
                   cpe_id=cpe("cjson_project", "cjson", cjson), license_id="MIT"),
         component("wasm-micro-runtime", wamr.removeprefix("WAMR-"),
-                  f"pkg:github/bytecodealliance/wasm-micro-runtime@{wamr}",
+                  f"pkg:github/wasm-micro-runtime/wasm-micro-runtime@{wamr}",
                   cpe_id=cpe("bytecodealliance", "webassembly_micro_runtime", wamr.removeprefix("WAMR-")),
                   license_id="Apache-2.0", description="WAMR, fast interpreter only"),
     ]

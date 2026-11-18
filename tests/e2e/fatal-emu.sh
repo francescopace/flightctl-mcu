@@ -25,7 +25,7 @@ cd "$ROOT"
 source tools/local-ip.sh
 IP="${HOST_IP:-$(local_ip)}"
 CHIP="${CHIP:-esp32c3}"
-IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.0.3}"
+IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.1.1}"
 MODE="${MODE:-fault}"
 case "$MODE" in
   fault) VARIANT=faulttest RESET=panic REASON='' ;;

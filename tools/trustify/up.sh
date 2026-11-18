@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Trustify for the lab's Flight Control on kind, and Flight Control's
 # vulnerability reporting pointed at it (docs/SBOM.md).
-#  - Trustify 0.4.12, the API Flight Control 1.4.0's client is generated from
+#  - Trustify 0.4.21, the API Flight Control 1.4.0's client is generated from
 #    (internal/trustify/v2/openapi.yaml): 0.5 and later moved it to /api/v3.
 #    Its "PM mode" binary, with an embedded PostgreSQL, checked against the
 #    sha256 GitHub gives for the release asset; in a container on kind's Docker
@@ -12,7 +12,7 @@
 # Data in the Docker volume fc-trustify. Remove: docker rm -f fc-trustify.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-VERSION="${TRUSTIFY_VERSION:-0.4.12}"
+VERSION="${TRUSTIFY_VERSION:-0.4.21}"
 FC_VERSION="${FC_VERSION:-1.4.0}"
 case "$(uname -m)" in arm64|aarch64) ARCH=aarch64 ;; *) ARCH=x86_64 ;; esac
 NAME="trustd-pm-$VERSION-$ARCH-unknown-linux-gnu"
@@ -38,10 +38,11 @@ docker run -d --name fc-trustify --restart unless-stopped --network kind --user 
   -e HOME=/data -e TZ=UTC -e AUTH_DISABLED=true -e HTTP_SERVER_BIND_ADDR=0.0.0.0 -w /data \
   -v fc-trustify:/data -v "$DL/$NAME:/opt/trustify:ro" -p 127.0.0.1:8095:8080 \
   fc-trustify-base:local /opt/trustify/trustd-pm >/dev/null
-for _ in $(seq 120); do
-  [[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8095/api/v2/sbom)" == 200 ]] && break
-  sleep 2
-done
+curl -fsS --retry-all-errors --retry 120 --retry-delay 2 \
+  --retry-max-time 240 --max-time 5 -o /dev/null 'http://127.0.0.1:8095/api/v2/sbom?limit=1' || {
+  echo "Trustify $VERSION did not become ready on port 8095" >&2
+  exit 1
+}
 helm upgrade flightctl "oci://quay.io/flightctl/charts/flightctl:${FC_VERSION}" -n flightctl --reuse-values \
   --set vulnerabilityReporting.enabled=true --set vulnerabilityReporting.syncInterval=1m \
   --set vulnerabilityReporting.trustify.endpoint=http://fc-trustify:8080 \

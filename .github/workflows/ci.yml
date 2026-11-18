@@ -23,7 +23,6 @@ concurrency:
 
 env:
   ESP_EMU_VERSION: 1.1.0
-  MBEDTLS_VERSION: v4.1.1
 
 jobs:
   build:
@@ -41,8 +40,6 @@ jobs:
         run: echo "$(dirname "$(ls /usr/lib/llvm-*/bin/clang | tail -1)")" >> "$GITHUB_PATH"
       - uses: ./.github/actions/mbedtls
         id: mbedtls
-        with:
-          version: ${{ env.MBEDTLS_VERSION }}
       - run: third_party/fetch-wamr.sh
       - name: WASM apps (alarm v1 and v2, trend v1)
         run: |
@@ -72,8 +69,6 @@ jobs:
         run: echo "$(dirname "$(ls /usr/lib/llvm-*/bin/clang | tail -1)")" >> "$GITHUB_PATH"
       - uses: ./.github/actions/mbedtls
         id: mbedtls
-        with:
-          version: ${{ env.MBEDTLS_VERSION }}
       - run: third_party/fetch-wamr.sh
       - name: host agent (the provisioning test runs its fc-prov-host)
         run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} port/host/build-ci.sh
@@ -102,7 +97,7 @@ jobs:
   firmware:
     name: firmware (${{ matrix.target }}${{ matrix.profile != 'plain' && format(', {0}', matrix.profile) || '' }})
     runs-on: ubuntu-latest
-    container: espressif/idf:v6.0.3
+    container: espressif/idf:v6.1.1
     strategy:
       fail-fast: false
       matrix:

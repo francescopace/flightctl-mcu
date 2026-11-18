@@ -43,7 +43,7 @@ flightctl-mcu: retain only the wrappers used by libc_init in fc_apps.c.
 -    REG_NATIVE_FUNC(strncmp, "(**~)i"),
 -    REG_NATIVE_FUNC(strncpy, "(**~)i"),
 -    REG_NATIVE_FUNC(malloc, "(i)i"),
--    REG_NATIVE_FUNC(realloc, "(ii)i"),
+-    REG_NATIVE_FUNC(realloc, "(*i)i"),
 -    REG_NATIVE_FUNC(calloc, "(ii)i"),
 -    REG_NATIVE_FUNC(strdup, "($)i"),
 -    /* clang may introduce __strdup */

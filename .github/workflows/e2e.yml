@@ -78,7 +78,7 @@ jobs:
     needs: source
     if: needs.source.outputs.skip != 'true'
     runs-on: ubuntu-latest
-    container: espressif/idf:v6.0.3
+    container: espressif/idf:v6.1.1
     strategy:
       fail-fast: false
       matrix:
@@ -121,7 +121,7 @@ jobs:
     needs: source
     if: needs.source.outputs.skip != 'true'
     runs-on: ubuntu-latest
-    container: espressif/idf:v6.0.3
+    container: espressif/idf:v6.1.1
     strategy:
       fail-fast: false
       matrix:
@@ -271,7 +271,7 @@ jobs:
           # NVS partition generator for provisioning (else the ESP-IDF image is pulled)
           pip install esp-idf-nvs-partition-gen==0.3.0
           # espsecure: the secure test signs a firmware with a key the chip does not know
-          pip install esptool==5.3.1
+          pip install esptool==5.6.0
           # detools: the release is pushed with a delta from the debug build
           # (the version tools/fw-push.py pins).
           # It has C extensions: the Python headers only if pip needs them.
@@ -340,7 +340,7 @@ jobs:
         if: matrix.secure == 0 && (matrix.chip == 'esp32s3' || matrix.chip == 'esp32c5')
         run: |
           # addr2line comes from the ESP-IDF image
-          docker pull -q espressif/idf:v6.0.3
+          docker pull -q espressif/idf:v6.1.1
           for mode in fault abort iwdt; do
             PREBUILT=1 CHIP=${{ matrix.chip }} MODE=$mode tests/e2e/fatal-emu.sh
           done

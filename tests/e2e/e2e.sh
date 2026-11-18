@@ -469,7 +469,7 @@ git -C "$WORK/git/src" add fleets
 git -C "$WORK/git/src" -c user.name=e2e -c user.email=e2e@localhost commit -qm "e2e fleet"
 git clone -q --bare "$WORK/git/src" "$WORK/git/fleets.git"
 GIT_SERVER="fc-e2e-git-$TAG"
-docker run -d --rm --name "$GIT_SERVER" -p "${GIT_PORT:-9418}:9418" -v "$WORK/git:/git:ro" alpine:3.20 sh -c \
+docker run -d --rm --name "$GIT_SERVER" -p "${GIT_PORT:-9418}:9418" -v "$WORK/git:/git:ro" alpine:3.24 sh -c \
   "apk add -q --no-cache git-daemon && git config --global safe.directory '*' &&
    exec git daemon --reuseaddr --export-all --base-path=/git --listen=0.0.0.0 /git" >/dev/null
 for i in $(seq 1 30); do

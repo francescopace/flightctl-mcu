@@ -13,9 +13,6 @@ on:
         description: minutes per target
         default: "20"
 
-env:
-  MBEDTLS_VERSION: v4.1.1
-
 jobs:
   fuzz:
     name: fuzzing, ${{ inputs.minutes || '20' }} minutes per target
@@ -30,8 +27,6 @@ jobs:
         run: echo "$(dirname "$(ls /usr/lib/llvm-*/bin/clang | tail -1)")" >> "$GITHUB_PATH"
       - uses: ./.github/actions/mbedtls
         id: mbedtls
-        with:
-          version: ${{ env.MBEDTLS_VERSION }}
       - uses: actions/cache/restore@v6
         with:
           path: build/fuzz/corpus_*

@@ -11,7 +11,13 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "mbedtls/build_info.h"
 #include "psa/crypto.h"
+
+/* The host and both firmware ports are tested with the same mbedTLS release. */
+#if MBEDTLS_VERSION_NUMBER != 0x04010100
+#error "flightctl-mcu requires mbedTLS 4.1.1 on every port"
+#endif
 
 /* The agent calls PSA from several threads at once (the status thread, the
  * spec thread, app downloads), and PSA's key table is shared between them

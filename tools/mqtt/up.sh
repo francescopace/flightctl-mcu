@@ -13,7 +13,7 @@ source "$ROOT/tools/local-ip.sh"
 IP="${HOST_IP:-$(local_ip)}"
 TLS_PORT="${TLS_PORT:-8883}"
 SECRETS="${SECRETS:-$ROOT/.secrets/mqtt}"
-IMAGE="${IMAGE:-docker.io/library/eclipse-mosquitto:2.0.22}"
+IMAGE="${IMAGE:-docker.io/library/eclipse-mosquitto:2.1.4-alpine}"
 NAME=fc-mqtt
 HOST="mqtt.$IP.nip.io"
 USER_NAME=device

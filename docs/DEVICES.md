@@ -6,12 +6,12 @@ What the agent asks of a device, where it runs today, and how to add another one
 
 The agent is not tied to a chip or a vendor: it is a C core and a thin port for each system it runs on. What it asks of a device:
 
-- a CPU that [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) has a target for. In use here: Xtensa, RISC-V, Arm Cortex-M3 (emulated), and AArch64 and x86-64 on a host;
+- a CPU that [WAMR](https://github.com/wasm-micro-runtime/wasm-micro-runtime) has a target for. In use here: Xtensa, RISC-V, Arm Cortex-M3 (emulated), and AArch64 and x86-64 on a host;
 - 384 KB of SRAM at the least. What counts is the heap left once the agent and an app run ([RESULTS.md](RESULTS.md#ram)). Chips with less SRAM are not supported ([support levels](#support-levels));
 - flash for two firmware slots and some storage, 2 MB at the least (images are 0.7 to 1.5 MB);
 - an IP network with TCP. Nothing in the core is about WiFi, but WiFi is the only link tried on hardware. Ethernet is tried on Zephyr in QEMU (`mps2/an385`, [ZEPHYR.md](ZEPHYR.md#on-an-emulated-arm-cortex-m3)); a real Zephyr board with Ethernet is two files ([below](#another-zephyr-board));
 - a random generator and a way to learn the time (SNTP), for TLS;
-- mbedTLS 4.1 or later.
+- mbedTLS 4.1.1.
 
 ## Where it runs
 
@@ -93,7 +93,7 @@ The core needs:
 - POSIX threads (mutex, condition variable, threads with a configurable stack);
 - BSD sockets, reachable through `mbedtls_net_*`;
 - `time()` that returns the real time (certificates are validated);
-- mbedTLS 4.1 or later (TLS 1.3; its cryptography is PSA only);
+- mbedTLS 4.1.1 (TLS 1.3; its cryptography is PSA only);
 - a platform layer for WAMR. WAMR already has one for Zephyr, NuttX, RT-Thread and RIOT, among others.
 
 Then implement [core/include/fc_port.h](../core/include/fc_port.h) for your platform, the reference for each function:

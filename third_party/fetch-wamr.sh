@@ -3,6 +3,10 @@
 # third_party/wamr (git-ignored), and applies the patches in
 # third_party/patches/wamr-*.patch. The firmware builds it as an ESP-IDF
 # component, and the Zephyr build from the same tree.
+#   wamr-const-natives.patch: leave sorted native tables in flash and let
+#   the agent register the app's allowed libc functions during startup.
+#   wamr-libc-subset.patch: keep only the 15 builtin wrappers used by the
+#   agent, so the linker can discard the rest.
 #   wamr-unaligned-select.patch: the fast interpreter's loader rewrites a
 #   `select` of 64-bit values with a plain 32-bit store into code that is only
 #   2-byte aligned on chips without unaligned access. On a Cortex-M0+ (the
@@ -45,13 +49,17 @@
 #   or more): the function ran with the stack 4 bytes off what C requires.
 #   An app's snprintf (five arguments) then gave a double to the C library's
 #   own snprintf from the wrong place, and %f printed nonsense.
-# None is in upstream as of WAMR 2.4.5 and main.
+# WAMR 2.4.6 fixes the guest-facing realloc wrapper. The ESP-IDF port's
+# os_realloc still needs the alignment fix above.
 set -euo pipefail
-WAMR_TAG="${WAMR_TAG:-WAMR-2.4.5}"
+WAMR_TAG="${WAMR_TAG:-WAMR-2.4.6}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DIR="$HERE/wamr"
 if [[ ! -d "$DIR/.git" ]]; then
-  git clone --depth 1 --branch "$WAMR_TAG" https://github.com/bytecodealliance/wasm-micro-runtime "$DIR"
+  git clone --depth 1 --branch "$WAMR_TAG" https://github.com/wasm-micro-runtime/wasm-micro-runtime "$DIR"
+elif [[ "$(git -C "$DIR" rev-parse HEAD)" != "$(git -C "$DIR" rev-parse --verify "$WAMR_TAG^{commit}" 2>/dev/null)" ]]; then
+  echo "Expected $WAMR_TAG. Move the existing $DIR aside and rerun this script." >&2
+  exit 1
 fi
 for p in "$HERE"/patches/wamr-*.patch; do
   # The libc subset changes the context immediately following the const

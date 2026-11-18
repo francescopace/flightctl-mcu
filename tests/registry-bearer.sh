@@ -32,8 +32,7 @@ cd "$ROOT"
 source tools/local-ip.sh
 REG_PORT="${REG_PORT:-9443}" AUTH_PORT="${AUTH_PORT:-9444}" PROXY_PORT="${PROXY_PORT:-9445}"
 QUAY_PORT="${QUAY_PORT:-9446}"
-case "$(uname -m)" in arm64 | aarch64) QUAY_ARCH=-arm64 ;; *) QUAY_ARCH="" ;; esac
-QUAY_IMAGE="${QUAY_IMAGE:-quay.io/projectquay/quay:v3.17.3$QUAY_ARCH}"
+QUAY_IMAGE="${QUAY_IMAGE:-quay.io/projectquay/quay:3.18.3}"
 # oras refuses a realm on a loopback address: the LAN IP, through nip.io.
 IP="$(local_ip)"
 REG_HOST="reg.$IP.nip.io" AUTH_HOST="auth.$IP.nip.io"
@@ -181,7 +180,7 @@ registry() { # name realm [tls]
 registry fc-bearer-registry "https://$AUTH_HOST:$AUTH_PORT/auth" tls
 registry fc-bearer-registry2 "https://$PROXY/service/token"
 docker run -d --name fc-bearer-nginx --network "$NET" -p "$PROXY_PORT:443" -v "$W/certs:/certs:ro" \
-  -v "$W/nginx:/etc/nginx/conf.d:ro" nginx:1.27-alpine >/dev/null
+  -v "$W/nginx:/etc/nginx/conf.d:ro" nginx:1.30-alpine >/dev/null
 for url in "https://$REG/v2/" "https://$AUTH_HOST:$AUTH_PORT/" "https://$PROXY/v2/"; do
   for _ in $(seq 1 40); do
     curl -s -o /dev/null --cacert "$W/certs/ca.crt" "$url" && break
@@ -217,8 +216,8 @@ FEATURE_GENERAL_OCI_SUPPORT: true
 EOF
   chmod 644 "$W/quay/conf/"*
   docker run -d --name fc-bearer-quay-db --network "$NET" -e POSTGRES_USER=quay -e POSTGRES_PASSWORD="$DB_PASS" \
-    -e POSTGRES_DB=quay postgres:15-alpine >/dev/null
-  docker run -d --name fc-bearer-quay-redis --network "$NET" redis:7-alpine >/dev/null
+    -e POSTGRES_DB=quay postgres:18-alpine >/dev/null
+  docker run -d --name fc-bearer-quay-redis --network "$NET" redis:8-alpine >/dev/null
   for _ in $(seq 1 60); do
     docker exec fc-bearer-quay-db psql -U quay -d quay -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;' >/dev/null 2>&1 && break
     sleep 1
