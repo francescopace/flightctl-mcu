@@ -86,6 +86,19 @@ int fc_agent_busy(void);
  * download or connection can hold. */
 long fc_agent_status_age(void);
 
+/* Seconds since the agent's spec thread last took a rendered device: told
+ * it was unchanged, or got one it could parse; -1 before it starts. A device
+ * whose statuses go out but whose spec does not come in (no heap to parse
+ * it, a hung download) is not restarted by the agent itself. */
+long fc_agent_spec_age(void);
+
+/* For the port's watchdog, outside the agent's threads, every minute or so:
+ * what has not happened for longer than FC_AGENT_WATCHDOG_S ("status update
+ * accepted", "rendered spec taken"), with `age` set to how long, or NULL. The
+ * device is then to be restarted. */
+#define FC_AGENT_WATCHDOG_S 1800
+const char *fc_agent_watchdog(long *age);
+
 #ifdef __cplusplus
 }
 #endif

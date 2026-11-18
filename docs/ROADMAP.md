@@ -21,6 +21,7 @@ Checks not made yet:
 - [ ] The rest of HTTP/2 on the boards ([REGISTRY.md](REGISTRY.md)):
   - a certificate renewal over it;
   - the traffic it saves or costs ([RESULTS.md](RESULTS.md#idle-traffic) has HTTP/1.1's only).
+- [ ] z30 or later on the Zephyr ESP32-S3 without PSRAM, flashed over USB: z28 cannot update itself over the air there (368 bytes of C heap at the lowest). Then on it: MQTT beside a metrics export, the idle traffic over HTTP/2, and the watchdog of a stuck agent ([ZEPHYR.md](ZEPHYR.md#on-an-esp32-s3)).
 - [ ] The core's own WiFi provisioning on an ESP-IDF board: it passes in the emulator only ([PROVISIONING.md](PROVISIONING.md)).
 - [ ] `lastFatalError` after a real crash on the ESP32-S3 with Zephyr: the code is on the board but has never run on Xtensa ([RESULTS.md](RESULTS.md#a-crash-in-the-status)). That build has 4 KB of DRAM left at link time, so a larger static buffer must take its room from something else.
 
@@ -42,7 +43,7 @@ What an app can do and hold:
   - `expf`, `logf` and `tanhf`, and `tinymlp`, on a board (unit tests only).
 - [ ] MQTT for the apps ([APPS.md](APPS.md#mqtt)):
   - on the C3 with an app using MQTT, the first metrics exports after a restart fail for want of memory, the heap down to 6 to 10 KB ([RESULTS.md](RESULTS.md#ram));
-  - on the boards: the connection kept through a download, and MQTT with Zephyr beside a metrics export: on the ESP32-S3 the two used up the C heap; the wait for heap that came after it is not yet tried there ([APPS.md](APPS.md#mqtt));
+  - on the boards: the connection kept through a download, and MQTT with Zephyr beside a metrics export: on the ESP32-S3 the two used up the C heap; the wait for heap that came after it (z29) is not yet on that board ([APPS.md](APPS.md#mqtt));
   - not planned for 1.0: the device's certificate for the broker, a QoS 1 message sent again after a lost link, QoS 2, a will message, a persistent session.
 
 Waiting for Flight Control (the numbers are the [limitations in RESULTS.md](RESULTS.md#flight-control-limitations-found-upstream-proposals)):

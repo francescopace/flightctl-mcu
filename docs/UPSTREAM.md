@@ -84,7 +84,7 @@ The gaps found in Flight Control for microcontrollers, with what the source show
 ## 15. A console session whose user left before the device came stays listed
 
 - A session is listed in the device's annotation (`device-controller/console`) when it starts, and taken out only when the user's websocket closes after the device joined (`internal/console/console.go`: `CloseSession`). If the user leaves first (`flightctl console` gives up after 60 s, the UI's Logs tab after 50 s), nothing takes it out. While any session is listed the rendered spec is served at once, with no long-poll (`internal/store/model/device.go`), so the device asks for its spec every few seconds, for good.
-- Seen on boards: sessions asked for while a board was restarting stayed listed. This agent remembers the last 16 sessions it saw (it never opens one twice), ends a session nobody joins within a minute, and polls every 15 s instead of 5 once only sessions it has seen are listed.
+- Seen on boards: sessions asked for while a board was restarting stayed listed. This agent remembers the last 64 sessions it opened (it never opens one twice), parses only the list of sessions while the spec is unchanged, ends a session nobody joins within a minute, and polls every 15 s instead of 5 once only sessions it has seen are listed.
 - Proposal: take a session out when its user leaves, joined or not, and give listed sessions a lifetime.
 
 All of these were read again in the source of 1.4.0 and of Flight Control's main branch of 12 November 2026: they hold in both, except limitation 8, fixed on main. Limitation 15 was read in main's source and seen with 1.4.0.

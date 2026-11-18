@@ -763,6 +763,42 @@ static void metrics_and_pulls_take_turns(void)
     CHECK_INT(fc_agent_busy(), 1); /* not started: busy anyway */
 }
 
+/* The port's watchdog: a status not accepted, or a spec not taken, for
+ * FC_AGENT_WATCHDOG_S; nothing before the threads run. */
+static void the_watchdog_wants_statuses_and_specs(void)
+{
+    long saved_status = s_status_ok_mono, saved_spec = s_spec_ok_mono, age = 0;
+    s_status_ok_mono = 0;
+    s_spec_ok_mono = 0;
+    CHECK(fc_agent_watchdog(&age) == NULL);
+    s_status_ok_mono = mono_s() - 10;
+    s_spec_ok_mono = mono_s() - FC_AGENT_WATCHDOG_S;
+    CHECK(fc_agent_watchdog(&age) == NULL);
+    s_spec_ok_mono = mono_s() - FC_AGENT_WATCHDOG_S - 5;
+    const char *what = fc_agent_watchdog(&age);
+    CHECK(what != NULL && strcmp(what, "rendered spec taken") == 0);
+    CHECK(age >= FC_AGENT_WATCHDOG_S + 5 && age <= FC_AGENT_WATCHDOG_S + 6);
+    s_status_ok_mono = mono_s() - FC_AGENT_WATCHDOG_S - 60;
+    what = fc_agent_watchdog(&age);
+    CHECK(what != NULL && strcmp(what, "status update accepted") == 0);
+    s_status_ok_mono = saved_status;
+    s_spec_ok_mono = saved_spec;
+}
+
+/* A rendered device the agent can parse is a spec taken; one it cannot
+ * parse (no heap for it) is not. */
+static void a_parsed_spec_is_taken(void)
+{
+    new_agent();
+    long saved = s_spec_ok_mono;
+    s_spec_ok_mono = 0;
+    CHECK_INT(apply_rendered(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"1"), 0);
+    CHECK_INT(fc_agent_spec_age(), -1);
+    CHECK_INT(apply_rendered(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"1\"}}, \"spec\": {}}"), 0);
+    CHECK(fc_agent_spec_age() >= 0 && fc_agent_spec_age() <= 1);
+    s_spec_ok_mono = saved;
+}
+
 /* The age of the last accepted status, for the port's watchdog: -1 before
  * the status thread runs, then seconds on a monotonic clock. */
 static void the_status_age_is_monotonic(void)
@@ -983,6 +1019,21 @@ static void a_console_alone_is_not_applied_again(void)
     CHECK_INT(consoles(&s_a, with, "4"), 0); /* a new version too: applied */
     CHECK_INT(consoles(&s_a, "{\"metadata\": {}, \"spec\": {}}", "5"), 0);
     CHECK_INT(s_console_syncs, 2);
+    /* Read in place: other members before, with what looks like JSON in
+     * their strings, and nesting. */
+    const char *busy = "{\"kind\": \"Device\", \"x\": {\"a\": [1, {\"b\": \"}]\\\" {\"}], \"c\": -1.5e3, \"d\": null},"
+                       " \"metadata\": {\"name\": \"d\", \"annotations\": {\"other\": \"\", \"" RENDERED_ANNOTATION "\": \"5\"}},"
+                       " \"spec\": {\"os\": {\"image\": \"r/fw:{z29}\"}, \"consoles\": [{\"sessionID\": \"s1\"}], \"config\": []}}";
+    CHECK_INT(consoles(&s_a, busy, "5"), 1);
+    CHECK_INT(s_console_syncs, 3);
+    CHECK_INT(consoles(&s_a, "{\"spec\": {\"consoles\": []}}", "5"), 0); /* none listed */
+    CHECK_INT(consoles(&s_a, "{\"spec\": {\"consoles\": [{\"sessionID\": ", "5"), 0); /* cut short */
+    CHECK_INT(consoles(&s_a, "{\"spec\": {\"consoles\": {}}}", "5"), 0);
+    CHECK_INT(s_console_syncs, 3);
+    /* A version with an escape is not read: the spec is applied. */
+    CHECK_INT(consoles(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"\\u0035\"}},"
+                             " \"spec\": {\"consoles\": [{\"sessionID\": \"s1\"}]}}", "5"), 0);
+    CHECK_INT(s_console_syncs, 4);
     free(s_a.mgmt_cert_pem);
     s_a.mgmt_cert_pem = NULL;
     fc_http_session_free(s_a.sess);
@@ -1278,6 +1329,8 @@ int main(void)
     RUN(metrics_and_pulls_take_turns);
     RUN(an_export_waits_for_room_above_the_floor);
     RUN(the_status_age_is_monotonic);
+    RUN(the_watchdog_wants_statuses_and_specs);
+    RUN(a_parsed_spec_is_taken);
     RUN(an_export_waits_for_room_with_the_apps_checks_off);
     RUN(a_console_alone_is_not_applied_again);
     RUN(counters_are_read_again_only_when_due);

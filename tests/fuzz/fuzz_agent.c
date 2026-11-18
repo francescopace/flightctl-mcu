@@ -1,6 +1,7 @@
 /*
  * Fuzzes what the agent does with server answers: the rendered device spec
- * (config files, applications, OS image) and certificate signing requests.
+ * (config files, applications, OS image, its console sessions) and certificate
+ * signing requests.
  * Downloads always fail, so nothing is installed and nothing reboots.
  */
 #include <unistd.h>
@@ -71,6 +72,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         /* A spec may ask for decommissioning: that only marks it (the wipe
          * waits for a status accepted, and there is no server here). */
         a.decom = DECOM_NONE;
+        consoles(&a, json, "1"); /* the look in place; no certificate, no session opened */
         apply_rendered(&a, json);
         cJSON_Delete(build_status(&a));
     }

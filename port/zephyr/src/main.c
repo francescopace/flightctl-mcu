@@ -135,6 +135,26 @@ static void stop(const char *why)
     }
 }
 
+/* A watchdog outside the agent's threads, on the system work queue: no
+ * status update accepted, or no rendered spec taken, for FC_AGENT_WATCHDOG_S
+ * restarts the device. The agent restarts it itself after 10 minutes without
+ * a status, but only from its status thread, and statuses can go out while
+ * the spec cannot come in: an ESP32-S3 whose heap was too low to parse its
+ * spec stayed so for hours, until someone pressed RESET. */
+static void watchdog_check(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(s_watchdog, watchdog_check);
+
+static void watchdog_check(struct k_work *work)
+{
+    long age = 0;
+    const char *what = fc_agent_watchdog(&age);
+    if (what != NULL) {
+        fc_port_log(FC_LOG_ERROR, "no %s for %ld s, the agent stuck: restarting", what, age);
+        fc_port_reboot();
+    }
+    k_work_schedule(&s_watchdog, K_SECONDS(60));
+}
+
 int main(void)
 {
     fc_port_log(FC_LOG_INFO, "flightctl-mcu %s on Zephyr, board %s", CONFIG_FC_FW_VERSION, CONFIG_BOARD_TARGET);
@@ -185,6 +205,7 @@ int main(void)
         .ota_verify_timeout_s = CONFIG_FC_OTA_VERIFY_TIMEOUT,
         .hw = &s_hw,
     };
+    k_work_schedule(&s_watchdog, K_SECONDS(60));
     fc_agent_run(&cfg);
     stop("the agent stopped");
     return 1;

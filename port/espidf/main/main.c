@@ -464,18 +464,20 @@ static void ota_guard(void *arg)
     }
 }
 
-/* A watchdog outside the agent's threads: no status update accepted for
- * this long restarts the device. The agent does it itself after 10 minutes
- * from its status thread, which a hung download or connection can hold: on
- * an ESP32-C5 running two apps with 64 KB memories the device went silent
- * for good (v3.14-rc10.1). Checked every minute on esp_timer's task. */
-#define STATUS_WATCHDOG_S 1800
-
+/* A watchdog outside the agent's threads: no status update accepted, or no
+ * rendered spec taken, for FC_AGENT_WATCHDOG_S restarts the device. The
+ * agent restarts it itself after 10 minutes without a status, but from its
+ * status thread, which a hung download or connection can hold: on an
+ * ESP32-C5 running two apps with 64 KB memories the device went silent for
+ * good (v3.14-rc10.1). And statuses can go out while the spec cannot come in
+ * (the heap too low to parse it): a Zephyr ESP32-S3 stayed so for hours.
+ * Checked every minute on esp_timer's task. */
 static void status_watchdog(void *arg)
 {
-    long age = fc_agent_status_age();
-    if (age > STATUS_WATCHDOG_S) {
-        ESP_LOGE(TAG, "no status update accepted for %ld s, the agent stuck: restarting", age);
+    long age = 0;
+    const char *what = fc_agent_watchdog(&age);
+    if (what != NULL) {
+        ESP_LOGE(TAG, "no %s for %ld s, the agent stuck: restarting", what, age);
         esp_restart();
     }
 }

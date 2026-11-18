@@ -285,17 +285,111 @@ static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, cons
     return rc;
 }
 
+/* ---- a look into the rendered device without parsing it ---------------- */
+
+/* The rendered device is parsed whole only when it is to be applied. While
+ * a console session is listed the server sends it every poll, and Flight
+ * Control may list stale sessions for good (docs/UPSTREAM.md, 15): parsing
+ * it each time took a tree several times its size from the heap every 15 s,
+ * on a board with little to spare. These read the text in place; malformed
+ * text gives NULL, and what they find is parsed by cJSON (the console list)
+ * or copied (the version). */
+
+static const char *jws(const char *p)
+{
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        p++;
+    }
+    return p;
+}
+
+/* Past the string p starts (at its quote). */
+static const char *jstr_end(const char *p)
+{
+    for (p++; *p && *p != '"'; p++) {
+        if (*p == '\\' && *++p == '\0') {
+            return NULL;
+        }
+    }
+    return *p ? p + 1 : NULL;
+}
+
+/* Past the value p starts; no recursion, however deep the nesting. */
+static const char *jskip(const char *p)
+{
+    p = jws(p);
+    if (*p == '"') {
+        return jstr_end(p);
+    }
+    if (*p == '{' || *p == '[') {
+        int depth = 0;
+        while (*p) {
+            if (*p == '"') {
+                if ((p = jstr_end(p)) == NULL) {
+                    return NULL;
+                }
+                continue;
+            }
+            if (*p == '{' || *p == '[') {
+                depth++;
+            } else if ((*p == '}' || *p == ']') && --depth == 0) {
+                return p + 1;
+            }
+            p++;
+        }
+        return NULL;
+    }
+    const char *start = p;
+    while (*p && !strchr(",}] \t\r\n", *p)) {
+        p++;
+    }
+    return p == start ? NULL : p;
+}
+
+/* The value of member `key` of the object at p, or NULL. */
+static const char *jmember(const char *p, const char *key)
+{
+    if (p == NULL || *(p = jws(p)) != '{') {
+        return NULL;
+    }
+    size_t klen = strlen(key);
+    for (p = jws(p + 1); *p == '"'; p = jws(p + 1)) {
+        const char *k = p + 1, *end = jstr_end(p);
+        if (end == NULL || *(p = jws(end)) != ':') {
+            return NULL;
+        }
+        p = jws(p + 1);
+        if ((size_t)(end - 1 - k) == klen && memcmp(k, key, klen) == 0) {
+            return p;
+        }
+        if ((p = jskip(p)) == NULL || *(p = jws(p)) != ',') {
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
 /* The spec's console sessions (fc_console.c), on the agent's connection.
  * Returns 1 if the spec is the one applied already: only a console made the
- * server answer, and nothing is to be applied. */
+ * server answer, and nothing is to be applied. Only the list of sessions is
+ * parsed: none, and nothing is. */
 static int consoles(agent_t *a, const char *json, const char *known)
 {
-    cJSON *dev = cJSON_Parse(json);
-    const cJSON *list = cJSON_GetObjectItem(cJSON_GetObjectItem(dev, "spec"), "consoles");
-    const char *version = cJSON_GetStringValue(
-        cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(dev, "metadata"), "annotations"), RENDERED_ANNOTATION));
-    int same = 0;
     a->console_quiet = 0;
+    const char *at = jmember(jmember(json, "spec"), "consoles");
+    const char *end = at != NULL && *at == '[' ? jskip(at) : NULL;
+    if (end == NULL || *jws(at + 1) == ']') {
+        return 0;
+    }
+    char version[32] = "";
+    const char *v = jmember(jmember(jmember(json, "metadata"), "annotations"), RENDERED_ANNOTATION);
+    const char *v_end = v != NULL && *v == '"' ? jstr_end(v) : NULL;
+    if (v_end != NULL && (size_t)(v_end - v - 2) < sizeof(version) && memchr(v, '\\', (size_t)(v_end - v)) == NULL) {
+        memcpy(version, v + 1, (size_t)(v_end - v - 2));
+        version[v_end - v - 2] = '\0';
+    }
+    cJSON *list = cJSON_ParseWithLength(at, (size_t)(end - at));
+    int same = 0;
     if (cJSON_GetArraySize(list) > 0) {
         fc_http_target_t t = enrollment_target(a, 30);
         pthread_mutex_lock(&a->lock);
@@ -308,11 +402,11 @@ static int consoles(agent_t *a, const char *json, const char *known)
             t.session = a->sess;
             int listed = fc_console_sync(list, &t);
             a->console_quiet = listed == 1;
-            same = listed && version != NULL && known[0] && strcmp(version, known) == 0;
+            same = listed && version[0] && known[0] && strcmp(version, known) == 0;
             free(cert);
         }
     }
-    cJSON_Delete(dev);
+    cJSON_Delete(list);
     return same;
 }
 
@@ -1462,6 +1556,36 @@ long fc_agent_status_age(void)
     return t == 0 ? -1 : mono_s() - t;
 }
 
+/* When the spec thread last took a rendered device: told it was unchanged,
+ * or got one it could parse (applied, or to be tried again); 0 before it
+ * runs, and once decommissioning (fc_agent_spec_age). */
+static long s_spec_ok_mono;
+
+static void spec_taken(void)
+{
+    __atomic_store_n(&s_spec_ok_mono, mono_s(), __ATOMIC_RELAXED);
+}
+
+long fc_agent_spec_age(void)
+{
+    long t = __atomic_load_n(&s_spec_ok_mono, __ATOMIC_RELAXED);
+    return t == 0 ? -1 : mono_s() - t;
+}
+
+const char *fc_agent_watchdog(long *age)
+{
+    long s = fc_agent_status_age(), r = fc_agent_spec_age();
+    if (s > FC_AGENT_WATCHDOG_S) {
+        *age = s;
+        return "status update accepted";
+    }
+    if (r > FC_AGENT_WATCHDOG_S) {
+        *age = r;
+        return "rendered spec taken";
+    }
+    return NULL;
+}
+
 static void *status_thread(void *arg)
 {
     agent_t *a = arg;
@@ -1754,6 +1878,7 @@ static int apply_rendered(agent_t *a, const char *json)
         fc_port_log(FC_LOG_WARN, "rendered device: invalid JSON");
         return 0;
     }
+    spec_taken();
     const cJSON *ann = cJSON_GetObjectItem(cJSON_GetObjectItem(dev, "metadata"), "annotations");
     const char *version = cJSON_GetStringValue(cJSON_GetObjectItem(ann, RENDERED_ANNOTATION));
     const cJSON *spec = cJSON_GetObjectItem(dev, "spec");
@@ -1957,6 +2082,7 @@ static void *spec_thread(void *arg)
 {
     agent_t *a = arg;
     time_t quiet_since = 0; /* only sessions seen before listed, since then */
+    spec_taken();
     for (;;) {
         if (a->mqtt_retry) {
             a->mqtt_retry = fc_mqtt_configure(a->id.name) == -2;
@@ -1982,6 +2108,7 @@ static void *spec_thread(void *arg)
             continue;
         }
         if (r.status == 200 && consoles(a, r.body, known)) {
+            spec_taken();
             fc_http_free(&r);
             time_t now = time(NULL);
             if (!a->console_quiet) {
@@ -2006,12 +2133,14 @@ static void *spec_thread(void *arg)
             pthread_mutex_unlock(&a->lock);
             if (decommissioning) {
                 /* No spec matters any more: the status thread finishes. */
+                __atomic_store_n(&s_spec_ok_mono, 0, __ATOMIC_RELAXED);
                 return NULL;
             }
             if (again) {
                 sleep(3 * RETRY_DELAY_S);
             }
         } else if (r.status == 204) {
+            spec_taken();
             fc_port_log(FC_LOG_DEBUG, "spec unchanged (%s)", known);
         } else {
             fc_port_log(FC_LOG_WARN, "get rendered: HTTP %d %s", r.status, r.body);

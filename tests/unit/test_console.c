@@ -261,7 +261,67 @@ static void a_session_seen_is_not_run_again_even_after_a_restart(void)
     pthread_mutex_unlock(&s_lock);
     session("s4", "{\"command\": {\"command\": \"help\"}, " V5 "}");
     CHECK_INT(f_opened, 1);
-    CHECK_STR(stub_kv(KV_SEEN), "s4");
+    char want[16];
+    snprintf(want, sizeof(want), "%08" PRIx32, id_hash("s4"));
+    CHECK_STR(stub_kv(KV_SEEN), want);
+}
+
+/* Flight Control may list more stale sessions than 16, the IDs a firmware
+ * before kept: none is opened again, poll after poll. */
+static void many_stale_sessions_are_not_opened_again(void)
+{
+    reset();
+    char json[40 * 128] = "[";
+    for (int i = 0; i < 40; i++) {
+        size_t n = strlen(json);
+        snprintf(json + n, sizeof(json) - n,
+                 "%s{\"sessionID\": \"stale-%02d\", \"sessionMetadata\": \"{\\\"command\\\": "
+                 "{\\\"command\\\": \\\"help\\\"}}\"}",
+                 i ? ", " : "", i);
+    }
+    strcat(json, "]");
+    cJSON *list = cJSON_Parse(json);
+    CHECK_INT(cJSON_GetArraySize(list), 40);
+    fc_http_target_t t = {.host = "srv", .port = 443};
+    CHECK_INT(fc_console_sync(list, &t), 2);
+    CHECK(wait_closed(40));
+    CHECK_INT(fc_console_sync(list, &t), 1);
+    pthread_mutex_lock(&s_lock);
+    memset(s_seen, 0, sizeof(s_seen));
+    s_seen_next = 0;
+    s_seen_loaded = 0; /* a restart */
+    pthread_mutex_unlock(&s_lock);
+    CHECK_INT(fc_console_sync(list, &t), 1);
+    CHECK_INT(f_opened, 40);
+    cJSON_Delete(list);
+}
+
+/* What a firmware before stored, the IDs themselves, is still known. */
+static void the_ids_a_firmware_before_kept_are_known(void)
+{
+    reset();
+    fc_port_kv_set(KV_SEEN, "old-1,s9", 8);
+    CHECK_INT(session("s9", "{\"command\": {\"command\": \"help\"}, " V5 "}"), 1);
+    CHECK_INT(f_opened, 0);
+}
+
+/* Remembering a new session forgets one no longer listed before one that
+ * is: with all 64 places taken, the oldest still listed stays known. */
+static void a_listed_session_is_forgotten_last(void)
+{
+    reset();
+    pthread_mutex_lock(&s_lock);
+    s_seen_loaded = 1;
+    for (int i = 0; i < SEEN_MAX; i++) {
+        s_seen[i] = 1000 + (uint32_t)i;
+    }
+    s_seen_next = 0;
+    int slot = remember_locked(5, (uint64_t)1 << 0 | (uint64_t)1 << 1); /* 0 and 1 listed */
+    pthread_mutex_unlock(&s_lock);
+    CHECK_INT(slot, 2);
+    CHECK_INT(s_seen[0], 1000);
+    CHECK_INT(s_seen[2], 5);
+    CHECK_INT(s_seen_next, 3);
 }
 
 static void a_second_session_is_refused(void)
@@ -287,7 +347,9 @@ static void reboot_restarts_after_the_status(void)
     }
     CHECK_INT(stub_reboots, 1);
     CHECK_STR(sent(CH_ERROR), "{\"metadata\":{},\"status\":\"Success\"}");
-    CHECK_STR(stub_kv(KV_SEEN), "s7"); /* kept before it ran */
+    char want[16];
+    snprintf(want, sizeof(want), "%08" PRIx32, id_hash("s7"));
+    CHECK_STR(stub_kv(KV_SEEN), want); /* kept before it ran */
 }
 
 static void no_protocol_no_selected_protocol(void)
@@ -721,6 +783,9 @@ int main(void)
     RUN(an_unknown_command_fails_with_127);
     RUN(a_terminal_gets_a_prompt_and_line_editing);
     RUN(a_session_seen_is_not_run_again_even_after_a_restart);
+    RUN(many_stale_sessions_are_not_opened_again);
+    RUN(the_ids_a_firmware_before_kept_are_known);
+    RUN(a_listed_session_is_forgotten_last);
     RUN(a_second_session_is_refused);
     RUN(reboot_restarts_after_the_status);
     RUN(no_protocol_no_selected_protocol);

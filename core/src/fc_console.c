@@ -38,11 +38,14 @@
 #define SCRIPT_MAX   2048 /* a line of a script read from stdin (bash -s): the Logs tab's fit */
 #define OUT_PIECE    768  /* stdout bytes per message */
 /* Flight Control lists a session until the device's stream for it closes:
- * one whose stream died with a restart stays listed, beside the new ones.
- * The device remembers more than the server may list, so that it never opens
- * an old one again. */
-#define SEEN_MAX     16
-#define SEEN_ID_MAX  40
+ * one whose stream died with a restart stays listed, beside the new ones,
+ * and one whose user left before the device came stays listed for good
+ * (docs/UPSTREAM.md, 15). The device remembers a hash of each session it
+ * opened, kept across restarts, so that it never opens an old one again:
+ * more than the server has been seen to list, in less RAM than 16 IDs took.
+ * One it forgot would be opened again at each poll, with its stream and
+ * buffers. */
+#define SEEN_MAX     64
 #define KV_SEEN      "console_seen"
 /* The session's thread: its deepest call is a command's output going out
  * through TLS (send_payload, the stream, mbedTLS); the buffers of a
@@ -103,7 +106,7 @@ typedef struct {
 
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 static char s_device[64];
-static char s_seen[SEEN_MAX][SEEN_ID_MAX];
+static uint32_t s_seen[SEEN_MAX]; /* id_hash of the sessions opened; 0 empty */
 static int s_seen_next, s_seen_loaded;
 static int s_running;  /* the session thread runs */
 static int s_joinable; /* it ran, and was not joined */
@@ -120,6 +123,18 @@ void fc_console_set_device(const char *name)
 
 /* ---- the sessions seen, kept across restarts ----------------------------------- */
 
+/* FNV-1a, never 0 (an empty slot). */
+static uint32_t id_hash(const char *id)
+{
+    uint32_t h = 2166136261u;
+    for (const unsigned char *p = (const unsigned char *)id; *p; p++) {
+        h = (h ^ *p) * 16777619u;
+    }
+    return h ? h : 1;
+}
+
+/* Stored as 8 hex digits each, comma-separated. A firmware before kept the
+ * IDs themselves: those are hashed as they come. */
 static void seen_load_locked(void)
 {
     if (s_seen_loaded) {
@@ -133,34 +148,48 @@ static void seen_load_locked(void)
     }
     char *save = NULL;
     for (char *id = strtok_r(v, ",", &save); id != NULL && s_seen_next < SEEN_MAX; id = strtok_r(NULL, ",", &save)) {
-        snprintf(s_seen[s_seen_next++], SEEN_ID_MAX, "%s", id);
+        int hex = strlen(id) == 8 && strspn(id, "0123456789abcdef") == 8;
+        uint32_t h = hex ? (uint32_t)strtoul(id, NULL, 16) : id_hash(id);
+        s_seen[s_seen_next++] = h ? h : 1;
     }
     s_seen_next %= SEEN_MAX;
     free(v);
 }
 
-static int seen_locked(const char *id)
+/* The slot that holds h, or -1. */
+static int seen_locked(uint32_t h)
 {
     for (int i = 0; i < SEEN_MAX; i++) {
-        if (strcmp(s_seen[i], id) == 0) {
-            return 1;
+        if (s_seen[i] == h) {
+            return i;
         }
     }
-    return 0;
+    return -1;
 }
 
-static void remember_locked(const char *id)
+/* Into the oldest slot not in `keep` (the sessions listed now), so that one
+ * still listed is forgotten only when more than SEEN_MAX are. Returns it. */
+static int remember_locked(uint32_t h, uint64_t keep)
 {
-    snprintf(s_seen[s_seen_next], SEEN_ID_MAX, "%s", id);
-    s_seen_next = (s_seen_next + 1) % SEEN_MAX;
-    char all[SEEN_MAX * SEEN_ID_MAX + SEEN_MAX];
+    int slot = s_seen_next;
+    for (int k = 0; k < SEEN_MAX; k++) {
+        int i = (s_seen_next + k) % SEEN_MAX;
+        if (!(keep >> i & 1)) {
+            slot = i;
+            break;
+        }
+    }
+    s_seen[slot] = h;
+    s_seen_next = (slot + 1) % SEEN_MAX;
+    char all[SEEN_MAX * 9];
     size_t n = 0;
     for (int i = 0; i < SEEN_MAX; i++) {
-        if (s_seen[i][0]) {
-            n += (size_t)snprintf(all + n, sizeof(all) - n, "%s%s", n ? "," : "", s_seen[i]);
+        if (s_seen[i] != 0) {
+            n += (size_t)snprintf(all + n, sizeof(all) - n, "%s%08" PRIx32, n ? "," : "", s_seen[i]);
         }
     }
     fc_port_kv_set(KV_SEEN, all, n);
+    return slot;
 }
 
 /* ---- the wire: gRPC messages, protobuf ----------------------------------------------- */
@@ -1845,23 +1874,35 @@ static void start(const char *id, const char *metadata, const fc_http_target_t *
 int fc_console_sync(const cJSON *consoles, const fc_http_target_t *t)
 {
     int listed = 0;
+    uint64_t keep = 0; /* the slots of the sessions listed now */
     const cJSON *c;
+    pthread_mutex_lock(&s_lock);
+    seen_load_locked();
+    cJSON_ArrayForEach(c, consoles) {
+        const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(c, "sessionID"));
+        int slot = id != NULL && id[0] ? seen_locked(id_hash(id)) : -1;
+        if (slot >= 0) {
+            keep |= (uint64_t)1 << slot;
+        }
+    }
+    pthread_mutex_unlock(&s_lock);
     cJSON_ArrayForEach(c, consoles) {
         const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(c, "sessionID"));
         const char *meta = cJSON_GetStringValue(cJSON_GetObjectItem(c, "sessionMetadata"));
-        if (id == NULL || id[0] == '\0' || strlen(id) >= SEEN_ID_MAX || strchr(id, ',') != NULL) {
+        if (id == NULL || id[0] == '\0') {
             continue;
         }
+        uint32_t h = id_hash(id);
         listed = listed ? listed : 1;
         pthread_mutex_lock(&s_lock);
-        seen_load_locked();
-        if (seen_locked(id)) {
+        if (seen_locked(h) >= 0) {
             listed = s_running ? 2 : listed;
             pthread_mutex_unlock(&s_lock);
             continue;
         }
         listed = 2;
-        remember_locked(id); /* before it runs: a reboot it asks for is not asked again */
+        /* before it runs: a reboot it asks for is not asked again */
+        keep |= (uint64_t)1 << remember_locked(h, keep);
         int busy = s_running;
         pthread_mutex_unlock(&s_lock);
         start(id, meta, t, busy);
