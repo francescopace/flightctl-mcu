@@ -2086,6 +2086,31 @@ static void test_heap_low_holds(void)
     CHECK_INT(fc_heap_low_begin(), -1);
 }
 
+/* A decoded module gives unused SRAM back without giving up the block
+ * for its linear memory. Meter the smaller reservation from that point. */
+static void test_trim_heap_hold(void)
+{
+    stub_heap_largest_next[0] = 160 * 1024;
+    stub_heap_largest_queued = 1;
+    void *hold = fc_heap_hold(0);
+    CHECK(hold != NULL);
+    stub_heap_watch_low = 180 * 1024;
+    int k = fc_heap_low_begin();
+    CHECK(k >= 0);
+    CHECK(fc_heap_trim_hold(NULL, 64 * 1024) == NULL);
+    CHECK(fc_heap_trim_hold(hold, 0) == hold);
+    CHECK(fc_heap_trim_hold(hold, 256 * 1024) == hold);
+    hold = fc_heap_trim_hold(hold, 128 * 1024);
+    CHECK(hold != NULL);
+    stub_heap_watch_low = 12 * 1024;
+    CHECK_INT(fc_heap_low_peek(k, NULL), 140 * 1024);
+    hold = fc_heap_trim_hold(hold, 64 * 1024);
+    CHECK_INT(fc_heap_low_peek(k, NULL), 76 * 1024);
+    fc_heap_unhold(hold);
+    CHECK_INT(fc_heap_low_end(k, NULL), 12 * 1024);
+    stub_heap_watch_low = -1;
+}
+
 /* An app whose memory would leave the agent less heap than it needs for a
  * connection and a spec is refused, tried once more, and not started again
  * until its image or env vars change. */
@@ -2712,6 +2737,7 @@ int main(void)
     RUN(test_malloc);
     RUN(test_hold_leaves_room_for_the_stack);
     RUN(test_heap_low_holds);
+    RUN(test_trim_heap_hold);
     RUN(test_heap_floor);
     RUN(test_deferred_start);
     RUN(test_catalog_commit);

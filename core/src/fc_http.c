@@ -397,16 +397,35 @@ void *fc_heap_hold(size_t leave)
     return p;
 }
 
+void *fc_heap_trim_hold(void *hold, size_t limit)
+{
+    pthread_mutex_lock(&s_meter_lock);
+    for (int i = 0; hold && i < HEAP_HOLDS; i++) {
+        if (s_holds[i].p == hold && limit > 0 && limit < (size_t)s_holds[i].n) {
+            void *trimmed = realloc(hold, limit);
+            if (trimmed != NULL) {
+                meter_fold();
+                s_held -= s_holds[i].n - (long)limit;
+                s_holds[i].p = hold = trimmed;
+                s_holds[i].n = (long)limit;
+            }
+            break;
+        }
+    }
+    pthread_mutex_unlock(&s_meter_lock);
+    return hold;
+}
+
 void fc_heap_unhold(void *hold)
 {
     if (hold == NULL) {
         return;
     }
     /* Given back before it is no longer counted. */
-    free(hold);
     pthread_mutex_lock(&s_meter_lock);
     for (int i = 0; i < HEAP_HOLDS; i++) {
         if (s_holds[i].p == hold) {
+            free(hold);
             meter_fold();
             s_held -= s_holds[i].n;
             s_holds[i].p = NULL;

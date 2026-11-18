@@ -28,6 +28,9 @@
 #   this firmware does not build): where the image found no PSRAM, no app
 #   could start. Now only with AOT; the interpreter's memory comes from
 #   internal RAM first, PSRAM when no internal block is large enough.
+#   wamr-bytecode-placement.patch: on SRAM-only C5/C6 let the app loader
+#   resize its heap reservation after reading the memory declaration and
+#   before allocating the fast interpreter's decoded functions.
 #   wamr-instantiation-hook.patch: the code a module runs as it is
 #   instantiated (its start function, __post_instantiate, __wasm_call_ctors)
 #   ran in an exec env WAMR made for it, which the embedder never saw: with

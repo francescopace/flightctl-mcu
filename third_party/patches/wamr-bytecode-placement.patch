@@ -1,0 +1,16 @@
+diff --git a/core/iwasm/interpreter/wasm_loader.c b/core/iwasm/interpreter/wasm_loader.c
+--- a/core/iwasm/interpreter/wasm_loader.c
++++ b/core/iwasm/interpreter/wasm_loader.c
+@@ -6493,6 +6493,11 @@
+ #if WASM_ENABLE_FAST_INTERP != 0 && WASM_ENABLE_LABELS_AS_VALUES != 0
+     handle_table = wasm_interp_get_handle_table();
+ #endif
+-
++
++#ifdef WASM_BEFORE_PREPARE_BYTECODE
++    extern void WASM_BEFORE_PREPARE_BYTECODE(WASMModule *);
++    WASM_BEFORE_PREPARE_BYTECODE(module);
++#endif
++
+     for (i = 0; i < module->function_count; i++) {
+         WASMFunction *func = module->functions[i];

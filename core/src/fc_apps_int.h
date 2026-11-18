@@ -14,6 +14,9 @@
 #include "fc_hw.h"
 #include "fc_mqtt.h"
 #include "wasm_export.h"
+#ifdef FC_WASM_SRAM_PLACEMENT
+#include "fc_wasm_placement.h"
+#endif
 
 #define APP_HANDLES   12
 #define APP_TIMERS    4  /* FC_MAX_TIMERS */
@@ -108,6 +111,9 @@ typedef struct app {
      * NULL when the stored module could not be loaded. The .wasm bytes are
      * not kept in RAM (load_module). */
     wasm_module_t module;
+#ifdef FC_WASM_SRAM_PLACEMENT
+    fc_wasm_reserve_t linear; /* app_start gives ownership to the runner through go */
+#endif
 
     pthread_t thread;
     pthread_attr_t thread_attr; /* until the thread is joined: on Zephyr it owns the stack */

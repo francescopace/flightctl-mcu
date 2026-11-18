@@ -21,12 +21,16 @@
  * two from inside its own file, where a wrap does not reach. A request that
  * fails is kept, for the app to wait for a block of that size
  * (fc_wasm_mem_failed). Linked with --wrap=os_mmap, os_munmap and os_mremap
- * (components/fc_core/CMakeLists.txt): WAMR is not patched.
+ * (components/fc_core/CMakeLists.txt). On SRAM-only C5/C6 a runner can
+ * bring the block it reserved before its native stack was allocated.
  */
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
+#ifdef FC_WASM_SRAM_PLACEMENT
+#include "fc_wasm_placement.h"
+#endif
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 
@@ -48,6 +52,39 @@ static size_t class_round(size_t size)
     size_t step = (size_t)1 << (fls - 4);
     return (size + step - 1) & ~(step - 1);
 }
+
+#ifdef FC_WASM_SRAM_PLACEMENT
+/* Only the instantiating thread can claim its app's block, once. */
+static _Thread_local fc_wasm_reserve_t *s_instantiating;
+
+size_t fc_wasm_block_size(size_t bytes)
+{
+    return bytes >= ROUND_FROM && bytes <= INT32_MAX ? class_round(bytes) : 0;
+}
+
+fc_wasm_reserve_t fc_wasm_reserve_memory(wasm_module_t module)
+{
+    size_t size = fc_wasm_block_size(fc_wasm_initial_memory(module));
+    void *p = size ? heap_caps_malloc(size, MALLOC_CAP_8BIT) : NULL;
+    return (fc_wasm_reserve_t){p, p ? size : 0};
+}
+
+void fc_wasm_release_memory(fc_wasm_reserve_t *reserve)
+{
+    heap_caps_free(reserve->data);
+    *reserve = (fc_wasm_reserve_t){0};
+}
+
+wasm_module_inst_t fc_wasm_instantiate_reserved(fc_wasm_reserve_t *reserve, wasm_module_t module,
+                                                uint32_t stack, char *error, uint32_t error_size)
+{
+    s_instantiating = reserve;
+    wasm_module_inst_t inst = wasm_runtime_instantiate(module, stack, 0, error, error_size);
+    s_instantiating = NULL;
+    fc_wasm_release_memory(reserve);
+    return inst;
+}
+#endif
 
 static int exact_slot(void *p, void *put)
 {
@@ -71,7 +108,17 @@ void *__wrap_os_mmap(void *hint, size_t size, int prot, int flags, int file)
     size_t block = class_round(size);
     /* As WAMR's: internal RAM, or PSRAM where the chip has some and no
      * internal block is large enough (MALLOC_CAP_8BIT). */
-    void *p = heap_caps_malloc(block, MALLOC_CAP_8BIT);
+    void *p;
+#ifdef FC_WASM_SRAM_PLACEMENT
+    if (s_instantiating && s_instantiating->data && s_instantiating->size == block
+        && hint == NULL && flags == 0 && file == -1) {
+        p = s_instantiating->data;
+        *s_instantiating = (fc_wasm_reserve_t){0};
+    } else
+#endif
+    {
+        p = heap_caps_malloc(block, MALLOC_CAP_8BIT);
+    }
     if (p == NULL) {
         __atomic_store_n(&s_failed, block, __ATOMIC_RELAXED);
         return NULL;

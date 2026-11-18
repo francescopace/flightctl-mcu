@@ -1628,7 +1628,14 @@ static wasm_module_inst_t instantiate(app_t *a, char *ebuf, size_t elen, int *sh
     *short_of_heap = 0;
     a->heap_after = -1;
     long before = fc_port_heap_free();
+#ifdef FC_WASM_SRAM_PLACEMENT
+    if (before >= 0) {
+        before += (long)a->linear.size;
+    }
+    wasm_module_inst_t inst = fc_wasm_instantiate_reserved(&a->linear, a->module, WASM_STACK, ebuf, (uint32_t)elen);
+#else
     wasm_module_inst_t inst = wasm_runtime_instantiate(a->module, WASM_STACK, 0, ebuf, (uint32_t)elen);
+#endif
     if (inst == NULL) {
         fc_appapi_close_all(a); /* what code run as it was instantiated opened */
     }
@@ -1813,6 +1820,9 @@ static void *runner(void *arg)
         }
     }
 done:
+#ifdef FC_WASM_SRAM_PLACEMENT
+    fc_wasm_release_memory(&a->linear); /* stopped before its first instantiate */
+#endif
     wasm_runtime_destroy_thread_env();
     __atomic_store_n(&a->runner_done, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&s_poll_event, 1, __ATOMIC_RELEASE);
@@ -1872,8 +1882,22 @@ static void app_start(app_t *a, const char *why)
     if (!a->relocated) {
         a->retried_idle = false;
     }
+#ifdef FC_WASM_SRAM_PLACEMENT
+    a->linear = fc_wasm_reserve_memory(a->module);
+#endif
     if (a->io == NULL) {
-        app_io_t *io = alloc_app_state(sizeof(*io));
+        app_io_t *io = NULL;
+#ifdef FC_WASM_SRAM_PLACEMENT
+        if (a->linear.data) {
+            io = calloc(1, sizeof(*io));
+            if (io == NULL) {
+                fc_wasm_release_memory(&a->linear);
+            }
+        }
+#endif
+        if (io == NULL) {
+            io = alloc_app_state(sizeof(*io));
+        }
         if (!io) {
             a->mem_wait = 1;
             a->mem_cost = sizeof(*io);
@@ -1901,18 +1925,27 @@ static void app_start(app_t *a, const char *why)
     pthread_attr_init(&a->thread_attr);
     __atomic_store_n(&a->made, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&a->go, 0, __ATOMIC_RELAXED);
-    /* The thread's stack goes around the heap's largest block, kept whole
-     * for the instance's memory (hold_but_stack, fc_heap_hold.h). Made
-     * again without the hold if it still did not fit. */
+    /* With a known linear memory, reserve its block through instantiation.
+     * The SDK can place the native stack in any remaining main SRAM.
+     * Otherwise protect the largest block just while creating the thread. */
+#ifdef FC_WASM_SRAM_PLACEMENT
+    void *hold = a->linear.data ? NULL : hold_but_stack();
+#else
     void *hold = hold_but_stack();
+#endif
     int sized = pthread_attr_setstacksize(&a->thread_attr, THREAD_STACK) == 0;
     a->thread_running = sized && pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
-    if (sized && !a->thread_running && hold != NULL) {
-        fc_heap_unhold(hold);
-        hold = NULL;
+    bool retry = hold != NULL;
+    fc_heap_unhold(hold);
+#ifdef FC_WASM_SRAM_PLACEMENT
+    if (!a->thread_running && a->linear.data) {
+        fc_wasm_release_memory(&a->linear);
+        retry = true;
+    }
+#endif
+    if (!a->thread_running && sized && retry) {
         a->thread_running = pthread_create(&a->thread, &a->thread_attr, runner, a) == 0;
     }
-    fc_heap_unhold(hold);
     __atomic_store_n(&a->go, 1, __ATOMIC_RELEASE);
     /* Until the instance is made (or could not be): the caller, the spec
      * being applied, holds the agent's connection closed meanwhile
@@ -2560,6 +2593,23 @@ static void drop_slot(app_t *a)
     free(a);
 }
 
+#ifdef FC_WASM_SRAM_PLACEMENT
+static _Thread_local void **s_load_hold;
+
+/* Called by WAMR after it has validated the memory declaration, before it
+ * allocates the decoded bytecode. Leave the surplus main SRAM available. */
+struct WASMModule;
+void fc_wasm_before_bytecode(struct WASMModule *module)
+{
+    if (s_load_hold && *s_load_hold) {
+        size_t size = fc_wasm_block_size(fc_wasm_initial_memory((wasm_module_t)module));
+        if (size) {
+            *s_load_hold = fc_heap_trim_hold(*s_load_hold, size);
+        }
+    }
+}
+#endif
+
 /* Loads a module and checks it is an app this firmware runs. */
 static wasm_module_t load_app(unsigned char *code, size_t len, const char *entry, char *ebuf, size_t elen)
 {
@@ -2567,7 +2617,13 @@ static wasm_module_t load_app(unsigned char *code, size_t len, const char *entry
      * block available for linear memory when loading from flash or OCI. */
     run_low_end(NULL);
     void *hold = fc_heap_hold(0);
+#ifdef FC_WASM_SRAM_PLACEMENT
+    s_load_hold = &hold;
+#endif
     wasm_module_t m = load_module(code, len, ebuf, elen);
+#ifdef FC_WASM_SRAM_PLACEMENT
+    s_load_hold = NULL;
+#endif
     if (hold != NULL) {
         fc_heap_unhold(hold);
         if (m == NULL) {

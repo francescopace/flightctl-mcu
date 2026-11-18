@@ -225,7 +225,20 @@ Capping both temporary reservations at 72 KiB for this 64 KiB app kept all decod
 
 A final comparison kept the same cap and selected the heap for the native stack at task creation in main/RTC/RTC/main order. On the C6 the decoded bytecode stayed in main SRAM in all four installs. With the stack in main SRAM, CoreMark scored 12.047 and 12.088 iterations/s (81.9–82.1 task ms/iteration). With the stack in RTC FAST memory it scored 11.809 and 11.821 (83.7 task ms/iteration). These placements account for a repeatable part of the release difference. The original release runs did not record allocation addresses.
 
-On the C5 the same stack selection exposed the cost in contiguous RAM. Both main-SRAM stack requests left a largest block of 62 KiB and the module could not start. With the stack requested in RTC FAST memory, one install passed at 18.358 iterations/s with all decoded bytecode in main SRAM, and one was refused with a 64 KiB largest block. The v3.12 allocator needed 68 KiB for this module. The 72 KiB reservation cap was specific to the benchmark. A general placement policy still needs to accommodate other linear-memory sizes.
+On the C5 the same stack selection exposed the cost in contiguous RAM. Both main-SRAM stack requests left a largest block of 62 KiB and the module could not start. With the stack requested in RTC FAST memory, one install passed at 18.358 iterations/s with all decoded bytecode in main SRAM, and one was refused with a 64 KiB largest block. The v3.12 allocator needed 68 KiB for this module. The 72 KiB reservation cap was specific to that benchmark.
+
+The SRAM-only C5 and C6 now limit the loader's heap reservation to the module's declared initial memory before WAMR decodes its functions. At startup the firmware reserves the loaded module's linear memory before allocating app handles, the event queue and the native stack. WAMR takes that block when instantiating the module.
+
+The same physical boards each ran six installs of the same wasm3 module per firmware, removing the app between installs and staying on one boot per series. Both builds used ESP-IDF 6.0.3, WAMR 2.4.5, size optimization for the firmware and `-O2` for the interpreter. CoreMark ran alone at the agent's current app priority with metrics disabled. The reference used the placement policy at `c10e3a6b`. SRAM placement and scores below count completed runs.
+
+| Board | Firmware | Completed | All decoded bytecode in main SRAM | Native stack in main SRAM | Median iterations/s | Range |
+|---|---|---:|---:|---:|---:|---:|
+| C5 | Reference | 5/6 | 3/5 | 4/5 | 11.104 | 7.679–11.124 |
+| C5 | Module-sized reservation | 6/6 | 6/6 | 6/6 | 11.085 | 10.994–11.128 |
+| C6 | Reference | 6/6 | 6/6 | 5/6 | 6.027 | 5.941–6.055 |
+| C6 | Module-sized reservation | 6/6 | 6/6 | 6/6 | 6.030 | 5.995–6.055 |
+
+On the reference C5, the two slowest runs placed 6,676 and 4,382 bytes of decoded bytecode in RTC FAST memory. One install was refused with a largest free block of 36 KiB. With the new policy WAMR used the reserved 65,536 B block in all twelve installs. Immediately before allocating app handles and stack, the largest free block was exactly 64 KiB in 4 C5 installs and 1 C6 install. The C5's slow outliers disappeared in this series. Median throughput on each board was close to its reference.
 
 #### Scores by board
 

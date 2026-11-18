@@ -35,6 +35,11 @@ target_compile_options(${wamr_lib} PRIVATE -include ${CMAKE_CURRENT_LIST_DIR}/wa
 # WAMR, which runs the apps, optimized for speed (-O2, after the firmware's
 # -Os, sdkconfig.defaults), as in the Zephyr build.
 target_compile_options(${wamr_lib} PRIVATE -O2)
+if((CONFIG_IDF_TARGET_ESP32C5 OR CONFIG_IDF_TARGET_ESP32C6) AND NOT CONFIG_SPIRAM)
+    target_sources(${wamr_lib} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/fc_wasm_size.c)
+    target_compile_definitions(${wamr_lib} PRIVATE WASM_BEFORE_PREPARE_BYTECODE=fc_wasm_before_bytecode)
+    target_compile_definitions(${wamr_lib} PUBLIC FC_WASM_SRAM_PLACEMENT=1)
+endif()
 if(NOT CONFIG_HEAP_HAS_EXEC_HEAP)
     target_compile_definitions(${wamr_lib} PRIVATE MALLOC_CAP_EXEC=MALLOC_CAP_INVALID)
 endif()

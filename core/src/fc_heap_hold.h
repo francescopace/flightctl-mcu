@@ -21,6 +21,8 @@
  * enough. NULL when there is no block worth holding. Given back with
  * fc_heap_unhold (NULL is fine). (fc_http.c) */
 void *fc_heap_hold(size_t leave);
+/* Give back the bytes above a nonzero limit. Use the returned pointer. */
+void *fc_heap_trim_hold(void *hold, size_t limit);
 void fc_heap_unhold(void *hold);
 
 /*
