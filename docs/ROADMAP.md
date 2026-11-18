@@ -23,7 +23,7 @@ What an app can do and hold:
 - [ ] On a provisioned C3, verify the console thread failure reaches the remote client and determine why the earlier board opened a session after the client timed out.
 - [ ] CoreMark slower and less even on the C5 and C6 since v3.12 than with the same `-Os` firmware before it. Not explained yet ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] CoreMark with Zephyr on an ESP32-S3 without PSRAM: it runs only from the N8R8's PSRAM, and the C heap is about 20 KB short ([RESULTS.md](RESULTS.md#coremark)).
-- [ ] Verify GPIO interrupts and I2C, SPI, UART, ADC and PWM with wired devices. On Zephyr, verify devicetree hardware names on a board and implement and verify RS-485 driver-enable control. See [APPS.md](APPS.md).
+- [ ] Verify GPIO interrupts and I2C, SPI, UART, ADC and PWM with wired devices. On Zephyr, verify devicetree hardware names on a board and measure ESP32-S3 RS-485 driver-enable timing with a transceiver and a responding peer. See [APPS.md](APPS.md).
 
 ### Firmware reliability and footprint
 

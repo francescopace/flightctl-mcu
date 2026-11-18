@@ -11,6 +11,7 @@
 #include <zephyr/drivers/adc/adc_emul.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
 #include <zephyr/drivers/pwm/pwm_fake.h>
+#include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/fff.h>
 #include <zephyr/kernel.h>
 #include <zephyr/ztest.h>
@@ -197,13 +198,108 @@ ZTEST(fc_hw, test_uart)
     zassert_true(k_uptime_get() - t0 >= 30);
     hw.uart_close(u);
     int calls = s_uart_calls;
-    fc_hw_bus_t rb = {.dt = id(FC_HW_KIND_UART, "rs485")};
-    zassert_equal(hw.uart_open(&rb, 9600, FC_HW_UART_8N1, on_uart, NULL), FC_HW_ENOTSUP, "RS-485: not yet");
     /* Closed: the port no longer calls. */
     u = hw.uart_open(&ub, 0 + 9600, FC_HW_UART_8N1, on_uart, NULL);
     hw.uart_close(u);
     k_msleep(20);
     zassert_equal(s_uart_calls, calls);
+}
+
+/* The emulated UART provides the FIFO. Draining it moves the character
+ * into the modeled shift register; only the test completes its stop bit. */
+static const struct device *const rs_uart = DEVICE_DT_GET(DT_NODELABEL(euart1));
+static atomic_t shift_busy, fifo_blocked;
+static K_SEM_DEFINE(rs_queued, 0, 1);
+static K_SEM_DEFINE(rs_idle_seen, 0, 1);
+static K_SEM_DEFINE(rs_writer_done, 0, 1);
+static struct k_thread rs_writer;
+static K_THREAD_STACK_DEFINE(rs_stack, 1536);
+static int rs_handle, rs_result, rs_queued_count;
+static bool block_after_byte;
+
+int fc_test_uart_tx_state(const struct device *dev, bool *room, bool *idle)
+{
+    if (dev != rs_uart) {
+        return FC_HW_ENOTSUP;
+    }
+    *room = !atomic_get(&fifo_blocked);
+    *idle = !atomic_get(&shift_busy);
+    if (*idle) {
+        k_sem_give(&rs_idle_seen);
+    }
+    return 0;
+}
+
+static void rs_byte_queued(const struct device *dev, size_t size, void *ctx)
+{
+    uint8_t byte;
+    zassert_equal(gpio_emul_output_get(gpio0, 9), 0, "DE active before loading FIFO");
+    zassert_equal(uart_emul_get_tx_data(dev, &byte, 1), 1);
+    zassert_equal(byte, 'A');
+    rs_queued_count++;
+    atomic_set(&shift_busy, 1);
+    if (block_after_byte) {
+        atomic_set(&fifo_blocked, 1);
+    }
+    k_sem_give(&rs_queued);
+}
+
+static void rs_write(void *a, void *b, void *c)
+{
+    rs_result = hw.uart_write(rs_handle, (const uint8_t *)"A", 1, 1000);
+    k_sem_give(&rs_writer_done);
+}
+
+ZTEST(fc_hw, test_rs485_waits_for_the_shift_register)
+{
+    atomic_clear(&shift_busy);
+    atomic_clear(&fifo_blocked);
+    rs_queued_count = 0;
+    block_after_byte = false;
+    k_sem_reset(&rs_queued);
+    k_sem_reset(&rs_writer_done);
+    fc_hw_bus_t bus = {.dt = id(FC_HW_KIND_UART, "rs485")};
+    fc_hw_bus_t alias = {.dt = id(FC_HW_KIND_UART, "rs485-alias")};
+    fc_hw_bus_t shared_de = {.dt = id(FC_HW_KIND_UART, "rs485-shared-de")};
+    fc_hw_bus_t unsupported = {.dt = id(FC_HW_KIND_UART, "rs485-unsupported")};
+    zassert_equal(hw.uart_open(&unsupported, 9600, FC_HW_UART_8N1, on_uart, NULL), FC_HW_ENOTSUP);
+    rs_handle = hw.uart_open(&bus, 9600, FC_HW_UART_8N2, on_uart, NULL);
+    zassert_true(rs_handle >= 0);
+    zassert_equal(gpio_emul_output_get(gpio0, 9), 1, "inactive at open");
+    zassert_equal(hw.uart_open(&alias, 9600, FC_HW_UART_8N1, on_uart, NULL), FC_HW_EBUSY);
+    zassert_equal(hw.uart_open(&shared_de, 9600, FC_HW_UART_8N1, on_uart, NULL), FC_HW_EBUSY);
+    fc_hw_bus_t serial = {.dt = id(FC_HW_KIND_UART, "serial")};
+    int ordinary = hw.uart_open(&serial, 9600, FC_HW_UART_8N1, on_uart, NULL);
+    zassert_true(ordinary >= 0);
+    uart_emul_callback_tx_data_ready_set(rs_uart, rs_byte_queued, NULL);
+    k_thread_create(&rs_writer, rs_stack, K_THREAD_STACK_SIZEOF(rs_stack), rs_write,
+                    NULL, NULL, NULL, K_PRIO_PREEMPT(4), 0, K_NO_WAIT);
+    zassert_ok(k_sem_take(&rs_queued, K_SECONDS(2)));
+    zassert_equal(gpio_emul_output_get(gpio0, 9), 0, "empty FIFO, stop bit still on the wire");
+    zassert_equal(hw.uart_write(rs_handle, (const uint8_t *)"B", 1, 0), FC_HW_EBUSY);
+    zassert_equal(hw.uart_write(ordinary, (const uint8_t *)"X", 1, 20), 1, "independent port");
+    atomic_clear(&shift_busy);
+    zassert_ok(k_sem_take(&rs_writer_done, K_SECONDS(2)));
+    zassert_ok(k_thread_join(&rs_writer, K_SECONDS(2)));
+    hw.uart_close(ordinary);
+    zassert_equal(rs_result, 1);
+    zassert_equal(gpio_emul_output_get(gpio0, 9), 1, "DE released on completion");
+    /* The second byte cannot enter the FIFO before the caller's deadline.
+     * Close during the last stop bit must preserve DE and the UART claim. */
+    block_after_byte = true;
+    zassert_equal(hw.uart_write(rs_handle, (const uint8_t *)"AB", 2, 20), 1);
+    zassert_equal(rs_queued_count, 2);
+    hw.uart_close(rs_handle);
+    zassert_equal(gpio_emul_output_get(gpio0, 9), 0);
+    zassert_equal(hw.uart_open(&alias, 9600, FC_HW_UART_8N1, on_uart, NULL), FC_HW_EBUSY);
+    k_sem_reset(&rs_idle_seen);
+    atomic_clear(&shift_busy);
+    zassert_ok(k_sem_take(&rs_idle_seen, K_SECONDS(2)));
+    int next = hw.uart_open(&alias, 9600, FC_HW_UART_8N1, on_uart, NULL);
+    zassert_true(next >= 0);
+    zassert_equal(gpio_emul_output_get(gpio0, 9), 1);
+    hw.uart_close(next);
+    uart_emul_callback_tx_data_ready_set(rs_uart, NULL, NULL);
 }
 
 ZTEST_SUITE(fc_hw, NULL, setup, NULL, NULL, NULL);

@@ -238,6 +238,8 @@ The example apps ([APPS.md](APPS.md#examples)), with ESP-IDF unless the row says
 | wasm3-arduino's blink, Rust build, beside `tinyml` | Ran for 45 minutes on the C3, C6 and S3. Refused on the C5 (`allocate linear memory failed (largest free block 52 KB)`) and on the classic ESP32 (`its memory would leave the agent 22 KB of heap, less than the 40 KB it needs`), the device reporting all along. |
 | wasm3-arduino's blink, C++ build, beside `alarm` | Ran on the C3, C6, S3 and the classic ESP32. The blink also runs on the host and on Zephyr's `native_sim`. |
 
+Zephyr `native_sim` passed eight hardware API tests covering devicetree names, GPIO, ADC, PWM, I²C, SPI, UART and RS-485. The RS-485 fixture held the driver-enable signal active while the FIFO was empty and the shift register was still sending. A link with an ESP32-S3 UART1 and a driver-enable GPIO used 377,248 of 380,672 B of DRAM, leaving 3,424 B. Electrical timing and peer turnaround remain unmeasured.
+
 On the Zephyr S3 N8R8, `mqttdemo` answered four distinct QoS 1 commands during reception of a 1,037,990 B signed firmware image. The largest encrypted TLS record observed during this transfer was 16,401 B. The broker retained one connection until the firmware reboot, and the new boot reported the expected digest.
 
 On an ESP32-C6 running v3.14-rc12, `mqttdemo` answered distinct QoS 1 commands before and after the signed 2,261 B `trend` download. The broker recorded a single device connection throughout the transfer. Both apps were running afterward on the same boot.

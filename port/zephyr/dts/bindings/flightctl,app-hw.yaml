@@ -56,4 +56,4 @@ child-binding:
       description: The UART's speed when the app gives 0, in bits per second.
     de-gpios:
       type: phandle-array
-      description: An RS-485 transceiver's driver enable (not supported yet on Zephyr).
+      description: An RS-485 transceiver's driver enable, asserted until the UART sends its last stop bit. Supported on an ESP32-S3 UART; the GPIO flags specify the active level.

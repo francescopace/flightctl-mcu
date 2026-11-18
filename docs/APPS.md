@@ -187,7 +187,7 @@ On Zephyr the board map's names come from the devicetree, not from pins: the chi
 | ADC | ADC1's pins, 0 to about 3.1 V, calibrated from the chip's eFuse; up to 8 channels | the devicetree's channels, in millivolts by their reference | 1650 mV on any pin |
 | PWM | LEDC, up to 4, each at its own frequency, duty to 14 bits | the devicetree's channels | printed when it changes |
 | SPI | master, up to 4 devices on one bus (two buses on the ESP32 and S3), chip select driven by the firmware; transfers in pieces of 64 bytes, without DMA | the devicetree's devices, chip select driven by the firmware; a transfer lasts as long as the driver makes it | MISO wired to MOSI: what is sent comes back |
-| UART | UART1, and UART2 on the ESP32 and S3 (UART0 is the console's); RS-485 half duplex with `de`; 512 bytes received ahead | interrupt-driven, 512 bytes received ahead; never the console's; no RS-485 yet (`FC_ENOTSUP` for a node with `de-gpios`) | RX wired to TX: what is written comes back, with `FC_EV_UART` |
+| UART | UART1, and UART2 on the ESP32 and S3 (UART0 is the console's); RS-485 half duplex with `de`; 512 bytes received ahead | interrupt-driven, 512 bytes received ahead, excluding the console. On ESP32-S3, enable runtime UART configuration and set `de-gpios` for RS-485. The port holds DE through the last stop bit, including after a timed-out write or close. Other controllers with `de-gpios` return `FC_ENOTSUP` | RX wired to TX: what is written comes back, with `FC_EV_UART` |
 
 What was tried on the boards is in [RESULTS.md](RESULTS.md#apps-on-the-boards); GPIO interrupts and wired devices are not yet tried on a board.
 

@@ -34,7 +34,18 @@
 		};
 		rs485 {
 			uart = <&euart1>;
+			de-gpios = <&gpio0 9 GPIO_ACTIVE_LOW>;
+		};
+		rs485-alias {
+			uart = <&euart1>;
+		};
+		rs485-shared-de {
+			uart = <&euart0>;
 			de-gpios = <&gpio0 9 GPIO_ACTIVE_HIGH>;
+		};
+		rs485-unsupported {
+			uart = <&euart0>;
+			de-gpios = <&gpio0 10 GPIO_ACTIVE_HIGH>;
 		};
 		console {
 			uart = <&uart0>;

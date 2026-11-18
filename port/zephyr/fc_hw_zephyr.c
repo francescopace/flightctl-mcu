@@ -59,6 +59,7 @@ typedef struct {
 #ifdef CONFIG_PWM
     struct pwm_dt_spec pwm;
 #endif
+    bool has_de;
     const struct device *bus; /* I2C, SPI, UART */
     int mode, hz, baud;
 } node_t;
@@ -88,7 +89,8 @@ typedef struct {
                                  .de = GPIO_DT_SPEC_GET_OR(n, de_gpios, {0}),))                                 \
         IF_ENABLED(CONFIG_ADC, (.adc = COND_CODE_1(DT_NODE_HAS_PROP(n, io_channels), (ADC_DT_SPEC_GET(n)), ({0})),)) \
         IF_ENABLED(CONFIG_PWM, (.pwm = COND_CODE_1(DT_NODE_HAS_PROP(n, pwms), (PWM_DT_SPEC_GET(n)), ({0})),))  \
-        .bus = NODE_BUS(n), .mode = DT_PROP_OR(n, spi_mode, 0), .hz = DT_PROP_OR(n, clock_frequency, 0),        \
+        .has_de = DT_NODE_HAS_PROP(n, de_gpios), .bus = NODE_BUS(n),                                           \
+        .mode = DT_PROP_OR(n, spi_mode, 0), .hz = DT_PROP_OR(n, clock_frequency, 0),                           \
         .baud = DT_PROP_OR(n, current_speed, 0),                                                                \
     }
 
@@ -496,8 +498,50 @@ static void fz_spi_close(int id)
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 #define UART_RX_BUF 512
 
+/* No per-slot work items for boards without a transceiver. */
+#define HAS_DE(n) || DT_NODE_HAS_PROP(n, de_gpios)
+#if defined(CONFIG_GPIO) && DT_HAS_COMPAT_STATUS_OKAY(flightctl_app_hw)
+#define FZ_HAS_RS485 (0 DT_FOREACH_CHILD_STATUS_OKAY(FC_HW_DT, HAS_DE))
+#else
+#define FZ_HAS_RS485 0
+#endif
+
+#if FZ_HAS_RS485
+#if defined(FC_TEST_RS485)
+/* The test controls FIFO space and the separate shift register. */
+extern int fc_test_uart_tx_state(const struct device *dev, bool *room, bool *idle);
+#define fz_uart_tx_state fc_test_uart_tx_state
+#else
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#include <hal/uart_ll.h>
+#endif
+static int fz_uart_tx_state(const struct device *dev, bool *room, bool *idle)
+{
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+    /* The same S3 HAL idle check as the UART driver uses for UART_TX_DONE:
+     * FIFO empty and the serializer idle. uart_irq_tx_complete is ISR-only. */
+#define TX_STATE(n)                                                                                      \
+    if (dev == DEVICE_DT_GET(n)) {                                                                       \
+        uart_dev_t *hw = (uart_dev_t *)DT_REG_ADDR(n);                                                    \
+        *room = uart_ll_get_txfifo_len(hw) > 0;                                                          \
+        *idle = uart_ll_is_tx_idle(hw);                                                                  \
+        return 0;                                                                                        \
+    }
+    DT_FOREACH_STATUS_OKAY(espressif_esp32_uart, TX_STATE)
+#undef TX_STATE
+#endif
+    return FC_HW_ENOTSUP;
+}
+#endif
+#endif
+
 typedef struct {
     int id;
+    bool claimed;
+#if FZ_HAS_RS485
+    struct k_work_delayable drain;
+    bool drain_initialized, driving, closed;
+#endif
     struct ring_buf rb;
     uint8_t buf[UART_RX_BUF];
     struct k_sem data;
@@ -507,6 +551,43 @@ typedef struct {
 } uart_slot_t;
 
 static uart_slot_t s_uart[2];
+static K_MUTEX_DEFINE(s_uart_lock0);
+static K_MUTEX_DEFINE(s_uart_lock1);
+static struct k_mutex *const s_uart_locks[] = {&s_uart_lock0, &s_uart_lock1};
+BUILD_ASSERT(ARRAY_SIZE(s_uart) == ARRAY_SIZE(s_uart_locks));
+
+#if FZ_HAS_RS485
+/* Under this slot's mutex. A pending tail still owns the UART, even after close.
+ * Never leave the system workqueue waiting on the transceiver. */
+static void fz_uart_release_idle(uart_slot_t *u)
+{
+    const node_t *n = &s_nodes[u->id];
+    bool room, idle;
+    if (u->driving && fz_uart_tx_state(n->bus, &room, &idle) == 0 && idle &&
+        gpio_pin_set_dt(&n->de, 0) == 0) {
+        u->driving = false;
+    }
+    if (u->driving) {
+        k_work_reschedule(&u->drain, K_TICKS(1));
+    } else if (u->closed) {
+        u->claimed = false;
+    }
+}
+
+static void fz_uart_drain(struct k_work *work)
+{
+    uart_slot_t *u = CONTAINER_OF(k_work_delayable_from_work(work), uart_slot_t, drain);
+    struct k_mutex *lock = s_uart_locks[u - s_uart];
+    if (k_mutex_lock(lock, K_NO_WAIT) != 0) {
+        k_work_reschedule(&u->drain, K_TICKS(1));
+        return;
+    }
+    if (u->driving) {
+        fz_uart_release_idle(u);
+    }
+    k_mutex_unlock(lock);
+}
+#endif
 
 static void fz_uart_isr(const struct device *dev, void *arg)
 {
@@ -534,23 +615,43 @@ static void fz_uart_work(struct k_work *w)
     }
 }
 
-static int fz_uart_open(const fc_hw_bus_t *b, int baud, int format, void (*cb)(void *, int), void *ctx)
+static int fz_uart_open_locked(const fc_hw_bus_t *b, int baud, int format, void (*cb)(void *, int), void *ctx)
 {
     const node_t *n = fz_node(b->dt, FC_HW_KIND_UART);
     if (n == NULL || !device_is_ready(n->bus) || fz_is_console(n->bus)) {
         return FC_HW_ENOTSUP;
     }
-#ifdef CONFIG_GPIO
-    if (n->de.port != NULL) {
-        return FC_HW_ENOTSUP; /* RS-485 is not there yet on Zephyr */
-    }
+    int i = ARRAY_SIZE(s_uart);
+    for (int j = 0; j < (int)ARRAY_SIZE(s_uart); j++) {
+        if (s_uart[j].claimed) {
+            const node_t *owner = &s_nodes[s_uart[j].id];
+            if (owner->bus == n->bus) {
+                return FC_HW_EBUSY;
+            }
+#if FZ_HAS_RS485
+            if (owner->has_de && n->has_de && owner->de.port == n->de.port && owner->de.pin == n->de.pin) {
+                return FC_HW_EBUSY;
+            }
 #endif
-    int i = 0;
-    while (i < (int)ARRAY_SIZE(s_uart) && s_uart[i].cb != NULL) {
-        i++;
+        } else if (i == (int)ARRAY_SIZE(s_uart)) {
+            i = j;
+        }
     }
     if (i == (int)ARRAY_SIZE(s_uart)) {
         return FC_HW_EBUSY;
+    }
+    if (n->has_de) {
+#if FZ_HAS_RS485
+        bool room, idle;
+        if (!gpio_is_ready_dt(&n->de) || fz_uart_tx_state(n->bus, &room, &idle) != 0) {
+            return FC_HW_ENOTSUP;
+        }
+        if (!idle) {
+            return FC_HW_EBUSY;
+        }
+#else
+        return FC_HW_ENOTSUP;
+#endif
     }
     struct uart_config c = {
         .baudrate = (uint32_t)baud,
@@ -564,7 +665,23 @@ static int fz_uart_open(const fc_hw_bus_t *b, int baud, int format, void (*cb)(v
         return FC_HW_EINVAL;
     }
     uart_slot_t *u = &s_uart[i];
+#if FZ_HAS_RS485
+    if (n->has_de) {
+        if (rc != 0) {
+            return FC_HW_ENOTSUP; /* require the requested framing and flow control */
+        }
+        if (gpio_pin_configure_dt(&n->de, GPIO_OUTPUT_INACTIVE) != 0) {
+            return FC_HW_EIO;
+        }
+        if (!u->drain_initialized) {
+            k_work_init_delayable(&u->drain, fz_uart_drain);
+            u->drain_initialized = true;
+        }
+    }
+    u->closed = false;
+#endif
     u->id = b->dt;
+    u->claimed = true;
     ring_buf_init(&u->rb, sizeof(u->buf), u->buf);
     k_sem_init(&u->data, 0, 1);
     k_work_init(&u->work, fz_uart_work);
@@ -575,18 +692,71 @@ static int fz_uart_open(const fc_hw_bus_t *b, int baud, int format, void (*cb)(v
     return i;
 }
 
-static int fz_uart_write(int i, const uint8_t *d, size_t len, int timeout_ms)
+static int fz_uart_open(const fc_hw_bus_t *b, int baud, int format, void (*cb)(void *, int), void *ctx)
 {
-    if (i < 0 || i >= (int)ARRAY_SIZE(s_uart) || s_uart[i].cb == NULL) {
+    /* Check the two claims together, including a closing UART's last stop bit. */
+    if (cb == NULL) {
         return FC_HW_EINVAL;
     }
-    const struct device *dev = s_nodes[s_uart[i].id].bus;
+    k_mutex_lock(&s_uart_lock0, K_FOREVER);
+    k_mutex_lock(&s_uart_lock1, K_FOREVER);
+    int rc = fz_uart_open_locked(b, baud, format, cb, ctx);
+    k_mutex_unlock(&s_uart_lock1);
+    k_mutex_unlock(&s_uart_lock0);
+    return rc;
+}
+
+static int fz_uart_write(int i, const uint8_t *d, size_t len, int timeout_ms)
+{
     int64_t end = k_uptime_get() + timeout_ms;
-    size_t done = 0;
-    while (done < len && k_uptime_get() < end) {
-        uart_poll_out(dev, d[done++]);
+    if (i < 0 || i >= (int)ARRAY_SIZE(s_uart)) {
+        return FC_HW_EINVAL;
     }
-    return (int)done;
+    struct k_mutex *lock = s_uart_locks[i];
+    if (k_mutex_lock(lock, K_MSEC(timeout_ms)) != 0) {
+        return FC_HW_EBUSY;
+    }
+    if (s_uart[i].cb == NULL) {
+        k_mutex_unlock(lock);
+        return FC_HW_EINVAL;
+    }
+    uart_slot_t *u = &s_uart[i];
+    const node_t *n = &s_nodes[u->id];
+    int done = 0;
+    while ((size_t)done < len && k_uptime_get() < end) {
+#if FZ_HAS_RS485
+        if (n->has_de) {
+            bool room, idle;
+            if (fz_uart_tx_state(n->bus, &room, &idle) != 0) {
+                done = done ? done : FC_HW_EIO;
+                break;
+            }
+            if (!room) {
+                k_sleep(K_TICKS(1));
+                continue;
+            }
+            if (!u->driving) {
+                if (gpio_pin_set_dt(&n->de, 1) != 0) {
+                    done = FC_HW_EIO;
+                    break;
+                }
+                u->driving = true;
+            }
+        }
+#endif
+        uart_poll_out(n->bus, d[done++]);
+    }
+#if FZ_HAS_RS485
+    if (u->driving) {
+        bool room, idle;
+        while (fz_uart_tx_state(n->bus, &room, &idle) == 0 && !idle && k_uptime_get() < end) {
+            k_sleep(K_TICKS(1));
+        }
+        fz_uart_release_idle(u);
+    }
+#endif
+    k_mutex_unlock(lock);
+    return done;
 }
 
 static int fz_uart_read(int i, uint8_t *b, size_t cap, int timeout_ms)
@@ -611,14 +781,31 @@ static int fz_uart_read(int i, uint8_t *b, size_t cap, int timeout_ms)
 
 static void fz_uart_close(int i)
 {
-    if (i < 0 || i >= (int)ARRAY_SIZE(s_uart) || s_uart[i].cb == NULL) {
+    if (i < 0 || i >= (int)ARRAY_SIZE(s_uart)) {
+        return;
+    }
+    struct k_mutex *lock = s_uart_locks[i];
+    k_mutex_lock(lock, K_FOREVER);
+    if (s_uart[i].cb == NULL) {
+        k_mutex_unlock(lock);
         return;
     }
     uart_slot_t *u = &s_uart[i];
-    const struct device *dev = s_nodes[u->id].bus;
-    uart_irq_rx_disable(dev);
+    uart_irq_rx_disable(s_nodes[u->id].bus);
     u->cb = NULL;
+    k_mutex_unlock(lock);
     k_work_cancel_sync(&u->work, &(struct k_work_sync){0}); /* no callback once this returns */
+    k_mutex_lock(lock, K_FOREVER);
+#if FZ_HAS_RS485
+    if (u->driving) {
+        u->closed = true;
+        fz_uart_release_idle(u);
+    } else
+#endif
+    {
+        u->claimed = false;
+    }
+    k_mutex_unlock(lock);
 }
 #endif
 
