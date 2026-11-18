@@ -52,7 +52,7 @@ For flightctl-mcu, "next" is on the [roadmap](ROADMAP.md#v10-in-progress) for 1.
 | **Server you run yourself** | ✓ Flight Control on Kubernetes, OpenShift or Podman; Red Hat Edge Manager is its supported build | ✗ hosted | ✗ hosted (Memfault, nRF Cloud) | ✗ hosted only; on-premise planned |
 | **ESP-IDF** | ✓ ESP32, S3, C3, C5, C6 | ✓ | ✓ | ✗ Zephyr only |
 | **Zephyr** | ◐ without the device protection of the ESP-IDF port · after 1.0: the same protection | ✓ | ✓ | ✓ ESP32-S3 as reference board |
-| **Other chips** | ◐ Arm Cortex-M3 in QEMU · next: an ST Nucleo with Ethernet · after 1.0: Nordic nRF, RP2350, STM32U5 | ✓ Nordic, Espressif, Infineon, NXP and more | ✓ any Cortex-M or ESP32 | ✓ any Zephyr board with MCUboot |
+| **Other chips** | ◐ Arm Cortex-M3 in QEMU · 1.0 hardware tests planned on NUCLEO-F767ZI, Pico 2 W and nRF7002-DK · cellular connectivity and TF-M device keys planned for 2.0 | ✓ Nordic, Espressif, Infineon, NXP and more | ✓ any Cortex-M or ESP32 | ✓ any Zephyr board with MCUboot |
 | **Linux devices in the same fleets** | ✓ the Flight Control agent, bootc images and containers | ◐ Linux SDK, experimental | ✓ Linux (Yocto) and Android SDKs | ✓ Mender's main client |
 | **WebAssembly apps** | ✓ run by WAMR, installed and updated without a reboot or a firmware release; one `.wasm` for Xtensa, RISC-V and Arm | ◐ a [demo](https://blog.golioth.io/webassembly-on-zephyr/) with WAMR, modules sent as settings; not a product feature | ✗ | ✗ |
 | **Firmware and apps from an OCI registry** | ✓ any registry (TLS, password), signed with cosign, one index for every chip | ✗ its own storage | ✗ its own storage | ✗ its own artifacts |

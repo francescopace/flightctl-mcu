@@ -36,6 +36,7 @@
 #include "fc_crypto.h"
 #include "fc_log.h"
 #include "fc_port.h"
+#include "fc_tls_pool.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -398,6 +399,22 @@ long fc_port_heap_watch(int start)
     int ok = heap_caps_monitor_local_minimum_free_size_stop() == ESP_OK;
     __atomic_store_n(&s_heap_watching, 0, __ATOMIC_RELEASE);
     return ok ? low : -1;
+}
+
+void *fc_idf_tls_heap_calloc(size_t n, size_t size)
+{
+    /* TLS uses internal RAM. Records allocated in PSRAM were corrupted
+     * on the ESP32-S2. */
+    const unsigned caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+#if CONFIG_IDF_TARGET_ESP32C5 && CONFIG_ESP_SYSTEM_ALLOW_RTC_FAST_MEM_AS_HEAP && CONFIG_MBEDTLS_HARDWARE_AES && \
+    defined(FC_IDF_DYNAMIC_TLS_RX)
+    /* The C5's RTC FAST heap can hold small TLS objects, leaving DMA RAM
+     * for hardware AES. Receive records keep their usual allocation. */
+    if (n && size && n <= 2048 / size && !fc_idf_allocating_tls_rx()) {
+        return heap_caps_calloc_prefer(n, size, 2, MALLOC_CAP_RTCRAM | MALLOC_CAP_8BIT, caps);
+    }
+#endif
+    return heap_caps_calloc(n, size, caps);
 }
 
 long fc_port_heap_largest(void)

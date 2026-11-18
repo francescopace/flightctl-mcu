@@ -46,6 +46,10 @@ int fc_tls_pool_give(void *p);
 /* calloc and free with the pool first, the C heap otherwise. */
 void *fc_tls_calloc(size_t n, size_t size);
 void fc_tls_free(void *p);
+#if defined(ESP_PLATFORM) && !defined(__ZEPHYR__)
+/* ESP-IDF heap storage for TLS allocations and the pool's reserved slots. */
+void *fc_idf_tls_heap_calloc(size_t n, size_t size);
+#endif
 #if defined(FC_IDF_DYNAMIC_TLS_RX)
 /* True only while this task is allocating a dynamic TLS receive record. */
 int fc_idf_allocating_tls_rx(void);

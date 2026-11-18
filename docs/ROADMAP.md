@@ -6,24 +6,15 @@ What is left before 1.0 and after it. What the agent does today is in the [READM
 
 Verification:
 
-- [ ] Rerun the Git-managed fleet test on the host, Zephyr `native_sim` and Arm QEMU with the previous inline registry credentials removed before applying the Secret mounts. Verify that all three clients pull the app with the mounted credentials and complete decommissioning. [End-to-end run](https://github.com/francescopace/flightctl-mcu/actions/runs/44348764399)
-- [ ] **Blocked** — Collect an idle HTTP/2 window on a C3 with an empty console list for comparison with HTTP/1.1. The current device still has eleven stale console entries. [Traffic measurements](RESULTS.md#idle-traffic) · [Console session lifetime](FLIGHTCTL-LIMITATIONS.md#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)
-- [ ] **In progress** — Test Zephyr on the ESP32-S3 N8R8 with PSRAM disabled. Verify MQTT during a metrics export, idle HTTP/2 traffic and recovery from a stuck agent using internal RAM. Physical validation on a board manufactured without PSRAM is still open. On z28 an OTA update failed with 368 B of C heap free. [Zephyr on ESP32-S3](ZEPHYR.md#on-an-esp32-s3)
+- [ ] **Blocked** — Collect an idle HTTP/2 window on a C3 with an empty console list for comparison with HTTP/1.1. Eleven outstanding console entries kept the server from holding the long-poll open during the 330 s sample. [Traffic measurements](RESULTS.md#idle-traffic) · [Console session lifetime](FLIGHTCTL-LIMITATIONS.md#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)
+- [ ] **Blocked** — Measure idle HTTP/2 traffic on the Zephyr N8R8 with PSRAM disabled and an empty console list. The previous window retained 15 console entries. [Traffic measurements](RESULTS.md#idle-traffic) · [Zephyr on ESP32-S3](ZEPHYR.md#on-an-esp32-s3)
 
 What an app can do and hold:
 
-- [ ] **In progress** — Reduce transient C5 status failures under CoreMark load. Five PUT attempts failed during the ten-swap recovery test. Identify the remaining allocation or write failures and verify the result with the same workload. [CoreMark measurements](RESULTS.md#coremark).
-- [ ] **Queued** — On a provisioned S3-mini, repeat the cold boot with a growable primary and 400 s of withheld management responses. Compare secondary start and heap with the fixed-size primary.
-- [ ] **Queued** — On the S3-mini, repeat the spec change that restarts the primary with a new environment and updates the secondary in the same spec. Check when free internal heap falls below the 40 KB admission floor. The original run reached 32 KB, while the agent reported 37 KB.
-- [ ] **In progress** — Repeat the C6's seven-entry board-map test with the original apps to account for the remaining heap difference. Also measure free storage before and after the test to verify the 576 B decrease observed in the original run.
-- [ ] **Queued** — On a provisioned C3, verify the console thread failure reaches the remote client and determine why the earlier board opened a session after the client timed out.
+- [ ] Determine where the C3 stops processing a rendered spec under load when a console client times out. The timeout recurred with the HTTP/2 buffer fallback enabled. Capture the last completed step before reset. [Console timing](RESULTS.md#timings)
 - [ ] CoreMark slower and less even on the C5 and C6 since v3.12 than with the same `-Os` firmware before it. Not explained yet ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] CoreMark with Zephyr on an ESP32-S3 without PSRAM: it runs only from the N8R8's PSRAM, and the C heap is about 20 KB short ([RESULTS.md](RESULTS.md#coremark)).
 - [ ] Verify GPIO interrupts and I2C, SPI, UART, ADC and PWM with wired devices. On Zephyr, verify devicetree hardware names on a board and measure ESP32-S3 RS-485 driver-enable timing with a transceiver and a responding peer. See [APPS.md](APPS.md).
-
-### Firmware reliability and footprint
-
-- [ ] **Queued** — Measure the peak heap of the variable-sized metrics export on a provisioned C3 with MQTT active after a restart. Capture the largest free block before instantiation, the minimum free heap during each export and any failed or skipped early exports. See [RAM measurements](RESULTS.md#ram).
 
 ### Blocked on Flight Control
 
@@ -37,16 +28,19 @@ Each needs one of the [limitations in FLIGHTCTL-LIMITATIONS.md](FLIGHTCTL-LIMITA
 
 ### Blocked on hardware availability
 
-- [ ] Verify the Zephyr port over Ethernet when a physical ST Nucleo H563ZI or F767ZI is available. Arm has been tested in [QEMU](ZEPHYR.md#on-an-emulated-arm-cortex-m3).
+- [ ] **ESP32-S3 manufactured without PSRAM** — Install Zephyr z30 or later over USB and verify the firmware on that board. The older z28 failed to download its update with one app running and a C heap low of 368 B. The N8R8 measurements with PSRAM disabled are in [RESULTS.md](RESULTS.md#zephyr-on-the-esp32-s3).
+- [ ] **ST NUCLEO-F767ZI (ordered)** — Repeat the [emulated Arm Ethernet test](ZEPHYR.md#on-an-emulated-arm-cortex-m3) on the physical board. Enroll the Zephyr agent over Ethernet, verify that Flight Control receives status updates, then power-cycle the board and confirm it reconnects with the same device identity.
+- [ ] **Raspberry Pi Pico 2 W with headers (RP2350, SC1634, ordered)** — Enroll the Zephyr agent over WiFi, run a signed WASM app and record the minimum free heap with the app active.
+- [ ] **Nordic nRF7002-DK (ordered)** — Run the Zephyr agent on the nRF5340 and enroll over the nRF7002 WiFi connection. Verify status updates, deploy a signed WASM app and measure the minimum free heap while the app runs.
 
 ## v2.0 (Planned)
 
 Proposed for 2.0, from what similar products offer ([COMPARISON.md](COMPARISON.md)):
 
 - [ ] Let operators enable automatic coredump uploads after reboot to an external destination of their choice, such as an S3-compatible bucket.
-- [ ] Cellular (LTE-M, NB-IoT): a modem as the link, through ESP-IDF's PPP or Zephyr's cellular drivers. A long-poll held open over cellular costs data and power, so it comes with the battery-powered devices above.
-- [ ] Devices without IP (BLE, Thread) through a Linux gateway in the same fleet: the gateway's Flight Control agent, or an app on it, holds the device's identity and passes its spec, status and firmware.
-- [ ] More silicon: Nordic nRF (nRF7002 WiFi, nRF91 cellular), RP2350, STM32U5, the last two with TF-M to keep the device key protected.
-- [ ] On Zephyr, the device key protected and the flash encrypted: today only images are signed and rollback refused. It comes with the TF-M chips above; on an ESP32-S3 it would take Espressif's own MCUboot ([what it takes](SECURITY.md#zephyr)).
+- [ ] Verify enrollment and status over LTE-M or NB-IoT using an nRF91 or an external cellular modem with a supported host board and network subscription. Measure traffic and power with the spec long-poll active.
+- [ ] Use the nRF7002-DK as the BLE or Thread device in a Linux gateway test. The gateway needs a matching radio interface and must relay the device's identity, spec, status and firmware. [Board radios](https://www.nordicsemi.com/Products/Development-hardware/nRF7002-DK)
+- [ ] Integrate a persistent, non-exportable TF-M device key on Zephyr. Use the ordered nRF7002-DK for the first enrollment and reconnect test, then verify the Pico 2 W integration. Check that the same identity authenticates after a power cycle. STM32U5 coverage would require that board. [TF-M on nRF7002-DK](https://docs.zephyrproject.org/latest/boards/nordic/nrf7002dk/doc/index.html#building-the-secure-firmware-with-tf-m)
+- [ ] Verify flash encryption separately on a Zephyr target that supports it. Cover the device's stored credentials and application data. [Current Zephyr protections](SECURITY.md#zephyr)
 - [ ] Apps against [Toit](https://toit.io) and against WAMR's AOT mode, on the same ESP32-C6 ([the benchmarks](COMPARISON.md#tied-to-one-chip-vendor)).
 - [ ] A soak test: a fleet of boards left running for weeks. The collector is ready (`tools/soak/collect.py`: time not online, restarts and their causes, the heap's low-water mark, traffic per hour); not yet run.

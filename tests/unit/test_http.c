@@ -15,6 +15,13 @@ static void *test_tls_calloc(size_t n, size_t size)
     return fail_short_tls_alloc && n == 1 && size == SHORT_TLS_RX_BYTES ? NULL : calloc(n, size);
 }
 
+static size_t realloc_limit;
+
+static void *test_realloc(void *p, size_t size)
+{
+    return realloc_limit && size > realloc_limit ? NULL : realloc(p, size);
+}
+
 #define FC_IDF_DYNAMIC_TLS_RX 1
 #include "../../port/espidf/fc_tls_record.c"
 
@@ -33,7 +40,9 @@ static int test_clock_gettime(clockid_t clock, struct timespec *ts)
 }
 #define clock_gettime test_clock_gettime
 #define calloc test_tls_calloc
+#define realloc test_realloc
 #include "../../core/src/fc_http.c"
+#undef realloc
 #undef calloc
 #undef clock_gettime
 
@@ -582,6 +591,49 @@ static void a_status_put_drains_the_device_without_a_response_buffer(void)
     CHECK_INT(s_opens, 1);
     fc_http_session_free(session);
     join_servers();
+}
+
+static uint8_t rendered_body[11163];
+
+static void script_rendered_body(int fd)
+{
+    req_t r;
+    if (srv_hello(fd) == 0 && srv_request(fd, &r) == 0) {
+        srv_headers(fd, r.sid, 200, NULL, NULL, 0);
+        srv_send(fd, F_DATA, FL_END_STREAM, r.sid, rendered_body, sizeof(rendered_body));
+    }
+    srv_drain(fd);
+}
+
+static void a_fragmented_heap_can_still_fit_the_response(void)
+{
+    for (size_t i = 0; i < sizeof(rendered_body); i++) {
+        rendered_body[i] = (uint8_t)(i % 251);
+    }
+    for (int fits = 0; fits <= 1; fits++) {
+        realloc_limit = sizeof(rendered_body) + fits;
+        serve(script_rendered_body);
+        fc_http_session_t *session = fc_http_session_new();
+        fc_http_target_t t = target(session);
+        fc_http_response_t r;
+        int rc = fc_http_request(&t, "GET", "/rendered", NULL, NULL, 0, &r);
+        if (fits) {
+            CHECK_INT(rc, 0);
+            CHECK_INT(r.body_len, sizeof(rendered_body));
+            CHECK(r.body != NULL);
+            if (r.body != NULL && r.body_len == sizeof(rendered_body)) {
+                CHECK(memcmp(r.body, rendered_body, r.body_len) == 0);
+                CHECK_INT(r.body[r.body_len], '\0');
+            }
+        } else {
+            CHECK_INT(rc, -1);
+            CHECK(r.body == NULL);
+        }
+        fc_http_free(&r);
+        fc_http_session_free(session);
+        join_servers();
+    }
+    realloc_limit = 0;
 }
 
 /* Bodies of 100 KB, three times on one connection: past the 64 KB the
@@ -1332,6 +1384,7 @@ int main(void)
     RUN(a_get_returns_status_and_body);
     RUN(a_put_sends_its_body_and_reads_a_challenge);
     RUN(a_status_put_drains_the_device_without_a_response_buffer);
+    RUN(a_fragmented_heap_can_still_fit_the_response);
     RUN(flow_control_keeps_a_kept_connection_going);
     RUN(two_threads_share_one_connection);
     RUN(goaway_sends_the_request_again);

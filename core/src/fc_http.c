@@ -147,10 +147,7 @@ static int count_recv_timeout(void *ctx, unsigned char *buf, size_t len, uint32_
 /* ---- TLS receive buffer pool (fc_tls_pool.h) ------------------------------ */
 
 #if defined(ESP_PLATFORM) && !defined(__ZEPHYR__) /* Zephyr's ESP32 HAL defines it too */
-#include "esp_heap_caps.h"
-/* As ESP-IDF's own allocator for mbedTLS: internal RAM only. In PSRAM, TLS
- * records got corrupted on the ESP32-S2 (RESULTS.md). */
-#define TLS_HEAP_CALLOC(n, size) heap_caps_calloc((n), (size), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+#define TLS_HEAP_CALLOC(n, size) fc_idf_tls_heap_calloc((n), (size))
 #else
 #define TLS_HEAP_CALLOC(n, size) calloc((n), (size))
 #endif
@@ -1553,12 +1550,19 @@ static int on_data(conn_t *c, uint32_t sid, uint8_t flags, size_t len)
             fc_port_log(FC_LOG_WARN, "response too large");
             failed = 1;
         } else if (!s->discard_200_body || s->status != 200) {
-            if (s->body_len + k + 1 > s->body_cap) {
+            size_t need = s->body_len + k + 1;
+            if (need > s->body_cap) {
                 size_t cap = s->body_cap ? s->body_cap : 1024;
-                while (cap < s->body_len + k + 1) {
+                while (cap < need) {
                     cap *= 2;
                 }
                 char *nb = realloc(s->body, cap);
+                /* A fragmented heap may still extend the current allocation
+                 * in place by the bytes needed for this chunk and its NUL. */
+                if (nb == NULL && cap > need) {
+                    cap = need;
+                    nb = realloc(s->body, cap);
+                }
                 if (nb == NULL) {
                     failed = 1;
                     continue;

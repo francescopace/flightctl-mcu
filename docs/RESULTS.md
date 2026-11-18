@@ -93,6 +93,8 @@ An ESP32-C3 applying a spec that removed two resident apps had 115,060 B free at
 
 On the C6, changing a map containing its onboard LED and removing the apps left 1,032 B less internal heap than the empty post-reboot sample with one app, and 1,104 B less with two. The allocation trace covered installation, map changes and removal. It retained all allocations of 64 B or more without overflowing. The second run had one extra live 128 B allocation in NVS. The original seven-entry map had left about 9.4 KB after two apps. A separate allocation found in both traces belonged to a finished remote console thread (8,192 B of stack and 112 B of thread storage). After the spec loop began joining finished console threads, the same two-app trace contained neither allocation. Internal heap went from 171,764 B empty to 171,592 B after removing both apps. The largest free block went from 126,976 to 98,304 B. Repeating with two copies of the original peripheral and metrics test app on the LED-only map left 1,016 B less total heap. With telemetry enabled, the gateway observed both cumulative counters at 1, 7 and 13 over successive 30 s exports. The map reload between the last two exports restarted both apps, as shown by their per-instance gauges, while both counters continued.
 
+On the physical C6 at `f09c6c6b`, two apps retained 125,816 B of free heap on the LED-only map. Expanding to the original seven devices and returning to the LED left 124,988 B after one cycle and 124,948 B after two, a difference of 828 B and 868 B respectively. After both apps were removed, free heap was 1,732–1,740 B below the empty post-boot sample and the largest block had fallen from 139,264 to 118,784 B. The one-app and two-app traces both ended with the same 23 live allocations of at least 64 B, totalling 6,261 B. Free NVS storage returned to 635,744 B after each trial, with the same 17 stored objects and sizes. Across the entire firmware round trip, free NVS on the original firmware increased by 32 B. The earlier 576 B decrease did not recur.
+
 **App metrics on the ESP32-C6.** The ESP-IDF compiler gives the per-app table a fixed size of 456 bytes for eight metrics and bookkeeping. The same allocation also holds one copy of the app name and its terminator. The previous table requested 1,408 bytes as soon as either app published. The figures below are heap requests before allocator rounding and overhead. The static list pointer occupies four bytes in both builds.
 
 | Publishing apps | Previous heap request | Current heap request | Bytes saved |
@@ -149,6 +151,16 @@ The heap's lowest in the first 25 s after a restart (v3.14-rc7, three restarts e
 
 The difference is what the app and MQTT keep (`mqttdemo`'s instance 19 KB and its thread, the client's 8 KB thread and 4 KB pool), not a handshake beside another: the lowest comes during the first metrics export, before the broker's handshake. With the held block counted, the heap's own lowest is 1 to 10 KB on every chip, with or without MQTT. On the C3 with MQTT connected, a metrics export goes down to 6 to 10 KB, and the first one or two after a restart fail for want of memory (a 4.4 KB allocation); the later ones are sent. In a repeat on C3 rc12 with the same two apps, MQTT connected before the first two successful exports after restart. Their minimum internal heap was 53,412 and 51,520 B. The gateway reported one cumulative skip. The C5 goes down to 9 to 15 KB and sends them. With Zephyr on the ESP32-S3, 4,112 bytes of the 372 KB DRAM segment are left at link time, with a 12 KB status-thread stack and a 92 KB kernel heap.
 
+On a physical C3 at `ec3cf3a`, the largest free block before starting `alarm` and `mqttdemo` was 90,112 B. The exporter deferred its first attempt at 7 s while the agent was busy. MQTT was connected for the next five exports, which all succeeded. The gateway reported one skip. The two minimum-heap columns show the allocator's raw reading and the agent's reading adjusted for its temporary TLS reservation.
+
+| Uptime at export | Largest block before export | Minimum internal heap (ESP-IDF) | Minimum internal heap (agent) |
+|---:|---:|---:|---:|
+| 18 s | 77,824 B | 15,672 B | 60,636 B |
+| 49 s | 61,440 B | 27,000 B | 60,528 B |
+| 80 s | 61,440 B | 28,412 B | 59,704 B |
+| 111 s | 61,440 B | 27,740 B | 56,248 B |
+| 142 s | 61,440 B | 27,756 B | 58,704 B |
+
 What the agent took of the internal heap once an app's instance was made, up to a minute after, with a metrics export every 30 s; the block held while a TLS connection opens left out ([APPS.md](APPS.md#size-and-limits)). The 40 KB the device keeps for the agent comes from these:
 
 | Board | `alarm` (v3.14-rc12) | CoreMark's 64 KB build (v3.14-rc12) | Left at the lowest with CoreMark |
@@ -191,6 +203,8 @@ The classic ESP32 repeated the same swaps on successive builds. All completed ru
 Nine of the initial fourteen failures followed a TLS read reporting insufficient memory. A successful status PUT echoes the whole device object. Streaming a 5,596 B response to completion saved an 8,192 B buffer in a host test. The two subsequent board failures came from a 6,248 B ESP-IDF TLS receive allocation. The last build in the table lets that allocation borrow an unused reserved TLS record when internal RAM is fragmented. The 13 s wakeup in that run occurred with old console entries still listed. The agent now checks once per second during that polling delay while a one-shot primary is running and another app is waiting for it.
 
 The ESP32-C5 completed all ten swaps on a single boot at 9.022–11.156 iterations/s, with ten valid CRCs, no task-watchdog reports and no reset. The secondary resumed 90–1,090 ms after completion. Five status PUT attempts failed and were retried. The device applied all ten removal specs. On the ninth swap a 64 KiB linear allocation encountered a 60 KiB largest block. Closing idle management TLS increased free RAM from 106,008 to 122,860 B while the largest block stayed at 61,440 B. Unloading the saved module allowed its replacement instance to start on the same spec 30.12 s after the refusal, with 46 KiB left for the agent. Two earlier ten-swap trials each completed nine swaps and kept one primary waiting for at least eight minutes.
+
+All five failed C5 PUTs followed a hardware AES allocation failure during a TLS write. With small TLS allocations (up to 2 KiB, excluding receive records) placed preferentially in RTC FAST memory, an instrumented C5 repeated the same ten swaps. All ten passed CRC with no allocation refusal or reset. Across 41 status attempts, 39 returned HTTP 200 and two returned HTTP 429. The next retry was accepted, and no TLS write failed. The secondary resumed in 60–1,010 ms. Median CoreMark was 9.830 iterations/s, compared with 9.841 before the allocator change.
 
 A controlled comparison installed the identical 7,769 B wasm3 module three times per boot on one 160 MHz C6. The four release blocks were v3.10, v3.12, v3.12 and v3.10. Their median scores were 12.253, 11.983, 11.783 and 12.200 iterations/s respectively. All twelve runs passed. Across both boots v3.10 ranged from 12.189 to 12.264, and v3.12 from 10.911 to 12.204. The 7,502 instructions in the C6 fast bytecode interpreter dispatch retained the same opcodes and registers in both images. The linked address and some immediate operands differed. The source of the timing variation is still open.
 
@@ -249,6 +263,16 @@ On an ESP32-C6 running v3.14-rc12, `mqttdemo` answered distinct QoS 1 commands b
 
 On the ESP32-S3-mini with ESP-IDF v3.14-rc12, repeated 100 ms native waits in one call tripped the one-second limit. The device reported the exception and two app restarts while its firmware stayed online.
 
+On a provisioned ESP32-S3-mini at `ec3cf3a`, the same firmware withheld management responses for 400 s on three boots. Each run started the saved primary before the first accepted status.
+
+| Boot and primary | Restore started | Primary running | Secondary | First accepted status | Minimum internal heap |
+|---|---:|---:|---|---:|---:|
+| Power cycle, fixed-size primary | 180.352 s | 180.371 s | Running at 188.972 s | 413.509 s | 93,948 B |
+| Power cycle, primary grew from one to three pages | 180.422 s | 180.476 s | Parked throughout and after reconnection | 409.528 s | 84,016 B |
+| Software reset, primary grew from one to three pages | 180.362 s | 180.417 s | Parked throughout and after reconnection | 407.230 s | 84,160 B |
+
+On an instrumented ESP-IDF S3-mini at `ec3cf3a`, one spec changed the primary app's environment and updated the secondary. The minimum internal heap during the primary restart and secondary reopen was 54,784 B by both the ESP-IDF allocator and the agent, leaving 13,824 B above the 40 KiB admission floor. The secondary installation completed with a minimum of 84,736 B. The device applied the spec 2 s after deferring it. A second run measured the whole spec over 77 s. Both low-water counters and an independent 5 ms sampler reported 59,880 B free at the lowest, 356 ms into spec processing, between applying the config and updating the apps. The secondary installation in this run reached 67,832 B.
+
 ### Timings
 
 ESP-IDF boards with an early build, unless the row says otherwise:
@@ -268,6 +292,12 @@ ESP-IDF boards with an early build, unless the row says otherwise:
 | A loop in a C constructor, emulated C3 | stopped by the budget in under a second, the app removed in 3 s |
 | Decommissioning, from the request to `Completed` | 2.4 to 3 s |
 | A whole firmware, from `Downloading` to `Rebooting` (v3.14-rc10 to rc10.1, polled every 3 s) | 13 s on the C3, 9 s on the C5 with fewer WiFi receive buffers (9 and 6 s before), 13 s on the C6 |
+
+On a physical ESP32-C3, a test build deliberately refused to start a console thread after its stream opened. The remote client received `could not start the console thread` and exited with status 1 in 0.927 s. The next request completed with status 0.
+
+With two apps and outstanding console sessions, an instrumented C3 failed to grow an HTTP/2 response buffer to 16,384 B when it needed 8,193 B. Retrying with the exact size let the device receive the full 11,163 B rendered spec and process it in the same second. The fallback succeeded seven times as that response grew. On a build that retained the fallback and omitted the probes, two console clients still timed out after 60 s under load. When the rendered spec shrank from 11,907 to 9,902 B, the device opened the expired sessions and then failed to start their console threads.
+
+In a repeat with both apps running, the console client timed out after 60.115 s. Flight Control offered newer specs of 10,199 and 10,321 B while the device continued to report the previous version. After a manual reset, the C3 applied the latest spec within 3 s. The diagnostic markers did not survive the reset, so the last step the device completed before the timeout is unknown.
 
 ### Idle traffic
 
@@ -296,9 +326,13 @@ On an ESP32-S3 N8R8 with Zephyr, six minutes of idle management traffic with no 
 
 What is left is the full status, and going lower needs differential updates (limitation 6). The apps' changes go out together, one status every 15 s at most.
 
+With PSRAM disabled on the Zephyr N8R8, the management socket carried 9,868 B from the board and 30,891 B to it in 330 s (445 kB/hour extrapolated). All 23 samples showed the same boot and spec, with no apps, broker or telemetry export configured. Fifteen pre-existing console entries kept the server from holding the spec long-poll open. A quiet long-poll baseline on this profile remains unmeasured.
+
 ### In Espressif's emulator
 
-The ESP32-C5, C6 and S3 each passed the end-to-end tests with ordinary and `secure` firmware at commit `f09c6c6b`. On all six runs, the device reported `ota_0` at enrollment and `ota_1` after the signed update, with the release confirmed and the app running. After a broken update, each device returned to `ota_1` and reported the rollback. The checks observed the confirmed release after 22–34 s and the rollback after 61–74 s, measured from the start of each wait. In the same workflow, the host and both Zephyr jobs pulled the app from the Git-managed fleet, then failed the test's check for a fresh write of identical registry credentials. [End-to-end run](https://github.com/francescopace/flightctl-mcu/actions/runs/44348764399)
+The ESP32-C5, C6 and S3 each passed the end-to-end tests with ordinary and `secure` firmware at commit `ec3cf3a`. On all six runs, the device reported `ota_0` at enrollment and `ota_1` after the signed update, with the release confirmed and the app running. After a broken update, each device returned to `ota_1` and reported the rollback. The checks observed the confirmed release after 21–34 s and the rollback after 55–70 s, measured from the start of each wait. [End-to-end run](https://github.com/francescopace/flightctl-mcu/actions/runs/44357365823)
+
+On the host, Zephyr `native_sim` and Zephyr Arm QEMU, a Git-managed fleet delivered the registry CA and credentials through Kubernetes Secrets after the inline copies had been removed. All three devices pulled and ran the app, then completed decommissioning. The host's factory reset also removed the app and erased its key and certificate. [Host](https://github.com/francescopace/flightctl-mcu/actions/runs/44357365823/job/134989082574) · [Zephyr native_sim](https://github.com/francescopace/flightctl-mcu/actions/runs/44357365823/job/134989082618) · [Zephyr Arm QEMU](https://github.com/francescopace/flightctl-mcu/actions/runs/44357365823/job/134989082724)
 
 [esp-emu](https://github.com/espressif/esp-emulator) 0.51 runs the real firmware against the same Flight Control. The workflow runs the C5, the S3 and the C6 ([TESTING.md](TESTING.md)); the runs below had 4-minute certificates, the C3's by hand:
 
@@ -392,6 +426,7 @@ An ESP32-S3-DevKitC with Zephyr 4.5 and MCUboot ([ZEPHYR.md](ZEPHYR.md#on-an-esp
 | Downloads over HTTP/2 | a delta and the `mqttdemo` app: manifests, signatures and blobs, every request HTTP/2 in the registry's log |
 | MQTT | [Apps on the boards](#apps-on-the-boards) |
 | Without PSRAM | with one app, the C heap got down to 368 bytes while downloading an update, which failed (`HTTP -1`); the spec then stopped coming in while statuses went out, until a reset |
+| N8R8 with PSRAM disabled in firmware | The signed image was 1,038,022 B, with 8,696 B of DRAM free at link time. A runtime check placed the C heap arena in internal DRAM. With the broker connected before starting `mqttdemo`, the app answered a QoS 1 command. At an export attempt only 32,012 B were free against the 61,440 B gate, and the gateway received no sample from that firmware. |
 | The UI's Logs tab, metrics | the tab's commands answered (every filter, live mode); the device's metrics at the Telemetry Gateway ([CONSOLE.md](CONSOLE.md), [METRICS.md](METRICS.md)) |
 | Field provisioning | from an iPhone with Espressif's app ([PROVISIONING.md](PROVISIONING.md#on-zephyr)) |
 
@@ -413,7 +448,7 @@ The gaps found in Flight Control for this class of device, each with a proposal,
 - **Zephyr**: an app's heap floor and the `.wasm` size limit are not checked yet.
 - **MQTT with Zephyr** depends on internal RAM and available POSIX mutexes. On the N8R8 with both TLS records in internal RAM, `mqttdemo` left 32,364 B free and a 25,580 B largest block, below the 61,440 B telemetry threshold. With the records in PSRAM the board could export at cold boot, but a broker connection exhausted the pool of 28 mutexes during TLS client-certificate signing. With 32 mutexes, the gateway received telemetry both when MQTT connected before enabling exports and when it connected after a successful export on a fresh boot (64,648 and 64,644 B free). The four additional mutexes cost 84 B in the ELF's mutex tables. [Apps on the boards](#apps-on-the-boards).
 - **Zephyr on the ESP32-S3 without PSRAM**: with one app it got down to 368 bytes of free C heap while trying to download an update, which did not go through, and the device then took no spec while its statuses went out ([Zephyr on the ESP32-S3](#zephyr-on-the-esp32-s3)).
-- **A stuck agent**: no status accepted, or no spec taken, for 30 minutes restarts the device from outside the agent's threads, on ESP-IDF and Zephyr; tried in unit tests only.
-- **Memory for apps.** A 64 KiB app memory requires a contiguous block plus enough free internal RAM for the agent. Classic ESP32 and C5 each completed a ten-swap trial. The C5 recovered one refusal on the same spec and still retried five status PUTs under load. [CoreMark](#coremark).
+- **Agent watchdog.** On ESP-IDF and Zephyr, the watchdog checks for 30 minutes without an accepted status or a received spec. On a physical Zephyr ESP32-S3 N8R8 with PSRAM disabled, the device restarted 1,826 s after its last spec while statuses continued. The last accepted status was 54 s before the restart. The same device came back online on the confirmed firmware and applied its pending spec. The ESP-IDF watchdog and the missing-status case have unit-test coverage.
+- **Memory for apps.** A 64 KiB app memory requires a contiguous block plus enough free internal RAM for the agent. Classic ESP32 and C5 each completed a ten-swap trial. The C5 recovered one refusal on the same spec. With RTC FAST memory available for small TLS allocations, a repeat completed all ten swaps without a TLS write failure. [CoreMark](#coremark).
 
 What comes next is in the [roadmap](ROADMAP.md).
