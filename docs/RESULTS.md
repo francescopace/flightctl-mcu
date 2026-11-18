@@ -374,7 +374,7 @@ The ESP32-C5, C6 and S3 each passed the end-to-end tests with ordinary and `secu
 
 On the host, Zephyr `native_sim` and Zephyr Arm QEMU, a Git-managed fleet delivered the registry CA and credentials through Kubernetes Secrets after the inline copies had been removed. All three devices pulled and ran the app, then completed decommissioning. The host's factory reset also removed the app and erased its key and certificate. [Host](https://github.com/francescopace/flightctl-mcu/actions/runs/44357365823/job/134989082574) · [Zephyr native_sim](https://github.com/francescopace/flightctl-mcu/actions/runs/44357365823/job/134989082618) · [Zephyr Arm QEMU](https://github.com/francescopace/flightctl-mcu/actions/runs/44357365823/job/134989082724)
 
-[esp-emu](https://github.com/espressif/esp-emulator) 0.51 runs the real firmware against the same Flight Control. The workflow runs the C5, the S3 and the C6 ([TESTING.md](TESTING.md)); the runs below had 4-minute certificates, the C3's by hand:
+The figures below were measured with [esp-emu](https://github.com/espressif/esp-emulator) 0.51.0 and 4-minute certificates against the same Flight Control. The C3 ran by hand. The workflow covers the C5, S3 and C6 ([TESTING.md](TESTING.md)).
 
 | Chip | Signed OTA (reboot into the other slot) | Unsigned app | Certificate renewal | Heap free / minimum / largest block |
 |---|---|---|---|---|
