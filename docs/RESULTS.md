@@ -295,11 +295,9 @@ ESP-IDF boards with an early build, unless the row says otherwise:
 
 On a physical ESP32-C3, a test build deliberately refused to start a console thread after its stream opened. The remote client received `could not start the console thread` and exited with status 1 in 0.927 s. The next request completed with status 0.
 
-With two apps and outstanding console sessions, an instrumented C3 failed to grow an HTTP/2 response buffer to 16,384 B when it needed 8,193 B. Retrying with the exact size let the device receive the full 11,163 B rendered spec and process it in the same second. The fallback succeeded seven times as that response grew. On a build that retained the fallback and omitted the probes, two console clients still timed out after 60 s under load. When the rendered spec shrank from 11,907 to 9,902 B, the device opened the expired sessions and then failed to start their console threads.
+With `alarm` and `blinkcpp` running on the physical ESP32-C3, five consecutive console commands (four `status` and one `apps`) returned output and exited successfully in 0.261–0.361 s. The `apps` command reported both apps running. All five ran on the same boot and desired spec, with 19 outstanding console entries. During the commands, the rendered device response measured 13,073–13,077 B.
 
-With both apps running, one console client timed out after 60.115 s while the C3 continued to report its previous spec. After a reset, the device applied the latest spec within 3 s.
-
-With `alarm` and `blinkcpp` running, an instrumented C3 answered one console command in 0.304 s. The next client exited after 60.135 s without receiving a response. While reading a 12,781 B HTTP/2 response, the device failed to grow its buffer to 12,289 B. It had 22,364 B free, with 7,680 B in the largest block. The read failed before the device could parse the console list. Its last recorded step before timeout was starting another spec request. The next recorded DATA frame arrived 51 s later, after the desired spec was reduced. On the same boot the C3 read the 10,559 B response and started a thread for the expired session.
+The agent reads that response in 1 KiB pages and releases them before opening the console. With the earlier contiguous buffer, a client under the same two-app load timed out after 60.135 s. The device had 22,364 B free, but its largest block was 7,680 B and it needed a 12,289 B allocation to read a 12,781 B response.
 
 ### Idle traffic
 

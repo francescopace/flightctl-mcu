@@ -6,6 +6,8 @@
  * their requests go over the same connection at once, each on its stream. */
 typedef struct fc_http_session fc_http_session_t;
 
+typedef int (*fc_http_data_cb)(const void *data, size_t len, void *ctx);
+
 /* Always TLS 1.3 and HTTP/2 (ALPN h2): a server that offers neither is
  * refused, and so is a target without a CA. */
 typedef struct {
@@ -21,6 +23,8 @@ typedef struct {
     fc_http_session_t *session; /* NULL: a connection for this request alone */
     int connect_timeout_s; /* >0: the TCP connect gives up after this long; 0: the system's (a minute or more) */
     int (*interrupt_wait)(void); /* Optional lock-free check while waiting for response headers. */
+    fc_http_data_cb receive_200; /* Optional bounded fc_http_request body receiver. */
+    void *receive_ctx;
     int discard_200_body; /* fc_http_request drains an HTTP 200 body and returns an empty string. */
 } fc_http_target_t;
 
@@ -66,7 +70,6 @@ void fc_http_free(fc_http_response_t *resp);
  * responses and may return non-zero to abort (the stream is reset, the
  * connection kept). *total gets the Content-Length, or -1. Returns 0 if
  * the whole body was delivered. */
-typedef int (*fc_http_data_cb)(const void *data, size_t len, void *ctx);
 int fc_http_get_stream(const fc_http_target_t *t, const char *path, fc_http_data_cb on_data,
                        void *ctx, int *status, long *total);
 

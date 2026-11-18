@@ -54,6 +54,7 @@ set(DELTA_SRCS core/src/fc_delta.c)
 
 add_library(fc_core STATIC
     core/src/fc_agent.c
+    core/src/fc_rendered.c
     core/src/fc_console.c
     core/src/fc_log.c
     core/src/fc_metrics.c
@@ -112,7 +113,7 @@ if(FC_FUZZ)
     fc_fuzzer(fuzz_oci port/host/fc_port_host.c core/src/fc_log.c ${CJSON} ${DELTA_SRCS})
     fc_fuzzer(fuzz_delta ${DELTA_SRCS})
     fc_fuzzer(fuzz_console port/host/fc_port_host.c core/src/fc_log.c ${CJSON})
-    fc_fuzzer(fuzz_agent core/src/fc_http.c core/src/fc_console.c core/src/fc_identity.c core/src/fc_apps.c core/src/fc_appapi.c core/src/fc_arduino.c core/src/fc_board.c core/src/fc_resources.c core/src/fc_log.c core/src/fc_metrics.c core/src/fc_mqtt.c port/host/fc_port_host.c ${CJSON})
+    fc_fuzzer(fuzz_agent core/src/fc_rendered.c core/src/fc_http.c core/src/fc_console.c core/src/fc_identity.c core/src/fc_apps.c core/src/fc_appapi.c core/src/fc_arduino.c core/src/fc_board.c core/src/fc_resources.c core/src/fc_log.c core/src/fc_metrics.c core/src/fc_mqtt.c port/host/fc_port_host.c ${CJSON})
     target_link_libraries(fuzz_agent PRIVATE vmlib)
 endif()
 

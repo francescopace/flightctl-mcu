@@ -72,8 +72,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         /* A spec may ask for decommissioning: that only marks it (the wipe
          * waits for a status accepted, and there is no server here). */
         a.decom = DECOM_NONE;
-        consoles(&a, json, "1"); /* the look in place; no certificate, no session opened */
-        apply_rendered(&a, json);
+        fc_rendered_body_t body = {0};
+        fc_rendered_t rendered;
+        if (fc_rendered_feed(data + 1, size - 1, &body) == 0 && fc_rendered_read(&body, "", 0, &rendered) == 0) {
+            consoles(&a, rendered.consoles); /* no certificate, no session opened */
+            apply_rendered(&a, rendered.spec, cJSON_GetStringValue(rendered.version));
+            fc_rendered_clear(&rendered);
+        }
+        fc_rendered_free(&body);
         cJSON_Delete(build_status(&a));
     }
     free(json);

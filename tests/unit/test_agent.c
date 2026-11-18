@@ -72,6 +72,19 @@ static int agent_request(const fc_http_target_t *t, const char *method, const ch
 #include "port_stub.h"
 #include "test.h"
 
+/* A fragmented C3 can have 22 KB free across blocks of at most 7,680
+ * bytes. Bound the rendered reader's allocations without changing cJSON
+ * hooks used by other threads. */
+static size_t rendered_allocation_limit;
+static void *rendered_malloc(size_t n)
+{
+    return rendered_allocation_limit && n > rendered_allocation_limit ? NULL : malloc(n);
+}
+
+#define malloc rendered_malloc
+#include "../../core/src/fc_rendered.c"
+#undef malloc
+
 /* ---- stubs ------------------------------------------------------------------ */
 
 static agent_t s_a;
@@ -347,12 +360,42 @@ static void confirm_firmware(void)
     wait_confirmed(&s_a); /* returns at once now */
 }
 
+static int read_rendered(const char *json, const char *known, fc_rendered_t *r)
+{
+    fc_rendered_body_t body = {0};
+    CHECK_INT(fc_rendered_feed(json, strlen(json), &body), 0);
+    return fc_rendered_read(&body, known, 0, r);
+}
+
+static int apply_json(agent_t *a, const char *json)
+{
+    fc_rendered_t r;
+    if (read_rendered(json, "", &r) != 0) {
+        return 0;
+    }
+    int rc = apply_rendered(a, r.spec, cJSON_GetStringValue(r.version));
+    fc_rendered_clear(&r);
+    return rc;
+}
+
+static int sync_json(agent_t *a, const char *json, const char *known)
+{
+    fc_rendered_t r;
+    if (read_rendered(json, known, &r) != 0) {
+        return 0;
+    }
+    consoles(a, r.consoles);
+    int same = r.same && cJSON_GetArraySize(r.consoles);
+    fc_rendered_clear(&r);
+    return same;
+}
+
 static void apply(const char *version, const char *spec)
 {
     char json[4096];
     snprintf(json, sizeof(json), "{\"metadata\":{\"annotations\":{\"device-controller/renderedVersion\":\"%s\"}},"
              "\"spec\":%s}", version, spec);
-    apply_rendered(&s_a, json);
+    apply_json(&s_a, json);
     start_apps(&s_a);
 }
 
@@ -576,7 +619,7 @@ static void a_deeply_nested_spec_is_refused_without_crashing(void)
         strcat(json, "]");
     }
     strcat(json, "}");
-    apply_rendered(&s_a, json); /* over cJSON's nesting limit: not parsed */
+    apply_json(&s_a, json); /* over cJSON's nesting limit: not parsed */
     CHECK_STR(s_a.rendered_version, "");
 }
 
@@ -625,7 +668,7 @@ static void omitted_apps_are_released_before_files_and_ota(void)
     CHECK_INT(s_prunes_at_config, 1);
     CHECK_INT(s_prunes_at_download, 1);
     CHECK_INT(s_apps_applied, 0); /* the firmware fetch failed; removals still took place */
-    apply_rendered(&s_a, "{}");
+    apply_json(&s_a, "{}");
     CHECK_INT(s_prunes, 1);
 }
 
@@ -1029,9 +1072,9 @@ static void a_parsed_spec_is_taken(void)
     new_agent();
     long saved = s_spec_ok_mono;
     s_spec_ok_mono = 0;
-    CHECK_INT(apply_rendered(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"1"), 0);
+    CHECK_INT(apply_json(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"1"), 0);
     CHECK_INT(fc_agent_spec_age(), -1);
-    CHECK_INT(apply_rendered(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"1\"}}, \"spec\": {}}"), 0);
+    CHECK_INT(apply_json(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"1\"}}, \"spec\": {}}"), 0);
     CHECK(fc_agent_spec_age() >= 0 && fc_agent_spec_age() <= 1);
     s_spec_ok_mono = saved;
 }
@@ -1251,7 +1294,7 @@ static void a_download_takes_the_connections_turn(void)
     char json[512];
     snprintf(json, sizeof(json), "{\"metadata\":{\"annotations\":{\"device-controller/renderedVersion\":\"7\"}},"
              "\"spec\":{\"applications\":[]}}");
-    CHECK_INT(apply_rendered(&s_a, json), 0);
+    CHECK_INT(apply_json(&s_a, json), 0);
     CHECK_INT(s_apps_started, 0);
     CHECK_INT(s_a.turn_depth, 1);
     start_apps(&s_a);
@@ -1272,30 +1315,77 @@ static void a_console_alone_is_not_applied_again(void)
     const char *with = "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"5\"}},"
                        " \"spec\": {\"consoles\": [{\"sessionID\": \"s1\", \"sessionMetadata\": \"{}\"}]}}";
     s_console_syncs = 0;
-    CHECK_INT(consoles(&s_a, with, "5"), 1);
+    CHECK_INT(sync_json(&s_a, with, "5"), 1);
     CHECK_INT(s_console_syncs, 1);
-    CHECK_INT(consoles(&s_a, with, "4"), 0); /* a new version too: applied */
-    CHECK_INT(consoles(&s_a, "{\"metadata\": {}, \"spec\": {}}", "5"), 0);
+    CHECK_INT(sync_json(&s_a, with, "4"), 0); /* a new version too: applied */
+    CHECK_INT(sync_json(&s_a, "{\"metadata\": {}, \"spec\": {}}", "5"), 0);
     CHECK_INT(s_console_syncs, 2);
     /* Read in place: other members before, with what looks like JSON in
      * their strings, and nesting. */
     const char *busy = "{\"kind\": \"Device\", \"x\": {\"a\": [1, {\"b\": \"}]\\\" {\"}], \"c\": -1.5e3, \"d\": null},"
                        " \"metadata\": {\"name\": \"d\", \"annotations\": {\"other\": \"\", \"" RENDERED_ANNOTATION "\": \"5\"}},"
                        " \"spec\": {\"os\": {\"image\": \"r/fw:{z29}\"}, \"consoles\": [{\"sessionID\": \"s1\"}], \"config\": []}}";
-    CHECK_INT(consoles(&s_a, busy, "5"), 1);
+    CHECK_INT(sync_json(&s_a, busy, "5"), 1);
     CHECK_INT(s_console_syncs, 3);
-    CHECK_INT(consoles(&s_a, "{\"spec\": {\"consoles\": []}}", "5"), 0); /* none listed */
-    CHECK_INT(consoles(&s_a, "{\"spec\": {\"consoles\": [{\"sessionID\": ", "5"), 0); /* cut short */
-    CHECK_INT(consoles(&s_a, "{\"spec\": {\"consoles\": {}}}", "5"), 0);
+    CHECK_INT(sync_json(&s_a, "{\"spec\": {\"consoles\": []}}", "5"), 0); /* none listed */
+    CHECK_INT(sync_json(&s_a, "{\"spec\": {\"consoles\": [{\"sessionID\": ", "5"), 0); /* cut short */
+    CHECK_INT(sync_json(&s_a, "{\"spec\": {\"consoles\": {}}}", "5"), 0);
     CHECK_INT(s_console_syncs, 3);
-    /* A version with an escape is not read: the spec is applied. */
-    CHECK_INT(consoles(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"\\u0035\"}},"
-                             " \"spec\": {\"consoles\": [{\"sessionID\": \"s1\"}]}}", "5"), 0);
+    /* A JSON escape represents the same version. */
+    CHECK_INT(sync_json(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"\\u0035\"}},"
+                             " \"spec\": {\"consoles\": [{\"sessionID\": \"s1\"}]}}", "5"), 1);
     CHECK_INT(s_console_syncs, 4);
     free(s_a.mgmt_cert_pem);
     s_a.mgmt_cert_pem = NULL;
     fc_http_session_free(s_a.sess);
     s_a.sess = NULL;
+}
+
+/* Page and HTTP DATA boundaries are independent. Both a new and an
+ * unchanged version may arrive after a console list. */
+static void a_large_rendered_device_is_read_in_pages(void)
+{
+    const char *first = "{\"status\":{\"ignored\":\"";
+    const char *last = "\"},\"sp\\u0065c\":{\"consoles\":[{\"sessionID\":\"id\"}],\"config\":[]},"
+                       "\"metadata\":{\"annota\\u0074ions\":{\"" RENDERED_ANNOTATION "\":\"7\"}}}";
+    char pad[129] = {0};
+    memset(pad, 's', sizeof(pad));
+    rendered_allocation_limit = 7680;
+    for (int same = 0; same <= 1; same++) {
+        fc_rendered_body_t body = {0};
+        CHECK_INT(fc_rendered_feed(first, strlen(first), &body), 0);
+        for (int i = 0; i < 111; i++) {
+            CHECK_INT(fc_rendered_feed(pad, sizeof(pad), &body), 0);
+        }
+        /* The escaped field name straddles a page. */
+        while ((body.size + 8) % 1024) {
+            CHECK_INT(fc_rendered_feed("p", 1, &body), 0);
+        }
+        for (const char *c = last; *c; c++) {
+            CHECK_INT(fc_rendered_feed(c, 1, &body), 0);
+        }
+        fc_rendered_t r;
+        CHECK_INT(fc_rendered_read(&body, same ? "7" : "6", 0, &r), 0);
+        CHECK(body.first == NULL);
+        CHECK_INT(r.same, same);
+        CHECK_INT(cJSON_GetArraySize(r.consoles), 1);
+        CHECK_STR(cJSON_GetStringValue(r.version), "7");
+        if (same) {
+            CHECK(r.spec == NULL);
+        } else {
+            CHECK(cJSON_IsArray(cJSON_GetObjectItem(r.spec, "config")));
+        }
+        fc_rendered_clear(&r);
+    }
+    rendered_allocation_limit = 1;
+    fc_rendered_body_t empty = {0};
+    CHECK_INT(fc_rendered_feed("{}", 2, &empty), -1);
+    fc_rendered_free(&empty);
+    rendered_allocation_limit = 0;
+    fc_rendered_t r;
+    CHECK_INT(read_rendered("{\"spec\":{},\"status\":{\"bad\" false}}", "", &r), -1);
+    CHECK_INT(read_rendered("{\"spec\":{},\"status\":[true,]}", "", &r), -1);
+    CHECK_INT(read_rendered("{\"spec\":{},\"status\":\"\\uDC00\"}", "", &r), -1);
 }
 
 /* ---- status content ---------------------------------------------------------- */
@@ -1604,6 +1694,7 @@ int main(void)
     RUN(a_parsed_spec_is_taken);
     RUN(an_export_waits_for_room_with_the_apps_checks_off);
     RUN(a_console_alone_is_not_applied_again);
+    RUN(a_large_rendered_device_is_read_in_pages);
     RUN(counters_are_read_again_only_when_due);
     RUN(stack_headroom_is_reported_per_thread);
     RUN(a_status_with_nothing_new_is_the_same);

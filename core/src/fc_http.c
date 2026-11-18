@@ -864,6 +864,8 @@ typedef struct stream {
     void *ctx;
     int aborted;         /* on_data asked to stop */
     int discard_200_body;
+    fc_http_data_cb receive_200;
+    void *receive_ctx;
     char *body;
     size_t body_len, body_cap;
     long long got;       /* body bytes */
@@ -1549,6 +1551,8 @@ static int on_data(conn_t *c, uint32_t sid, uint8_t flags, size_t len)
         } else if (s->got > FC_HTTP_MAX_RESPONSE) {
             fc_port_log(FC_LOG_WARN, "response too large");
             failed = 1;
+        } else if (s->status == 200 && s->receive_200) {
+            failed = s->receive_200(chunk, k, s->receive_ctx) != 0;
         } else if (!s->discard_200_body || s->status != 200) {
             size_t need = s->body_len + k + 1;
             if (need > s->body_cap) {
@@ -2126,6 +2130,8 @@ static int exchange(conn_t *c, stream_t *s, const fc_http_target_t *t, const cha
 {
     int has_body = body != NULL && body_len > 0;
     s->discard_200_body = t->discard_200_body;
+    s->receive_200 = t->receive_200;
+    s->receive_ctx = t->receive_ctx;
     size_t hlen;
     uint8_t *hb = header_block(t, method, path, content_type, body_len, has_body || content_type != NULL, &hlen);
     if (hb == NULL) {

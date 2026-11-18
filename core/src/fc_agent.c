@@ -26,6 +26,7 @@
 #include "fc_oci.h"
 #include "fc_port.h"
 #include "fc_resources.h"
+#include "fc_rendered.h"
 #include "fc_tls_pool.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/x509_crt.h"
@@ -52,7 +53,6 @@
 #define KV_RESOURCES         "resources"      /* spec.resources last applied */
 
 #define API "/api/v1"
-#define RENDERED_ANNOTATION "device-controller/renderedVersion"
 #define SPEC_POLL_TIMEOUT_S 300 /* server holds the long-poll up to ~4 min */
 /* While a console session is listed, the server answers the long-poll at
  * once with the same version: the next poll waits this long. */
@@ -271,7 +271,7 @@ static fc_http_target_t enrollment_target(const agent_t *a, int timeout_s)
  * replace and free it while a long-poll is still running. */
 static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, const char *method, const char *path,
                         const char *content_type, const char *body, size_t body_len, fc_http_response_t *r,
-                        int (*interrupt_wait)(void), int discard_200_body)
+                        int (*interrupt_wait)(void), int discard_200_body, fc_rendered_body_t *rendered)
 {
     fc_http_target_t t = enrollment_target(a, timeout_s);
     pthread_mutex_lock(&a->lock);
@@ -288,117 +288,17 @@ static int mgmt_request(agent_t *a, fc_http_session_t *sess, int timeout_s, cons
     t.session = sess;
     t.interrupt_wait = interrupt_wait;
     t.discard_200_body = discard_200_body;
+    t.receive_200 = rendered ? fc_rendered_feed : NULL;
+    t.receive_ctx = rendered;
     int rc = fc_http_request(&t, method, path, content_type, body, body_len, r);
     free(cert);
     return rc;
 }
 
-/* ---- a look into the rendered device without parsing it ---------------- */
-
-/* The rendered device is parsed whole only when it is to be applied. While
- * a console session is listed the server sends it every poll, and Flight
- * Control may list stale sessions for good (docs/FLIGHTCTL-LIMITATIONS.md, 15): parsing
- * it each time took a tree several times its size from the heap every 15 s,
- * on a board with little to spare. These read the text in place; malformed
- * text gives NULL, and what they find is parsed by cJSON (the console list)
- * or copied (the version). */
-
-static const char *jws(const char *p)
-{
-    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
-        p++;
-    }
-    return p;
-}
-
-/* Past the string p starts (at its quote). */
-static const char *jstr_end(const char *p)
-{
-    for (p++; *p && *p != '"'; p++) {
-        if (*p == '\\' && *++p == '\0') {
-            return NULL;
-        }
-    }
-    return *p ? p + 1 : NULL;
-}
-
-/* Past the value p starts; no recursion, however deep the nesting. */
-static const char *jskip(const char *p)
-{
-    p = jws(p);
-    if (*p == '"') {
-        return jstr_end(p);
-    }
-    if (*p == '{' || *p == '[') {
-        int depth = 0;
-        while (*p) {
-            if (*p == '"') {
-                if ((p = jstr_end(p)) == NULL) {
-                    return NULL;
-                }
-                continue;
-            }
-            if (*p == '{' || *p == '[') {
-                depth++;
-            } else if ((*p == '}' || *p == ']') && --depth == 0) {
-                return p + 1;
-            }
-            p++;
-        }
-        return NULL;
-    }
-    const char *start = p;
-    while (*p && !strchr(",}] \t\r\n", *p)) {
-        p++;
-    }
-    return p == start ? NULL : p;
-}
-
-/* The value of member `key` of the object at p, or NULL. */
-static const char *jmember(const char *p, const char *key)
-{
-    if (p == NULL || *(p = jws(p)) != '{') {
-        return NULL;
-    }
-    size_t klen = strlen(key);
-    for (p = jws(p + 1); *p == '"'; p = jws(p + 1)) {
-        const char *k = p + 1, *end = jstr_end(p);
-        if (end == NULL || *(p = jws(end)) != ':') {
-            return NULL;
-        }
-        p = jws(p + 1);
-        if ((size_t)(end - 1 - k) == klen && memcmp(k, key, klen) == 0) {
-            return p;
-        }
-        if ((p = jskip(p)) == NULL || *(p = jws(p)) != ',') {
-            return NULL;
-        }
-    }
-    return NULL;
-}
-
-static int same_rendered_version(const char *json, const char *known)
-{
-    const char *v = jmember(jmember(jmember(json, "metadata"), "annotations"), RENDERED_ANNOTATION);
-    const char *end = v && *v == '"' ? jstr_end(v) : NULL;
-    size_t n = strlen(known);
-    return n && end && (size_t)(end - v - 2) == n && !memchr(v + 1, '\\', n) && !memcmp(v + 1, known, n);
-}
-
-/* The spec's console sessions (fc_console.c), on the agent's connection.
- * Returns 1 if the spec is the one applied already: only a console made the
- * server answer, and nothing is to be applied. Only the list of sessions is
- * parsed: none, and nothing is. */
-static int consoles(agent_t *a, const char *json, const char *known)
+/* Console sessions travel on the agent's existing connection. */
+static void consoles(agent_t *a, const cJSON *list)
 {
     a->console_quiet = 0;
-    const char *at = jmember(jmember(json, "spec"), "consoles");
-    const char *end = at != NULL && *at == '[' ? jskip(at) : NULL;
-    if (end == NULL || *jws(at + 1) == ']') {
-        return 0;
-    }
-    cJSON *list = cJSON_ParseWithLength(at, (size_t)(end - at));
-    int same = 0;
     if (cJSON_GetArraySize(list) > 0) {
         fc_http_target_t t = enrollment_target(a, 30);
         pthread_mutex_lock(&a->lock);
@@ -411,12 +311,9 @@ static int consoles(agent_t *a, const char *json, const char *known)
             t.session = a->sess;
             int listed = fc_console_sync(list, &t);
             a->console_quiet = listed == 1;
-            same = listed && same_rendered_version(json, known);
             free(cert);
         }
     }
-    cJSON_Delete(list);
-    return same;
 }
 
 /* ---- status ------------------------------------------------------------ */
@@ -754,7 +651,7 @@ static int put_status(agent_t *a)
     snprintf(path, sizeof(path), API "/devices/%s/status", a->id.name);
     fc_http_response_t r;
     /* Flight Control returns the whole Device. Only an error body is used. */
-    int rc = mgmt_request(a, a->sess, 60, "PUT", path, "application/json", body, strlen(body), &r, NULL, 1);
+    int rc = mgmt_request(a, a->sess, 60, "PUT", path, "application/json", body, strlen(body), &r, NULL, 1, NULL);
     free(body);
     if (rc != 0) {
         return -1;
@@ -1152,7 +1049,7 @@ static int request_cert(agent_t *a, cert_role_t role)
         }
         fc_port_log(FC_LOG_INFO, "requesting certificate (%s)", name);
         int rc = mgmt_request(a, a->sess, 60, "POST", API "/certificatesigningrequests", "application/json", body,
-                              strlen(body), &r, NULL, 0);
+                              strlen(body), &r, NULL, 0, NULL);
         free(body);
         if (rc != 0) {
             *name = '\0';
@@ -1167,7 +1064,7 @@ static int request_cert(agent_t *a, cert_role_t role)
     } else {
         char path[160];
         snprintf(path, sizeof(path), API "/certificatesigningrequests/%s", name);
-        if (mgmt_request(a, a->sess, 60, "GET", path, NULL, NULL, 0, &r, NULL, 0) != 0) {
+        if (mgmt_request(a, a->sess, 60, "GET", path, NULL, NULL, 0, &r, NULL, 0, NULL) != 0) {
             return 0;
         }
         if (r.status != 200) {
@@ -1932,23 +1829,14 @@ static void load_resources(void)
 }
 
 /* Returns 1 when the spec is to be tried again (after a while). */
-static int apply_rendered(agent_t *a, const char *json)
+static int apply_rendered(agent_t *a, const cJSON *spec, const char *version)
 {
-    cJSON *dev = cJSON_Parse(json);
-    if (dev == NULL) {
-        fc_port_log(FC_LOG_WARN, "rendered device: invalid JSON");
-        return 0;
-    }
     spec_taken();
-    const cJSON *ann = cJSON_GetObjectItem(cJSON_GetObjectItem(dev, "metadata"), "annotations");
-    const char *version = cJSON_GetStringValue(cJSON_GetObjectItem(ann, RENDERED_ANNOTATION));
-    const cJSON *spec = cJSON_GetObjectItem(dev, "spec");
     char err[160] = "";
 
     const cJSON *decom = cJSON_GetObjectItem(spec, "decommissioning");
     if (cJSON_IsObject(decom)) {
         request_decommission(a, decom);
-        cJSON_Delete(dev);
         return 0;
     }
 
@@ -1969,7 +1857,6 @@ static int apply_rendered(agent_t *a, const char *json)
             snprintf(a->attempted_version, sizeof(a->attempted_version), "%s", version);
         }
         pthread_mutex_unlock(&a->lock);
-        cJSON_Delete(dev);
         return retry_catalog || version == NULL;
     }
     apply_resources(cJSON_GetObjectItem(spec, "resources"), err, sizeof(err));
@@ -2073,7 +1960,6 @@ static int apply_rendered(agent_t *a, const char *json)
         fc_port_log(FC_LOG_INFO, "stack never used: %ld bytes; firmware %s installed, rebooting",
                     fc_port_stack_unused(), image);
         sleep(3); /* let the status update go out */
-        cJSON_Delete(dev);
         fc_port_reboot();
         return 0;
     }
@@ -2082,7 +1968,6 @@ static int apply_rendered(agent_t *a, const char *json)
     } else {
         fc_port_log(FC_LOG_INFO, "spec %s applied", version ? version : "?");
     }
-    cJSON_Delete(dev);
     return retry == 1;
 }
 
@@ -2158,9 +2043,17 @@ static void *spec_thread(void *arg)
         } else {
             snprintf(path, sizeof(path), API "/devices/%s/rendered", a->id.name);
         }
+        fc_rendered_body_t body = {0};
         fc_http_response_t r;
         int rc = mgmt_request(a, a->sess, SPEC_POLL_TIMEOUT_S, "GET", path, NULL, NULL, 0, &r,
-                              known[0] && !refresh ? spec_work_due : NULL, 0);
+                              known[0] && !refresh ? spec_work_due : NULL, 0, &body);
+        fc_rendered_t rendered = {0};
+        if (rc == 0 && r.status == 200 && fc_rendered_read(&body, known, refresh, &rendered) != 0) {
+            fc_port_log(FC_LOG_WARN, "cannot read rendered device");
+            fc_http_free(&r);
+            rc = -1;
+        }
+        fc_rendered_free(&body);
         if (rc == FC_HTTP_INTERRUPTED) {
             continue;
         }
@@ -2168,7 +2061,14 @@ static void *spec_thread(void *arg)
             sleep(RETRY_DELAY_S);
             continue;
         }
-        if (r.status == 200 && consoles(a, r.body, known)) {
+        int listed = cJSON_GetArraySize(rendered.consoles);
+        if (r.status == 200) {
+            consoles(a, rendered.consoles);
+            cJSON_Delete(rendered.consoles);
+            rendered.consoles = NULL;
+        }
+        if (r.status == 200 && rendered.same && listed) {
+            fc_rendered_clear(&rendered);
             spec_taken();
             fc_http_free(&r);
             time_t now = time(NULL);
@@ -2190,7 +2090,8 @@ static void *spec_thread(void *arg)
             continue;
         }
         quiet_since = 0;
-        if (refresh && r.status == 200 && same_rendered_version(r.body, known)) {
+        if (refresh && r.status == 200 && rendered.same) {
+            fc_rendered_clear(&rendered);
             spec_taken();
             fc_http_free(&r);
             continue;
@@ -2198,7 +2099,8 @@ static void *spec_thread(void *arg)
         if (r.status == 200) {
             wait_confirmed(a);
             apply_begin(a);
-            int again = apply_rendered(a, r.body);
+            int again = apply_rendered(a, rendered.spec, cJSON_GetStringValue(rendered.version));
+            fc_rendered_clear(&rendered);
             fc_http_free(&r);
             start_apps(a);
             request_status(a);

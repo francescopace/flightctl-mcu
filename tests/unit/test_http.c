@@ -955,6 +955,43 @@ static void a_streamed_get_and_its_abort(void)
     join_servers();
 }
 
+static void a_rendered_body_receiver_only_consumes_successful_responses(void)
+{
+    serve(script_stream);
+    fc_http_session_t *session = fc_http_session_new();
+    fc_http_target_t t = target(session);
+    fc_http_response_t r;
+    t.receive_200 = sink;
+    t.receive_ctx = (void *)1; /* stop partway through the first response */
+    s_streamed = 0;
+    CHECK_INT(fc_http_request(&t, "GET", "/rendered", NULL, NULL, 0, &r), -1);
+    CHECK(s_streamed > 1000 && s_streamed < 3000);
+    fc_http_free(&r);
+
+    t.receive_ctx = NULL;
+    s_streamed = 0;
+    CHECK_INT(fc_http_request(&t, "GET", "/rendered", NULL, NULL, 0, &r), 0);
+    CHECK_INT(r.status, 200);
+    CHECK_INT(s_streamed, 3000);
+    CHECK_INT(r.body_len, 0);
+    CHECK_STR(r.body, "");
+    fc_http_free(&r);
+    CHECK_INT(s_opens, 1);
+    fc_http_session_free(session);
+    join_servers();
+
+    serve(script_put); /* returns a 401 with an error body */
+    t = target(NULL);
+    t.receive_200 = sink;
+    s_streamed = 0;
+    CHECK_INT(fc_http_request(&t, "GET", "/rendered", NULL, NULL, 0, &r), 0);
+    CHECK_INT(r.status, 401);
+    CHECK_INT(s_streamed, 0);
+    CHECK_STR(r.body, "denied");
+    fc_http_free(&r);
+    join_servers();
+}
+
 /* A server that never answers: the request ends at its timeout. */
 static void script_silent(int fd)
 {
@@ -1392,6 +1429,7 @@ int main(void)
     RUN(header_fragments_use_only_the_needed_heap);
     RUN(header_blocks_span_frames);
     RUN(a_streamed_get_and_its_abort);
+    RUN(a_rendered_body_receiver_only_consumes_successful_responses);
     RUN(a_progressing_download_outlasts_the_initial_deadline);
     RUN(an_interrupted_poll_keeps_its_connection);
     RUN(a_silent_server_times_out);
