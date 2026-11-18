@@ -227,9 +227,9 @@ A final comparison kept the same cap and selected the heap for the native stack 
 
 On the C5 the same stack selection exposed the cost in contiguous RAM. Both main-SRAM stack requests left a largest block of 62 KiB and the module could not start. With the stack requested in RTC FAST memory, one install passed at 18.358 iterations/s with all decoded bytecode in main SRAM, and one was refused with a 64 KiB largest block. The v3.12 allocator needed 68 KiB for this module. The 72 KiB reservation cap was specific to that benchmark.
 
-The SRAM-only C5 and C6 now limit the loader's heap reservation to the module's declared initial memory before WAMR decodes its functions. At startup the firmware reserves the loaded module's linear memory before allocating app handles, the event queue and the native stack. WAMR takes that block when instantiating the module.
+On ESP-IDF, C5 and C6 builds without PSRAM can leave main SRAM available for decoded bytecode and the native stack by reserving a block sized for the module's linear memory. [Allocation policy and fallback](APPS.md#size-and-limits)
 
-The same physical boards each ran six installs of the same wasm3 module per firmware, removing the app between installs and staying on one boot per series. Both builds used ESP-IDF 6.0.3, WAMR 2.4.5, size optimization for the firmware and `-O2` for the interpreter. CoreMark ran alone at the agent's current app priority with metrics disabled. The reference used the placement policy at `c10e3a6b`. SRAM placement and scores below count completed runs.
+The same physical boards each ran six installs of the same wasm3 module per firmware, removing the app between installs and staying on one boot per series. Both builds used ESP-IDF 6.0.3, WAMR 2.4.5, size optimization for the firmware and `-O2` for the interpreter. CoreMark ran alone at the agent's current app priority with metrics disabled. The instrumented builds compared the reference policy at `c10e3a6b` with the policy in `f208b530`. SRAM placement and scores below count completed runs.
 
 | Board | Firmware | Completed | All decoded bytecode in main SRAM | Native stack in main SRAM | Median iterations/s | Range |
 |---|---|---:|---:|---:|---:|---:|
@@ -238,7 +238,7 @@ The same physical boards each ran six installs of the same wasm3 module per firm
 | C6 | Reference | 6/6 | 6/6 | 5/6 | 6.027 | 5.941–6.055 |
 | C6 | Module-sized reservation | 6/6 | 6/6 | 6/6 | 6.030 | 5.995–6.055 |
 
-On the reference C5, the two slowest runs placed 6,676 and 4,382 bytes of decoded bytecode in RTC FAST memory. One install was refused with a largest free block of 36 KiB. With the new policy WAMR used the reserved 65,536 B block in all twelve installs. Immediately before allocating app handles and stack, the largest free block was exactly 64 KiB in 4 C5 installs and 1 C6 install. The C5's slow outliers disappeared in this series. Median throughput on each board was close to its reference.
+On the reference C5, the two slowest runs placed 6,676 and 4,382 bytes of decoded bytecode in RTC FAST memory. One install was refused with a largest free block of 36 KiB. With the new policy WAMR used the reserved 65,536 B block in all twelve installs. Immediately before allocating app handles and stack, the firmware reported a largest free block of 64 KiB in four C5 installs and one C6 install, measured in whole KiB. The C5's slow outliers disappeared in this series. Median throughput on each board was close to its reference.
 
 #### Scores by board
 
@@ -249,7 +249,7 @@ Iterations per second of [CoreMark](https://github.com/eembc/coremark) 1.0's two
 | Classic ESP32 (240 MHz) | 14.23 | does not fit: largest free block 64–76 KB | about 505 |
 | ESP32-C3 (160 MHz) | 14.21 | does not fit: largest free block 36–38 KB | about 409 |
 | ESP32-C6 (160 MHz) | 12.10 | 13.24–13.71 | |
-| ESP32-C5 (240 MHz) | 19.70 (18.9–22.3 across installs since v3.12) | does not fit: largest free block 72 KB | |
+| ESP32-C5 (240 MHz) | 19.70 (18.9–22.3 across installs in the earlier release measurements) | does not fit: largest free block 72 KB | |
 | ESP32-S3 N4R2 (2 MB quad PSRAM) | 18.09 | 21.04–21.64, in PSRAM | about 614 |
 | ESP32-S3, PSRAM off | 18.88–18.95 (v3.10, built for speed) | does not fit: no internal block of 128 KB left once running | about 614 |
 | ESP32-S3 N8R8 with Zephyr, PSRAM disabled | 17.885 in internal DRAM (one run) | – | |
@@ -260,7 +260,7 @@ Iterations per second of [CoreMark](https://github.com/eembc/coremark) 1.0's two
 | Against native code | about 30 times slower, the instruction count included; WAMR's AOT mode should be about 3 times slower, with one module per architecture instead of one for every device; not measured |
 | Firmware built for size, WAMR still at `-O2` | about 5% slower than built for speed on the S3, 7% on the classic ESP32, nothing on the C5 and C6 |
 | Classic ESP32 at 240 MHz | 2.2 times faster than at ESP-IDF's debug default of 160 MHz |
-| Block needed for the memory | one free block of 68 KB for 64 KB, of 136 KB for 128 KB |
+| Contiguous block for CoreMark linear memory on ESP-IDF | 64 KiB for the wasm3 build, 128 KiB for the wasm-coremark build. The earlier allocator needed 68 KiB and 136 KiB respectively. |
 | ESP32-S3 with PSRAM | an app's memory goes to PSRAM when no internal block is large enough: the `esp32s3` image for quad PSRAM or none, `esp32s3-r8` for octal ([DEVICES.md](DEVICES.md)) |
 | Zephyr on the S3 N8R8 | the octal PSRAM is a heap of its own for app memories of 16 KB or more; its driver takes 4 KB of internal RAM |
 | Zephyr on the S3 N8R8 with PSRAM disabled | The 64 KiB wasm3 benchmark ran with a 140,592 B C heap and a 79,872 B kernel heap. This gives the C heap 20 KiB more, using 14 KiB from the kernel heap and 6 KiB of DRAM previously free at link time. The instrumented build left 1,392 B free at link time. |
@@ -275,7 +275,7 @@ The N8R8 ran CoreMark as its only app, with MQTT and telemetry export off. Both 
 
 Flight Control received the completed score at 62 s uptime and another status at 122 s with the same score. The device then applied a new spec replacing CoreMark with `alarm`. At 128 s it reported `alarm` running and the new spec up to date. All three reports carried the same boot ID.
 
-With ESP-IDF the 64 KB build takes about 105 KB of heap in all: the loaded module about 18 KB, its thread's stack 8.7 KB, the instance about 71 KB with its 68 KB block. Whether that block is there depends on how broken up the heap is. With v3.14-rc12, 40 KB kept for the agent and app memories in blocks of their own size:
+With the earlier ESP-IDF allocator, the 64 KiB build used about 105 KB of heap in total. The loaded module took about 18 KB, its thread stack 8.7 KB and its instance about 71 KB including the 68 KiB block. In v3.14-rc12 the allocator could serve the same linear memory from a 64 KiB block. The following swaps used that release with a 40 KiB heap floor for the agent.
 
 | | |
 |---|---|
