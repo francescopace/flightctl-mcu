@@ -1773,6 +1773,7 @@ static void test_arduino(void)
     CHECK_INT(stub_log_count("app a: arduino pin 0: written before pinMode(OUTPUT) (-1)"), 1);
     CHECK(!stub_log_has("app a: arduino pin 7: written before pinMode(OUTPUT) (-1)"));
     CHECK(!stub_log_has("app a: arduino pin 17: written before pinMode(OUTPUT) (-1)"));
+    wait_idle("a"); /* The runner closes its handles after reporting Completed. */
     CHECK_INT(gpio_level(5), 0); /* closed when run() returned: relay1's safe level */
     CHECK(!f_led_open);
     remove_all();
