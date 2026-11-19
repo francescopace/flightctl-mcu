@@ -16,7 +16,7 @@ For C apps, start with [alarm.c](../wasm-apps/alarm/alarm.c). Build and publish 
 | SPI | `fc_spi_open`, `fc_spi_transfer` | a name in `FC_ALLOW` |
 | UART | `fc_uart_open`, `fc_uart_read`, `fc_uart_write` | a name in `FC_ALLOW` |
 | ADC and PWM | `fc_adc_open`, `fc_adc_read_mv`, `fc_pwm_open`, `fc_pwm_duty` | a name in `FC_ALLOW` |
-| Sensors | `fc_sensor_read` (millidegrees Celsius), `fc_sensor_subscribe` (temperature triggers) | board-map name in `FC_ALLOW`; built-in `die_temp` needs no grant |
+| Sensors | `fc_sensor_read` (temperature or battery channels), `fc_sensor_subscribe` (temperature triggers) | board-map name in `FC_ALLOW`; built-in `die_temp` needs no grant |
 | Metrics | `fc_metric` | `metrics` |
 | MQTT | `fc_mqtt_publish`, `fc_mqtt_subscribe`, `fc_mqtt_topic`, `fc_event_data` | `mqtt` |
 | C library (`env`) | Functions from `string.h`, `stdio.h`, `stdlib.h`, `ctype.h` and `math.h`. [Function list](#the-c-library) | always |
@@ -87,7 +87,7 @@ Names are unique across the map. A fleet template can use labels to select pins 
 | I²C | `sda`, `scl`, optional `hz` (default 100 kHz). |
 | SPI | `sck`, `mosi`, `miso` (one data pin may be omitted), `cs`, `mode` (0–3), `hz` (default 1 MHz). Devices with matching bus pins share the bus. |
 | UART | `tx`, `rx` (one may be omitted), optional RS-485 driver-enable pin `de`. `baud` defaults to 115200 when the app requests 0. |
-| Sensor | `"source": "die_temp"` selects the built-in temperature source. On Zephyr, `"dt"` selects a temperature probe declared in the app hardware devicetree. |
+| Sensor | `"source": "die_temp"` selects the built-in temperature source. On Zephyr, `"dt"` selects a temperature probe declared in the app hardware devicetree. Battery sources reference an ADC channel or I²C bus by name. [Battery channels](#battery-channels) |
 | PWM | `hz` defaults to 1 kHz when the app requests 0. |
 
 For a firmware-defined name, `"pin": -1` (or omitted bus pins) keeps its original wiring. The device rejects invalid field types, unknown sections, reserved or nonexistent pins, and conflicting pin assignments. A valid map change restarts apps using the interface. Opening an unknown name returns `FC_ENOENT`.
@@ -138,6 +138,41 @@ spec:
           envVars:
             FC_ALLOW: "relay1 button0 led0"
 ```
+
+## Battery channels
+
+Use `fc_sensor_read(name, nlen, &value)` to poll a battery channel. Grant the app only the sensor names it reads. The firmware claims the underlying ADC channel or I²C bus for each reading and releases it before returning. A raw peripheral grant is unnecessary. An open handle on the same input gives `FC_EBUSY`. Battery channels return `FC_ENOTSUP` from `fc_sensor_subscribe`.
+
+| Source in the board map | Input | Value |
+|---|---|---|
+| `battery_adc` | Named ADC channel wired to the pack through a known divider | Battery millivolts, rounded to the nearest mV after scaling |
+| `sbs_voltage` | Named I²C bus connected to an SBS gauge | Pack voltage in mV |
+| `sbs_percent` | Same bus | Relative state of charge, 0–100% |
+| `sbs_charging` | Same bus | 1 for positive current into the pack, 0 for idle or discharge |
+
+For a voltage divider, first declare the wired ADC channel in the board map. On ESP-IDF use a supported ADC1 pin. On Zephyr use an ADC channel exposed by the board's app hardware devicetree. This map uses a channel named `vbat_adc` whose pin sees half the pack voltage.
+
+```json
+{"sensor":{"battery_mv":{"source":"battery_adc","input":"vbat_adc","divider_num":2,"divider_den":1}}}
+```
+
+The multiplier is `divider_num / divider_den`, both positive integers with the numerator at least as large as the denominator. Use the actual divider ratio and keep the input within the board's ADC range. Accuracy depends on the ADC calibration and resistor tolerances. Configure this source only where the divider is wired. A floating pin can return a plausible voltage.
+
+For a Smart Battery gauge on an existing bus named `i2c0`, use this map. The firmware reads standard two-byte little-endian words at the 7-bit address `0x0b` for Voltage (0x09), RelativeStateOfCharge (0x0d) and signed Current (0x0a). Omit channels the gauge does not implement.
+
+```json
+{
+  "sensor": {
+    "battery_mv":       {"source":"sbs_voltage",  "input":"i2c0"},
+    "battery_pct":      {"source":"sbs_percent",  "input":"i2c0"},
+    "battery_charging": {"source":"sbs_charging", "input":"i2c0"}
+  }
+}
+```
+
+A successful read returns 0 and writes the value. On failure the output stays unchanged. An unmapped name returns `FC_ENOENT`, a missing grant gives `FC_EPERM`, and a failed bus read returns the driver's error. Charge above 100% is rejected with `FC_EIO`. A divider supplies voltage only.
+
+The example `battery` app uses the names above. Set `FC_ALLOW` to `battery_mv battery_pct battery_charging metrics` and configure the threshold for your pack in `/etc/fc-app/battery.json`, for example `{"low_mv":3300,"sample_ms":30000}`. It samples at startup, on config change and every 30 seconds by default (minimum 1 second). It reports `app.battery.low_battery` as 1 below a positive threshold and 0 at or above it. Without a configured threshold it skips that gauge. Other gauges are `voltage_mv`, `charge_pct` and `charging` under the same prefix. Each updates only on a valid reading. The telemetry gateway may continue to receive the last good value after a read error. Flight Control shows `battery unavailable` when the voltage channel is absent or unsupported, `battery access denied` for a missing grant, and `battery read failed` for a transient error.
 
 ## Config and storage
 
@@ -264,6 +299,7 @@ The SDK also maps common math operations such as `sqrtf` and `fabsf` directly to
 | App | What to try |
 |---|---|
 | [alarm](../wasm-apps/alarm/alarm.c) | Set `sensor` (default `die_temp`), `threshold_c`, `hysteresis_c` and `sample_ms` in `/etc/fc-app/alarm.json`. Grant `led0` for a blue warning 2 °C below the threshold and a blinking alarm. |
+| [battery](../wasm-apps/battery/battery.c) | Polls named battery channels and publishes voltage, low-battery, relative charge and charging gauges. [Configuration](#battery-channels) |
 | [trend](../wasm-apps/trend/trend.c) | Reports temperature and rate of change. Grant `metrics` to export both. Like `alarm`, it stays idle on chips without a temperature sensor. |
 | [libccheck](../wasm-apps/libccheck/libccheck.c) | Exercises libc. A passing run reports `bad=0`. |
 | [hwcheck](../wasm-apps/hwcheck/hwcheck.c) | Grant `i2c0 spi0 uart0 adc0 pwm0` to inspect bus responses, UART loopback, ADC voltage and PWM output. |

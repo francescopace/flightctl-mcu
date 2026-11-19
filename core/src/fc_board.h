@@ -25,12 +25,25 @@ typedef enum {
     FC_RES_SENSOR = FC_HW_KIND_SENSOR,
 } fc_res_kind_t;
 
+typedef enum {
+    FC_SENSOR_TEMPERATURE,
+    FC_SENSOR_BATTERY_ADC,
+    FC_SENSOR_SBS_VOLTAGE,
+    FC_SENSOR_SBS_PERCENT,
+    FC_SENSOR_SBS_CHARGING,
+} fc_sensor_source_t;
+
 typedef struct {
     char name[FC_BOARD_NAME_MAX + 1];
     int kind;
     int pin;        /* -1 when the entry has none (a bus, a devicetree node) */
     int has_dt;     /* names a devicetree node ("dt") */
-    char dt[FC_BOARD_NAME_MAX + 1];
+    union {
+        char dt[FC_BOARD_NAME_MAX + 1];
+        char input[FC_BOARD_NAME_MAX + 1]; /* ADC or I2C entry for battery sensors */
+    };
+    fc_sensor_source_t source;
+    int divider_num, divider_den;
     int dt_id;      /* the port's id for it (fc_hw_t.dt_find), -1 if none */
     int active_low; /* GPIO */
     int safe;       /* GPIO output level when its app stops; -1: back to input */

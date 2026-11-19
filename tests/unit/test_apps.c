@@ -133,7 +133,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/growing", s_growing, sizeof(s_growing)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
-        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_sensor), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(app_tinymlp), V(t_env),
+        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_sensor), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_battery), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(app_tinymlp), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
         V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_libcmath), V(t_malloc), V(t_ctorloop), V(t_ctorfc), V(t_mqtt),
         V(t_arduino), V(t_arduinotick), V(arduino_rust), V(arduino_cpp), V(arduino_assemblyscript), V(arduino_tinygo),
@@ -1752,6 +1752,112 @@ static void test_sensor_events(void)
     fc_apps_file_changed(FC_BOARD_PATH);
 }
 
+static int f_sbs_current, f_sbs_pct;
+
+static int f_sbs_transfer(int bus, int addr, const uint8_t *w, size_t wl, uint8_t *r, size_t rl, int timeout_ms)
+{
+    if (bus != 7 || addr != 0x0b || wl != 1 || rl != 2 || timeout_ms <= 0 || timeout_ms > 100) {
+        return FC_HW_EINVAL;
+    }
+    int word;
+    switch (*w) {
+    case 0x09: word = 3700; break;
+    case 0x0a: word = f_sbs_current; break;
+    case 0x0d: word = f_sbs_pct; break;
+    default: return FC_HW_EIO;
+    }
+    r[0] = (uint8_t)word;
+    r[1] = (uint8_t)((unsigned)word >> 8);
+    return 0;
+}
+
+static void check_battery_metric(const char *name, int value)
+{
+    fc_metric_point_t points[8];
+    size_t count = fc_metrics_app_points(points, 8);
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(points[i].name, name) == 0) {
+            CHECK(!points[i].sum && points[i].d == value);
+            return;
+        }
+    }
+    CHECK(value == -1); /* absent */
+}
+
+static void test_battery(void)
+{
+    char err[160];
+    const char *adc = "{\"sensor\":{\"battery_mv\":{\"source\":\"battery_adc\",\"input\":\"level\","
+                      "\"divider_num\":5,\"divider_den\":3}}}";
+    const char *sbs = "{\"sensor\":{\"battery_mv\":{\"source\":\"sbs_voltage\",\"input\":\"i2c0\"},"
+                      "\"battery_pct\":{\"source\":\"sbs_percent\",\"input\":\"i2c0\"},"
+                      "\"battery_charging\":{\"source\":\"sbs_charging\",\"input\":\"i2c0\"}}}";
+    const char *grant = "{\"FC_ALLOW\":\"battery_mv battery_pct battery_charging metrics\"}";
+    const char *config = "{\"low_mv\":3700}";
+    CHECK_INT(fc_port_write_file("/etc/fc-app/battery.json", config, strlen(config)), 0);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"sensor\":{\"v\":{\"source\":\"sbs_voltage\","
+                                 "\"input\":\"level\"}}}", err, sizeof(err)), -1);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"sensor\":{\"v\":{\"source\":\"battery_adc\","
+                                 "\"input\":\"level\",\"divider_num\":2,\"divider_den\":0}}}", err, sizeof(err)), -1);
+    CHECK_INT(apply_one("battery", "reg/app_battery", grant, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("battery", "Running battery unavailable", 3000), "Running battery unavailable");
+    check_battery_metric("app.battery.low_battery", -1);
+    remove_all();
+
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, adc, err, sizeof(err)), 0);
+    CHECK_INT(fc_port_write_file(FC_BOARD_PATH, adc, strlen(adc)), 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    CHECK_INT(apply_one("battery", "reg/app_battery", "{\"FC_ALLOW\":\"level metrics\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("battery", "Running battery access denied", 3000), "Running battery access denied");
+    CHECK_INT(apply_one("battery", "reg/app_battery", grant, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("battery", "Running 2057 mV (low)", 3000), "Running 2057 mV (low)");
+    check_battery_metric("app.battery.voltage_mv", 2057);
+    check_battery_metric("app.battery.low_battery", 1);
+    check_battery_metric("app.battery.charge_pct", -1);
+    CHECK_INT(f_adc_pin, -1);
+    fc_board_entry_t *input = fc_board_find("level", 5);
+    CHECK(input != NULL);
+    CHECK_INT(fc_board_claim(input, 7), 0);
+    fc_apps_file_changed("/etc/fc-app/battery.json");
+    CHECK_STR(wait_state_of("battery", "Running battery read failed", 3000), "Running battery read failed");
+    fc_board_release(input);
+    fc_apps_file_changed("/etc/fc-app/battery.json");
+    CHECK_STR(wait_state_of("battery", "Running 2057 mV (low)", 3000), "Running 2057 mV (low)");
+    remove_all();
+
+    CHECK_INT(fc_port_write_file("/etc/fc-app/battery.json", "{}", 2), 0);
+    CHECK_INT(apply_one("battery", "reg/app_battery", grant, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("battery", "Running 2057 mV", 3000), "Running 2057 mV");
+    check_battery_metric("app.battery.low_battery", -1);
+    remove_all();
+    CHECK_INT(fc_port_write_file("/etc/fc-app/battery.json", config, strlen(config)), 0);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, sbs, err, sizeof(err)), 0);
+    CHECK_INT(fc_port_write_file(FC_BOARD_PATH, sbs, strlen(sbs)), 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    CHECK_INT(apply_one("battery", "reg/app_battery", grant, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("battery", "Running battery read failed", 3000), "Running battery read failed");
+    check_battery_metric("app.battery.voltage_mv", -1);
+    CHECK_INT(f_i2c_open, 0);
+    remove_all();
+
+    s_fake.i2c_transfer = f_sbs_transfer;
+    const int currents[] = {-200, 0, 200};
+    for (size_t i = 0; i < 3; i++) {
+        f_sbs_current = currents[i];
+        f_sbs_pct = i == 0 ? 101 : 62;
+        CHECK_INT(apply_one("battery", "reg/app_battery", grant, err, sizeof(err)), 0);
+        CHECK_STR(wait_state_of("battery", "Running 3700 mV", 3000), "Running 3700 mV");
+        check_battery_metric("app.battery.low_battery", 0);
+        check_battery_metric("app.battery.charge_pct", i == 0 ? -1 : 62);
+        check_battery_metric("app.battery.charging", currents[i] > 0);
+        CHECK_INT(f_i2c_open, 0);
+        remove_all();
+    }
+    s_fake.i2c_transfer = f_i2c_transfer;
+    CHECK_INT(fc_port_write_file(FC_BOARD_PATH, "{}", 2), 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
+}
+
 static void test_example_apps(void)
 {
     char err[160];
@@ -2926,6 +3032,7 @@ int main(void)
     RUN(test_board_map);
     RUN(test_board_dt);
     RUN(test_sensor_events);
+    RUN(test_battery);
     RUN(test_example_apps);
     RUN(test_tinyml);
     RUN(test_tinymlp);

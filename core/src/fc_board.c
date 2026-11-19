@@ -35,10 +35,10 @@ static int int_field(const cJSON *o, const char *k, int def, int *out)
         *out = def;
         return 0;
     }
-    if (!cJSON_IsNumber(v) || v->valuedouble != (double)(int)v->valuedouble) {
+    if (!cJSON_IsNumber(v) || v->valuedouble != (double)v->valueint) {
         return -1;
     }
-    *out = (int)v->valuedouble;
+    *out = v->valueint;
     return 0;
 }
 
@@ -88,7 +88,36 @@ static int parse_sensor(const cJSON *o, fc_board_entry_t *e, const fc_hw_t *hw)
     if (e->has_dt) {
         return fields == 1 && valid_name(dt->valuestring) && hw && hw->dt_find ? 0 : -1;
     }
-    return fields == 1 && cJSON_IsString(src) && strcmp(src->valuestring, "die_temp") == 0 ? 0 : -1;
+    if (!cJSON_IsString(src)) {
+        return -1;
+    }
+    if (strcmp(src->valuestring, "die_temp") == 0) {
+        return fields == 1 ? 0 : -1;
+    }
+    const cJSON *input = cJSON_GetObjectItemCaseSensitive(o, "input");
+    if (!cJSON_IsString(input) || !valid_name(input->valuestring)) {
+        return -1;
+    }
+    snprintf(e->input, sizeof(e->input), "%s", input->valuestring);
+    if (strcmp(src->valuestring, "battery_adc") == 0) {
+        e->source = FC_SENSOR_BATTERY_ADC;
+        if (fields != 4 || int_field(o, "divider_num", 0, &e->divider_num) < 0 ||
+            int_field(o, "divider_den", 0, &e->divider_den) < 0 ||
+            e->divider_den <= 0 || e->divider_num < e->divider_den) {
+            return -1;
+        }
+    } else if (fields != 2) {
+        return -1;
+    } else if (strcmp(src->valuestring, "sbs_voltage") == 0) {
+        e->source = FC_SENSOR_SBS_VOLTAGE;
+    } else if (strcmp(src->valuestring, "sbs_percent") == 0) {
+        e->source = FC_SENSOR_SBS_PERCENT;
+    } else if (strcmp(src->valuestring, "sbs_charging") == 0) {
+        e->source = FC_SENSOR_SBS_CHARGING;
+    } else {
+        return -1;
+    }
+    return 0;
 }
 
 /* One entry from its JSON object. */
@@ -158,7 +187,7 @@ static int parse_entry(const fc_hw_t *hw, int check, int kind, const cJSON *o, f
     e->has_dt = cJSON_IsString(dt);
     e->dt_id = -1;
     if (kind == FC_RES_SENSOR && parse_sensor(o, e, hw) < 0) {
-        snprintf(err, err_len, "%s: invalid sensor source", e->name);
+        snprintf(err, err_len, "%s: invalid sensor source, input or divider", e->name);
         return -1;
     }
     if (e->has_dt) {
@@ -417,12 +446,33 @@ static int check_pins(const fc_board_entry_t *map, int count, char *err, size_t 
     return 0;
 }
 
+static int check_sensor_inputs(const fc_board_entry_t *map, int count, char *err, size_t err_len)
+{
+    for (int i = 0; i < count; i++) {
+        if (map[i].source == FC_SENSOR_TEMPERATURE) {
+            continue;
+        }
+        int kind = map[i].source == FC_SENSOR_BATTERY_ADC ? FC_RES_ADC : FC_RES_I2C;
+        int j = 0;
+        while (j < count && !(map[j].kind == kind && strcmp(map[j].name, map[i].input) == 0)) {
+            j++;
+        }
+        if (j == count) {
+            snprintf(err, err_len, "%s needs a mapped %s input: %s", map[i].name,
+                     kind == FC_RES_ADC ? "ADC" : "I2C", map[i].input);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int build(const fc_hw_t *hw, const char *fleet, fc_board_entry_t *map, int *count, char *err, size_t err_len)
 {
     *count = 0;
     char *defaults = hw != NULL && hw->board_defaults != NULL ? hw->board_defaults() : NULL;
     int rc = 0;
-    if (defaults != NULL && merge(hw, 0, defaults, map, count, err, err_len) != 0) {
+    if (defaults != NULL && (merge(hw, 0, defaults, map, count, err, err_len) != 0 ||
+                             check_sensor_inputs(map, *count, err, err_len) != 0)) {
         fc_port_log(FC_LOG_WARN, "the firmware's board map is not valid: %s", err);
         *count = 0;
     }
@@ -432,7 +482,8 @@ static int build(const fc_hw_t *hw, const char *fleet, fc_board_entry_t *map, in
         if (merge(hw, 1, fleet, map, count, why, sizeof(why)) != 0) {
             snprintf(err, err_len, "%s: %s", FC_BOARD_PATH, why);
             rc = -1;
-        } else if (check_pins(map, *count, why, sizeof(why)) != 0) {
+        } else if (check_pins(map, *count, why, sizeof(why)) != 0 ||
+                   check_sensor_inputs(map, *count, why, sizeof(why)) != 0) {
             snprintf(err, err_len, "%s: %s", FC_BOARD_PATH, why);
             rc = -1;
         }

@@ -18,7 +18,7 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 
 - **Works today.** Operators can issue a short-lived certificate per batch and approve devices from an allow list. A leaked certificate can still submit enrollment requests until expiry.
 - **Feature limit.** Deleting the CertificateSigningRequest leaves a leaked certificate usable. Operators have no way to revoke it immediately on 1.4.0.
-- **Server change.** The 1.4.0 enrollment endpoint checks the signer and expiry. On Flight Control’s main branch, an operator can revoke the certificate through its CertificateSigningRequest, and enrollment checks the CSR’s approval and revocation status (`CSRStatusAllowsEnrollment`). Operators need a server release containing that API. On 1.4.0, running `tools/enrollment.sh` issues a certificate and leaves earlier certificates valid until expiry.
+- **Server change.** The 1.4.0 enrollment endpoint checks the signer and expiry. On Flight Control’s main branch, an operator can revoke the certificate through its CertificateSigningRequest, and enrollment checks the CSR’s approval and revocation status (`CSRStatusAllowsEnrollment`). Operators need a server release containing that API. On 1.4.0, running `tools/enrollment.sh` issues a certificate and leaves earlier certificates valid until expiry. [Upstream PR #3817](https://github.com/flightctl/flightctl/pull/3817)
 
 ### 3. A device with an RSA key cannot enroll
 

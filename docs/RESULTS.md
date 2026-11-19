@@ -9,11 +9,29 @@ Six boards were tested with Flight Control 1.4.0. Firmware sizes are for release
 | Fleet management | Both ports enrolled over mTLS, reported status, applied config and ran signed WASM apps. Firmware updates preserved device identity. Certificate renewal was also verified on a physical C6. |
 | Named temperature sensors | The same signed WASM alarm read `line_temp` on the ESP-IDF C6 and the Zephyr S3 N8R8. Both used their physical die probes. Both reported access denied without the grant, entered alarm at a 5 °C threshold, cleared at 120 °C and reported denial again after revocation. [Sensor mapping](APPS.md#what-an-app-may-use) |
 | Sensor notifications | A signed WASM probe on the physical ESP-IDF C6 received a threshold interrupt with a 4–5 °C window, closed its subscription and received another interrupt after reopening. Revoking the grant returned `FC_EPERM`. The physical Zephyr S3 die driver returned `FC_ENOTSUP` for both triggers and the alarm continued sampling. Zephyr `native_sim` exercised data-ready and threshold callbacks with an emulated sensor driver. |
+| Firmware and apps before 0.9.1 | All six physical boards installed the candidate firmware and ran the signed `alarm` and `battery` modules in turn, each with zero reported app restarts. The five boards with a die probe entered alarm at 5 °C. The classic ESP32 reported its missing temperature sensor. All six reported `battery unavailable` with no pack connected. All six returned to their v0.9.0 firmware and app. |
 | Firmware updates | Both ports installed full and delta images from a TLS registry, confirmed the new firmware after reboot and rolled back a failed release. [Measured deltas](#firmware-deltas) |
 | <a id="http2"></a>HTTP/2 | Spec and status shared a connection on all six boards. Registry logs confirmed HTTP/2 app and firmware downloads on classic ESP32, C5, C6 and S3 with ESP-IDF, and on S3 with Zephyr. |
 | Wi-Fi provisioning | A phone provisioned the C6 with ESP-IDF and the S3 with Zephyr. After a password retry, C6 joined in about 2 s, closed its AP about 8 s later and rejoined after reset. The Zephyr S3 joined in 8 s and was online with its app running 1 s after its AP closed. [Provisioning](PROVISIONING.md) |
 | Operations | Both ports delivered device logs, remote console output and OTLP metrics. Decommissioning wiped the device key and certificate in 2.4–3 s. The resident app kept running. |
 | Crash dumps | A physical Zephyr S3 with `alarm` produced an 8,535 B dump. Emulated ESP-IDF C3 dumps measured 11,200–14,080 B with zero or two apps. Both were retrieved and decoded. [Download and decode a dump](CONSOLE.md#download-a-crash-dump) |
+
+## Battery telemetry
+
+The `v0.9.1-rc.battery1` images used the same `battery` module (1,466 B) across ESP32, C3, C5, C6 and S3 N4R2 with ESP-IDF, and S3 N8R8 with Zephyr. The companion `alarm` module was 2,926 B. [Sensor API and fleet configuration](APPS.md#battery-channels)
+
+On an emulated ESP32-C3 running the same ESP-IDF image and signed app, Flight Control's Telemetry Gateway exported the following gauges. The fleet set `low_mv` to 3,600. For the ADC test, esp-emu 1.1.0 drove GPIO3 with its potentiometer and the board map used a 2:1 divider. The readings include the ESP-IDF ADC calibration. [Espressif virtual parts](https://github.com/espressif/esp-emulator/blob/v1.1.0/docs/guides/PARTS.md)
+
+| Input | `voltage_mv` | `low_battery` | `charge_pct` | `charging` |
+|---|---:|---:|---:|---:|
+| ADC at 1,650 mV | 3,280 | 1 | — | — |
+| ADC raised to 1,980 mV | 3,924 | 0 | — | — |
+| ADC returned to 1,650 mV | 3,280 | 1 | — | — |
+| I²C register file at 0x0b, 3,700 mV and +14 mA | 3,700 | 0 | 62 | 1 |
+
+The I²C fixture used SDA on GPIO5 and SCL on GPIO6. The emulator option was `--i2c-dev 0:0x0b,width=1,fill=0,reg=0x09=0x74,reg=0x0a=0x0e,reg=0x0d=0x3e`. Pack voltage accuracy and charger behavior still need verification on wired hardware.
+
+In host WAMR tests, a 1,234 mV ADC input and a 5:3 divider produced 2,057 mV. At exactly the configured threshold, the app emitted `low_battery=0`. It skipped that gauge when the fleet omitted the threshold. An emulated gauge reported 62% relative charge, rejected 101%, and distinguished +200 mA charging current from idle and −200 mA discharge.
 
 ## Firmware size
 

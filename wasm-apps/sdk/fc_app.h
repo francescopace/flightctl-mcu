@@ -277,10 +277,13 @@ FC_IMPORT("pwm_open") int32_t fc_pwm_open(const char *name, int32_t nlen, int32_
 FC_IMPORT("pwm_duty") int32_t fc_pwm_duty(int32_t h, int32_t duty);
 
 /* ---- Named sensors ------------------------------------------------------
- * Read temperature in millidegrees Celsius. On error *value is unchanged
- * (FC_ENOENT: unmapped, FC_EPERM: missing grant). A mapped name needs its
- * own FC_ALLOW grant. Multiple apps can read it. The built-in "die_temp"
- * remains available without a grant where supported. */
+ * Read one signed integer. Temperature is in millidegrees Celsius. Battery
+ * voltage is in mV, relative charge in percent (0..100), and net charging
+ * is 1 when current flows into the pack, otherwise 0. The board map picks
+ * the source. Battery sources support polling only. On error *value is
+ * unchanged (FC_ENOENT: unmapped, FC_EPERM: missing grant). A mapped name
+ * needs its own FC_ALLOW grant. Multiple apps can read it. The built-in
+ * "die_temp" remains available without a grant where supported. */
 FC_IMPORT("sensor_read") int32_t fc_sensor_read(const char *name, int32_t nlen, int32_t *value);
 
 /* Subscribe to a granted board-map name. The event prompts a fresh

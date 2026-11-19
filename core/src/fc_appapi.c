@@ -671,6 +671,57 @@ static int32_t fc_led_rgb(wasm_exec_env_t env, int32_t h, int32_t r, int32_t g, 
 
 /* ---- named sensors ----------------------------------------------------------------------- */
 
+static int battery_read(const fc_hw_t *hw, const fc_board_entry_t *sensor, int slot, int32_t *value)
+{
+    fc_board_entry_t *input = fc_board_find(sensor->input, strlen(sensor->input));
+    if (!input || !hw) {
+        return FC_HW_ENOTSUP;
+    }
+    int rc = fc_board_claim(input, slot);
+    if (rc < 0) {
+        return rc;
+    }
+    rc = FC_HW_ENOTSUP;
+    if (sensor->source == FC_SENSOR_BATTERY_ADC) {
+        if (hw->adc_open && hw->adc_read_mv && hw->adc_close) {
+            rc = hw->adc_open(fc_board_pin(input));
+            if (rc >= 0) {
+                int mv = hw->adc_read_mv(rc);
+                hw->adc_close(rc);
+                rc = mv;
+                if (mv >= 0) {
+                    int64_t scaled = ((int64_t)mv * sensor->divider_num + sensor->divider_den / 2) / sensor->divider_den;
+                    rc = scaled > INT32_MAX ? FC_HW_EIO : 0;
+                    if (!rc) {
+                        *value = (int32_t)scaled;
+                    }
+                }
+            }
+        }
+    } else if (hw->i2c_open && hw->i2c_transfer && hw->i2c_close) {
+        rc = hw->i2c_open(&input->bus);
+        if (rc >= 0) {
+            int bus = rc;
+            /* Smart Battery Data, Read Word: Voltage, RelativeStateOfCharge, Current. */
+            uint8_t reg = sensor->source == FC_SENSOR_SBS_VOLTAGE ? 0x09 :
+                          sensor->source == FC_SENSOR_SBS_PERCENT ? 0x0d : 0x0a;
+            uint8_t data[2];
+            rc = hw->i2c_transfer(bus, 0x0b, &reg, 1, data, sizeof(data), APP_WAIT_MS);
+            hw->i2c_close(bus);
+            if (rc == 0) {
+                int word = data[0] | (data[1] << 8);
+                if (sensor->source == FC_SENSOR_SBS_PERCENT && word > 100) {
+                    rc = FC_HW_EIO;
+                } else {
+                    *value = sensor->source == FC_SENSOR_SBS_CHARGING ? (word > 0 && word < 0x8000) : word;
+                }
+            }
+        }
+    }
+    fc_board_release(input);
+    return rc;
+}
+
 static int32_t fc_sensor_read(wasm_exec_env_t env, const char *name, int32_t nlen, int32_t value_at)
 {
     wasm_module_inst_t inst = wasm_runtime_get_module_inst(env);
@@ -688,7 +739,11 @@ static int32_t fc_sensor_read(wasm_exec_env_t env, const char *name, int32_t nle
     }
     int32_t v;
     int rc;
-    if (sensor && sensor->has_dt) {
+    if (sensor && sensor->source != FC_SENSOR_TEMPERATURE) {
+        int64_t start = fc_apps_now_us();
+        rc = battery_read(hw, sensor, app_of(env)->slot, &v);
+        fc_apps_native_time(env, app_of(env), start);
+    } else if (sensor && sensor->has_dt) {
         if (!hw || !hw->sensor_read_dt) {
             return FC_HW_ENOTSUP;
         }
@@ -730,7 +785,7 @@ static int32_t fc_sensor_subscribe(wasm_exec_env_t env, const char *name, int32_
     if (mode != FC_HW_SENSOR_READY && (mode != FC_HW_SENSOR_THRESHOLD || low >= high)) {
         return FC_HW_EINVAL;
     }
-    if (!g_fc_hw || !g_fc_hw->sensor_subscribe || !g_fc_hw->sensor_unsubscribe) {
+    if (e->source != FC_SENSOR_TEMPERATURE || !g_fc_hw || !g_fc_hw->sensor_subscribe || !g_fc_hw->sensor_unsubscribe) {
         return FC_HW_ENOTSUP;
     }
     int i = new_handle(a, H_SENSOR);
