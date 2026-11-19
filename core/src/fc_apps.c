@@ -1548,7 +1548,6 @@ static int run_entry(app_t *a, wasm_module_inst_t inst, wasm_exec_env_t env, con
     fc_port_log(FC_LOG_INFO, "app %s running %s() (%s)", a->name, name, a->image);
     uint32_t argv[2] = {0, 0};
     a->call_start_ms = fc_apps_now_ms();
-    fc_port_background_compute();
     a->unlimited = 1; /* the device's functions too (fc_apps_native_time) */
     int ok = arm_call(a, env, -1) && wasm_runtime_call_wasm(env, f, 0, argv);
     if (!ok) {

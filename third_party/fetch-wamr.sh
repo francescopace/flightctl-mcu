@@ -27,6 +27,8 @@
 #   thread manager does, whether the exec env's limit was set to 0, and then
 #   traps: an app's run-once export (FC_ENTRY), which has no budget, can be
 #   removed while it runs.
+#   wamr-unbounded-checkpoint.patch: let the ESP-IDF scheduler pause unlimited
+#   calls at instruction checkpoints shared by all WASM runners.
 #   wamr-espidf-psram-interp.patch: on an ESP32-S3 built with PSRAM, WAMR
 #   asked for every linear memory in PSRAM only (meant for AOT code, which
 #   this firmware does not build): where the image found no PSRAM, no app

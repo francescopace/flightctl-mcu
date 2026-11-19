@@ -58,6 +58,8 @@ static int app_kv_set(const char *key, const void *data, size_t len)
 #include "wasm_vectors.h"
 #include "arduino_vectors.h"
 
+unsigned test_wasm_checkpoint_count(void);
+
 /* An app that sets its state to "v1" (tests/unit/wasm/t_state.c); "v2" is the
  * same module with that string changed (make_v2). */
 #define s_v1 w_t_state
@@ -620,6 +622,7 @@ static void test_endless_loop(void)
 {
     char err[160];
     int retry;
+    unsigned checkpoints = test_wasm_checkpoint_count();
     s_call_budget = 2000000;
     CHECK_INT(apply("reg/app:loop", err, sizeof(err), &retry), 0);
     for (int i = 0; i < 300 && strncmp(app_state(), "Error", 5) != 0; i++) {
@@ -632,6 +635,7 @@ static void test_endless_loop(void)
     /* Removed while it may be in its loop again (restarted after the delay). */
     CHECK_INT(apply(NULL, err, sizeof(err), &retry), 0);
     CHECK_STR(app_state(), "none");
+    CHECK(test_wasm_checkpoint_count() == checkpoints);
     s_call_budget = FC_APP_CALL_BUDGET;
 }
 
@@ -832,9 +836,11 @@ static void test_fc_refused(void)
 static void test_entry(void)
 {
     char err[160];
+    unsigned checkpoints = test_wasm_checkpoint_count();
     s_call_budget = 200000; /* run() takes 300 ms: far more than this */
     CHECK_INT(apply_one("e", "reg/t_entry", "{\"FC_ENTRY\": \"run\"}", err, sizeof(err)), 0);
     CHECK_STR(wait_state_of("e", "Completed run() returned 1234.568", 3000), "Completed run() returned 1234.568");
+    CHECK(test_wasm_checkpoint_count() - checkpoints > 1);
     usleep(200 * 1000); /* not run again */
     CHECK_STR(state_of("e"), "Completed run() returned 1234.568");
     pthread_mutex_lock(&s_lock);

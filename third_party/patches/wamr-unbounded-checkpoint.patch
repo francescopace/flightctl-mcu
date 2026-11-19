@@ -1,0 +1,45 @@
+--- a/core/iwasm/interpreter/wasm_interp_fast.c
++++ b/core/iwasm/interpreter/wasm_interp_fast.c
+@@ -90,6 +90,34 @@
+     } while (0)
+
+ #if WASM_ENABLE_INSTRUCTION_METERING != 0
++#ifdef WASM_UNBOUNDED_CHECKPOINT
++extern void
++WASM_UNBOUNDED_CHECKPOINT(void);
++
++/* Bounded calls trap at their original limit. Unlimited calls borrow the
++ * dispatch counter to check the scheduler even in straight-line bytecode.
++ * A concurrent stop sets the environment limit to zero. */
++static int
++refill_unbounded_call(WASMExecEnv *exec_env)
++{
++    if (*(volatile int *)&exec_env->instructions_to_execute >= 0)
++        return 0;
++    WASM_UNBOUNDED_CHECKPOINT();
++    return 4096;
++}
++
++#define CHECK_INSTRUCTION_LIMIT()                                      \
++    do {                                                               \
++        if (instructions_left <= 0) {                                  \
++            instructions_left = refill_unbounded_call(exec_env);       \
++            if (instructions_left == 0) {                              \
++                wasm_set_exception(module, "instruction limit exceeded"); \
++                goto got_exception;                                    \
++            }                                                          \
++        }                                                              \
++        instructions_left--;                                           \
++    } while (0)
++#else
+ #define CHECK_INSTRUCTION_LIMIT()                                 \
+     if (instructions_left == 0) {                                 \
+         wasm_set_exception(module, "instruction limit exceeded"); \
+@@ -97,6 +125,7 @@
+     }                                                             \
+     else if (instructions_left > 0)                               \
+         instructions_left--;
++#endif
+
+ #else
+ #define CHECK_INSTRUCTION_LIMIT() (void)0

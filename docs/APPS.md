@@ -44,7 +44,7 @@ A trap is the app's; a crash of the firmware is the device's, and it restarts. T
 A module built for no device in particular, such as a benchmark, runs as it was published. The fleet names the export to call in the app's env var `FC_ENTRY`; a module with neither `tick` nor `on_event` that exports `_start` needs none. The device calls that export once, with no arguments:
 
 - once the agent has had nothing on hand for 2 s (no status update due or being sent, no spec being applied), and at most 30 s after the app started, so that a benchmark does not share the CPU with the agent's first status updates; until then the app is `Preparing`. Its memory is taken as soon as the app starts; if it does not fit, the app waits for the heap ([below](#size-and-limits));
-- with no instruction budget. On ESP-IDF this entry runs at idle priority so the idle task can service the watchdog while the app computes. Removing or updating the app stops it at its next branch or call;
+- with no instruction budget. On ESP-IDF this entry runs at the normal app priority. The interpreter checks the system tick every 4,096 operations and pauses all computing apps in the same short window so the idle task can service the watchdog. Removing or updating the app stops it at its next branch or call;
 - on the app's thread, at the priority of the agent's threads, so they take turns on the CPU;
 - when it returns, the app is `Completed` and not run again until its image or env vars change, or the device restarts. What it returned is its state, in `customInfo["app.<name>"]`, such as `run() returned 12.500`; a float is given to the thousandth. A trap is an `Error`, and it is run again after a few seconds, as any app.
 
@@ -208,7 +208,7 @@ CI tests the ESP-IDF drivers against virtual peripherals on the S3 (GPIO interru
 | One I2C transfer | 1 KB each way (`FC_I2C_MAX`) |
 | One SPI transfer | 4 KB (`FC_SPI_MAX`) |
 
-Set `FC_PRIMARY: "true"` in one app's `envVars` to give it first use of contiguous memory. At boot the device loads that module first. The second app can stay installed in flash while the primary starts. Updating the primary or restarting it after a trap releases the other app's thread, hardware handles and module. Its stored WASM and key/value data survive. A completed one-shot app keeps its result. Its finished thread is joined and its event and handle buffers are released. Reloading the board map preserves both apps’ metric counters across the restart. On ESP-IDF, an unbounded one-shot entry shares CPU time with the idle task so the idle watchdog can run.
+Set `FC_PRIMARY: "true"` in one app's `envVars` to give it first use of contiguous memory. At boot the device loads that module first. The second app can stay installed in flash while the primary starts. Updating the primary or restarting it after a trap releases the other app's thread, hardware handles and module. Its stored WASM and key/value data survive. A completed one-shot app keeps its result. Its finished thread is joined and its event and handle buffers are released. Reloading the board map preserves both apps’ metric counters across the restart.
 
 Each installed app gets its own descriptor on demand. An empty slot takes no descriptor or event queue. At boot a saved secondary can report `Preparing` from its catalog entry while the primary takes its memory. A secondary that was already running releases its I/O buffers when parked and retains its descriptor for status and restart. Removing either app frees its descriptor without moving or restarting the survivor.
 

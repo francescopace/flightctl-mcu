@@ -206,8 +206,6 @@ void fc_port_metrics(void *obj)
     cJSON_AddStringToObject((cJSON *)obj, "reads", n);
 }
 
-void fc_port_background_compute(void) {}
-
 long fc_port_stack_unused(void)
 {
     return stub_stack_unused;

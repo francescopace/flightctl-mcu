@@ -451,8 +451,6 @@ void fc_port_metrics(void *obj)
 #endif
 }
 
-void fc_port_background_compute(void) {}
-
 long fc_port_stack_unused(void)
 {
 #if defined(CONFIG_INIT_STACKS) && defined(CONFIG_THREAD_STACK_INFO)

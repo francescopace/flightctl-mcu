@@ -234,8 +234,6 @@ long fc_port_heap_low(void)
 }
 
 
-void fc_port_background_compute(void) {}
-
 long fc_port_stack_unused(void)
 {
     return -1;

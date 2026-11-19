@@ -66,10 +66,6 @@ void fc_port_metrics(void *obj);
  * each of its threads and the apps' (customInfo stackMinFreeBytes). */
 long fc_port_stack_unused(void);
 
-/* Schedule an unbounded compute entry alongside the idle task on ports whose
- * watchdog needs idle CPU time. Called only on its dedicated runner. */
-void fc_port_background_compute(void);
-
 /* The largest block the heap could give now, in bytes, or -1 when the port
  * cannot tell. An app whose memory does not fit says it in its error. */
 long fc_port_heap_largest(void);

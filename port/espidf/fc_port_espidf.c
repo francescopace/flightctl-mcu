@@ -465,9 +465,18 @@ void fc_port_metrics(void *obj)
     }
 }
 
-void fc_port_background_compute(void)
+/* WAMR calls this on a one-shot runner every 4096 interpreter operations.
+ * All runners use the same tick window, including on different cores. A
+ * delay relative to each runner's start could let them starve idle in turns. */
+void fc_wasm_compute_checkpoint(void)
 {
-    vTaskPrioritySet(NULL, tskIDLE_PRIORITY);
+    TickType_t now = xTaskGetTickCount();
+    const TickType_t window = pdMS_TO_TICKS(20) + 1;
+    const TickType_t period = pdMS_TO_TICKS(500) + 1;
+    TickType_t phase = now % period;
+    if (phase < window) {
+        xTaskDelayUntil(&now, window - phase);
+    }
 }
 
 long fc_port_stack_unused(void)
