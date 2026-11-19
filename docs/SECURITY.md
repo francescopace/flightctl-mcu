@@ -14,7 +14,7 @@ The default ESP-IDF build leaves eFuses untouched. A plain device requires USB f
 
 ## Product compliance
 
-For a product assessment, use the [SBOM tied to the release digest](SBOM.md), the protections for the variant you ship and the [verification results](RESULTS.md#what-works).
+For a product assessment, use the [SBOM tied to the release digest](SBOM.md), the protections for the variant you ship and the [signed firmware update results](RESULTS.md#firmware-deltas).
 
 The manufacturer assesses the finished product against the requirements that apply to it. For a product covered by the EU Cyber Resilience Act, this includes assessing cybersecurity risks and handling vulnerabilities throughout the product's support period. ETSI EN 303 645 provides baseline security requirements for consumer IoT devices. See the [Cyber Resilience Act, Article 13 and Annex I](https://op.europa.eu/en/publication-detail/-/publication/21b7d4eb-a6e2-11ef-85f0-01aa75ed71a1/language-en) and [ETSI EN 303 645](https://portal.etsi.org/webapp/WorkProgram/Report_WorkItem.asp?WKI_ID=69970).
 
@@ -30,7 +30,7 @@ espsecure generate-signing-key --version 2 --scheme rsa3072 secure_boot_key.pem
 ```
 
 ```bash
-TARGET=esp32c3 FW_VERSION=v0.9.0 VARIANT=secure SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
+TARGET=esp32c3 FW_VERSION=v0.9.1 VARIANT=secure SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
 ```
 
 `VARIANT=secure-release` gives the release profile of the same, and `fw-push.py --variant secure-release` pushes it. With the OCI public key provisioned, a firmware update passes both the OCI signature check and the Secure Boot image check.

@@ -9,6 +9,8 @@ The [end-to-end workflow](../.github/workflows/e2e.yml) uses those artifacts and
 - [Unit tests](../tests/unit.sh) run the C core with ASan and UBSan against an in-memory port. They cover management, OCI, deltas, apps, hardware, console, MQTT, metrics and recovery. The WASM suite also fills and restores the sample FIFO, counts record writes, withholds MQTT receipts and exercises two local apps with the broker offline. Python tests cover publishing and provisioning tools.
 - [Fuzz targets](../tests/fuzz.sh) exercise HTTP responses, OCI manifests and signatures, rendered specs, certificates, deltas and console input. CI gives each target 30 s on code pushes. The [nightly workflow](../.github/workflows/fuzz-nightly.yml) defaults to 20 min per target and retains its corpus. Regression inputs live in `tests/fuzz/corpus`.
 
+The FIFO test fills a queue with 680 four-byte samples. The in-memory KV port counts 680 writes (1,401,480 B) on fill and 680 (1,397,400 B) on drain. Peeking, rejecting a stale acknowledgement and pushing to a full queue produce no writes. [Queue test](../tests/unit/test_apps.c) · [Queue capacity and reboot results](RESULTS.md#persistent-samples)
+
 ## End-to-end tests
 
 | Target | What the workflow checks |
@@ -40,7 +42,7 @@ esp-emu --chip esp32c3 --firmware port/espidf/build-esp32c3/merged-binary.bin --
 
 ## Peripheral tests
 
-The [ESP-IDF fixtures](../tests/espidf-hw) call the production drivers. The S3 fixture reads I²C and SPI sensors, checks a UART reply, detects button edges and measures PWM. A second boot with the wrong chip-select must fail. The C3 fixture checks calibrated ADC readings. Run from `tests/espidf-hw` with esp-emu and its examples installed.
+The [ESP-IDF fixtures](../tests/espidf-hw) call the production drivers. The emulated S3 read I²C and SPI sensors, received a UART reply, detected button edges and generated 1–2 ms PWM pulses. A second boot with the wrong chip-select must fail. The emulated C3 returned calibrated ADC readings of 1,640 and 1,962 mV for inputs of 1,650 and 1,980 mV. Run from `tests/espidf-hw` with esp-emu and its examples installed.
 
 ```bash
 idf.py -D IDF_TARGET=esp32s3 build merge-bin
@@ -50,7 +52,7 @@ idf.py -B build-c3 -D SDKCONFIG=build-c3/sdkconfig -D IDF_TARGET=esp32c3 build m
 python3 run.py --fixture adc build-c3/merged-binary.bin /path/to/esp-emu-1.1.0-examples
 ```
 
-The Zephyr S3 job builds the MCUboot agent and a separate Simple Boot button fixture. Build the fixture in the west workspace, then run the second command from `tests/espidf-hw`.
+The Zephyr S3 job builds the MCUboot agent and a separate Simple Boot button fixture. In the emulator, one WASM app read the same button by its devicetree name and by its fleet alias. Build the fixture in the west workspace, then run the second command from `tests/espidf-hw`.
 
 ```bash
 west build -b esp32s3_devkitc/esp32s3/procpu -d /tmp/button-s3 /path/to/repo/tests/zephyr-apps

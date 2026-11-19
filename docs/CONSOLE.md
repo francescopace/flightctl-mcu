@@ -50,7 +50,9 @@ bt
 
 ESP-IDF captures registers and task snapshots. Zephyr on Arm captures registers and thread stacks. The Xtensa backend on the ESP32-S3 captures the faulting thread's registers and stack.
 
-The ESP-IDF factory layout reserves 64 KiB for a dump and 576 KiB for the agent's data. An OTA update preserves the installed partition table. Devices with the older 640 KiB data partition still report `lastFatalError`. Saving a native dump requires provisioning with the new factory layout. The Zephyr ESP32-S3 DevKitC with 8 MiB of flash reserves 128 KiB for a dump. [Measured dump sizes](RESULTS.md#what-works)
+The ESP-IDF factory layout reserves 64 KiB for a dump and 576 KiB for the agent's data. Dumps on an emulated C3 ranged from 11,200 to 14,080 B with zero or two apps running. An OTA update preserves the installed partition table. Devices with the older 640 KiB data partition still report `lastFatalError`. Saving a native dump requires provisioning with the new factory layout.
+
+The Zephyr ESP32-S3 DevKitC with 8 MiB of flash reserves 128 KiB for a dump. A physical board running `alarm` produced an 8,535 B dump.
 
 ## The log
 

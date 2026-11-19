@@ -46,4 +46,4 @@ ESP-IDF keeps the network in `fc_creds` or in encrypted storage on secure builds
 
 Use `tools/provision.py --format zephyr`. A Zephyr device uses the factory network, a previously saved field network, or the access-point procedure above. Radios supporting simultaneous station and AP mode report success or failure before closing the AP, with 5 s for the final response. Other radios close the AP to try the network and reopen it after three failures.
 
-Field credentials are stored in clear in the storage partition. Replacing the provisioning credentials or erasing storage clears the saved field network. [Zephyr build settings](ZEPHYR.md#on-an-esp32-s3) · [Phone provisioning results](RESULTS.md#what-works)
+Field credentials are stored in clear in the storage partition. Replacing the provisioning credentials or erasing storage clears the saved field network. [Zephyr build settings](ZEPHYR.md#on-an-esp32-s3) · [Phone provisioning results](RESULTS.md#timings)

@@ -6,7 +6,8 @@ These findings cover Flight Control 1.4.0.
 
 ## Upstream blockers for agent v1.0.0
 
-The official agent 1.0.0 release depends on the five Flight Control changes below. Each entry describes what works with 1.4.0 and what still needs a server change or release. [Release roadmap](ROADMAP.md#v100-in-progress)
+The official agent 1.0.0 release depends on the Flight Control changes listed below.
+Each entry describes what works and what still needs a server change or release. [Release roadmap](ROADMAP.md#v100-in-progress)
 
 ### 1. Fixed 5-minute disconnect timeout (`DeviceDisconnectedTimeout`)
 
@@ -24,7 +25,7 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 
 - **Works today.** The ESP32-S3, C3 and C6 can enroll with an ECDSA device key kept in storage.
 - **Feature limit.** Their Digital Signature peripheral signs only with RSA. Approval of an enrollment request using that key fails with HTTP 400, so the agent keeps this hardware-key option disabled.
-- **Server change.** Flight Control's ECDSA certificate authority copies the RSA request's signature algorithm into the certificate template (`internal/crypto/internal_ca.go`). Leaving `SignatureAlgorithm` unset would let the authority certify the device's RSA public key using its own ECDSA signing key.
+- **Server change.** Flight Control's ECDSA certificate authority copies the RSA request's signature algorithm into the certificate template (`internal/crypto/internal_ca.go`). The proposed fix leaves `SignatureAlgorithm` unset when the device and issuer use different key types, allowing the CA to certify the device's RSA public key with its ECDSA key. [Upstream PR #3940](https://github.com/flightctl/flightctl/pull/3940)
 
 ### 4. A fleet's OS image cannot come from the software catalog
 
@@ -47,8 +48,6 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 - **Impact.** The fleet controller ignores `matchExpressions`. A selector using only expressions can leave a fleet empty without informing the operator (`internal/tasks/fleet_selector.go`).
 - **Today.** The supplied fleet definitions use `matchLabels`. For example, the ESP-IDF fleet selects devices labeled `app=alarm`. [Fleet definition](../tools/fleet/idf-lab.yaml)
 - **Why v1.0 can proceed.** Exact label matches let operators target the intended devices and roll out a fleet spec. More expressive selectors would require controller support.
-
-<a id="7-batch-success-is-based-only-on-renderedversion"></a>
 
 ### 7. Batch success can precede firmware confirmation
 
@@ -79,8 +78,6 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 - **Impact.** Publishing different firmware under the same tag leaves `os.image` unchanged. Devices can keep running the old firmware even though the registry now serves a new image for that tag.
 - **Today.** Operators change the fleet's `os.image` for each release, using a new version tag or pinning the new digest (`@sha256:…`).
 - **Why v1.0 can proceed.** A changed reference triggers the normal firmware rollout. Detecting a change behind a reused tag would require the server to compare image digests.
-
-<a name="label-sync"></a>
 
 ### 12. A change in the status is a label event
 

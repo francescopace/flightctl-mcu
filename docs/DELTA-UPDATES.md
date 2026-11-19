@@ -56,7 +56,9 @@ The decoder is in the core. A port only has to read its running image: `fc_port_
 
 ## What was verified
 
-[Board results](RESULTS.md#firmware-deltas) give delta sizes, platforms and timings. Unit tests cover truncated, corrupted and mismatched deltas and full-image fallback. The emulator checks both delta and full updates. [Test suite](TESTING.md#end-to-end-tests)
+On the ESP-IDF S3, a 511 KB delta from a debug build to a release build took 13 s. On the Zephyr S3, a 19 KB delta between successive builds took 8 s and was 2.2% of the full image. [Delta sizes across all six boards](RESULTS.md#firmware-deltas)
+
+Unit tests cover truncated, corrupted and mismatched deltas and full-image fallback. The emulator checks both delta and full updates. [Test suite](TESTING.md#end-to-end-tests)
 
 ## Limits
 

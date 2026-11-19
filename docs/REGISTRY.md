@@ -100,8 +100,6 @@ The UI's **Import fleets** form accepts the same repository, revision and path.
 
 Make subsequent changes in Git. Before the first sync, remove a previously applied fleet with the same name. Secrets default to the `flightctl` namespace. Override it with `FLEET_SECRETS_NAMESPACE`.
 
-<a id="moving-a-fleet-to-the-tls-door"></a>
-
 ## Changing the registry address
 
 Changing the registry address in `os.image` triggers a firmware download and reboot even if the image is identical. Publish a [delta from the running release](DELTA-UPDATES.md#publishing-a-release-with-deltas) before changing the fleet. [Image reference comparison](FLIGHTCTL-LIMITATIONS.md#11-the-server-compares-osimage-only-as-a-string)
@@ -110,4 +108,4 @@ Changing the registry address in `os.image` triggers a firmware download and reb
 
 During a registry pull the agent finishes any in-flight status update, closes its management connection and uses one connection for manifests, signatures and blobs. Status resumes after the download.
 
-A TLS connection costs about 25 KB on these boards, including a 16.7 KB receive buffer for a full record. The agent reserves that buffer at startup. ESP-IDF uses smaller dynamic buffers for short records. A cross-host token request temporarily needs another receive buffer from the heap. [Heap during signed downloads](RESULTS.md#ram)
+A TLS connection costs about 25 KB on these boards, including a 16.7 KB receive buffer for a full record. The agent reserves that buffer at startup. ESP-IDF uses smaller dynamic buffers for short records. A cross-host token request temporarily needs another receive buffer from the heap. [Heap during signed downloads](RESULTS.md#full-firmware-download-over-tls)

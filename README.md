@@ -24,7 +24,7 @@ The microcontroller uses Flight Control’s HTTP/JSON agent API over mutual TLS.
 
 **Update an app without rebooting the device.** Change the app image in the fleet spec. The agent downloads the new WASM module and restarts the app while the firmware keeps running. The same module runs on ESP-IDF and Zephyr boards that provide the peripherals it needs. [WASM apps](docs/APPS.md)
 
-**Send only the firmware changes.** If the release includes a delta for the installed image, the device uses it to rebuild the new firmware in the inactive slot. It checks the digest before rebooting. Without a matching delta, it downloads the full image. On one Zephyr ESP32-S3 update, the delta was 19 KB, or 2.2% of the full image. [Delta updates](docs/DELTA-UPDATES.md) · [Board measurements](docs/RESULTS.md#firmware-deltas)
+**Send only the firmware changes.** If the release includes a delta for the installed image, the device uses it to rebuild the new firmware in the inactive slot. It checks the digest before rebooting. Without a matching delta, it downloads the full image. On one Zephyr ESP32-S3 update, the delta was 19 KB, or 2.2% of the full image. [Measured update sizes and times](docs/DELTA-UPDATES.md#what-was-verified) · [Board measurements](docs/RESULTS.md#firmware-deltas)
 
 ![An ESP32-C6's page in Flight Control](docs/img/device.png)
 *An ESP32-C6's page: its status, its labels, and the WASM app `alarm` running.*

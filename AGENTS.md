@@ -60,3 +60,7 @@ Tests must not depend on wall-clock margins: CI's runner is slower than a workst
 ## Docs
 
 `docs/` is written for people who deploy the agent, not for our bench. Give what was verified and the figures (heap, timings, sizes), the limits, and what is not done yet. Keep the history of how a bug was found out of them. `docs/ROADMAP.md` lists only what is open: remove an item when it's done, and put its figures in `docs/RESULTS.md`.
+
+In `docs/RESULTS.md`, put new measurements beside the figures they update. Name the board, firmware and workload when they affect the result. Keep older figures when they help explain a change. Leave bench commands, retries and fleet restoration steps in the lab notes.
+
+Link to Markdown headings where possible. If you rename one, update the links that point to it.

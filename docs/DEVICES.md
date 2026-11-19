@@ -8,7 +8,7 @@
 
 ## Devices and ports
 
-Boards marked **HW** are tested on physical hardware for every release. **Simulation** covers host processes and QEMU. Hardware tests for the three boards on order are pending. [Board results](RESULTS.md#what-works) · [Planned hardware tests](ROADMAP.md#blocked-on-hardware-availability)
+We test each release on the boards marked **HW**. **Simulation** covers host processes and QEMU. The three boards marked **HW pending** still need their first hardware tests. [Board results](RESULTS.md) · [Planned hardware tests](ROADMAP.md#v100-in-progress)
 
 | MCU / target | SRAM | Architecture | Agent port | Test Level |
 |---|---|---|---|---|

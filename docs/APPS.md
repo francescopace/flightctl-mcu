@@ -46,8 +46,6 @@ Whenever an app stops, the agent closes its handles, restores GPIO outputs to th
 
 A device crash counts against an app if it was loading, started less than a minute ago or has had no accepted status since startup. A restart for missing status below the agent's heap reserve also counts. Two consecutive attributed crashes leave the app in `Error` with `crashed the device as it started`. Changing the image, env vars or firmware, or removing the app, clears the block. A normal power cycle or update resets the consecutive crash count.
 
-<a id="modules-built-for-no-device"></a>
-
 ## Standalone modules
 
 Set `FC_ENTRY` to a no-argument export to run a standalone module once. A module with `_start` and no callbacks needs no setting. It may import `env.clock_ms` (i32 or i64 milliseconds since app start), the [C library](#the-c-library) and [Arduino functions](#the-blink-of-wasm3-arduino). Imports from `fc` require the callback interface.
@@ -61,7 +59,7 @@ Both catalog CoreMark modules export `run`. The wasm3 build needs 64 KiB of cont
 ```yaml
         - name: coremark
           appType: container
-          image: <registry>/flightctl-mcu/coremark:v0.9.0-wasm3
+          image: <registry>/flightctl-mcu/coremark:v0.9.1-wasm3
           envVars:
             FC_ENTRY: run
 ```
@@ -174,6 +172,8 @@ For a Smart Battery gauge on an existing bus named `i2c0`, use this map. The fir
 A successful read returns 0 and writes the value. On failure the output stays unchanged. An unmapped name returns `FC_ENOENT`, a missing grant gives `FC_EPERM`, and a failed bus read returns the driver's error. Charge above 100% is rejected with `FC_EIO`. A divider supplies voltage only.
 
 The example `battery` app uses the names above. Set `FC_ALLOW` to `battery_mv battery_pct battery_charging metrics` and configure the threshold for your pack in `/etc/fc-app/battery.json`, for example `{"low_mv":3300,"sample_ms":30000}`. It samples at startup, on config change and every 30 seconds by default (minimum 1 second). It reports `app.battery.low_battery` as 1 below a positive threshold and 0 at or above it. Without a configured threshold it skips that gauge. Other gauges are `voltage_mv`, `charge_pct` and `charging` under the same prefix. Each updates only on a valid reading. The telemetry gateway may continue to receive the last good value after a read error. Flight Control shows `battery unavailable` when the voltage channel is absent or unsupported, `battery access denied` for a missing grant, and `battery read failed` for a transient error.
+
+On an emulated ESP32-C3 running a development build, the app used a 3,600 mV threshold. With a 2:1 divider and ESP-IDF ADC calibration, a 1,650 mV input gave a pack reading of 3,280 mV and set the low-battery flag. At 1,980 mV the app reported 3,924 mV and cleared the flag. An emulated Smart Battery gauge at 3,700 mV and +14 mA reported 62% charge and a charging state. [Physical board results](RESULTS.md#apps-on-the-boards)
 
 ## Config and storage
 
@@ -294,7 +294,7 @@ On Zephyr, the fleet can alias a hardware node in the board map. Grant the alias
 
 **Build flags.** Keep the flags from `wasm-apps/build.sh`, including `-mcpu=mvp` and exports for `__heap_base` and `__data_end`. WAMR supports tail calls but lacks reference types. If an app needs a new firmware import, deploy the firmware and app in the same spec. The agent installs and confirms firmware first. An unsupported import rejects the app update and preserves the installed version. Rebuild legacy apps that import `env.set_state`, `env.log` or `env.led`.
 
-Split long computations across callbacks. The instruction limit counts interpreter operations. Native calls and waits share a separate time allowance per callback. Hitting either limit stops the app. [Time per board](RESULTS.md#timings)
+Split long computations across callbacks. The instruction limit counts interpreter operations. A counting loop took 0.66 s on C5, 0.90 s on S3, 1.06 s on C3, 1.20 s on ESP32 and 1.30 s on C6 to execute five million instructions. Native calls and waits share a separate time allowance per callback. Hitting either limit stops the app.
 
 ### The C library
 
@@ -327,7 +327,7 @@ The SDK also maps common math operations such as `sqrtf` and `fabsf` directly to
 | [libccheck](../wasm-apps/libccheck/libccheck.c) | Exercises libc. A passing run reports `bad=0`. |
 | [hwcheck](../wasm-apps/hwcheck/hwcheck.c) | Grant `i2c0 spi0 uart0 adc0 pwm0` to inspect bus responses, UART loopback, ADC voltage and PWM output. |
 | [mqttdemo](../wasm-apps/mqttdemo/mqttdemo.c) | Grant `mqtt` to publish temperature on `temp` and receive commands on device `cmd/#` and fleet `cmd`. Replies appear on `ack`. Grant `led0` for LED commands. |
-| [CoreMark](../wasm-apps/coremark/fetch.sh) | Fetch both verified modules. Publish the smaller one with `wasm-apps/push.sh coremark wasm3 v0.9.0-wasm3`. See [one-shot deployment](#modules-built-for-no-device). |
+| [CoreMark](../wasm-apps/coremark/fetch.sh) | Fetch both verified modules. Publish the smaller one with `wasm-apps/push.sh coremark wasm3 v0.9.1-wasm3`. See [one-shot deployment](#standalone-modules). |
 
 ### TinyML with emlearn
 
@@ -341,7 +341,7 @@ The device runs the [wasm3-arduino blink](https://github.com/wasm3/wasm3-arduino
 
 ```bash
 wasm-apps/arduino/fetch.sh
-wasm-apps/push.sh arduino rust v0.9.0-rust
+wasm-apps/push.sh arduino rust v0.9.1-rust
 ```
 
 | Function | On the device |
