@@ -1,0 +1,229 @@
+apiVersion: flightctl.io/v1alpha1
+kind: Catalog
+metadata:
+  name: mcu-lab
+spec:
+  displayName: MCU lab (test)
+  shortDescription: Firmware and WASM apps for the flightctl-mcu boards
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: alarm
+  catalog: mcu-lab
+spec:
+  displayName: Line temperature alarm (WASM)
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/alarm
+  versions:
+  - version: 2.0.1-pico
+    channels:
+    - candidate
+    references:
+      container: v2.pico
+  - version: 2.2.0
+    channels:
+    - stable
+    references:
+      container: v2.2
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: arduino
+  catalog: mcu-lab
+spec:
+  displayName: Arduino LED blink (WASM)
+  shortDescription: Blinks the board LED using the Rust build. Set FC_ALLOW=led0 when deploying.
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/arduino
+  versions:
+  - version: 1.0.0
+    channels:
+    - stable
+    references:
+      container: rust
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: coremark
+  catalog: mcu-lab
+spec:
+  displayName: CoreMark benchmark (WASM)
+  shortDescription: Measures iterations per second using the wasm3 build. Set FC_ENTRY=run when deploying.
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/coremark
+  versions:
+  - version: 1.0.0
+    channels:
+    - stable
+    references:
+      container: wasm3
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: fw-zephyr
+  catalog: mcu-lab
+spec:
+  displayName: Zephyr firmware
+  category: system
+  type: os
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/fw
+  versions:
+  - version: 3.0.0
+    channels:
+    - stable
+    references:
+      container: z3
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: fw-zephyr-lab
+  catalog: mcu-lab
+spec:
+  displayName: Zephyr lab firmware
+  category: system
+  type: os
+  artifacts:
+  - type: container
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
+  versions:
+  - version: 29.0.0
+    channels:
+    - stable
+    references:
+      container: z29
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: hwcheck
+  catalog: mcu-lab
+spec:
+  displayName: Board hardware check (WASM)
+  shortDescription: Checks the board interfaces granted through FC_ALLOW.
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/hwcheck
+  versions:
+  - version: 1.0.0
+    channels:
+    - stable
+    references:
+      container: v1
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: libccheck
+  catalog: mcu-lab
+spec:
+  displayName: C library check (WASM)
+  shortDescription: Exercises the C library functions available to WASM apps.
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/libccheck
+  versions:
+  - version: 1.0.0
+    channels:
+    - stable
+    references:
+      container: v1
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: mqttdemo
+  catalog: mcu-lab
+spec:
+  displayName: MQTT temperature demo (WASM)
+  shortDescription: Publishes temperature readings and receives commands. Requires MQTT access through FC_ALLOW.
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/mqttdemo
+  versions:
+  - version: 1.0.0
+    channels:
+    - stable
+    references:
+      container: v1
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: tinyml
+  catalog: mcu-lab
+spec:
+  displayName: TinyML temperature classifier (WASM)
+  shortDescription: Classifies temperature patterns with a random forest.
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/tinyml
+  versions:
+  - version: 1.0.0
+    channels:
+    - stable
+    references:
+      container: v1
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: tinymlp
+  catalog: mcu-lab
+spec:
+  displayName: TinyML neural temperature classifier (WASM)
+  shortDescription: Classifies temperature patterns with a neural network and reports confidence.
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/tinymlp
+  versions:
+  - version: 1.0.0
+    channels:
+    - stable
+    references:
+      container: v1
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: trend
+  catalog: mcu-lab
+spec:
+  displayName: Temperature trend (WASM)
+  shortDescription: Reports the chip temperature trend and rate of change.
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: ${HOST_IP}:5001/flightctl-mcu/trend
+  versions:
+  - version: 1.0.0
+    channels:
+    - stable
+    references:
+      container: v1

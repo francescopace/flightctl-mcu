@@ -26,6 +26,12 @@ flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t 
 
 The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
 
+`tools/kind/up.sh` creates the [MCU lab catalog](../tools/kind/mcu-lab.yaml) only if `mcu-lab` is missing. Open **Software Catalog → MCU lab (test)** for the nine WASM apps, including CoreMark, and the two Zephyr firmware entries. To reapply the manifest to an existing catalog or finish an interrupted restore, run `tools/kind/apply-catalog.sh`. Both scripts accept the host's LAN IP as an argument.
+
+The manifest restores the catalog entries and their version tags. The OCI images live in the registry's separate Docker volume, `fc-registry`, which survives kind cluster deletion. If you also remove that volume, republish the images with the tags in the manifest before deploying them.
+
+The sample app entries point to the registry on port 5001. For deployment to devices that require TLS, use the same image and tag at `registry.<your-ip>.nip.io:5443` with the fleet's registry configuration (step 6).
+
 Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, once an hour, so narrow that to what does not change ([why](FLIGHTCTL-LIMITATIONS.md#label-sync)):
 
 ```bash

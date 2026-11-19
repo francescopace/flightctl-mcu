@@ -38,6 +38,7 @@ helm upgrade --install flightctl "oci://quay.io/flightctl/charts/flightctl:${FC_
   --set global.gateway.ports.tls=443 \
   ${CLUSTER_CLI_ARGS[@]+"${CLUSTER_CLI_ARGS[@]}"}
 sed "s/BASE_DOMAIN/${FC_BASE_DOMAIN}/" telemetry-route.yaml | kubectl apply -f -
+./apply-catalog.sh --if-missing "$HOST_IP"
 
 echo "Base domain: ${FC_BASE_DOMAIN}"
 echo "UI:          http://ui.${FC_BASE_DOMAIN}:8080"
