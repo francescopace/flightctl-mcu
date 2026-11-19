@@ -1,58 +1,36 @@
 # The agent on Zephyr
 
-The second port of the agent, after ESP-IDF: `port/zephyr`, the port and a small application (`port/zephyr/src`). The core is unchanged between the two.
-
-**Where it stands.** On `native_sim` (Zephyr built as a Linux process) the agent passes the end-to-end test of the simulated device, against an unmodified Flight Control. On a real ESP32-S3 it enrolls over WiFi, stays online, runs a signed WASM app and updates its firmware through MCUboot, whole or as a delta, going back when the new one does not work (below): the first chip to run both ports. On an Arm Cortex-M3 with Ethernet, emulated in QEMU, it passes the same end-to-end test as on `native_sim`.
+Run the Zephyr agent on an [ESP32-S3](#on-an-esp32-s3), on a [Cortex-M3 in QEMU](#on-an-emulated-arm-cortex-m3), or as a Linux process with `native_sim`. The physical S3 supports Wi-Fi and firmware updates through MCUboot. [Board results](RESULTS.md#what-works)
 
 ## Try it
 
-Needs Docker. The first command pulls Zephyr's build image (about 10 GB) and a Zephyr tree with the modules the port uses (about 900 MB, in `third_party/zephyr-ws`).
+Start with a running Flight Control instance and [enrollment credentials](QUICKSTART.md#2-credentials). Allow about 10 GB for the Docker build image and 900 MB for the Zephyr checkout.
 
 ```bash
 third_party/fetch-wamr.sh
-```
-
-```bash
 third_party/fetch-zephyr.sh
-```
-
-```bash
 port/zephyr/build.sh
 ```
 
-Then a flash image with the device's credentials (`tools/enrollment.sh` makes them, as for the other devices), and the device itself:
+Create a blank flash image once, provision it and start the simulator. On subsequent runs, use only the last command to keep the device identity and apps.
 
 ```bash
 python3 -c "open('build/zephyr-flash.bin','wb').write(b'\xff'*(2*1024*1024))"
-```
-
-```bash
 tools/provision.py --format zephyr --image build/zephyr-flash.bin
-```
-
-```bash
 port/zephyr/run.sh build/zephyr-flash.bin
 ```
 
 It asks to be approved like any device (`flightctl approve enrollmentrequest/<name>`), and keeps its key, certificate and apps in the flash file across restarts.
 
-## What is Zephyr's and what is ours
+## Storage and network
 
-| | |
-|---|---|
-| Kernel, threads, clock | Zephyr, through its POSIX layer: the core uses pthreads and `clock_gettime` as elsewhere. |
-| TLS, X.509 | Zephyr's mbedTLS module, 4.1, the version ESP-IDF 6.1 has; its cryptography is PSA's (TF-PSA-Crypto), with its threading layer on POSIX mutexes (`include/fc-tf-psa-user.h`), which Zephyr has no option for: the agent's threads use PSA at the same time. |
-| Network | Zephyr's sockets; `port/zephyr/fc_net_zephyr.c` gives mbedTLS its `mbedtls_net_*` functions on them. On `native_sim` the sockets are the host's (no TAP interface to set up). |
-| Storage | LittleFS on the `fc_storage` flash partition: one file per key, written through a rename. |
-| Credentials | The `fc_creds` partition: `"FCC1"`, a length and a JSON object with the fields of the ESP-IDF firmware's partition (`tools/provision.py --format zephyr`). |
-| C heap | `port/zephyr/fc_heap_zephyr.c`, a heap the port owns, so that the device can report how much is free (`memFreeBytes`, `memMinFreeBytes`); Zephyr's malloc does not say. |
-| WASM | WAMR's Zephyr platform, fast interpreter, as in the other builds. |
-| Firmware updates | MCUboot's two slots (boards built with it): the image is streamed into the second, read back, and asked for as a test; MCUboot checks its signature, swaps the slots, and swaps them back unless the agent confirms the image once it has reached Flight Control. `native_sim` has no MCUboot and no updates. |
-| Firmware deltas | the core's decoder, as elsewhere; the port reads the running image from the first slot. |
+`fc_creds` holds factory credentials in the `FCC1` format. The agent keeps keys, configuration and apps in LittleFS on `fc_storage`. It writes each key through a file rename. The port supplies POSIX threads and sockets to the shared core. On `native_sim` sockets use the host network directly.
+
+On boards with MCUboot, the agent streams firmware into the second slot and reads it back before requesting a test boot. MCUboot checks the signature and reverts an unconfirmed image. `native_sim` and the QEMU build have no firmware updates.
 
 ## Hardware for apps
 
-The names apps open are the devicetree's: the children of a node with compatible `flightctl,app-hw` ([its binding](../port/zephyr/dts/bindings/flightctl,app-hw.yaml)), each a GPIO, an ADC channel, a PWM, an I2C bus, an SPI device or a UART by what it has. A board's overlay adds them and its `.conf` enables the drivers they need:
+Define each app peripheral as a child of a `flightctl,app-hw` node in the board overlay. Enable its driver in the board's `.conf`. [Devicetree binding](../port/zephyr/dts/bindings/flightctl,app-hw.yaml)
 
 ```dts
 / {
@@ -73,15 +51,7 @@ A GPIO's active level becomes the board map's `active_low`. The fleet's `/etc/fc
 
 The port reserves the console UART. On the ESP32-S3, an application UART can supply `de-gpios` for half-duplex RS-485. The port changes direction after both the FIFO and the transmit shift register are idle. The GPIO polarity comes from the devicetree. Other controllers that specify `de-gpios` return `FC_ENOTSUP`. Zephyr's I2C and SPI calls take no timeout, so a transfer lasts as long as the driver makes it; an SPI device waiting for another app's to let go of the bus gives up after 100 ms, as on ESP-IDF.
 
-The production board overlays do not yet expose app peripherals: the ESP32-S3 build, with 4 KB of its data region free, has little room for the drivers until something else gives way. [`tests/zephyr-hw`](../tests/zephyr-hw) runs it all on `native_sim`'s emulated drivers (GPIO, ADC, a fake PWM, I2C with an AT24 EEPROM, SPI with a loopback device, UART wired back to itself), in CI: `tests/zephyr-hw.sh`. The ESP32-S3 test overlay also runs a WASM app against a virtual button under both names. [ESP32-S3 results](RESULTS.md#zephyr-esp32-s3-hardware-names)
-
-## Zephyr 4.5
-
-`third_party/fetch-zephyr.sh` pins v4.5.0, which has mbedTLS 4.1.1, the same as ESP-IDF 6.1.1: the core is written for mbedTLS 4, whose cryptography is PSA only.
-
-## What the tests check
-
-CI runs the end-to-end test of the simulated device with the Zephyr build as the device, on `native_sim` and on `mps2/an385` in QEMU, and the port's hardware for apps and the apps' C library on emulated drivers: see [TESTING.md](TESTING.md) (Zephyr). One check is weaker than on the host: that a config file was stored is read from the device's log, as the file is inside the flash image.
+The production S3 overlay exposes no physical app peripherals. Adding drivers uses internal DRAM. Check the [link-time margin](RESULTS.md#firmware-size) when changing an overlay. [Peripheral tests](TESTING.md#peripheral-tests)
 
 ## On an emulated Arm Cortex-M3
 
@@ -89,75 +59,47 @@ QEMU's `mps2-an385`: Arm's MPS2 board with a Cortex-M3 and an SMSC LAN9118 Ether
 
 ```bash
 third_party/fetch-zephyr-sdk.sh
-```
-
-```bash
 BOARD=mps2/an385 port/zephyr/build.sh
-```
-
-```bash
 python3 -c "open('build/qemu-flash.bin','wb').write(b'\xff'*(1024*1024))"
-```
-
-```bash
 tools/provision.py --format zephyr --board mps2_an385 --image build/qemu-flash.bin
-```
-
-```bash
 port/zephyr/run-qemu.sh build/qemu-flash.bin
 ```
 
-QEMU's user network gives the device an address by DHCP, a DNS server and the way out to Flight Control. The board has no flash controller: the credentials and the storage are in Zephyr's flash simulator, in the last MB of SRAM, where `run-qemu.sh` loads the credentials partition. What the device stores survives its restarts (a certificate, the decommissioning), not the end of QEMU.
-
-The build has the memory of a microcontroller with 384 KB of SRAM, the least a device needs ([DEVICES.md](DEVICES.md#what-a-device-needs)): 300 KB of static data, of which 96 KB of kernel heap (thread stacks) and 128 KB of C heap; 400 KB of code. It passes the end-to-end test of the simulated device, from enrollment to decommissioning.
-
-What it is not: there is no MCUboot and no firmware update, and no random generator (Zephyr's test generator, whose numbers are not secret, stands in for one).
+QEMU supplies DHCP, DNS and outbound Ethernet. Simulated flash in the last MiB of SRAM persists through device reboots and is lost when QEMU exits. The build uses 300 KB of static data, including a 96 KB kernel heap and a 128 KB C heap. It uses a test random generator and has no MCUboot.
 
 ## On a board
 
-- **A thread's stack** comes from the kernel heap when its size is set; if that fails, Zephyr keeps a 1 KB default. The core checks and logs it instead of overflowing.
-- **A fatal error restarts the device** (Zephyr's default is to stop), and what it was is kept in RAM and logged at the next boot. The status says it too, in `customInfo`: `resetReason` is `panic`, as on ESP-IDF, and `lastFatalError` gives the reason, the thread, the uptime, the `pc` and what was calling: the `lr` on Arm, on the ESP32-S3 (Xtensa) the return addresses of Zephyr's own backtrace; on `native_sim` the `pc` is 0. It is the ESP-IDF firmware's text ([core/include/fc_fatal.h](../core/include/fc_fatal.h)), for `addr2line` against `zephyr.elf` (`tools/fw-elf.py` gets a release's back from the registry), with the firmware's version after it when a rollback put another one in its place.
-- **A watchdog on the system work queue** restarts the device after 30 minutes without a status accepted or a spec taken, as on ESP-IDF; the agent itself restarts it after 10 minutes without a status. While only console sessions change, the agent parses the list of sessions, not the whole spec.
-- **DNS and connections**: Zephyr resolves one query at a time and allows four connections by default; the agent's threads resolve together at start, and the registry needs a connection beside Flight Control's, DHCP's and DNS's. `prj.conf` raises both (`CONFIG_DNS_NUM_CONCUR_QUERIES`, `CONFIG_NET_MAX_CONN`).
-- **POSIX mutexes come from a fixed pool** (`CONFIG_MAX_PTHREAD_MUTEX_COUNT`, 5 by default), and so do condition variables. The core takes 7, mbedTLS's threading layer 7, the HTTP/2 client up to 11 (two per connection, one per session, one for the TLS buffers). Short of them, mbedTLS's own mutexes fail and a TLS handshake ends in `PSA_ERROR_GENERIC_ERROR` when the device signs with its key. `prj.conf` gives 28 mutexes and 12 condition variables, and the core logs it when it finds none left.
-- **The port reads a firmware slot back** before it asks MCUboot to try it: a flash driver may report a write it did not do.
+- **Thread stacks** come from the kernel heap. If allocation fails, Zephyr falls back to a 1 KB stack. The core checks the size before using it.
+- **Faults** restart the device. Check `customInfo.lastFatalError` for the thread, uptime, PC and return addresses. On `native_sim` the PC is zero. [Crash dump retrieval](CONSOLE.md#download-a-crash-dump)
+- **Watchdogs** restart the device after 10 minutes without accepted status or 30 minutes without management progress. The spec watchdog can also fire if status continues but the spec loop stalls.
+- **Connections and mutexes** come from fixed pools. Keep `CONFIG_DNS_NUM_CONCUR_QUERIES`, `CONFIG_NET_MAX_CONN` and the POSIX mutex and condition-variable limits sized for concurrent agent and TLS work. A depleted mutex pool can fail the client signature during a handshake.
 
 ## On an ESP32-S3
 
 The Zephyr board is an ESP32-S3-DevKitC N8R8 with 8 MiB each of flash and octal PSRAM. It runs Zephyr’s WiFi driver, MCUboot and TF-PSA-Crypto. The ESP-IDF measurements use a separate S3 N4R2. [Board results](RESULTS.md#coremark)
 
 ![The ESP32-S3 with Zephyr in Flight Control's UI](img/zephyr-device.png)
-*The ESP32-S3 with Zephyr in Flight Control: operating system `zephyr`, architecture `xtensa`, the firmware `z26` from its fleet, and the WASM app `alarm` running.*
+*The ESP32-S3 with Zephyr in Flight Control: operating system `zephyr`, architecture `xtensa`, and the fleet’s WASM app `alarm` running.*
 
 ```bash
+third_party/fetch-wamr.sh
 third_party/fetch-zephyr.sh
-```
-
-```bash
 third_party/fetch-zephyr-sdk.sh
-```
-
-```bash
 BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 port/zephyr/build.sh -- '-Dzephyr_CONFIG_FC_FW_VERSION="v0.9.0"' \
   '-Dzephyr_CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="0.9.0"'
 ```
 
+Match the board by USB serial number. For a fresh device, flash MCUboot, the signed app and credentials through the UART port (115200 baud console). `ERASE=1` erases the entire flash, including any existing identity. The label selects the example Zephyr fleet.
+
 ```bash
-ERASE=1 port/zephyr/flash-esp32.sh /dev/cu.usbmodemXXXX .secrets
+ERASE=1 port/zephyr/flash-esp32.sh /dev/cu.usbmodemXXXX .secrets --labels app=zephyr-lab --wifi-ssid <ssid> --wifi-password <password>
 ```
 
-The fetch scripts bring Espressif's HAL module (164 MB), the binary WiFi libraries it needs (under Espressif's licence) and the Xtensa toolchain. The agent firmware uses MCUboot for updates; `flash-esp32.sh` writes MCUboot, the signed application and the credentials with esptool, through the board's UART port, where the console also is (115200). Nothing burns eFuses: MCUboot checks the image's signature in software, and Secure Boot and flash encryption stay off.
-
-On the board it enrolls, runs a signed app, takes its firmware whole or as a delta through MCUboot and goes back from a broken one, downloads over HTTP/2, and answers the UI's Logs tab; what was tried, with figures, is in [RESULTS.md](RESULTS.md#zephyr-on-the-esp32-s3).
+This build uses software image verification. Credentials remain readable to anyone with physical flash access. [Zephyr security](SECURITY.md#zephyr)
 
 For the internal-RAM CoreMark run on the N8R8, the application and MCUboot overlays set `&psram0 { status = "disabled"; };`. In the application board configuration, set `CONFIG_ESP_SPIRAM=n`, omit the octal mode and external heap settings, and set `CONFIG_FC_HEAP_SIZE=140592` and `CONFIG_HEAP_MEM_POOL_SIZE=79872`. The WiFi buffer and thread stack settings are the same as on the ordinary N8R8 build. [CoreMark score and heap measurements](RESULTS.md#coremark)
 
-What it took, beyond the board's two files in `port/zephyr/boards/`:
-
-- **Internal DRAM.** On the N8R8, the kernel heap is 92 KiB and the C heap is 120,112 B. The status thread has a 12 KiB stack and the main thread has 16 KiB for the spec loop. The remaining link-time margin is reported with the [firmware size](RESULTS.md#firmware-size).
-- **PSRAM for apps and TLS.** The N8R8 has 8 MiB of octal PSRAM. The board configuration gives 2 MiB to the shared heap. WAMR takes app linear memories of 16 KiB or more from this heap when available. On the N8R8 software-crypto build, the TLS pool also prefers this heap for its two 17 KiB receive records. Both allocators fall back to internal RAM when needed. The PSRAM driver costs about 4 KiB of internal RAM. With MQTT connected, the board needs 32 POSIX mutexes for an OTLP client-certificate handshake to complete. [Memory and CoreMark measurements](RESULTS.md#ram)
-- **The WiFi driver joins after the request returns**, and chooses the access point itself (`CONFIG_ESP32_WIFI_STA_SCAN_ALL`: the strongest).
-- **A kept connection the server closed** is `ENOTCONN` to Zephyr's TCP, not a reset: the port took it for an error and warned at every request, before the core opened another connection as it should.
+The N8R8 reserves 2 MiB of PSRAM for the shared heap. WAMR prefers it for linear memories of at least 16 KiB. Software TLS also prefers it for two 17 KiB receive records. Both can fall back to internal RAM. The board uses 32 POSIX mutexes so telemetry can authenticate while MQTT is connected. [RAM by workload](RESULTS.md#ram)
 
 Zephyr boards go in a fleet of their own (the example is `tools/fleet/zephyr-lab.yaml`). Firmware v0.9.0 uses one OCI index for both ports. Each Zephyr image is identified by the board’s `CONFIG_FC_FW_PLATFORM`. To publish a Zephyr-only index under a new tag:
 
@@ -167,9 +109,7 @@ tools/fw-push.py --delta-from <running tag> <registry>/flightctl-mcu/fw:<new tag
 
 A board must hold the public half of the key the release is signed with; one provisioned with another refuses the fleet's app until its credentials are written again.
 
-Field provisioning ([PROVISIONING.md](PROVISIONING.md#on-zephyr)) needs, on this board: Zephyr's STA+AP usage mode (`CONFIG_WIFI_USAGE_MODE_STA_AP`; with `ESP32_WIFI_AP_STA_MODE` alone the network manager keeps one interface, the access point's address and DHCP server land on the station's, and installers get none), 4 KB of stack for the DHCP server's thread, and no ICMP probe before a lease (with it, the board restarted a second after a client joined).
-
-CI builds the MCUboot agent with the Xtensa toolchain. A separate Simple Boot image runs the WASM GPIO test on the emulated ESP32-S3. Secure Boot and flash encryption remain unverified on Zephyr. [GPIO test results](RESULTS.md#zephyr-esp32-s3-hardware-names) · [Zephyr security](SECURITY.md#zephyr)
+For [field provisioning](PROVISIONING.md#on-zephyr), enable `CONFIG_WIFI_USAGE_MODE_STA_AP`, give the DHCP server thread a 4 KB stack and disable the ICMP probe before granting a lease.
 
 ## Things to know about native_sim
 

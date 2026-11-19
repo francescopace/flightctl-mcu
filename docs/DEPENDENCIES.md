@@ -1,26 +1,22 @@
 # Dependencies
 
-Versions used to build and test the agent, checked on 18 November 2026. The tables name the source of each version. For test containers that follow a release series, they also give the version reported by the tested image.
+Build and test versions checked on 18 November 2026. For containers following a release series, the tables include the tested image version.
 
 ## Release support
 
-Starting with 1.0, each agent release lists the exact Flight Control and ESP-IDF versions verified for its ESP-IDF firmware in this document. Consult the copy that ships with your agent release. The project maintains compatibility with that pair until the next agent release. Fixes target the current release, with no commitment to backport them to earlier releases.
-
-The development builds for 1.0 use Flight Control 1.4.0 and ESP-IDF 6.1.1.
+The 1.0 development builds use Flight Control 1.4.0 and ESP-IDF 6.1.1. From 1.0 onward, consult this page in the release you deploy for its verified pair. Compatibility lasts until the next agent release. Fixes target the current release.
 
 ## In the core, on every port
 
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|
-| [mbedTLS](https://github.com/Mbed-TLS/mbedtls) | 4.1.1 | supplied by ESP-IDF and Zephyr, checked in `core/include/fc_crypto.h` on every port and in `CMakeLists.txt` for host builds | ESP-IDF 6.1.1 and Zephyr 4.5.0 both carry 4.1.1. ESP-IDF’s `release/v6.2` and `master` and Zephyr’s `main` also report 4.1.1. Host and both SDKs use TF-PSA-Crypto 1.1.1. |
+| [mbedTLS](https://github.com/Mbed-TLS/mbedtls) | 4.1.1 | supplied by ESP-IDF and Zephyr, checked in `core/include/fc_crypto.h` on every port and in `CMakeLists.txt` for host builds | Host and both SDKs use TF-PSA-Crypto 1.1.1. |
 | [cJSON](https://github.com/DaveGamble/cJSON) | 1.7.19 | a copy in `third_party/cjson`, unmodified | On every port, ESP-IDF 6 included (it no longer has its own). |
-| [WAMR](https://github.com/wasm-micro-runtime/wasm-micro-runtime) | 2.4.6 | `WAMR_TAG` in `third_party/fetch-wamr.sh` | Fetched at build time into `third_party/wamr`, then patched with `third_party/patches/wamr-*.patch` (the script describes each patch). Built as the fast interpreter only: no AOT, JIT, WASI, SIMD or reference types; instruction metering and tail calls on. Its libc-builtin table retains the 15 WAMR wrappers used on the device, but the core registers only the functions of the apps' [C library](APPS.md#the-c-library) (`s_libc` in `core/src/fc_apps.c`), some of them its own. |
+| [WAMR](https://github.com/wasm-micro-runtime/wasm-micro-runtime) | 2.4.6 | `WAMR_TAG` in `third_party/fetch-wamr.sh` | Fetched and patched at build time. Fast interpreter with instruction metering and tail calls. AOT, JIT, WASI, SIMD and reference types are disabled. [App libc](APPS.md#the-c-library) |
 
-Written in the core, with no library besides mbedTLS and BSD sockets: the firmware-delta decoder (detools' sequential format with heatshrink, `core/src/fc_delta.c`, [DELTA-UPDATES.md](DELTA-UPDATES.md)), the MQTT 3.1.1 client for the apps (`core/src/fc_mqtt.c`), the OTLP metrics encoding (`core/src/fc_metrics.c`), HTTP/1.1 and HTTP/2 (`core/src/fc_http.c`) and the provisioning protocol (`core/src/fc_prov.c`). Neither ESP-IDF's nor Zephyr's MQTT library is used.
+The core implements HTTP, MQTT, OTLP encoding, field provisioning and the firmware delta decoder.
 
 ## Host port (Linux, macOS)
-
-The simulated device, `port/host`: the core above on POSIX, with nothing else linked in.
 
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|

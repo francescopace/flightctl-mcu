@@ -1,6 +1,6 @@
 # Remote console
 
-Flight Control's console reaches the device as it reaches a Linux one: `flightctl console device/<name>`, or the UI's terminal. A microcontroller has no shell, so the device answers a closed set of commands instead:
+Open the UI terminal or run `flightctl console device/<name>`. The MCU accepts these commands.
 
 | Command | What it gives |
 |---|---|
@@ -13,18 +13,13 @@ Flight Control's console reaches the device as it reaches a Linux one: `flightct
 | `reboot` | restarts the device, once the session has ended |
 | `exit` | ends the session (so does Ctrl-D on an empty line) |
 
-One command per session:
+Run one command directly, or pass `--tty` for a prompt. An unknown command exits with status 127. In the prompt, Backspace edits, Ctrl-C or Ctrl-U clears the line, and Ctrl-D on an empty line exits. For a script, use `-- /bin/bash -s` and send one supported command per line on stdin.
 
 ```bash
 flightctl console device/<name> -- status
 ```
 
-A session can also read its commands on stdin, as `bash -s` would (`flightctl console device/<name> -- /bin/bash -s`, or no command and no terminal): each line runs as it comes, and the session ends when stdin does.
-
-Or a prompt, in a terminal (`--tty`, and the UI's terminal), with the line edited on the device: Backspace, Ctrl-C to drop the line, Ctrl-U; arrow keys are ignored. An unknown command answers so and, as a session's one command, exits with status 127.
-
-![status in the UI's terminal](img/console-status.png)
-*`status` in the UI's terminal, on an ESP32-C6 (the MAC is hidden here).*
+![Output of status on an ESP32-C6 in the UI terminal](img/console-status.png)
 
 ## Download a crash dump
 
@@ -53,18 +48,15 @@ info registers pc
 bt
 ```
 
-ESP-IDF captures registers and task snapshots. Zephyr on Arm captures registers and thread stacks. The Xtensa backend on the ESP32-S3 captures the faulting thread's registers and stack. [Measured dumps](RESULTS.md#a-crash-in-the-status)
+ESP-IDF captures registers and task snapshots. Zephyr on Arm captures registers and thread stacks. The Xtensa backend on the ESP32-S3 captures the faulting thread's registers and stack.
 
-The ESP-IDF factory layout reserves 64 KiB for a dump and 576 KiB for the agent's data. An OTA update preserves the installed partition table. Devices with the older 640 KiB data partition still report `lastFatalError`. Saving a native dump requires provisioning with the new factory layout. The Zephyr ESP32-S3 DevKitC with 8 MiB of flash reserves 128 KiB for a dump.
+The ESP-IDF factory layout reserves 64 KiB for a dump and 576 KiB for the agent's data. An OTA update preserves the installed partition table. Devices with the older 640 KiB data partition still report `lastFatalError`. Saving a native dump requires provisioning with the new factory layout. The Zephyr ESP32-S3 DevKitC with 8 MiB of flash reserves 128 KiB for a dump. [Measured dump sizes](RESULTS.md#what-works)
 
 ## The log
 
-The device keeps its last log lines in RAM, as the serial port shows them, in a ring of 4 KB reserved at build time (about 40 to 80 lines; the oldest go first):
+A 4 KB RAM ring holds roughly 40–80 lines. It includes agent messages, app logs, ESP-IDF errors and warnings, and the Zephyr system log. ESP-IDF keeps agent info messages even in quiet release builds. Most other ESP-IDF info messages and bare printk output are serial-only.
 
-- the agent's and the apps' (an app's are `app <name>: ...`), as `fc:`; debug lines only in a build that prints them, the agent's info lines also in a release build, which does not print them;
-- the system's own, with their tag: ESP-IDF's errors and warnings (WiFi, TLS, drivers), with the firmware's own info lines and the address the WiFi got; Zephyr's log as it prints it (its errors, a fault's report). The rest, ESP-IDF's other info lines (about 40 at each WiFi start) and bare printk lines, stays on the serial port: it would push the agent's lines out of the ring.
-
-The ring is in RAM that a restart does not clear: after a restart (a crash, a watchdog, an update, `reboot`) the previous boot's lines are still there, up to the last one written, as journalctl's boot -1; the boot before it goes. After a crash, the previous boot's last line is `fatal: ` and what it was (the fault, the task, the `pc`: the status's `lastFatalError`), and the new boot's first lines say so: on ESP-IDF `restarted after a reset: panic` (or the watchdog, a brownout) then `last crash: ` and the same text, on Zephyr the fault and where it was. A power cut, or a ring that does not check out after the restart (another firmware's layout, RAM overwritten), starts it empty. A test build (`VARIANT=crashtest` on ESP-IDF, `CONFIG_FC_CONSOLE_CRASH` on Zephyr) has a console command, `crash`, that makes the device fault, to see this; never a release.
+After a warm restart, use boot `-1` to read the previous boot. After a crash its final `fatal:` line identifies the fault, task and program counter, also reported in `lastFatalError`. Power loss or invalid retained RAM clears the ring.
 
 ```
 Nov 16 21:07:04 I fc: enrolled, starting management loop
@@ -72,9 +64,9 @@ Nov 16 21:07:05 W wifi:Password length matches WPA2 standards, authmode threshol
 Nov 16 21:12:30 W fc: app alarm: 31.5 C over the threshold
 ```
 
-The time is UTC; before the device has set its clock, a line shows its uptime instead (in the previous boot, if that boot never set it).
+Timestamps are UTC once the clock synchronizes. Earlier lines show uptime.
 
-**The UI's Logs tab.** Flight Control has no API for a device's log: the UI's Logs tab opens a console session with `/bin/bash -s` and writes on its stdin what a Linux device would run, `journalctl` with the tab's filters piped to `tail -n`, then a line that prints an end marker with the exit status. The device answers those commands from its RAM log:
+The UI's **Logs** tab runs a filtered `journalctl` request through the console. The device serves it from the ring.
 
 | The tab's filter | What the device shows |
 |---|---|
@@ -90,22 +82,18 @@ The time is UTC; before the device has set its clock, a line shows its uptime in
 ![The Logs tab](img/console-logs.png)
 *The Logs tab on the ESP32-S3 with Zephyr: the agent's lines of the current boot, here the app `alarm` changing state.*
 
-For this, the console takes the little of a shell's that the tab sends: quotes, `;`, `&&`, `||`, a pipe to `tail -n`, `sudo`, `bash -c`, `printf`, `echo`, `[[ ]]` and `journalctl`'s options. It is not a shell: nothing else runs, and a command it does not know answers so (exit status 127). If the UI changes the commands it sends, the tab may stop working with these devices; the commands are the same in the UI of Flight Control 1.4.0 and on its main branch of 16 November 2026.
+The console recognizes the subset of shell syntax used by the Flight Control 1.4 Logs tab. Arbitrary shell commands are unsupported.
 
 ## How it works
 
-Flight Control puts the session in the device's rendered spec (`spec.consoles`), and the device opens a gRPC stream for it, `flightctl.v1.RouterService/Stream`, on the agent's own HTTP/2 connection: the agent endpoint serves gRPC on the same port, so the console costs no TLS connection of its own. The server joins it to the user's side. The bytes on it are Kubernetes' remote command protocol (`v5.channel.k8s.io`): stdin comes in, stdout and the exit status go out.
+When a session appears in `spec.consoles`, the device opens a gRPC stream (`flightctl.v1.RouterService/Stream`) on its existing HTTP/2 connection. The server forwards stdin, stdout and exit status using `v5.channel.k8s.io`.
 
-While a session is listed, the server answers the spec's long-poll at once with the version the device has; the device then only handles the console, and waits 5 s before asking again. It remembers the last 64 sessions it opened (a 32-bit hash of each), across restarts, so a `reboot` is not asked again after the restart and a session still listed is never opened twice, and a session nobody joins within a minute ends (Flight Control 1.4 keeps listing a session whose user left before the device came: [limitation 15](FLIGHTCTL-LIMITATIONS.md#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)); while only such sessions are listed, the device asks for its spec every 15 s instead of 5. Of what the server sends then, only the list of sessions is parsed, not the whole spec.
-
-If the device cannot open the stream, it can retry the same listed session. Once it opens the stream, it remembers the session ID before running the command. If the console thread cannot start, the client receives a diagnostic and a non-zero exit status. The agent joins the finished thread and releases its stack even if nobody opens another session. On an instrumented ESP32-C6 this reclaimed 8,304 B. [RAM measurements](RESULTS.md#ram)
+A failed stream open is retryable. Once opened, the agent remembers the session before executing its command. The last 64 IDs survive reboot, so a listed command cannot replay. An unjoined session closes after one minute. The device polls every 5 s with active sessions and every 15 s when only remembered ones are listed. [Stale console sessions](FLIGHTCTL-LIMITATIONS.md#15-a-console-session-whose-user-left-before-the-device-came-stays-listed)
 
 ## Limits
 
-- **One session at a time.** A second gets "another console session is open on this device" and fails.
-- **A session ends** after 10 minutes without input (unless it follows the log: `log -f`, the Logs tab's live mode), and when the device needs its connection for a download (a firmware or an app takes the connection's turn, [REGISTRY.md](REGISTRY.md#memory)).
-- **Input**: up to 4 KB not yet read by the device; more at once (a large paste) ends the session. A line of a session reading stdin is up to 2 KB, one typed at the prompt 160 characters.
-- **RAM**: the log's ring, 4 KB, always (with Zephyr, 0.9 KB more for the lines on their way into it); while a session lasts, its thread's stack (8 KB, of which the Logs tab's commands used 5.2 KB at most on the ESP32, C5, C6 and S3), the session with its 2 KB input buffer, the stream's buffer, a 768-byte output buffer while a command writes, and 2 KB more for a session reading stdin; none otherwise.
-- **Access** is Flight Control's: whoever may open a console on the device may also restart it.
-
-Tried against Flight Control 1.4.0 on the classic ESP32, C3, C5, C6 and S3 (ESP-IDF) and the ESP32-S3 with Zephyr, and in the end-to-end test on the simulated device and the Zephyr builds: the commands, the Logs tab's filters and live mode in one session, and the previous boot after `reboot` and after a crash, which ends with the agent's last line (the C3) or Zephyr's report of the fault (the ESP32-S3).
+- One session at a time. A second receives `another console session is open on this device`.
+- Sessions close after 10 minutes without input, except while following logs. A firmware or app download also closes the session.
+- A paste exceeding 4 KB of unread input ends the session. A script line can contain 2 KB, an interactive line 160 characters.
+- An open session uses an 8 KiB thread stack. Zephyr also needs 0.9 KB to stage logs. [Measured heap](RESULTS.md#ram)
+- Console access includes reboot and crash dump retrieval.

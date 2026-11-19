@@ -1,98 +1,74 @@
 # Tests and CI
 
-GitHub Actions runs CI, end-to-end tests and nightly fuzzing. On pushes to `main` that touch code, [ci.yml](../.github/workflows/ci.yml) builds everything and runs the unit tests and a quick fuzzing pass. The end-to-end tests are [e2e.yml](../.github/workflows/e2e.yml), on what a CI run built: the host agent, the firmware images and the WASM apps, kept as the run's artifacts for 90 days. It runs every night on the last successful CI run of main, unless that commit has passed already; by hand from the Actions tab (with a CI run's id, or the last one); and from a CI run, by re-running its `e2e` job, which the first attempt skips. The end-to-end workflow also builds the deliberately broken rollback images and the crash-test firmware.
+[CI](../.github/workflows/ci.yml) builds the host agent, ESP-IDF firmware, Zephyr targets and example WASM apps on code pushes to `main`. Firmware artifacts contain no credentials. The CI secure builds require [signing](SECURITY.md#signing-a-ci-build). Artifacts are retained for 90 days.
 
-- **Builds**: the simulated device on Linux, the firmware for every chip in the default and release profiles (with `ccache`), and the `secure` variant for the chips the end-to-end tests emulate, the example WASM apps, and the Zephyr builds. The firmware has no credentials in it. The secure images are not signed: whoever flashes them signs them with their own Secure Boot key ([SECURITY.md](SECURITY.md#signing-a-ci-build)), and the end-to-end test signs them with throwaway keys.
-- **Unit tests** ([tests/unit.sh](../tests/unit.sh)): the C core on an in-memory port, with AddressSanitizer and UBSan: HTTP/1.1 and HTTP/2 with gRPC streams, OCI pulls, signatures and registry tokens, firmware deltas, device identity, enrollment and certificate renewal, rendered specs, WASM apps under WAMR (install, update, failures, endless loops, the heap left to the agent), the apps' C library and hardware against a fake board, MQTT against a fake broker, the console, metrics, resource alerts and crash records. Also the tools' Python logic: cosign payloads, the provisioning partition, the allow list, the Git export.
-- **Fuzzing** ([tests/fuzz.sh](../tests/fuzz.sh)): the HTTP response reader, the OCI manifest and signature handling, the agent's handling of rendered specs and certificates, the firmware delta decoder, and the remote console's handling of the server's bytes. CI runs each target for 30 seconds on code pushes. Local pre-push checks run the fuzzers only when requested with `--fuzz`. The nightly workflow runs each target for 20 minutes by default ([fuzz-nightly.yml](../.github/workflows/fuzz-nightly.yml)), with the corpus kept from one night to the next. Crashes found so far are kept as seed inputs in `tests/fuzz/corpus`.
-- The plain ESP32-S3 firmware job runs the [ESP-IDF wiring test](../tests/espidf-hw) in esp-emu. A small test firmware calls the production app hardware drivers. It reads an I²C SHT31 and an SPI TMP123, receives a checksummed UART reply from an MH-Z19B, takes both edges of a push button and changes the pulse width at a servo. A second boot with the wrong SPI chip-select must fail the temperature check. The S3 emulator has no ADC model. To repeat with ESP-IDF 6.1.1, run `idf.py -D IDF_TARGET=esp32s3 build merge-bin` in `tests/espidf-hw`, then `python3 run.py build/merged-binary.bin /path/to/esp-emu-1.1.0-examples` with esp-emu 1.1.0 on the PATH.
-- The plain ESP32-C3 job builds the ADC fixture in the same directory with `IDF_TARGET=esp32c3`. The runner moves a potentiometer connected to GPIO3 and checks both calibrated readings. Use a separate build directory when switching chips, e.g. `idf.py -B build-c3 -D SDKCONFIG=build-c3/sdkconfig -D IDF_TARGET=esp32c3 build merge-bin`, then `python3 run.py --fixture adc build-c3/merged-binary.bin /path/to/esp-emu-1.1.0-examples`.
-- The Zephyr ESP32-S3 job runs the WASM button test with Simple Boot and 8 MiB of PSRAM. From the Zephyr west workspace, build `tests/zephyr-apps` with `west build -b esp32s3_devkitc/esp32s3/procpu -d /tmp/button-s3 /path/to/repo/tests/zephyr-apps`. From `tests/espidf-hw`, run `python3 run.py --fixture zephyr /tmp/button-s3/zephyr/zephyr.bin /path/to/esp-emu-1.1.0-examples`. The runner presses and releases GPIO5 under each app grant. The RS-485 responding-peer test runs separately in `tests/zephyr-hw.sh` on `native_sim`.
-- **Hardware for apps on the boards**: [hwcheck](../wasm-apps/hwcheck/hwcheck.c), granted `i2c0 spi0 uart0 adc0 pwm0` with a board map per board, opens each and says what it answers. With nothing wired it scans the I2C bus, transfers on SPI, writes on the UART and reads a floating ADC pin; with a sensor or a jumper it shows what is there. For manual diagnostics, run it on the board with the relevant names in `FC_ALLOW`. [Recorded board results](RESULTS.md#apps-on-the-boards)
-- **End-to-end test** ([tests/e2e/e2e.sh](../tests/e2e/e2e.sh), in e2e.yml): the job deploys Flight Control 1.4.0 on kind and a registry on the runner, and the device pulls through its door with TLS and a password ([REGISTRY.md](REGISTRY.md)). The simulated device then goes through:
-  - enrollment, approved by the allow-list script;
-  - Online status;
-  - the registry's CA without the password, which it must report as missing credentials;
-  - inline config;
-  - a signed WASM app install, and `cosign verify` on its signature;
-  - an in-place update from v1 to v2;
-  - a config change;
-  - an unsigned app, which it must refuse;
-  - an update while the registry is down, which must complete once it is back (the TLS door stopped);
-  - the app's removal, then the second example app;
-  - metrics: with the fleet's `metrics.json`, the device asks for the Telemetry Gateway's certificate, and its own metrics and the app's reach the gateway's Prometheus exporter ([METRICS.md](METRICS.md));
-  - the remote console: `flightctl console device/<name> -- status` answers, and an unknown command fails; the command the UI's Logs tab sends on `bash -s` gets the log and the end marker the tab waits for;
-  - a memory alert from the fleet's `spec.resources`: `Warning` and the summary `Degraded`, then `Healthy` again with the default monitors;
-  - the renewal of its management certificate (the server issues 2-minute certificates for the test), and a status accepted after the first one expired;
-  - a server restart, after which it must reconnect and take a new spec;
-  - the server down until its certificate expired, after which it must enroll again, under a new name, with its config;
-  - the fleet kept in Git: exported with `tools/fleet/git-export.py`, served by `git daemon` and imported by a `ResourceSync`, with the registry's CA and password mounted from Kubernetes secrets;
-  - last, its decommissioning: Started, then Completed, the key and certificate wiped, and no new enrollment once it is restarted. The host agent gets `FactoryReset`, sent to the API (the CLI and the UI send `Unenroll` only), and its app has to be removed too; the Zephyr builds get `Unenroll` from the CLI.
-- **Firmware in the emulator** ([tests/e2e/e2e-emu.sh](../tests/e2e/e2e-emu.sh), in e2e.yml): the real firmware for the C5, the S3 and the C6, plain and `secure` (`SECURE=1`), six runs, in Espressif's [esp-emu](https://github.com/espressif/esp-emulator), whose WiFi access point NATs to the runner, against Flight Control on kind. Each provisions the default image for the test cluster, then goes through enrollment, a signed update from reported `ota_0` to confirmed `ota_1` (`customInfo.bootSlot`), a signed app and an unsigned one, all pulled through the registry's door with TLS and a password, a valid firmware of the other variant (refused), the rollback of a broken image that cannot reach the server (built with a 30-second confirmation window instead of 150), and last its decommissioning. Certificate renewal, with 2-minute certificates, is in the plain C5 run only (`CERT=0` leaves it out): the code is the same on every chip and the host and Zephyr runs cover it too, while short certificates make any slow step fail the run. The classic ESP32 and C3 are outside this end-to-end matrix. Run the C3 enrollment and OTA test manually with `CHIP=esp32c3` (the script default). Its ADC wiring test runs in the plain C3 CI job. What the secure runs check: [SECURITY.md](SECURITY.md#what-the-ci-checks); the plain runs' WiFi given in the field: [PROVISIONING.md](PROVISIONING.md#what-the-ci-checks).
-- **A crash in the emulator** ([tests/e2e/fatal-emu.sh](../tests/e2e/fatal-emu.sh), in e2e.yml after the plain S3 and C5 runs, against their cluster): a test build (`sdkconfig.faulttest`) faults 30 s after power-on; after the restart the status must give `resetReason: panic` and a `lastFatalError` naming the task, with a `pc` that `addr2line` decodes against the build's ELF to the function that faulted and its caller among the return addresses, and the previous boot's log must end with the same text ([what it gives](RESULTS.md#a-crash-in-the-status)). `MODE=abort` does the same with an `abort()`, whose `pc` is its caller's; `MODE=iwdt` with a loop with interrupts off, which the interrupt watchdog ends (`resetReason: int_wdt`); `MODE=twdt`, by hand only, with a loop that starves the idle task and the task watchdog set to panic (`resetReason: task_wdt`). The workflow runs the first three on the S3 (Xtensa) and the C5 (RISC-V), whose handlers differ; by hand it runs on the C3 too.
-- **Zephyr** ([port/zephyr/build.sh](../port/zephyr/build.sh)): the Zephyr application built for `native_sim`, then, in e2e.yml, the end-to-end test of the simulated device with that build as the device (`DEVICE_KIND=zephyr tests/e2e/e2e.sh`), the waits for a certificate to expire included: the device working after its first certificate expired, and enrolling again after the server was down, with the Zephyr build's reboot under its new identity. Some checks are weaker than on the host, as the device's files are inside its flash image: that a config file was stored is read from the device's log, the config is not checked across re-enrollment, and that decommissioning wiped the key and certificate is not checked (the device must still come back decommissioned and not enroll again). The same test runs with the Zephyr build for `mps2/an385`, an Arm Cortex-M3 on Ethernet, in QEMU (`DEVICE_KIND=qemu`): built with the Arm toolchain of the Zephyr SDK, with the memory of a 384 KB device. On ESP32-S3 the CI job builds the MCUboot agent and runs the separate Simple Boot WASM button fixture in esp-emu. The port's hardware for apps (GPIO, ADC, PWM, I2C, SPI, UART from the devicetree) runs on `native_sim`'s emulated drivers: `tests/zephyr-hw.sh`, a ztest suite. Its RS-485 fixture distinguishes an empty FIFO from an idle shift register and checks DE, timeouts, close and shared device claims. The peer sends a three-byte reply when DE is released. [RS-485 results](RESULTS.md#zephyr-rs-485) The apps' C library with Zephyr's picolibc runs on `native_sim` and on `mps2/an385` in QEMU, the apps' runtime alone with the port (`tests/zephyr-apps.sh`): its tests of `tests/unit`, `trend` and `hwcheck`, `%f` at every precision, and the stack each app's thread used.
+The [end-to-end workflow](../.github/workflows/e2e.yml) uses those artifacts and builds its own broken rollback and crash-test images. It runs nightly on the latest successful CI commit unless that commit already passed. To run it manually, select a CI run in Actions or rerun that run's `e2e` job.
 
-You can run both tests against a cluster you already have:
+## Unit tests and fuzzing
+
+- [Unit tests](../tests/unit.sh) run the C core with ASan and UBSan against an in-memory port. They cover management, OCI, deltas, apps, hardware, console, MQTT, metrics and recovery. Python tests cover publishing and provisioning tools.
+- [Fuzz targets](../tests/fuzz.sh) exercise HTTP responses, OCI manifests and signatures, rendered specs, certificates, deltas and console input. CI gives each target 30 s on code pushes. The [nightly workflow](../.github/workflows/fuzz-nightly.yml) defaults to 20 min per target and retains its corpus. Regression inputs live in `tests/fuzz/corpus`.
+
+## End-to-end tests
+
+| Target | What the workflow checks |
+|---|---|
+| [Host](../tests/e2e/e2e.sh) | Enrollment and approval, status, config, signed app install/update/removal, unsigned app rejection and retry after a registry outage. Exercises resource alerts, gateway metrics, console and Logs, Git-managed fleets and secret-backed registry credentials. |
+| Host identity and recovery | Renews a two-minute management certificate, reconnects after a server restart and re-enrolls under a new name after expiry offline. API `FactoryReset` must remove the app as well as the device credentials. |
+| Zephyr `native_sim` and Arm `mps2/an385` in QEMU | Run the host fleet scenario with `DEVICE_KIND=zephyr` or `qemu`. Check stored config through logs. The test cannot inspect erased keys in flash or verify config across re-enrollment. CLI `Unenroll` must survive reboot. |
+| [ESP-IDF emulator](../tests/e2e/e2e-emu.sh) | C5, S3 and C6, each plain and secure. Install a signed delta and a full image over TLS, confirm the boot slot, reject a mismatched variant and an unsigned app, roll back unreachable firmware, then decommission. Only plain C5 runs certificate renewal. C3 enrollment and OTA are available manually with `CHIP=esp32c3`. |
+| [ESP-IDF crash reporting](../tests/e2e/fatal-emu.sh) | S3 and C5 must report the fault and task after reboot. Decode the PC and caller with the release ELF and check the previous boot log. CI covers panic, abort and interrupt watchdog. Task watchdog is manual (`MODE=twdt`). |
+
+**Provisioning.** Plain ESP-IDF e2e images start with a proof of possession and no network. The test rejects an incorrect proof, supplies the emulated network and enrolls. The [host protocol test](../tests/e2e/prov-host.sh) also checks wrong Wi-Fi credentials, scanning and radios that must close their AP before joining.
+
+**Secure Boot.** Secure emulator runs use disposable signing keys. They check first-boot eFuses, encrypted flash and migration of factory credentials, signed OTA, rejected signatures and variants, anti-rollback and key rotation. The C5 signs with its ECDSA peripheral. S3 and C6 report a storage key. Physical verification limits are in [Device security](SECURITY.md#not-yet-done).
+
+To reuse an existing cluster, run either test with `SKIP_DEPLOY=1`. The emulator must be on `PATH` or in `~/.local/bin`.
 
 ```bash
 SKIP_DEPLOY=1 tests/e2e/e2e.sh
-```
-
-```bash
 SKIP_DEPLOY=1 CHIP=esp32c5 tests/e2e/e2e-emu.sh
 ```
 
-The emulator test needs `esp-emu` on the PATH or in `~/.local/bin`. In CI it does not rebuild the firmware (`PREBUILT=1`): it provisions the images of the CI run, after signing the secure ones with throwaway keys. To try a build in the emulator by hand, provision its merged image for the emulator's access point and run it:
+To boot a local C3 build in the emulator, provision a merged image with the emulator's Wi-Fi credentials.
 
 ```bash
 tools/provision.py --image port/espidf/build-esp32c3/merged-binary.bin --wifi-ssid myssid --wifi-password mypassword
-```
-
-```bash
 esp-emu --chip esp32c3 --firmware port/espidf/build-esp32c3/merged-binary.bin --net user
 ```
 
-What is checked for a single feature is described with it: [firmware deltas](DELTA-UPDATES.md#what-the-tests-check), [provisioning](PROVISIONING.md#what-the-ci-checks), [the secure variant](SECURITY.md#what-the-ci-checks).
+## Peripheral tests
+
+The [ESP-IDF fixtures](../tests/espidf-hw) call the production drivers. The S3 fixture reads I²C and SPI sensors, checks a UART reply, detects button edges and measures PWM. A second boot with the wrong chip-select must fail. The C3 fixture checks calibrated ADC readings. Run from `tests/espidf-hw` with esp-emu and its examples installed.
+
+```bash
+idf.py -D IDF_TARGET=esp32s3 build merge-bin
+python3 run.py build/merged-binary.bin /path/to/esp-emu-1.1.0-examples
+
+idf.py -B build-c3 -D SDKCONFIG=build-c3/sdkconfig -D IDF_TARGET=esp32c3 build merge-bin
+python3 run.py --fixture adc build-c3/merged-binary.bin /path/to/esp-emu-1.1.0-examples
+```
+
+The Zephyr S3 job builds the MCUboot agent and a separate Simple Boot button fixture. Build the fixture in the west workspace, then run the second command from `tests/espidf-hw`.
+
+```bash
+west build -b esp32s3_devkitc/esp32s3/procpu -d /tmp/button-s3 /path/to/repo/tests/zephyr-apps
+python3 run.py --fixture zephyr /tmp/button-s3/zephyr/zephyr.bin /path/to/esp-emu-1.1.0-examples
+```
+
+[Zephyr driver tests](../tests/zephyr-hw.sh) exercise GPIO, ADC, PWM, I²C, SPI and UART on `native_sim`. The RS-485 peer checks driver enable through the last transmitted bit, timeouts, close and shared claims. [App runtime tests](../tests/zephyr-apps.sh) cover libc, float formatting and stack usage on `native_sim` and Arm QEMU. For physical boards, use [hwcheck](APPS.md#examples). [Recorded peripheral results](RESULTS.md#apps-on-the-boards)
 
 ## Registry tokens
 
-[tests/registry-bearer.sh](../tests/registry-bearer.sh), by hand, not in CI: the device's registry client (`fc_oci.c` and `fc_http.c`, built for the host as `fc-oci-pull`, without the agent) against registries that ask for Bearer tokens, in Docker. [docker_auth](https://github.com/cesanta/docker_auth) is the token service, with an account that pushes, a pull-only account for the device and anonymous pulls of `public/*`; two `registry:3` take its tokens: one with the realm on the token service's host, one behind nginx with the realm on its own host and port, as Harbor has it. With `QUAY=1`, Quay too (3.18.3, with Postgres and Redis, on port 9446, `QUAY_PORT`): an organization for each repository and, for the device, a robot account that reads `flightctl-mcu`; it takes about 1 GB of memory and a minute or two to start. Everything on a CA made for the run, on ports 9443–9445 (`REG_PORT`, `AUTH_PORT`, `PROXY_PORT`); the containers are removed at the end.
-
-The release is pushed as the tools push it (`tools/fw-push.py`, `oras`, `tools/signing/sign.py`, through the same tokens), then pulled as a device, with the CA and `auth.json` where the fleet puts them, against each registry:
-
-- a firmware from a two-chip index, its signature checked, the image byte for byte, with one token for the whole pull;
-- a WASM layer, signed;
-- a public repository with no credentials (an anonymous token), a private one with none, and one the account may not read: refused with `HTTP 401` and the reason;
-- a wrong password (and a wrong robot token on Quay), a token service whose CA the device lacks;
-- a token that runs out between the manifests and the blob: a second token, and the image intact. The tokens live 5 s and `registry:3` allows 60 s of clock skew, so this step waits 70 s (`QUICK=1` leaves it out).
-
-The firmware index carries the C3 and S3 images, or made-up ones. What was verified: [REGISTRY.md](REGISTRY.md#what-was-verified).
-
-No output may hold the password. Needs docker, oras, openssl, htpasswd (bcrypt), python3, cmake, ninja and mbedTLS 4.
+The manual [registry test](../tests/registry-bearer.sh) needs Docker, ORAS, OpenSSL, htpasswd with bcrypt, Python 3, CMake, Ninja and mbedTLS 4. It runs `registry:3` with same-host and cross-host Bearer realms. Enable Quay to test a pull-only robot account. Allow about 1 GB for Quay.
 
 ```bash
 tests/registry-bearer.sh
-```
-
-```bash
 QUAY=1 tests/registry-bearer.sh
 ```
 
-The script gives `registry:3` docker_auth's signing key as a JWKS, under the `kid` docker_auth puts in its tokens.
+Checks include signed multi-chip firmware and WASM, public and private repositories, refused credentials, denied scopes, untrusted CAs and token expiry mid-pull. Output must not contain the password. `QUICK=1` skips the 70 s token-expiry wait. Override ports with `REG_PORT`, `AUTH_PORT`, `PROXY_PORT` and `QUAY_PORT`. [Registry configuration](REGISTRY.md)
 
 ## MQTT broker
 
-[tests/mqtt-broker.sh](../tests/mqtt-broker.sh), by hand, not in CI: the apps' MQTT client (`fc_mqtt.c`, built for the host as `mqtt-broker-check`, without the agent) against mosquitto 2.1.4 in Docker, on a plain listener and on a TLS one with a CA made for the run, on free ports; the container is removed at the end. About two minutes. Without and with TLS:
-
-- a wrong password refused, and with TLS a wrong CA;
-- a message published under the app's prefix, seen by `mosquitto_sub` in the container;
-- messages from `mosquitto_pub` on the device's prefix (QoS 1) and the fleet's, each to its subscription with its topic relative;
-- a payload too large dropped and counted, the next one received;
-- the app's own message back on its subscription;
-- with TLS, 25 s without traffic kept alive by the keep-alive (10 s), and the broker restarted: the link back and the subscriptions taken again.
-
-Needs docker, openssl, cmake, ninja and mbedTLS 4.
-
-```bash
-tests/mqtt-broker.sh
-```
+Run `tests/mqtt-broker.sh` with Docker, OpenSSL, CMake, Ninja and mbedTLS 4. The manual test runs the host client against Mosquitto on plain TCP and TLS. It checks authentication, CA validation, both topic prefixes, QoS 1, oversized messages, keep-alive and resubscription after a broker restart. Allow about two minutes. [Device MQTT configuration](APPS.md#mqtt)

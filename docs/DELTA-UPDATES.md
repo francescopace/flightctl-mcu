@@ -1,25 +1,16 @@
 # Firmware updates as deltas
 
-A firmware image is 0.7 to 1.5 MB, and most of it does not change from one release to the next. A release can therefore carry deltas: for a device that runs a known earlier release, the difference between the two images instead of the whole new one.
-
-Measured on the boards, each delta applied (`lastDelta: Applied`):
-
-| Update | Boards | Delta |
-|---|---|---|
-| A release with much new code | classic ESP32, C5, C6, S3 | 12 to 15% of the image |
-| A release of fixes | the same | 2 to 3% |
-| From the debug build to the release build | ESP32-S3 | 511 KB, half of the image: the two are compiled differently |
-| From one Zephyr build to the next | ESP32-S3 | 19 KB, 2.2% |
+Publish a delta to reduce the download for devices on a known release. Keep the full image in the same signed index so every device has an update path. [Measured download sizes](RESULTS.md#firmware-deltas)
 
 ## Publishing a release with deltas
 
 ```bash
-tools/fw-push.py --delta-from v1.0 --delta-from v1.1 <registry>/flightctl-mcu/fw:v1.2
+tools/fw-push.py --delta-from v0.9.0 "$REGISTRY/flightctl-mcu/fw:$NEW_TAG"
 ```
 
-For each chip, `fw-push.py` takes that chip's image out of each release named (a tag or a digest in the same repository), makes the delta to the new image and pushes it next to it. A delta no smaller than the image is left out. Nothing else changes: the fleet's `spec.os.image` names the new release as before, and each device finds out by itself whether a delta is for it.
+Set `REGISTRY` to the registry host and `NEW_TAG` to a fresh tag. Repeat `--delta-from` for each source tag or digest in the same repository. For each platform, the publisher generates a sequential, heatshrink-compressed patch and includes it only if smaller than the new image. The fleet still sets `spec.os.image` to the new release.
 
-The deltas are made with [detools](https://github.com/eerimoq/detools), the tool Espressif's `esp_delta_ota` uses: bsdiff's algorithm, in a patch that is applied in order (`sequential`), compressed with heatshrink. `fw-push.py` uses the `detools` Python package if it is installed, or installs it in a virtual environment in `build/detools-venv` the first time (it has C extensions: a compiler and the Python headers are needed). The device does not use detools: it decodes that format with its own code (`core/src/fc_delta.c`).
+The publisher installs detools in `build/detools-venv` if needed. Its C extensions require a compiler and Python headers. The device uses the [core decoder](../core/src/fc_delta.c).
 
 ## In the registry
 
@@ -34,48 +25,39 @@ index (tag)
                    io.flightctl-mcu.delta.from-size: that image's size
 ```
 
-The image stays the first layer, which is what firmware older than this takes. The index is signed as before, and the signature covers the deltas as it covers the image: manifests and layers are fetched by digest.
+Older firmware reads the first layer, which holds the full image. The index signature covers both full images and deltas through their manifest and layer digests.
 
 ## On the device
 
-1. The agent resolves the release and checks its signature, as for any update.
-2. For each delta in its chip's manifest, it hashes the first `from-size` bytes of the image it is running, read from its own slot, and compares with `from`. No match: it downloads the image, as before.
-3. With a match, it downloads the delta and rebuilds the new image into the inactive slot as the delta arrives, reading the old image from the running slot. Nothing is kept in RAM but the decoder: about 7 KB, a decompression window of 4 KB, 2 KB of the old image read ahead, and its state.
-4. The rebuilt image must have the sha256 of the first layer, which the signed manifest names. Then the slot is committed, with the usual checks (Secure Boot signature, security variant, anti-rollback), and the device reboots into it, confirms it or rolls back, as with a whole image.
+1. With the [OCI public key provisioned](SECURITY.md#two-signing-keys), verify the release signature. For each candidate delta, hash the first `from-size` bytes of the running slot and compare the digest with `from`.
+2. If a delta matches, stream it into the decoder. Read unchanged bytes from the running slot and write the rebuilt image to the inactive slot. Decoder state, a 4 KB window and 2 KB of read-ahead use about 7 KB of RAM.
+3. Check the rebuilt image against the signed full-image SHA-256 before committing the slot. Normal signature, security variant, anti-rollback and boot confirmation checks still apply.
 
-If anything goes wrong on the way (the delta does not decode, the result has another digest, memory is short), the slot is given up and the image is downloaded whole, in the same update. An image the device refuses at commit would be refused whole too, and is not downloaded again.
+Read `status.os.lastDelta.outcome` after an update.
 
-The device reports how its last firmware came in `status.os.lastDelta`, the field Flight Control 1.4 has for it: `outcome: Applied` for a delta, `NotUsed` for a whole image when the release has no delta from the running one, and `Fallback` with a `fallbackReason` when a delta did not work and the image came whole. The sizes are in the device's log. Flight Control also makes deltas of its own, for the bootc images of Linux devices: another mechanism, which these devices do not use.
+| Outcome | Meaning |
+|---|---|
+| `Applied` | Installed a matching delta. |
+| `NotUsed` | No matching delta. The device downloaded the full image. |
+| `Fallback` | Patch decoding, allocation or digest verification failed. The device retried with the full image. See `status.os.lastDelta.fallbackReason`. |
+
+If the device rejects the rebuilt image at commit, downloading it whole would give the same result. The agent reports the error without another pull.
 
 ![status.os.lastDelta in a device's YAML](img/delta-applied.png)
-*In the device's YAML in the UI: the release it runs and `lastDelta: Applied`, the firmware taken as a delta.*
-
-With Secure Boot and flash encryption nothing changes: the device reads its image in clear through the flash encryption, the delta is between the signed images, and what it rebuilds is the signed image, byte for byte.
+Flash encryption allows the decoder to read the running image in clear. With Secure Boot, the patch reconstructs the signed binary byte for byte.
 
 ## A delta is not trusted until the end
 
-The device decodes a delta before it can check its digest, which comes with the last byte, from a registry that anyone with an account can push to. What stands between a hostile delta and the device:
-
-- the decoder reads only inside the running image and writes at most the new image's size into a slot that is not committed (`core/src/fc_delta.c`);
-- it allocates about 2.5 KB for its state and the window the delta asks for, at most 4 KB: a delta asking for a larger window is refused;
-- the rebuilt image is committed only if its sha256 is the one in the signed manifest.
-
-The decoder is ours rather than detools' C library, which applies many kinds of patch: these devices need one, and its loop is short. Every size read from the patch is kept in a `size_t` and checked against what is left of the two images before it is used, where detools' library computes with plain `int`s that a patch can overflow. `tests/fuzz/fuzz_delta.c` fuzzes the decoder in CI with the others.
+The decoder processes bytes before the final digest is available. It bounds reads to the source image, writes to the expected output size and rejects decompression windows over 4 KB.
 
 ## Other ports
 
 The decoder is in the core. A port only has to read its running image: `fc_port_fw_read(off, buf, len)`. One that cannot returns -1, and its updates are whole images. On the host port, the image is the file `FC_FW_IMAGE` names; on Zephyr, MCUboot's first slot, and the image is the one signed for MCUboot (`fw-push.py ... PLATFORM=zephyr.signed.bin`).
 
-## What the tests check
-
-- Unit tests (`tests/unit/test_oci.c`): a delta is used when it starts from the running image and not otherwise; a delta that rebuilds another image, one corrupted at each byte in turn, one cut short, one with a larger window and one that does not match its digest all end with the whole image in the slot.
-- End-to-end, on every emulated chip and variant (`tests/e2e/e2e-emu.sh`): the release is pushed with a delta from the default build the device starts on, and the device must report that it came as a delta; the next image, which has none, must come whole.
-
 ## What was verified
 
-The ESP-IDF firmware on the classic ESP32, C5, C6 and S3, and the Zephyr firmware on the ESP32-S3, took releases as deltas, with the sizes above; on the S3 the 511 KB delta took 13 s, Zephyr's 19 KB 8 s. The C3 only in the emulator.
+[Board results](RESULTS.md#firmware-deltas) give delta sizes, platforms and timings. Unit tests cover truncated, corrupted and mismatched deltas and full-image fallback. The emulator checks both delta and full updates. [Test suite](TESTING.md#end-to-end-tests)
 
 ## Limits
 
-- **Deltas are per pair of images.** A device on a release with no delta to the new one downloads the image. Which releases to make deltas from is the publisher's choice.
-- **A device flashed over USB** takes a delta only if what was flashed is, byte for byte, an image that was pushed (it is, when both come from the same build).
+The running image must match the source of a published delta byte for byte. For a board flashed over USB, publish the same binary used for flashing.

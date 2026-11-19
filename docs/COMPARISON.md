@@ -1,95 +1,37 @@
 # Comparison with other device management for microcontrollers
 
-flightctl-mcu next to the services and open-source projects that manage microcontrollers from more than one chip vendor. What is said of the others comes from their public documentation, read in November 2026.
+The table compares the MCU integrations documented in November 2026. ✓ means supported, ◐ means partial or limited to the integration described, ✗ means unavailable in that integration, and – means the cited sources leave the capability open. Open source covers the device and server. “Apps without reflashing” means replacing an application independently of the MCU firmware.
 
-✓ yes, ◐ partly or with limits, ✗ no, – not documented: we did not find it there, which does not mean it cannot be built on top.
-
-## At a glance
-
-| | Self-hosted | Open source | ESP-IDF | Zephyr | Linux in the same fleets | Delta updates | Remote config | Crash reports | Apps without reflashing |
+| Platform | Self-hosted | Open source | ESP-IDF | Zephyr | Linux in the same fleets | Firmware deltas | Remote config | Crash reports | Apps without reflashing |
 |---|---|---|---|---|---|---|---|---|---|
 | **flightctl-mcu** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Golioth** | ✗ | ◐ | ✓ | ✓ | ◐ | – | ✓ | – | ◐ |
-| **Memfault** | ✗ | ◐ | ✓ | ✓ | ✓ | ✓ | – | ✓ | ✗ |
-| **Mender MCU** | ✗ | ◐ | ✗ | ✓ | ✓ | ✗ | – | – | ✗ |
-| **AWS IoT Device Management** | ✗ | ◐ | ✓ | ◐ | ✓ | – | ✓ | – | ✗ |
-| **Azure Device Update** | ✗ | ◐ | ◐ | – | ✓ | – | ✓ | – | ✗ |
-| **Eclipse hawkBit** | ✓ | ✓ | – | ✓ | ✓ | – | ✗ | ✗ | ✗ |
-| **LwM2M (Leshan, Coiote)** | ◐ | ◐ | ◐ | ✓ | ✓ | – | ✓ | – | ✗ |
+| **AkiraOS with AkiraHub** | ◐ | ◐ | ✗ | ✓ | – | ✗ (v1.6.7) | – | ◐ | ✓ |
+| **Atym with Ocre** | ✓ | ◐ | – | ✓ | ✓ | – | ✓ | – | ✓ |
+| **Golioth** | ✗ | ◐ | ✓ | ✓ | ◐ | – | ✓ | – | ◐ (Zephyr demo) |
+| **Memfault** | ✗ | ◐ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
+| **Mender MCU** | ✗ | ◐ | – | ✓ | ✓ | ✗ | – | – | – |
+| **AWS IoT Device Management** | ✗ | ◐ | ✓ | ◐ | ✓ | – | ✓ | – | – |
+| **Azure Device Update** | ✗ | ◐ | ◐ | – | ✓ | ◐ (SWUpdate reference client) | ✓ | – | – |
+| **Eclipse hawkBit** | ✓ | ✓ | – | ✓ | ✓ | – | – | – | – |
+| **Eclipse Leshan** | ✓ | ✓ | – | – | – | – | ✓ (LwM2M resource writes) | – | – |
+| **Coiote with Anjay** | ✓ | ◐ | ✓ | ✓ | ◐ | – | ✓ | – | – |
+| **ESP RainMaker Neo** | ✓ | ✓ | ✓ | – | ◐ | – | ✓ | ◐ | – |
+| **Toit with Artemis** | ✓ | ✓ | ✓ | – | ◐ | – | ✓ | – | ✓ |
 
-"Open source" is ✓ only when both the device code and the server are. Golioth, Memfault, AWS and Azure publish their device SDKs, not their servers; Mender's server is open source, but its microcontroller support is on hosted Mender only.
-
-## The others
-
-- **Golioth**, hosted, part of Canonical since March 2026. It has the broadest firmware SDK (ESP-IDF, Zephyr, nRF Connect, ModusToolbox) and, beside OTA by cohorts, settings, RPC, logs, a data pipeline and Bluetooth devices through gateways. Its OTA ships in Canonical's Zephyr 26.04 LTS. The Linux SDK is experimental, and apps without reflashing exist as a [WebAssembly demo](https://blog.golioth.io/webassembly-on-zephyr/).
-- **Memfault**, hosted, Nordic's since June 2025 and also sold as nRF Cloud. It is built around crashes: coredumps, metrics and traces, with OTA by cohorts and delta releases, on microcontrollers, Linux and Android.
-- **Mender** has an open-source server for Linux devices. Its microcontroller client, `mender-mcu` (Apache 2.0), runs on Zephyr only, does OTA and inventory, and works with hosted Mender only, in a "Micro" tier: artifacts up to 5 MB, no end-to-end signatures.
-- **AWS IoT Device Management** and **Azure Device Update** are parts of a cloud, to be put together with its other services. On AWS, OTA goes through IoT Jobs and the FreeRTOS OTA agent (on ESP32, Espressif's `esp-aws-iot`; on Zephyr, samples and nRF Connect's AWS FOTA library), configuration through device shadows, Linux through the Jobs agent and Greengrass. Azure has ESP32 samples (FreeRTOS, bare metal), an agent for Eclipse ThreadX, and device twins for configuration.
-- **Eclipse hawkBit** is an open-source update server with rollouts, and does nothing else. Zephyr has a client built in; Linux devices use SWUpdate or RAUC.
-- **LwM2M** is the OMA standard for device management, common on cellular devices, where firmware and configuration are objects of the protocol. The clients are Zephyr's own and AVSystem's Anjay, also on ESP-IDF; the servers, Eclipse Leshan (open source) and AVSystem Coiote (commercial).
-
-## What only flightctl-mcu does
-
-Of the eight, only flightctl-mcu:
-
-- runs WebAssembly apps: logic changes on a running device without a firmware release, the same `.wasm` runs on every chip, and an app reaches only the hardware its fleet grants it ([APPS.md](APPS.md));
-- takes firmware and apps from any OCI registry, signed with cosign as containers are, where the others keep them in their own storage and format;
-- publishes an SBOM per release to Trustify, and Flight Control shows the CVEs on the devices that run it ([SBOM.md](SBOM.md));
-- puts microcontrollers in Red Hat Edge Manager, with the same fleets, label selectors, rollouts and RBAC as bootc devices. Most of the others manage Linux too, each in its own way.
-
-Crash reports give the fault details in the device status after a restart. Operators with console access can download the native dump from flash and debug it with the crashed release's ELF. This was verified on a physical ESP32-S3 running Zephyr and in emulation on ESP-IDF C3 and Zephyr Arm. [Crash report measurements](RESULTS.md#a-crash-in-the-status)
-
-WiFi is its only link on real boards, deep sleep waits on Flight Control, and support is the community's.
-
-## Golioth, Memfault and Mender in detail
-
-These three manage ESP-IDF or Zephyr devices as a product, and are the nearest to flightctl-mcu. What works today is verified in [RESULTS.md](RESULTS.md).
-
-For flightctl-mcu, "next" is on the [roadmap](ROADMAP.md#v100-in-progress) for 1.0, "waits on Flight Control" needs a change there ([limitations](FLIGHTCTL-LIMITATIONS.md)), and "after 1.0" is proposed for 2.0 ([after 1.0](ROADMAP.md#v200-planned)).
-
-| | flightctl-mcu | Golioth | Memfault | Mender MCU |
-|---|---|---|---|---|
-| **Server you run yourself** | ✓ Flight Control on Kubernetes, OpenShift or Podman; Red Hat Edge Manager is its supported build | ✗ hosted | ✗ hosted (Memfault, nRF Cloud) | ✗ hosted only; on-premise planned |
-| **ESP-IDF** | ✓ ESP32, S3, C3, C5, C6 | ✓ | ✓ | ✗ Zephyr only |
-| **Zephyr** | ◐ without the device protection of the ESP-IDF port · after 1.0: the same protection | ✓ | ✓ | ✓ ESP32-S3 as reference board |
-| **Other chips** | ◐ Arm Cortex-M3 in QEMU · 1.0 hardware tests planned on NUCLEO-F767ZI, Pico 2 W and nRF7002-DK · cellular connectivity and TF-M device keys planned for 2.0 | ✓ Nordic, Espressif, Infineon, NXP and more | ✓ any Cortex-M or ESP32 | ✓ any Zephyr board with MCUboot |
-| **Linux devices in the same fleets** | ✓ the Flight Control agent, bootc images and containers | ◐ Linux SDK, experimental | ✓ Linux (Yocto) and Android SDKs | ✓ Mender's main client |
-| **WebAssembly apps** | ✓ run by WAMR, installed and updated without a reboot or a firmware release; one `.wasm` for Xtensa, RISC-V and Arm | ◐ a [demo](https://blog.golioth.io/webassembly-on-zephyr/) with WAMR, modules sent as settings; not a product feature | ✗ | ✗ |
-| **Firmware and apps from an OCI registry** | ✓ any registry (TLS, password), signed with cosign, one index for every chip | ✗ its own storage | ✗ its own storage | ✗ its own artifacts |
-| **Device identity** | ✓ key made on the device, mTLS certificate from the server, renewal | ✓ pre-shared key, or a certificate from your own PKI | ◐ a project key shared by the devices, and their serial number | ✓ key pair, accepted on the server |
-| **Firmware OTA with rollback** | ✓ A/B, confirmed only once the server accepts the new firmware's status | ✓ through MCUboot or ESP-IDF | ✓ | ✓ through MCUboot |
-| **Signed firmware** | ✓ cosign signatures checked by the agent; on ESP-IDF also Secure Boot, verified on emulated chips | ✓ | ✓ through the bootloader | ◐ MCUboot's; Mender's own signatures not on the Micro tier |
-| **Delta updates** | ✓ | – | ✓ | ✗ nor compression |
-| **Staged rollouts** | ✓ Flight Control's batches with a failure threshold | ✓ cohorts | ✓ cohorts and percentages | ◐ phased deployments, on paid plans |
-| **Remote configuration** | ✓ files the firmware can reject | ✓ settings | – | – |
-| **Health and alerts** | ✓ CPU, heap, storage against the fleet's rules | ◐ device state and logs | ✓ metrics and alerts | ◐ inventory |
-| **Crash reports** | ✓ `resetReason` and `lastFatalError` in status. Download the native dump on demand with `flightctl console` and decode it with the release ELF. Zephyr on Xtensa captures the faulting thread's registers and stack. Optional external uploads proposed for 2.0. [Results](RESULTS.md#a-crash-in-the-status) | – | ✓ its core feature | – |
-| **Remote log** | ✓ the last lines, kept in RAM, in the UI's Logs tab and the console ([CONSOLE.md](CONSOLE.md#the-log)) | ✓ | ✓ with crashes | – |
-| **Remote commands** | ✓ Flight Control's terminal and `flightctl console`, with a closed set of commands ([CONSOLE.md](CONSOLE.md)) | ✓ RPC | – | – |
-| **Data from apps** | ✓ Two-way MQTT and OTLP metrics on ESP-IDF and Zephyr ESP32-S3. [Board results](RESULTS.md#apps-on-the-boards) | ✓ LightDB Stream and pipelines | ◐ metrics only | – |
-| **Peripherals from apps** | ◐ ESP-IDF exposes GPIO, LEDs, I2C, SPI, UART, ADC and PWM. On Zephyr, physical peripherals need devicetree nodes and enabled drivers. The shipped S3 overlay exposes none. CI exercises the drivers on `native_sim` and a GPIO button in an S3 test build. [Zephyr board configuration](ZEPHYR.md#hardware-for-apps) | – in the firmware | – in the firmware | – in the firmware |
-| **SBOM and known vulnerabilities** | ✓ an SBOM per release, CVEs shown in Flight Control through Trustify | – | – | – |
-| **Links** | ◐ WiFi; Ethernet in QEMU · next: Ethernet on a board · after 1.0: cellular (LTE-M, NB-IoT) | ✓ WiFi, Ethernet, cellular | ✓ any, including BLE through a phone or gateway | ✓ what the Zephyr board has |
-| **Devices without IP** | after 1.0: BLE or Thread devices behind a Linux gateway in the same fleet | ✓ Bluetooth through gateways (Pouch) | ✓ BLE through a phone or gateway | – |
-| **Battery and deep sleep** | waits on Flight Control: a status without a long-poll | ✓ devices sync when they wake | ✓ devices upload when they wake | ◐ polling, up to once a week |
-| **Commercial support** | ✗ community | ✓ | ✓ | ✓ |
-
-## Tied to one chip vendor
-
-Not in the tables, since they run on one vendor's chips:
-
-- **[ESP RainMaker](https://developer.espressif.com/blog/2026/08/open-sourcing-esp-rainmaker-neo/)** (Espressif) gives OTA, parameters, a phone app and a cloud on AWS. Since August 2026 the whole RainMaker Neo stack, cloud included, is open source (Apache 2.0) and runs in your own AWS account. Crash reports and metrics come from ESP Insights, in the enterprise plan.
-- **[Toit](https://toit.io)** (ESP32) runs apps as containers that change without reflashing, as our WebAssembly apps do, but they are written in the Toit language. Its fleet manager, Artemis, pushes firmware, containers and configuration. Toit publishes no figures against native code or WebAssembly. A comparison on the same ESP32-C6 is planned after 1.0, with three benchmarks: Richards (method calls and pointers between objects), in Toit and in C built to `.wasm`; DeltaBlue (objects allocated and freed at every step), with the app's own `malloc` ([APPS.md](APPS.md#the-c-library)); and CoreMark in WAMR's AOT mode against the interpreter, which needs `wamrc`, a module per architecture, executable memory, and another way to stop an app than the instruction count.
-
-[AkiraOS](https://www.cnx-software.com/2026/06/06/docker-for-microcontrollers-akiraos-combines-zephyr-rtos-with-webassembly-wasm-applications/) also runs WebAssembly apps, on Zephyr; it is an OS, with no fleet management.
+For a team already using Flight Control, the same rollout tools can manage Linux gateways and MCU sensors. On both ESP-IDF and Zephyr, the agent can replace a signed WASM app while the firmware keeps running and can apply a firmware delta when the release includes one for the installed image. [App updates](APPS.md#how-an-app-runs) · [Firmware deltas](DELTA-UPDATES.md#on-the-device)
 
 ## Sources
 
-- Golioth: [Firmware SDK](https://github.com/golioth/golioth-firmware-sdk), [OTA](https://docs.golioth.io/firmware/golioth-firmware-sdk/firmware-upgrade), [cohorts](https://blog.golioth.io/golioth-upgrades-ota), [device authentication](https://docs.golioth.io/reference/device-api/device-auth), [Bluetooth](https://blog.golioth.io/bluetooth-at-golioth-so-far-2025/), [part of Canonical](https://blog.golioth.io/?p=10529), [Zephyr LTS](https://canonical.com/blog/zephyr-lts-announcement)
-- Memfault: [ESP-IDF integration](https://docs.memfault.com/docs/mcu/esp32-guide), [OTA, cohorts and delta releases](https://docs.memfault.com/docs/platform/ota), [Linux SDK](https://docs.memfault.com/docs/linux/introduction), [Nordic acquisition](https://embeddedcomputing.com/technology/iot/nordic-semiconductor-acquires-memfault-launches-chip-to-cloud-platform)
-- Mender: [MCU client](https://docs.mender.io/operating-system-updates-zephyr/overview), [release and Micro tier](https://mender.io/blog/official-release-of-mender-for-microcontrollers-mcus-like-zephyr-and-the-micro-device-tier), [device tiers](https://docs.mender.io/overview/device-tiers), [device support](https://docs.mender.io/devices), [known limits](https://docs.mender.io/troubleshoot/mender-mcu), [phased rollout](https://mender.io/blog/managing-large-scale-deployments-with-phased-rollout-and-schedule-deployments)
-- AWS: [Device Management features](https://aws.amazon.com/iot-device-management/features/), [FreeRTOS OTA](https://docs.aws.amazon.com/freertos/latest/userguide/ota-update-library.html), [OTA in the IoT Lens](https://docs.aws.amazon.com/wellarchitected/latest/iot-lens/change-management.html)
-- Azure: [Device Update](https://learn.microsoft.com/azure/iot-hub-device-update/understand-device-update), [OTA for MCUs](https://techcommunity.microsoft.com/blog/iotblog/over-the-air-updates-for-mcus-with-azure-device-update/3592702)
-- hawkBit: [features](https://eclipse.dev/hawkbit/features), [rollout management](https://eclipse.dev/hawkbit/concepts/rollout-management)
-- LwM2M: [firmware updates with Zephyr](https://www.zephyrproject.org/remote-firmware-updates-for-iot-devices-using-lwm2m-and-zephyr-rtos/), [Coiote updates](https://iotdevzone.avsystem.com/docs/Coiote_IoT_DM/Single_update)
-- ESP RainMaker: [RainMaker Neo open source](https://developer.espressif.com/blog/2026/08/open-sourcing-esp-rainmaker-neo/). Toit: [fleet management](https://docs.toit.io/getstarted/fleet)
+- **flightctl-mcu** — [Control plane and fleets](../README.md#what-maps-to-what) · [Board results](RESULTS.md#what-works) · [Measured deltas](RESULTS.md#firmware-deltas)
+- **AkiraOS with AkiraHub** — [Hub and hosting](https://akiraos.dev/) · [OS release notes](https://docs.akiraos.dev/resources/release-notes) · [v1.6.7 delta decoder](https://github.com/ArturR0k3r/AkiraOS/blob/v1.6.7/src/lib/akira_delta.c)
+- **Atym with Ocre** — [Ocre runtime and Hub hosting](https://www.atym.io/post/webassembly-for-containerization-of-embedded-software-comparing-diy-open-source-and-enterprise-im) · [WASM containers on Zephyr and Linux](https://docs.prod.atym.io/overview/containers) · [Fleet configuration and campaigns](https://docs.prod.atym.io/reference/cli/commands/campaign)
+- **Golioth** — [Firmware SDK and platforms](https://docs.golioth.io/reference/firmware/golioth-firmware-sdk/) · [WASM deployment demo](https://blog.golioth.io/webassembly-on-zephyr/)
+- **Memfault** — [ESP-IDF integration](https://docs.memfault.com/docs/mcu/espressif-esp32-guide) · [OTA and delta releases](https://docs.memfault.com/docs/platform/ota) · [Linux SDK](https://docs.memfault.com/docs/linux/introduction)
+- **Mender MCU** — [Device tiers](https://docs.mender.io/overview/device-tiers) · [MCU client limitations](https://docs.mender.io/troubleshoot/mender-mcu)
+- **AWS IoT Device Management** — [Fleet management and jobs](https://aws.amazon.com/iot-device-management/features/) · [Device shadows](https://docs.aws.amazon.com/iot/latest/developerguide/iot-device-shadows.html)
+- **Azure Device Update** — [Device Update](https://learn.microsoft.com/en-us/azure/iot-hub-device-update/understand-device-update) · [Supported delta format](https://learn.microsoft.com/en-us/azure/iot-hub-device-update/delta-updates) · [IoT Hub configuration](https://learn.microsoft.com/en-us/azure/iot-hub/iot-hub-automatic-device-management)
+- **Eclipse hawkBit** — [Rollout server](https://hawkbit.eclipse.dev/) · [Zephyr client](https://docs.zephyrproject.org/latest/samples/subsys/mgmt/hawkbit/README.html)
+- **Eclipse Leshan** — [Java server and client libraries](https://eclipse.dev/leshan/) · [Server demo and source](https://github.com/eclipse-leshan/leshan)
+- **Coiote with Anjay** — [Server features and Anjay platforms](https://avsystem.com/products-iot/) · [On-premises deployment](https://avsystem.com/hubfs/AVSystem_UC_Anjay_Coiote_IOT0224.pdf?hsLang=en)
+- **ESP RainMaker Neo** — [Server and device SDK](https://developer.espressif.com/blog/2026/08/open-sourcing-esp-rainmaker-neo/) · [POSIX support](https://docs.neo.rainmaker.espressif.com/docs/firmware/get-started/setup-posix)
+- **Toit with Artemis** — [Fleet and application updates](https://docs.toit.io/getstarted/fleet/) · [Artemis server](https://github.com/toitware/artemis)

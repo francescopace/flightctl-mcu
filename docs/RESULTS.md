@@ -1,16 +1,17 @@
 # Results
 
-Six boards were tested with Flight Control 1.4.0. Firmware sizes are for release `v0.9.0`, built with ESP-IDF 6.1.1 or Zephyr 4.5.0 and WAMR 2.4.6.
+Six boards were tested with Flight Control 1.4.0. Firmware sizes are for release `v0.9.0`, built with ESP-IDF 6.1.1 or Zephyr 4.5.0 and WAMR 2.4.6. Delta, CoreMark, RAM, timing and traffic measurements come from earlier builds. [Firmware versions used for those measurements](https://github.com/francescopace/flightctl-mcu/blob/aaf93f36891556c3d0913dcd40e50a7d6a843be0/docs/RESULTS.md)
 
 ## What works
 
 | Capability | Verified coverage |
 |---|---|
 | Fleet management | Both ports enrolled over mTLS, reported status, applied config and ran signed WASM apps. Firmware updates preserved device identity. Certificate renewal was also verified on a physical C6. |
-| Firmware updates | Both ports installed full and delta images from a TLS registry, confirmed the new firmware after reboot and rolled back a failed release. [Delta updates](DELTA-UPDATES.md#what-was-verified) |
+| Firmware updates | Both ports installed full and delta images from a TLS registry, confirmed the new firmware after reboot and rolled back a failed release. [Measured deltas](#firmware-deltas) |
 | <a id="http2"></a>HTTP/2 | Spec and status shared a connection on all six boards. Registry logs confirmed HTTP/2 app and firmware downloads on classic ESP32, C5, C6 and S3 with ESP-IDF, and on S3 with Zephyr. |
-| Wi-Fi provisioning | A phone provisioned the C6 with ESP-IDF and the S3 with Zephyr. After correcting a password, the C6 joined the network in about 2 s, closed its access point about 8 s later and rejoined after reset. [Provisioning](PROVISIONING.md) |
+| Wi-Fi provisioning | A phone provisioned the C6 with ESP-IDF and the S3 with Zephyr. After a password retry, C6 joined in about 2 s, closed its AP about 8 s later and rejoined after reset. The Zephyr S3 joined in 8 s and was online with its app running 1 s after its AP closed. [Provisioning](PROVISIONING.md) |
 | Operations | Both ports delivered device logs, remote console output and OTLP metrics. Decommissioning wiped the device key and certificate in 2.4–3 s. The resident app kept running. |
+| Crash dumps | A physical Zephyr S3 with `alarm` produced an 8,535 B dump. Emulated ESP-IDF C3 dumps measured 11,200–14,080 B with zero or two apps. Both were retrieved and decoded. [Download and decode a dump](CONSOLE.md#download-a-crash-dump) |
 
 ## Firmware size
 
@@ -26,11 +27,22 @@ ESP-IDF OTA slots are 1,703,936 B each. The firmware was built for size, with WA
 
 <a id="zephyr-on-the-esp32-s3"></a>On the **Zephyr S3 N8R8** with PSRAM, the signed image is **1,038,663 B**. It uses 376,800 of 380,672 B of internal DRAM at link time, leaving **3,872 B** for build changes. The linked image already includes the 120,112 B C heap and 94,208 B kernel heap. [Zephyr board configuration](ZEPHYR.md#on-an-esp32-s3)
 
-For scale, an earlier speed-optimized C3 build used about 430 KiB of flash for Wi-Fi and networking, 197 KiB for cryptography and TLS, 68 KiB for WAMR and 62 KiB for the agent core. The apps’ C library occupied 7.7 KiB.
+MQTT added 12.9 KB flash on C3 and 12.7 KB on Zephyr S3. Field provisioning added 17.4 KB flash and 16 B static RAM to an ESP-IDF 6.0.3 S3 debug build.
+
+## Firmware deltas
+
+| Update | Target | Download |
+|---|---|---|
+| Release with substantial code changes | ESP-IDF on ESP32, C5, C6 and S3 | 12–15% of the full image |
+| Fix release | Same boards | 2–3% |
+| Debug to release build | ESP-IDF S3 | 511 KB (about half the image), 13 s |
+| Successive Zephyr builds | Zephyr S3 | 19 KB (2.2%), 8 s |
+
+Each board reported `Applied` in `status.os.lastDelta.outcome`. C3 delta coverage was emulated. [Publish and inspect a delta](DELTA-UPDATES.md)
 
 ## CoreMark
 
-<a id="scores-by-board"></a>The same two unmodified WASM modules ran as the sole app on each board, with metrics export off, on ESP-IDF firmware `v3.15-rc2` and Zephyr firmware `z32`. Scores are iterations per second on WAMR’s fast interpreter. Each score passed the CRC checks with at least 10 s timed. The column sizes are the contiguous linear memory each module needs. [Benchmark modules](APPS.md#modules-built-for-no-device)
+<a id="scores-by-board"></a>The same two unmodified WASM modules ran as the sole app on each board, with metrics export off. Scores are iterations per second on WAMR’s fast interpreter. Each score passed the CRC checks with at least 10 s timed. The column sizes are the contiguous linear memory each module needs. [Benchmark modules](APPS.md#modules-built-for-no-device)
 
 | Board | 64 KiB | 128 KiB |
 |---|---:|---:|
@@ -41,7 +53,7 @@ For scale, an earlier speed-optimized C3 build used about 430 KiB of flash for W
 | ESP32-S3 N4R2, 2 MiB quad PSRAM | 17.586 | 21.081 |
 | Zephyr ESP32-S3 N8R8, 8 MiB octal PSRAM | 17.864 | 21.637 |
 
-<a id="memory-placement-on-c5-and-c6"></a>The 64 KiB scores for C5 and C6 are medians of six installs per board on a single boot. The ranges were 21.313–21.413 on C5 and 11.827–11.867 on C6. At 64 KiB, all five ESP-IDF boards scored within 5% of their `v3.14-rc12` baseline.
+<a id="memory-placement-on-c5-and-c6"></a>The 64 KiB scores for C5 and C6 are medians of six installs per board on a single boot. The ranges were 21.313–21.413 on C5 and 11.827–11.867 on C6.
 
 On an instrumented ESP-IDF C6, two continuous WASM apps ran together at normal priority. The longest measured interval between idle task executions was 0.50 s with a 5 s watchdog. [One-shot execution](APPS.md#modules-built-for-no-device)
 
@@ -49,22 +61,26 @@ A separate N8R8 build with PSRAM disabled reached 17.885 iterations/s at 64 KiB 
 
 ## RAM
 
-On ESP-IDF an app must leave **40 KiB of free internal RAM** after its instance is created. Its linear memory also needs a contiguous block. For example, the 1.9 KiB `trend` module used 17.7 KiB of heap on C3, including an 8 KiB thread stack. App threads used 2.5–3.4 KiB of stack with `alarm` on ESP-IDF and 3.0 KiB on Zephyr S3. [App size and limits](APPS.md#size-and-limits)
+On ESP-IDF, the 1.9 KiB `trend` module used 17.7 KiB of heap on C3, including an 8 KiB thread stack. App threads used 2.5–3.4 KiB of stack with `alarm` on ESP-IDF and 3.0 KiB on Zephyr S3. [App size and limits](APPS.md#size-and-limits)
 
-**Telemetry.** With `alarm` running and metrics every 30 s on ESP-IDF `v3.14-rc12`, the agent used the following internal heap during the first minute after app startup. The figures exclude its temporary TLS reservation.
+**Telemetry.** With `alarm` running and metrics every 30 s on ESP-IDF, the agent used the following internal heap during the first minute after app startup. The figures exclude its temporary TLS reservation.
 
 | ESP32 | C3 | C5 | C6 | S3 N4R2 |
 |---:|---:|---:|---:|---:|
 | 21–25 KiB | 24–28 KiB | 21–27 KiB | 21–27 KiB | 23–37 KiB |
 
-On a C3, an established MQTT connection used about 10 KiB. An open console session used up to 25 KiB on ESP-IDF. On Zephyr N8R8 with PSRAM and metrics off, one fixed-size app left 67,932 B of C heap free (61,516 B contiguous). Two left 56,016 B free (38,284 B contiguous).
+On a C3, an established MQTT connection used about 10 KiB. An open console session used up to 25 KiB on ESP-IDF. Closing one on an instrumented C6 reclaimed 8,304 B when its thread was joined.
 
-<a id="the-registry-with-tls-and-decommissioning-on-boards"></a>**Full firmware download over TLS.** Instrumented builds downloaded the signed `v3.15-rc1` (C3) and `z32` (N8R8) releases with `alarm` resident and metrics off. Minimum free heap covers manifest resolution through connection close. The largest free block was sampled during image writes, approximately every 16 KiB.
+On Zephyr N8R8 with PSRAM and metrics off, one fixed-size app left 67,932 B of C heap free (61,516 B contiguous). Two left 56,016 B free (38,284 B contiguous).
+
+<a id="the-registry-with-tls-and-decommissioning-on-boards"></a>**Full firmware download over TLS.** Instrumented C3 and N8R8 builds downloaded signed firmware with `alarm` resident and metrics off. Minimum free heap covers manifest resolution through connection close. The largest free block was sampled during image writes, approximately every 16 KiB.
 
 | Board and allocator | Free at start (B) | Minimum free (B) | Smallest sampled largest block during writes (B) |
 |---|---:|---:|---:|
 | ESP32-C3, internal heap | 144,552 | 42,980 | 106,496 |
 | Zephyr S3 N8R8, C heap | 97,176 | 31,064 | 75,748 |
+
+With PSRAM disabled, a Zephyr S3 N8R8 running one app had only **368 B** of free C heap during a failed firmware update. In a separate run with MQTT connected, it had 32,012 B free and skipped telemetry because the export requires 61,440 B. [Zephyr board configuration](ZEPHYR.md#on-an-esp32-s3)
 
 ## Apps on the boards
 
@@ -104,19 +120,6 @@ HTTP/2 management traffic including TLS, extrapolated from 5½–6 min on a pers
 
 | Board | Configuration | Traffic |
 |---|---|---:|
-| ESP-IDF C3, `v3.14-rc12` | `alarm`, 120 s heartbeat, empty console list | 153 kB/h |
+| ESP-IDF C3 | `alarm`, 120 s heartbeat, empty console list | 153 kB/h |
 | Same C3 | 11 outstanding console entries | 752 kB/h |
 | Zephyr S3 N8R8 | No apps or console commands, status about once a minute | 537 kB/h |
-
-<a id="a-crash-in-the-status"></a>
-
-## Crash diagnosis
-
-After reboot, `lastFatalError` identifies the fault and code addresses. Native dumps decoded against the release ELF measured 8,535 B on a physical Zephyr S3 with `alarm` and 11,200–14,080 B on an emulated ESP-IDF C3 with zero or two apps. [Download and decode a dump](CONSOLE.md#download-a-crash-dump)
-
-## Current limitations
-
-- **Zephyr without PSRAM.** An N8R8 running one app reached 368 B of free C heap during a failed update. In a separate test with MQTT connected, 32,012 B free fell below the 61,440 B telemetry threshold. Zephyr limits downloads to 64 KiB per WASM file. Its optional 40 KiB app heap floor is disabled by default and still needs hardware validation. [Zephyr configuration](ZEPHYR.md)
-- **Management outages.** The agent restarts after 10 min without an accepted status. A separate port watchdog checks for 30 min without an accepted status or a received spec. A Zephyr S3 restarted after 1,826 s without a spec while status updates continued.
-- **Credentials and registries.** Ordinary firmware stores the device key in flash unless a hardware key is configured. The registry needs the fleet’s CA and must serve downloads without cross-host redirects. Secure Boot and flash encryption have ESP-IDF emulator coverage. Registry bearer tokens have host-test coverage. [Device security](SECURITY.md) · [Registry](REGISTRY.md)
-- **Certificate expiry.** Flight Control 1.4 cannot revoke a batch enrollment certificate. A device offline past its management certificate’s expiry (one year by default) enrolls under a new identity and keeps its firmware, config and apps. [Flight Control limitations](FLIGHTCTL-LIMITATIONS.md)

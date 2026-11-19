@@ -1,88 +1,69 @@
 # Quick start
 
-Flight Control on your laptop, then a device in it: an Espressif board, or a simulated one with no hardware at all.
+Set up Flight Control first, then choose a board or the simulator.
 
-You need Docker, kind, helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), esptool, oras, Python 3 with PyYAML, and for WASM apps clang plus `wasm-ld` (`brew install lld`). The simulated device also needs CMake, Ninja and the same mbedTLS 4.1.1 as the firmware, built with pthread support. The ESP-IDF toolchain runs in the `espressif/idf:v6.1.1` container, so you don't install it.
+- [Flight Control environment](#flight-control-environment) — Install the tools, start the control plane and registry, and generate credentials.
+- [Device setup](#3-build-and-flash-a-board-esp-idf) — Flash and enroll an ESP32-C3, then deploy the example app.
+- [Simulator on macOS or Linux](#without-a-board) — Run the agent on your computer using the same control plane and credentials.
 
-The scripts were written on macOS (Apple Silicon). CI runs the host agent, the firmware build and the kind setup on Linux too.
+## Flight Control environment
 
-The walk below is for an Espressif board with the ESP-IDF firmware, the most complete of the three ports. For a board with the Zephyr build, steps 3 and 4 are in [ZEPHYR.md](ZEPHYR.md#on-an-esp32-s3) and its example fleet is `tools/fleet/zephyr-lab.yaml`; with no board at all, see [Without a board](#without-a-board).
+Install Docker, kind, Helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), ORAS and Python 3 with PyYAML. Flashing an ESP-IDF board needs esptool. Building apps needs clang with the wasm32 target and `wasm-ld` (`brew install lld` on macOS). The simulator also needs CMake and Ninja.
 
-## 1. Control plane
+### 1. Control plane
 
-Flight Control on [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker: a Kubernetes cluster whose nodes are containers on one machine), reachable from your LAN at `<your-ip>.nip.io`, and an OCI registry with two doors to the same images: TLS with a password at `registry.<your-ip>.nip.io:5443`, which devices pull through, and plain HTTP on port 5001, which the tools on your machine push through ([REGISTRY.md](REGISTRY.md)). If you already run Flight Control elsewhere, on Kubernetes or on a Linux host, skip the first script and give the device its agent endpoint with `tools/provision.py --server` (step 4).
+Start Flight Control on kind and the local registry. Replace `<your-ip>` with the host's LAN address. For an existing Flight Control installation, skip `tools/kind/up.sh`, log in to that installation and pass its agent endpoint to `tools/provision.py --server` in step 4.
 
 ```bash
 tools/kind/up.sh
-```
-
-```bash
 tools/registry/up.sh
-```
-
-```bash
 flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t "$(kubectl create token flightctl-admin -n flightctl --duration=24h)"
 ```
 
-The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
+Log in to `http://ui.<your-ip>.nip.io:8080` with the same token. Under **Software Catalog → MCU lab (test)** you should see the firmware and nine apps. The setup creates a missing catalog. To refresh an existing one, run `tools/kind/apply-catalog.sh`. Images live in the separate `fc-registry` Docker volume. If it was deleted, publish the tags you need in step 6.
 
-`tools/kind/up.sh` creates the [MCU lab catalog](../tools/kind/mcu-lab.yaml) only if `mcu-lab` is missing. Open **Software Catalog → MCU lab (test)** for the nine WASM apps, including CoreMark, and the ESP-IDF and Zephyr firmware entries. To reapply the manifest to an existing catalog or finish an interrupted restore, run `tools/kind/apply-catalog.sh`. Both scripts accept the host's LAN IP as an argument.
-
-The manifest restores the catalog entries and their version tags. The OCI images live in the registry's separate Docker volume, `fc-registry`, which survives kind cluster deletion. If you also remove that volume, republish the images with the tags in the manifest before deploying them.
-
-The app and lab firmware entries use the registry’s TLS endpoint at `registry.<your-ip>.nip.io:5443`. Devices need the registry configuration from step 6.
-
-Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, once an hour, so narrow that to what does not change ([why](FLIGHTCTL-LIMITATIONS.md#label-sync)):
+Apply the [stable label mapping](FLIGHTCTL-LIMITATIONS.md#label-sync) so changing counters do not become device labels.
 
 ```bash
 tools/fleet/apply.sh tools/fleet/labelsync-custom-info.yaml
 ```
 
-## 2. Credentials
+### 2. Credentials
 
-The enrollment credentials go to `.secrets/`, which is git-ignored:
+For a fresh installation, generate enrollment credentials and an OCI signing key in the git-ignored `.secrets/` directory. Devices receive the signing **public** key. The publishing scripts use the private key. Reuse the existing signing key when deploying images already in your registry.
 
 ```bash
 tools/enrollment.sh
-```
-
-Create the key that signs firmware and apps. The device gets its public half, and from then on installs only images signed with it. The push scripts sign with it automatically:
-
-```bash
 tools/signing/keygen.sh
 ```
 
 ## 3. Build and flash a board (ESP-IDF)
 
-Build the image with `LOCAL=0` to exclude the checkout’s WiFi credentials and endpoint. Step 4 provisions each board separately. `flash.sh` detects the chip on the port:
+For Zephyr, replace steps 3 and 4 with the [ESP32-S3 build and flash procedure](ZEPHYR.md#on-an-esp32-s3) and follow the Zephyr instructions in step 6.
+
+Match the board's USB serial number to its port. Replace `/dev/cu.usbmodem1101` in steps 3 and 4. `LOCAL=0` omits development Wi-Fi and endpoint settings.
+
+On the ESP32-C6 DevKitC, hold BOOT while connecting the native USB port to enter download mode.
+
+**ESP32-S3 firmware.** In the build command below, use `TARGET=esp32s3` for internal RAM or 2 MiB quad PSRAM (N4R2, N8R2). For 8 MiB octal PSRAM (N8R8, N16R8), also set `VARIANT=r8`. Flash that build once over USB by prefixing the flash command with `BUILD=build-esp32s3-r8`. Include `esp32s3-r8` in subsequent OTA releases.
 
 ```bash
 third_party/fetch-wamr.sh
-```
-
-```bash
 LOCAL=0 TARGET=esp32c3 FW_VERSION=v0.9.0 port/espidf/build.sh
-```
-
-```bash
 port/espidf/flash.sh /dev/cu.usbmodem1101
 ```
 
-That build is optimized for size (`-Os`), with WAMR, which runs the apps, at `-O2` and the CPU at the chip's highest clock. `VARIANT=release` builds the same with quieter logs, in `port/espidf/build-<chip>-release`; select that profile with `--variant release` before the registry reference in step 6.
-
-Nothing above touches the chip's eFuses. The `secure` variant does: Secure Boot v2, flash encryption and NVS encryption, for devices in the field. It is never built by default, and its first boot burns the chip's eFuses for good: read [SECURITY.md](SECURITY.md) first.
+The default build leaves eFuses untouched. The separate `secure` variant permanently burns eFuses on first boot. Read [Device security](SECURITY.md) before selecting it. For quieter logs use `VARIANT=release`, flash the corresponding build directory and publish with `--variant release`.
 
 ## 4. Provision it
 
-`provision.py` writes the board's `fc_creds` partition: the CA, the enrollment credentials, the signing key, the agent endpoint (by default `agent-api.<your-ip>.nip.io:8443`) and the labels. Pass the WiFi as well:
+Write credentials and the site's Wi-Fi network to the board.
 
 ```bash
-tools/provision.py --port /dev/cu.usbmodem1101 --wifi-ssid <ssid> --wifi-password <password>
+tools/provision.py --port /dev/cu.usbmodem1101 --labels site=lab,app=alarm --wifi-ssid <ssid> --wifi-password <password>
 ```
 
-When the site's network is not known yet, pass `--pop <secret>` instead of the WiFi: the device then opens an access point where an installer gives it the network, with Espressif's provisioning app or `esp_prov` (see [PROVISIONING.md](PROVISIONING.md)).
-
-`--image` writes the same partition into a merged flash image instead (the emulator uses it), `--out` into a file. During development you can also build the WiFi and the endpoint into the firmware, from `port/espidf/sdkconfig.wifi` and `port/espidf/sdkconfig.local` (see the `.example` files); a provisioned value wins. `LOCAL=0 port/espidf/build.sh` leaves those two files out, for images that leave your desk.
+The default endpoint is `agent-api.<your-ip>.nip.io:8443`. If an installer will supply Wi-Fi later, use `--pop <secret>` instead of the Wi-Fi arguments. See [field provisioning](PROVISIONING.md).
 
 ## 5. Approve it
 
@@ -96,7 +77,7 @@ flightctl get enrollmentrequests
 flightctl approve -l stage=canary enrollmentrequest/<name>
 ```
 
-For more than a few boards, list them in `tools/auto-approve/allowlist.yaml` (start from `allowlist.example.yaml`), by device name or MAC address with their labels, and let the script approve them as they show up:
+For batch approval, copy `tools/auto-approve/allowlist.example.yaml` to `allowlist.yaml` in the same directory. List the expected device names or MAC addresses and their labels. Then run the watcher.
 
 ```bash
 tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
@@ -104,61 +85,96 @@ tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
 
 ## 6. Give it firmware, config and an app
 
-In an empty registry, these commands publish the C3 image built in step 3 and the alarm app using the tags in `tools/fleet/idf-lab.yaml`. In the populated MCU lab, the signed firmware index covers all five ESP-IDF platforms and the Zephyr S3. The signed alarm image is also available. Skip both publish commands there. For a new release, build each target in the fleet, pass all those targets to one `fw-push.py` invocation under a fresh tag, then update the fleet reference.
-
-`apply.sh` fills in the registry address from `.secrets/registry/host` and adds the registry CA and password to the fleet as config files. Set `REGISTRY=host:port` to use another registry.
-
-```bash
-tools/fw-push.py localhost:5001/flightctl-mcu/fw:v0.9.0 esp32c3
-```
-
-It also pushes each image's ELF, which devices never pull: after a crash, `tools/fw-elf.py <registry>/flightctl-mcu/fw:<tag> <chip>` gets it back to decode the device's `lastFatalError` with `addr2line`.
+If the registry already contains the signed lab firmware for your platform and the signed alarm app, skip the publish commands and apply the fleet below. For an empty local registry, publish the alarm app once for either port.
 
 ```bash
 wasm-apps/build.sh alarm v0.9.0
 ```
 
+**ESP-IDF.** Publish the firmware from step 3. With no platform argument the publisher includes each built default-profile image, including `esp32s3` and `esp32s3-r8` when present. If you built the release profile, add `--variant release` before the registry reference.
+
 ```bash
-tools/fleet/apply.sh
+tools/fw-push.py localhost:5001/flightctl-mcu/fw:v0.9.0
 ```
 
-The fleet selects devices labelled `app=alarm` (the firmware requests that label at enrollment). It rolls out to the `stage=canary` device first, then to the rest.
+**Zephyr S3.** For a Zephyr-only registry, publish the MCUboot-signed image from the S3 build.
 
-![The example fleet in Flight Control's UI](img/fleet.png)
-*The fleet once applied: the firmware release as its system image, the four config sources, and every device up to date.*
+```bash
+tools/fw-push.py localhost:5001/flightctl-mcu/fw:v0.9.0 esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
+```
 
-The pushes go through the plain door, the devices pull the same images through the one with TLS: they speak nothing else. A fleet that still names the plain door has to move first; see [REGISTRY.md](REGISTRY.md#moving-a-fleet-to-the-tls-door). To keep the fleet in Git instead, see [REGISTRY.md](REGISTRY.md#fleets-kept-in-git).
+If you deploy both ports, publish a single index in one invocation, listing the ESP-IDF platforms you built (for example `esp32c3 esp32s3-r8`) and the Zephyr `esp32s3_devkitc=…` argument together. Each publish replaces the index at that tag. Use a fresh tag for subsequent firmware releases and update the fleet’s `os.image` to match.
 
-## 7. Take it out
+Apply the fleet for your port. The script supplies the TLS registry address, CA and credentials. [Registry configuration](REGISTRY.md#fleet-configuration)
+
+| Port | Command | Devices selected |
+|---|---|---|
+| ESP-IDF | `tools/fleet/apply.sh tools/fleet/idf-lab.yaml` | `app=alarm`, with `stage=canary` first |
+| Zephyr S3 | `tools/fleet/apply.sh tools/fleet/zephyr-lab.yaml` | `app=zephyr-lab` |
+
+In the UI, check that the device is up to date and the `alarm` app is running.
+
+![Example fleet with its firmware, config sources and device status](img/fleet.png)
+
+## 7. Decommission the device (optional)
 
 ```bash
 flightctl decommission device/<name>
 ```
 
-The device reports that it started, then that it completed. It then wipes its key and management certificate and restarts. Flight Control shows it as `Decommissioned`, and it can be deleted:
+Once Flight Control reports `Decommissioned`, you can delete its record.
 
 ```bash
 flightctl delete device/<name>
 ```
 
-The device keeps running its apps and config, but it no longer talks to Flight Control. It also does not enroll again by itself, even after a restart. To bring it back as a new device, erase its storage and flash it again:
+Unenrollment wipes the management key and certificate. Installed apps and config remain. To enroll the board again, erase storage and reprovision it.
 
 - ESP-IDF: `esptool -p <port> erase-flash`, then steps 3 and 4 again.
-- Zephyr on an ESP32: `ERASE=1 port/zephyr/flash-esp32.sh <port> .secrets` ([ZEPHYR.md](ZEPHYR.md#on-an-esp32-s3)).
+- For Zephyr S3, repeat the [build and flash procedure](ZEPHYR.md#on-an-esp32-s3) with the Zephyr fleet label and site Wi-Fi credentials.
 
 ## Without a board
 
-Steps 1 and 2, then fetch WAMR, build the simulated device and run it on your machine. It enrolls like a board (step 5) and takes config and apps; a firmware update only saves the image to a file.
+After steps 1 and 2, build the host agent. The simulator can enroll, accept config and run the same signed alarm app using its simulated temperature sensor.
 
 ```bash
 third_party/fetch-wamr.sh
-```
-
-```bash
-third_party/build-mbedtls-host.sh  # once, to install the pinned library in build/mbedtls-install
+third_party/build-mbedtls-host.sh
 cmake -S . -B build/host -G Ninja && cmake --build build/host
 ```
 
+Start the simulator with the label used by the host fleet. Replace `<your-ip>` with the control plane’s LAN address.
+
 ```bash
-build/host/fc-host-agent --server agent-api.<your-ip>.nip.io:8443 --ca .secrets/ca.crt --enroll-cert .secrets/enroll.crt --enroll-key .secrets/enroll.key --signing-key .secrets/signing.pub --label site=lab
+build/host/fc-host-agent --server agent-api.<your-ip>.nip.io:8443 --ca .secrets/ca.crt --enroll-cert .secrets/enroll.crt --enroll-key .secrets/enroll.key --signing-key .secrets/signing.pub --label app=host-lab
 ```
+
+In a second terminal, approve the request as in [step 5](#5-approve-it). If the registry is empty, run `wasm-apps/build.sh alarm v0.9.0`. Apply this fleet from the repository root and check that the simulator reports `alarm` as running.
+
+```bash
+tools/fleet/apply.sh /dev/stdin <<'YAML'
+apiVersion: flightctl.io/v1beta1
+kind: Fleet
+metadata:
+  name: host-lab
+spec:
+  selector:
+    matchLabels:
+      app: host-lab
+  template:
+    spec:
+      applications:
+        - name: alarm
+          appType: container
+          image: ${REGISTRY}/flightctl-mcu/alarm:v0.9.0
+          envVars:
+            FC_ALLOW: led0
+      config:
+        - name: alarm
+          inline:
+            - path: /etc/fc-app/alarm.json
+              content: '{"threshold_c":40}'
+YAML
+```
+
+**Optional firmware download.** To test the download path, publish a platform image as in [step 6](#6-give-it-firmware-config-and-an-app). Restart the host command with `FC_FW_PLATFORM` set to that platform (for example `FC_FW_PLATFORM=esp32c3`). Add `os: {image: "${REGISTRY}/flightctl-mcu/fw:v0.9.0"}` under `spec.template.spec` in the host fleet example and apply it again. The simulator saves the image to `build/host-data/ota-next.bin` and exits at reboot. On the next start the host reports rollback because it cannot boot the MCU image. Use a board or an emulator with OTA slots to test confirmation.

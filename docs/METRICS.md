@@ -1,6 +1,6 @@
 # Metrics
 
-A device sends its metrics, and its apps', to Flight Control's Telemetry Gateway, which adds the device's ID and organization and exports them to Prometheus, as for a Linux device with the OpenTelemetry Collector. Nothing is sent unless the fleet gives the gateway's address.
+Configure the Telemetry Gateway to export device and app metrics to Prometheus. The gateway adds `device_id` and `org_id` to each series.
 
 ## Turning it on
 
@@ -17,14 +17,12 @@ spec:
               content: '{"endpoint": "telemetry.flightctl.example.com:443", "intervalSeconds": 60}'
 ```
 
-| Field | What it is |
+| Setting | Meaning |
 |---|---|
 | `endpoint` | the gateway, `host:port` (443 if no port). On OpenShift Flight Control's chart exposes it as `telemetry.<base domain>`; elsewhere it needs a route of its own (on kind, [tools/kind/telemetry-route.yaml](../tools/kind/telemetry-route.yaml)). |
 | `intervalSeconds` | how often the device sends, 60 by default, at least 30: each export is a TLS connection |
 
-Without the file, or with no `endpoint` in it, nothing is sent; taking the file out of the fleet stops the exports.
-
-The device then asks Flight Control for the gateway's certificate on its own, as the Linux agent does for the collector: a request signed by `flightctl.io/device-svc-client`, with the CN `otel-<device name>` and the device key, which the server approves at once. It is valid for a year and renewed after a quarter of it; it is kept apart from the management certificate. The gateway's server certificate is checked against the CA the device already has for Flight Control.
+Remove the file or its `endpoint` to stop exports. The device requests a separate gateway certificate using its device key, signer `flightctl.io/device-svc-client` and CN `otel-<device name>`. Flight Control approves it automatically. It is valid for a year and renewed after one quarter of its lifetime. The device verifies the gateway against its Flight Control CA.
 
 ## What is sent
 
@@ -46,25 +44,20 @@ Every interval, one `ExportMetricsServiceRequest` (OTLP over gRPC), with the res
 | `device.metrics.export_min_free` (By) | `device_metrics_export_min_free_bytes` | ESP-IDF: the internal heap at its lowest during the last export |
 | `app.<app>.<name>` | `app_<app>_<name>` (`_total` for a counter) | an app's `fc_metric`, with `metrics` in its `FC_ALLOW` |
 
-Counters start at boot (or, for an app's, when the app first adds to it). A device sends nothing until its clock is set.
+Device counters start at boot. App counters start at their first update. Exports begin after the device clock synchronizes.
 
-![Prometheus, the temperature of four boards](img/metrics-prometheus.png)
-*In Prometheus, the temperature four ESP-IDF boards send, one series per `device_id`, the label the gateway adds.*
+![Four ESP-IDF temperature series in Prometheus, one per device_id](img/metrics-prometheus.png)
 
 ![Prometheus, an app's metric next to the device's](img/metrics-app.png)
-*An app's metric next to the device's: `trend`'s smoothed temperature (`app_trend_temp_c`, from its `fc_metric`) and the chip's own reading (`device_temperature_celsius`), on an ESP32-S3.*
+On the S3, compare `app_trend_temp_c` (smoothed) with `device_temperature_celsius` (chip reading).
 
 ## Memory
 
 The export reserves one point per active app series, plus 15 slots for device and exporter metrics. On ESP32-C6 the point array takes 2,160 B with no app series and 4,464 B with all 16. A series first published while the snapshot is being collected can appear in the next export.
 
-The export opens a TLS connection of its own beside the agent's, for a few seconds, and closes it. It is made only when all of these hold:
+Each export briefly opens a second TLS connection. It needs a contiguous block of 24 KiB on ESP-IDF and Zephyr builds with the agent's C heap, plus 20 KiB free above the agent's reserve (60 KiB total by default). It waits for downloads, status, spec changes, firmware verification, MQTT handshakes and decommissioning.
 
-- the heap's largest free block is at least 24 KB, on ESP-IDF and on Zephyr builds using the agent’s C heap;
-- the free heap is at least 20 KB above what the device keeps for the agent (40 KB by default, [APPS.md](APPS.md#size-and-limits)): 60 KB by default;
-- nothing else is under way: no download or pull, no status due, no firmware being verified, no spec being applied, no handshake with an app's MQTT broker, no decommissioning.
-
-Otherwise the export is skipped, counted in `device.metrics.skipped` (a skip for memory is also logged, once every ten), and tried again 10 seconds later. A download, or a spec to apply, waits for an export under way, as a download does for a status. A gateway that does not answer is given up after 15 seconds and tried again later and later, up to an hour; a new `metrics.json` from the fleet is tried at once.
+A skipped export increments `device.metrics.skipped` and retries after 10 s. The agent logs every tenth memory skip. A gateway request times out after 15 s. Repeated failures back off to one hour. Updating `metrics.json` retries immediately. [Board measurements with apps and MQTT](RESULTS.md#ram)
 
 ## Limits
 
@@ -72,4 +65,4 @@ Otherwise the export is skipped, counted in `device.metrics.skipped` (a skip for
 - The exported name includes the full app name (up to 47 bytes) and metric name (up to 32 bytes). Two publishing apps can export up to 16 metrics per interval.
 - A gauge or a counter, as a number (a double); no histograms.
 - The device's own metrics are fixed by the firmware.
-- Checked against Flight Control 1.4.0 with the simulated device, on the classic ESP32, C3, C5, C6 and S3 (ESP-IDF) and on the ESP32-S3 with Zephyr: the certificate approved by the server at once, the device's metrics in the gateway's Prometheus exporter with its `device_id`, and the `trend` app's (`app_trend_temp_c`) from the C6. The unit tests check the request byte for byte against what OpenTelemetry's own protobuf classes write, and an app's `fc_metric`. The heap during the exports, per board, is in [RESULTS.md](RESULTS.md#ram): where an app and MQTT leave little heap, an export can fail for want of memory or be skipped. Zephyr builds with the agent’s C heap report free bytes and the largest contiguous block separately. The ESP32-S3 N8R8 software-crypto build can export while MQTT is connected using TLS receive records in PSRAM and 32 POSIX mutexes. Not tried with the device key in hardware (the ECDSA or Digital Signature peripheral), which must sign the gateway's certificate request too.
+- Gateway enrollment with a hardware-backed device key is unverified.

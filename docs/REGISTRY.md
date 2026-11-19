@@ -1,14 +1,12 @@
 # Registry
 
-Where devices get their firmware and apps: an OCI registry, reached over TLS and HTTP/2, with a password when it asks for one.
+Devices pull firmware and WASM apps from an OCI registry over TLS and HTTP/2 (ALPN `h2`). Configure the registry or its reverse proxy to serve blobs directly. The agent does not follow redirects to object storage or a CDN. For Quay, set `FEATURE_PROXY_STORAGE: true`. For Harbor, set `storage_service.redirect.disable: true` in `harbor.yml`.
 
-## The rule
+## Fleet configuration
 
-A device reaches a registry over TLS, with the CA its fleet gives it, and HTTP/2. Without the CA the pull fails, and the error names the file the CA is expected in. Plain HTTP is not spoken.
+Supply the CA chain even for a public registry. The device has no public CA bundle. A missing CA error names the expected file.
 
-The CA and the credentials reach the device as config files in its fleet. The paths are the ones containers use on Linux, and so does Flight Control's Linux agent:
-
-| File | What it is |
+| File | Contents |
 |---|---|
 | `/etc/containers/certs.d/<host>/ca.crt` | The registry's CA (PEM), for any port of that host; port 443 when the image reference names no port. Flight Control refuses a `:` in a config file's path, so `certs.d/<host:port>/ca.crt`, which containers use, cannot come from a fleet. The device still reads it first, for a file put there another way. |
 | `/etc/ostree/auth.json`, `/etc/containers/auth.json`, `/root/.config/containers/auth.json` | The credentials, in podman's format. The device uses the first of these files that has an entry for the registry. |
@@ -17,12 +15,9 @@ The CA and the credentials reach the device as config files in its fleet. The pa
 {"auths": {"registry.example.com:5443": {"auth": "<base64 of user:password>"}}}
 ```
 
-A key may also name a repository, as in `registry.example.com:5443/flightctl-mcu`; the longest key that matches wins. `username` and `password` are taken in place of `auth`.
+Entries can name a host or a repository path. For `registry.example.com:5443/flightctl-mcu`, the longest matching entry wins. You can supply separate `username` and `password` fields instead of `auth`.
 
-The device sends the credentials only when the registry asks for them with a 401. It supports two schemes:
-
-- **Basic**, which is what `registry:3` with a password file asks for.
-- **Bearer tokens**, the scheme of Harbor, Quay, GitLab and most hosted registries. The token comes from the realm the challenge names, on https, with the credentials as Basic, or with none for a public repository (an anonymous token). A realm on another host needs that host's CA too (`certs.d/<that host>/ca.crt`) and takes a second connection while the token is asked for; one on the registry's own host and port uses the same connection. The device asks for one token per pull, for the scope the registry names, and replaces it once if it runs out during the pull.
+The device sends credentials on an HTTP 401 challenge. It supports Basic and Bearer authentication. For Bearer, it requests a scoped token from the HTTPS realm, with Basic credentials or anonymously for public repositories. A realm on a different host needs its own CA and a temporary second connection. The agent reuses the token for the pull and replaces an expired token once.
 
 A robot account of Harbor or Quay goes into `auth.json` as any account: its name (`<organization>+<robot>` in Quay, `robot$<project>+<robot>` in Harbor) as the user and its token as the password:
 
@@ -30,38 +25,31 @@ A robot account of Harbor or Quay goes into `auth.json` as any account: its name
 {"auths": {"quay.example.com": {"username": "flightctl-mcu+device", "password": "<the robot's token>"}}}
 ```
 
-A 401 that remains once the device has authenticated says why: `credentials refused` (Basic, or the token service refused the password), `no pull access with these credentials` (a token that does not open this repository: an account, such as a robot account, without access to it), `no pull access without credentials` (no `auth.json` entry for this registry or repository), `the registry refused the token: <error>` (a token the registry does not take, such as one signed with a key it does not know: `invalid_token`).
+Use a pull-only account for devices. The local `registry:3` password file also permits pushes. Inline credentials are visible to anyone who can read the fleet. Use a [Kubernetes secret](#fleets-kept-in-git) to keep them out of Git.
 
-The credentials never appear in the device's errors or its log. A registry that refuses them shows up in `status.updated.info` as `HTTP 401`.
+After a successful config update, the agent removes managed registry files dropped from the spec. An untracked file left by firmware that predates config tracking can persist.
+
+| HTTP 401 in `status.updated.info` | What to check |
+|---|---|
+| `credentials refused` | Registry password or token-service credentials |
+| `no pull access with these credentials` | Repository permissions for the account |
+| `no pull access without credentials` | Missing registry or repository entry in `auth.json` |
+| `the registry refused the token` | The registry's error, such as `invalid_token` |
 
 ## What was verified
 
-The device's registry client, built for the host, against Quay 3.17 with a robot account, and against `registry:3` with [docker_auth](https://github.com/cesanta/docker_auth) as the token service, with the realm on another host and on the registry's own host behind nginx, as Harbor has it ([TESTING.md](TESTING.md#registry-tokens)): a firmware index with the C3 and S3 images (1.1 MB) and a signed WASM layer pulled, each with one token; the refusals above; a token that ran out during a pull replaced, the image intact. The tokens were RS256, about 1 KB from Quay for a pull-only robot account and 0.8 KB from docker_auth. Not run: Harbor (no arm64 image), and Bearer tokens on a board (the same code).
+The host client pulled signed firmware and WASM from Quay 3.17 and from `registry:3` with same-host and cross-host token services. Expired tokens were replaced during a pull. Bearer authentication on hardware and against Harbor remains unverified. [Reproduce the registry tests](TESTING.md#registry-tokens)
 
 ## The local registry
 
-`tools/registry/up.sh` starts one storage with two doors:
+`tools/registry/up.sh` exposes the same image store at two addresses.
 
-| Door | Address | For |
-|---|---|---|
-| Plain HTTP | `<your-ip>:5001` | The tools on this machine, to push. Devices do not use it. Anyone on the LAN can read and push. |
-| TLS with a password | `registry.<your-ip>.nip.io:5443` | Devices, in a deployment |
+| Endpoint | Use |
+|---|---|
+| `<your-ip>:5001` | Plain HTTP for local publishing. Anyone on the LAN can read or push. |
+| `registry.<your-ip>.nip.io:5443` | TLS with a password for device pulls. |
 
-The first run makes `.secrets/registry/` with:
-
-- the CA;
-- the server certificate, made again when the LAN IP changes;
-- a random password for the user `device`;
-- `auth.json` holding that password;
-- `host`, the TLS door's address.
-
-An image pushed through one door can be pulled through the other.
-
-The push tools (`tools/fw-push.py`, `tools/signing/sign.py`, `wasm-apps/push.sh`, with the shared logic in `tools/registry/registry_client.py`) use TLS for a registry they have a CA for, and plain HTTP otherwise:
-
-- the TLS door, named in `.secrets/registry/host`: its CA and password from `.secrets/registry/`;
-- another registry: `$REGISTRY_CA` and `$REGISTRY_AUTH_FILE`;
-- the plain door (`<your-ip>:5001`, as in the [quick start](QUICKSTART.md)): neither.
+The script stores the CA, server certificate, generated `device` credentials, `auth.json` and TLS hostname in `.secrets/registry/`. It regenerates the server certificate when the LAN IP changes. Publishing tools read these files for the local TLS endpoint. For another registry, set `REGISTRY_CA` and `REGISTRY_AUTH_FILE`. With no CA the publishing tools use plain HTTP.
 
 ```bash
 tools/fw-push.py $(cat .secrets/registry/host)/flightctl-mcu/fw:<tag>
@@ -75,7 +63,7 @@ When the registry has a CA, `apply.sh` adds both files to the fleet's template a
 
 ## Fleets kept in Git
 
-Flight Control can take fleets from a Git repository: a `ResourceSync`, or Import Fleet in the UI. It applies the files as they are, so they cannot hold `${REGISTRY}`, and the password should not be in them. `tools/fleet/git-export.py` writes them for that: the registry spelled out, and the CA and `auth.json` mounted from two Kubernetes secrets (config of type `secretRef`), which `tools/fleet/registry-secrets.sh` makes from `.secrets/registry`. Flight Control's worker reads the secrets when it renders each device's spec; the device gets the same two files as with `apply.sh`. The Helm chart does not let the worker read secrets (`worker.clusterLevelSecretAccess: false`), and the fleet is then refused as invalid; the script also adds a Role that lets it read these two secrets only.
+For a Git-managed fleet, export the resolved registry address and mount its CA and `auth.json` through `secretRef`. The scripts create two Kubernetes secrets and grant the Flight Control worker read access to just those secrets. The default Helm configuration disables cluster-wide secret access.
 
 ```bash
 tools/fleet/registry-secrets.sh
@@ -106,28 +94,20 @@ spec:
   path: /fleets
 ```
 
-Or, in the UI, Import fleets asks for the same two:
+The UI's **Import fleets** form accepts the same repository, revision and path.
 
-![Import fleets in Flight Control's UI](img/import-fleets.png)
-*Import fleets: after the repository, a resource sync with its revision and path.*
+![Fleet import form](img/import-fleets.png)
 
-A fleet that a `ResourceSync` owns is changed through Git only: delete one applied with `apply.sh` before the first sync. The secrets are in the `flightctl` namespace by default (`FLEET_SECRETS_NAMESPACE`). The end-to-end test runs this against a repository served by `git daemon`.
+Make subsequent changes in Git. Before the first sync, remove a previously applied fleet with the same name. Secrets default to the `flightctl` namespace. Override it with `FLEET_SECRETS_NAMESPACE`.
 
-## Moving a fleet to the TLS door
+<a id="moving-a-fleet-to-the-tls-door"></a>
 
-Devices pull through the TLS door only. Changing the registry's address in a fleet's `os.image` makes every device download its firmware again and restart, as Flight Control compares `os.image` as a string ([limitation 11](FLIGHTCTL-LIMITATIONS.md#11-the-server-compares-osimage-only-as-a-string)): push the release with a delta from the running one (`--delta-from`, [DELTA-UPDATES.md](DELTA-UPDATES.md)) to keep that download small.
+## Changing the registry address
+
+Changing the registry address in `os.image` triggers a firmware download and reboot even if the image is identical. Publish a [delta from the running release](DELTA-UPDATES.md#publishing-a-release-with-deltas) before changing the fleet. [Image reference comparison](FLIGHTCTL-LIMITATIONS.md#11-the-server-compares-osimage-only-as-a-string)
 
 ## Memory
 
-The spec's long-poll and the status share one HTTP/2 connection, and firmware and apps come from the registry over HTTP/2; which boards this was checked on is in [RESULTS.md](RESULTS.md#http2).
+During a registry pull the agent finishes any in-flight status update, closes its management connection and uses one connection for manifests, signatures and blobs. Status resumes after the download.
 
-A TLS connection costs about 25 KB of RAM on these boards, 16.7 KB of it the buffer that receives the largest record the server may send. Neither Flight Control nor `registry:3` accepts smaller records (Go's TLS has neither `record_size_limit` nor `max_fragment_length`), so a connection cannot cost less, and the device holds one at a time. The agent's connection, where the spec's long-poll and the status share one HTTP/2 connection, is closed while a download from the registry runs, with manifests, signatures and blobs over one connection of its own: a status already on its way goes out first, the next one waits for the end of the download, and the agent then opens its connection again, with a new handshake. One receive buffer is reserved when the agent starts ([fc_tls_pool.h](../core/include/fc_tls_pool.h)), so a connection does not depend on finding 16.7 KB in one piece in a heap shared with WiFi and the apps. On ESP-IDF the TLS buffers are otherwise sized to each record and freed once it is read (dynamic buffers): only full-size records take the reserved one, and an idle connection holds little. Against two connections with a buffer each, that leaves about 20 KB more in the largest free block. A token service on another host is a second connection for the length of its request, with its buffer from the heap.
-
-## What it does not do
-
-- **No plain HTTP, no HTTP/1.1.** The registry, or the proxy in front of it, must offer HTTP/2 over TLS (ALPN `h2`), as `registry:3` does.
-- **No public CA bundle.** The device trusts only the CA that the fleet gives it. A registry with a public certificate, such as `ghcr.io` or `quay.io`, takes its CA chain as `ca.crt`.
-- **No redirects.** A registry that sends blobs from another host, such as S3 or a CDN, gets a 307 redirect that the device does not follow. Quay and Harbor do this when their storage is an object store, unless told to serve blobs themselves: `FEATURE_PROXY_STORAGE: true` in Quay's config, `storage_service.redirect.disable: true` in Harbor's `harbor.yml`. Serve blobs from the registry itself.
-- **No read-only account in `registry:3`.** Any account can push to it. A deployment should give its devices a pull-only account, such as a robot account in Harbor or Quay. Signatures still stop a device from installing an image it did not expect.
-- **The credentials stay in the fleet.** Inline config files are part of the fleet's spec, so whoever can read the fleet can read them. Flight Control 1.4 encrypts rendered config at rest. The files can also come from a Kubernetes secret (`secretRef` in the fleet): the server reads the secret and sends its keys to the device as files, as it does with inline ones, once the worker may read it ([Fleets kept in Git](#fleets-kept-in-git); tried in the end-to-end test).
-- **A file removed from the fleet is not removed from the device.** The device keeps the last `auth.json` it was given until a new one replaces it.
+A TLS connection costs about 25 KB on these boards, including a 16.7 KB receive buffer for a full record. The agent reserves that buffer at startup. ESP-IDF uses smaller dynamic buffers for short records. A cross-host token request temporarily needs another receive buffer from the heap. [Heap during signed downloads](RESULTS.md#ram)

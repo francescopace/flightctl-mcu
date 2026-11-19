@@ -1,12 +1,10 @@
 # Flight Control: limitations found
 
-Flight Control 1.4.0 has 15 documented limitations affecting MCU devices or fleet operations.
-
-These findings cover Flight Control 1.4.0 and the main branch as checked on 12 November 2026. Only limitation 2 had a fix on main. Limitation 15 was observed on 1.4.0 and confirmed in the source on main.
+These findings cover Flight Control 1.4.0. 
 
 ---
 
-## Upstream blockers for agent 1.0.0
+## Upstream blockers for agent v1.0.0
 
 The official agent 1.0.0 release depends on the five Flight Control changes below. Each entry describes what works with 1.4.0 and what still needs a server change or release. [Release roadmap](ROADMAP.md#v100-in-progress)
 
@@ -20,7 +18,7 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 
 - **Works today.** Operators can issue a short-lived certificate per batch and approve devices from an allow list. A leaked certificate can still submit enrollment requests until expiry.
 - **Feature limit.** Deleting the CertificateSigningRequest leaves a leaked certificate usable. Operators have no way to revoke it immediately on 1.4.0.
-- **Server change.** The 1.4.0 enrollment endpoint checks the signer and expiry. On Flight Control’s main branch, an operator can revoke the certificate through its CertificateSigningRequest, and enrollment checks the CSR’s approval and revocation status (`CSRStatusAllowsEnrollment`). Operators need a server release containing that API. Running `tools/enrollment.sh` issues a certificate and leaves earlier certificates valid until expiry or explicit revocation.
+- **Server change.** The 1.4.0 enrollment endpoint checks the signer and expiry. On Flight Control’s main branch, an operator can revoke the certificate through its CertificateSigningRequest, and enrollment checks the CSR’s approval and revocation status (`CSRStatusAllowsEnrollment`). Operators need a server release containing that API. On 1.4.0, running `tools/enrollment.sh` issues a certificate and leaves earlier certificates valid until expiry.
 
 ### 3. A device with an RSA key cannot enroll
 
@@ -31,7 +29,7 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 ### 4. A fleet's OS image cannot come from the software catalog
 
 - **Works today.** Operators deploy firmware by setting `os.image` directly. Catalog references also work for apps, as verified with the `alarm` app.
-- **Feature limit.** Selecting Zephyr firmware through `spec.os.catalogItemRef` gave the device an empty `os` field. The agent had no image to fetch, so the device could appear `UpToDate` while still running the old firmware.
+- **Feature limit.** Selecting Zephyr firmware through the fleet’s `spec.template.spec.os.catalogItemRef` gave the device an empty `os` field. The agent had no image to fetch, so the device could appear `UpToDate` while still running the old firmware.
 - **Server change.** When building the device spec from the fleet template, `assembleDesiredSpec` copies only `os.image` (`internal/tasks/desired_spec.go`). Flight Control needs to carry the firmware catalog reference through and resolve it to an image the agent can fetch, as it does for apps.
 
 ### 5. A device cannot enroll again under its own name
@@ -42,7 +40,7 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 
 ---
 
-## Non-blocking for agent v1.0
+## Non-blocking for agent v1.0.0
 
 ### 6. `matchExpressions` in the fleet selector is accepted but ignored
 
@@ -50,9 +48,11 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 - **Today.** The supplied fleet definitions use `matchLabels`. For example, the ESP-IDF fleet selects devices labeled `app=alarm`. [Fleet definition](../tools/fleet/idf-lab.yaml)
 - **Why v1.0 can proceed.** Exact label matches let operators target the intended devices and roll out a fleet spec. More expressive selectors would require controller support.
 
-### 7. Batch success is based only on `renderedVersion`
+<a id="7-batch-success-is-based-only-on-renderedversion"></a>
 
-- **Impact.** If a device reports the new `renderedVersion` as soon as it downloads firmware, Flight Control can start the next batch before the first device has confirmed a working image.
+### 7. Batch success can precede firmware confirmation
+
+- **Impact.** Flight Control counts a device as successful when its template and rendered versions match the rollout. If the device reports the new `renderedVersion` at download time, the next batch can start before the first device confirms a working image.
 - **Today.** The agent keeps reporting the previous version while the new firmware is awaiting confirmation. It reports the new version only after confirmation.
 - **Why v1.0 can proceed.** The server therefore sees a successful firmware rollout step only after the agent reaches the required state. Documenting this reporting rule in the API would help other agents implement it.
 
@@ -65,7 +65,7 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 ### 9. No free-form status field per app
 
 - **Impact.** An operator looking at the standard per-app status can see the lifecycle state, but `DeviceApplicationStatus` has no message field for an app reading such as `calibrating`.
-- **Today.** The agent publishes the text supplied by `fc_set_state` under `status.systemInfo.customInfo["app.<name>"]`, keyed by app name. [App state reporting](APPS.md)
+- **Today.** The agent publishes the text supplied by `fc_set_state` under `status.systemInfo.customInfo["app.<name>"]`, keyed by app name. [App state reporting](APPS.md#where-the-data-goes)
 - **Why v1.0 can proceed.** Operators can already read each app's message alongside the device status. A dedicated per-app field would change where they find it.
 
 ### 10. Cost of each status update
@@ -91,7 +91,7 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 ### 13. An inline file given in base64 reaches the device percent-encoded
 
 - **Impact.** An inline base64 file such as registry credentials can arrive with percent escapes. For example, `aGk=` arrives as `aGk%3D`. The Linux agent's base64 decoder rejects `%` according to its source. The file delivery test covered the MCU agent.
-- **Today.** The MCU agent removes the escapes before base64 decoding. The provisioning tools supply plain text, which Flight Control encodes correctly. [Registry configuration](REGISTRY.md)
+- **Today.** The MCU agent removes the escapes before base64 decoding. The provisioning tools supply plain text, which Flight Control encodes correctly. [Registry configuration](REGISTRY.md#fleet-configuration)
 - **Why v1.0 can proceed.** Both input forms deliver usable files on the MCU. Decoding the data URL from `SetFile` in the server's `ignitionConfigToRenderedConfig` would remove the need for the agent workaround.
 
 ### 14. A withdrawn advisory stays on the devices
@@ -103,5 +103,5 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 ### 15. A console session whose user left before the device came stays listed
 
 - **Impact.** If the user leaves before the device joins (after 60 s for a CLI timeout or 50 s in the UI's Logs tab), the stale session keeps the server answering spec requests immediately. This increases management traffic.
-- **Today.** The agent remembers the last 64 sessions it opened across restarts, closes an unjoined session after one minute and polls every 15 seconds while only remembered sessions remain listed. [Console behavior](CONSOLE.md#how-it-works)
+- **Today.** The agent remembers the last 64 sessions it opened across restarts, closes an unjoined session after one minute and switches from 5-second to 15-second polling after only remembered sessions have been listed for a minute. [Console behavior](CONSOLE.md#how-it-works)
 - **Why v1.0 can proceed.** Operators can still open a new console session, and a remembered session cannot replay its command. Extra polling continues until the stale entry clears. The server could remove it when the user leaves or give it an expiry.

@@ -1,10 +1,10 @@
 # SBOM and known vulnerabilities
 
-Every firmware release has an SBOM: what its images are built from, at which version. Flight Control shows the known vulnerabilities of each device's firmware from it, as it does for its own Linux images, once a Trustify instance holds the SBOM.
+Flight Control uses each device's running firmware digest to look up advisories in Trustify. Publish a release SBOM and import advisory data for the components you ship.
 
 ## What a release's SBOM holds
 
-`tools/fw-push.py` makes it with `tools/sbom.py` when it pushes a release: CycloneDX 1.6, JSON. Its root component is the release itself: an OCI package URL with the digest of the release's index, which is what each device reports as its OS image (`status.os.imageDigest`). Under it, each component with a package URL, a CPE where one is known, and its license:
+`tools/fw-push.py` generates one CycloneDX 1.6 JSON document per OCI index. Its root package URL includes the index digest reported in `status.os.imageDigest`. Components include a package URL, license and CPE when known.
 
 | | From |
 |---|---|
@@ -30,45 +30,29 @@ Flight Control 1.4 reads the vulnerabilities from Trustify (Helm values `vulnera
 TRUSTIFY_URL=http://127.0.0.1:8095 tools/fw-push.py ...
 ```
 
-Every 15 minutes it takes the image digests the devices report, finds in Trustify the package URL that holds each one and the SBOM that holds that package URL, and stores the advisories Trustify matches against the SBOM's components. The devices need nothing more: they report the digest already.
+Every 15 minutes Flight Control looks up reported digests in Trustify and stores matching advisories. The device already reports the digest.
 
 ![The security overview on a device's page](img/vulnerabilities-device.png)
 ![A vulnerability in the Security overview, with the release and the fleet it affects](img/vulnerabilities-cve.png)
 
-*What Flight Control shows from the SBOMs, here with the made-up test advisory below on Zephyr's release `z26`: the count by severity on the device's page, and in the Security overview each CVE with the releases, fleets and devices it affects.*
-
-Which advisories Trustify matches depends on what it has imported (CVE, OSV, CSAF feeds) and on how those name the components: by package URL or by CPE. For C libraries the CPE (`cpe:2.3:a:arm:mbed_tls:...`, `cpe:2.3:o:zephyrproject:zephyr:...`) is often the only name an advisory gives.
+The device view groups findings by severity. The security overview lists affected releases, fleets and devices. Matching depends on the imported advisories and their package URLs or CPEs.
 
 ## What was verified with a test advisory
 
-Flight Control 1.4.0 and Trustify 0.4.12 on kind, with Zephyr boards:
+On kind with Flight Control 1.4.0 and Trustify 0.4.12, the server found all three Zephyr release SBOMs by digest. A synthetic OSV advisory for mbedTLS 4.1.1 appeared in device, fleet and organization views within a minute. Trustify required a CVE alias. Withdrawing the advisory exposed [a server reconciliation limit](FLIGHTCTL-LIMITATIONS.md#14-a-withdrawn-advisory-stays-on-the-devices).
 
-- Trustify took the SBOMs of three Zephyr releases (CycloneDX 1.6), and found each release's SBOM by the digest the devices report, as Flight Control asks.
-- With a test advisory (OSV, made up and named as such, alias `CVE-2099-99999`, "affected": mbedTLS `v4.1.1`), Trustify listed it for the running release's SBOM, and within a minute Flight Control showed it for the devices running it: in `/api/v1/vulnerabilities/devices/<name>`, with the release's image and digest, severity and score, and in the fleet's and the organization's summaries.
-- The advisory was then deleted from Trustify; Flight Control kept the finding ([limitation 14](FLIGHTCTL-LIMITATIONS.md#14-a-withdrawn-advisory-stays-on-the-devices)).
-
-A test advisory had to carry a CVE alias: Trustify 0.4 made no vulnerability of an OSV record without one.
-
-## Trustify's feeds: no real advisory reaches these components
-
-Trustify 0.4's own feeds match no real advisory to a firmware release: its CVE importer ties a record to a package only for Maven, without CPEs, and its OSV importer only for programming-language ecosystems, while C libraries are named by CPE. Checked with Trustify 0.4.12 and the whole `cve-from-2024` feed: the SBOMs had no advisory. Hence `tools/advisories.py`, below.
+Trustify 0.4.12's stock CVE and OSV importers did not associate C-library advisories with the firmware SBOMs, even with the full `cve-from-2024` feed. The NVD import below supplies the missing package associations.
 
 ## From NVD: `tools/advisories.py`
 
-NVD has what the feeds lack: for each CVE, CPEs with version ranges. For each component of the given SBOMs that has a CPE, `tools/advisories.py` asks NVD for the CVEs that match it at the version shipped, checks the ranges again, and writes one OSV record per CVE: the CVE as its alias, NVD's description and CVSS vector, and as affected the SBOM components' package URLs at the versions shipped. Trustify ties those to the SBOMs, and Flight Control shows them:
+Run the importer for every release still deployed. It checks shipped versions against NVD's CPE ranges and writes an OSV advisory with the matching component package URLs, CVE alias and CVSS vector.
 
 ```bash
 tools/advisories.py build/sbom/fw-<esp-idf tag>.cdx.json build/sbom/fw-<zephyr tag>.cdx.json --upload http://127.0.0.1:8095
 ```
 
-Give it the SBOM of every release devices run, and run it again from time to time: NVD keeps adding CVEs. Without `NVD_API_KEY` NVD answers five requests in 30 seconds, about a minute for the components here. The CPE names it asks for are those of NVD's dictionary, with the other names NVD files a product under (`arm:mbed_tls` besides `trustedfirmware:mbed_tls`, for instance; `ALSO` in the script). MCUboot, littlefs and picolibc are not in the dictionary, so nothing is found for them this way.
+Repeat the import as NVD adds records. Without `NVD_API_KEY`, allow for NVD's rate limit. The importer checks known alternate CPE names. In the tested dictionary, MCUboot, littlefs and picolibc had no entries.
 
-Two releases running on boards, one with ESP-IDF 6.0.3 and one with Zephyr 4.5: NVD gave four CVEs, and within a minute Flight Control showed them on the devices of each release, in the fleets' and the organization's summaries (three high, one medium):
+Two board releases (ESP-IDF 6.0.3 and Zephyr 4.5) produced four cJSON version matches in Flight Control within a minute. Three were high severity and one medium. The firmware's build and usage ruled them out. [Reviewed findings and reasons](../tools/not-affected.json)
 
-| CVE | Component | Applies here? |
-|---|---|---|
-| CVE-2026-67215 (7.5), CVE-2026-67217 (5.3) | cJSON 1.7.19 | No: JSON Patch, in `cJSON_Utils.c`, which is not built (only `cJSON.c` is) |
-| CVE-2026-67216 (7.5) | cJSON 1.7.19 | No: `cJSON_Compare()`, which nothing calls |
-| CVE-2026-16554 (7.8) | cJSON 1.7.19 | Not in practice: it needs a string of about 859 million control characters |
-
-So a match by version is not a vulnerability of the firmware: what a release compiles and calls decides. Flight Control has no way to mark a finding as not applicable, so those that do not apply are kept out of Trustify: `tools/not-affected.json` lists each with its component, a justification (CycloneDX's impact analysis values: `code_not_present`, `code_not_reachable`, `requires_environment`...) and the reason, and `tools/advisories.py` leaves them out and prints them apart. Those above are in it; with it, the devices have no open vulnerability. Check an entry again when its component changes, or what the firmware uses of it: cJSON has no release with these fixed yet (1.7.19 is the latest), and building `cJSON_Utils.c` would bring the JSON Patch ones back.
+Flight Control has no per-finding applicability field. The importer reports reviewed exclusions separately and skips uploading them. Recheck each justification when a component or its use changes.
