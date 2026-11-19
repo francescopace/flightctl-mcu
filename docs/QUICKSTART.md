@@ -26,11 +26,11 @@ flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t 
 
 The UI is at `http://ui.<your-ip>.nip.io:8080`; log in with the same token.
 
-`tools/kind/up.sh` creates the [MCU lab catalog](../tools/kind/mcu-lab.yaml) only if `mcu-lab` is missing. Open **Software Catalog → MCU lab (test)** for the nine WASM apps, including CoreMark, and the two Zephyr firmware entries. To reapply the manifest to an existing catalog or finish an interrupted restore, run `tools/kind/apply-catalog.sh`. Both scripts accept the host's LAN IP as an argument.
+`tools/kind/up.sh` creates the [MCU lab catalog](../tools/kind/mcu-lab.yaml) only if `mcu-lab` is missing. Open **Software Catalog → MCU lab (test)** for the nine WASM apps, including CoreMark, and the ESP-IDF and Zephyr firmware entries. To reapply the manifest to an existing catalog or finish an interrupted restore, run `tools/kind/apply-catalog.sh`. Both scripts accept the host's LAN IP as an argument.
 
 The manifest restores the catalog entries and their version tags. The OCI images live in the registry's separate Docker volume, `fc-registry`, which survives kind cluster deletion. If you also remove that volume, republish the images with the tags in the manifest before deploying them.
 
-The sample app entries point to the registry on port 5001. For deployment to devices that require TLS, use the same image and tag at `registry.<your-ip>.nip.io:5443` with the fleet's registry configuration (step 6).
+The app and lab firmware entries use the registry’s TLS endpoint at `registry.<your-ip>.nip.io:5443`. Devices need the registry configuration from step 6.
 
 Flight Control 1.4 copies everything a device reports in `customInfo` into its labels. These devices report counters there, once an hour, so narrow that to what does not change ([why](FLIGHTCTL-LIMITATIONS.md#label-sync)):
 
@@ -61,7 +61,7 @@ third_party/fetch-wamr.sh
 ```
 
 ```bash
-LOCAL=0 TARGET=esp32c3 FW_VERSION=v3.14-rc9 port/espidf/build.sh
+LOCAL=0 TARGET=esp32c3 FW_VERSION=v3.15-rc1 port/espidf/build.sh
 ```
 
 ```bash
@@ -104,18 +104,18 @@ tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
 
 ## 6. Give it firmware, config and an app
 
-These commands publish the C3 image built in step 3 and the alarm app using the tags in `tools/fleet/idf-lab.yaml`. For another chip, replace `esp32c3` in both steps. When updating an existing fleet, give each new release a fresh tag and update its reference in the fleet manifest.
+In an empty registry, these commands publish the C3 image built in step 3 and the alarm app using the tags in `tools/fleet/idf-lab.yaml`. In the populated MCU lab, the firmware tag already contains all five ESP-IDF platforms and the alarm image is signed. Skip both publish commands there. For a new release, build each target in the fleet, pass all those targets to one `fw-push.py` invocation under a fresh tag, then update the fleet reference.
 
 `apply.sh` fills in the registry address from `.secrets/registry/host` and adds the registry CA and password to the fleet as config files. Set `REGISTRY=host:port` to use another registry.
 
 ```bash
-tools/fw-push.py localhost:5001/flightctl-mcu/fw:v3.14-rc9 esp32c3
+tools/fw-push.py localhost:5001/flightctl-mcu/fw:v3.15-rc1 esp32c3
 ```
 
 It also pushes each image's ELF, which devices never pull: after a crash, `tools/fw-elf.py <registry>/flightctl-mcu/fw:<tag> <chip>` gets it back to decode the device's `lastFatalError` with `addr2line`.
 
 ```bash
-wasm-apps/build.sh alarm v2.3
+wasm-apps/build.sh alarm v2.4.0
 ```
 
 ```bash

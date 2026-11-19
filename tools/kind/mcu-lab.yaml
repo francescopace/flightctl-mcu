@@ -17,18 +17,18 @@ spec:
   type: container
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/alarm
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/alarm
   versions:
-  - version: 2.0.1-pico
-    channels:
-    - candidate
-    references:
-      container: v2.pico
   - version: 2.2.0
     channels:
     - stable
     references:
       container: v2.2
+  - version: 2.4.0
+    channels:
+    - stable
+    references:
+      container: v2.4.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -37,18 +37,38 @@ metadata:
   catalog: mcu-lab
 spec:
   displayName: Arduino LED blink (WASM)
-  shortDescription: Blinks the board LED using the Rust build. Set FC_ALLOW=led0 when deploying.
+  shortDescription: Blinks the board LED using the Rust build by default. Set FC_ALLOW=led0 when deploying.
   category: application
   type: container
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/arduino
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/arduino
   versions:
   - version: 1.0.0
     channels:
     - stable
     references:
       container: rust
+  - version: 1.1.0
+    channels:
+    - stable
+    references:
+      container: v1.1.0-rust
+  - version: 1.1.0-cpp
+    channels:
+    - cpp
+    references:
+      container: v1.1.0-cpp
+  - version: 1.1.0-assemblyscript
+    channels:
+    - assemblyscript
+    references:
+      container: v1.1.0-assemblyscript
+  - version: 1.1.0-tinygo
+    channels:
+    - tinygo
+    references:
+      container: v1.1.0-tinygo
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -57,18 +77,28 @@ metadata:
   catalog: mcu-lab
 spec:
   displayName: CoreMark benchmark (WASM)
-  shortDescription: Measures iterations per second using the wasm3 build. Set FC_ENTRY=run when deploying.
+  shortDescription: Measures iterations per second with 64 KiB (stable) or 128 KiB (large-memory). Set FC_ENTRY=run when deploying.
   category: application
   type: container
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/coremark
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/coremark
   versions:
   - version: 1.0.0
     channels:
     - stable
     references:
       container: wasm3
+  - version: 1.1.0
+    channels:
+    - stable
+    references:
+      container: v1.1.0-wasm3
+  - version: 1.1.0-128k
+    channels:
+    - large-memory
+    references:
+      container: v1.1.0-wasm-coremark
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -81,13 +111,32 @@ spec:
   type: os
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/fw
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
-  - version: 3.0.0
+  - version: 32.0.0
     channels:
     - stable
     references:
-      container: z3
+      container: z32
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: fw-espidf-lab
+  catalog: mcu-lab
+spec:
+  displayName: ESP-IDF lab firmware
+  category: system
+  type: os
+  artifacts:
+  - type: container
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
+  versions:
+  - version: 3.15.0-rc.1
+    channels:
+    - candidate
+    references:
+      container: v3.15-rc1
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -107,6 +156,11 @@ spec:
     - stable
     references:
       container: z29
+  - version: 32.0.0
+    channels:
+    - stable
+    references:
+      container: z32
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -120,13 +174,18 @@ spec:
   type: container
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/hwcheck
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/hwcheck
   versions:
   - version: 1.0.0
     channels:
     - stable
     references:
       container: v1
+  - version: 1.1.0
+    channels:
+    - stable
+    references:
+      container: v1.1.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -140,13 +199,18 @@ spec:
   type: container
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/libccheck
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/libccheck
   versions:
   - version: 1.0.0
     channels:
     - stable
     references:
       container: v1
+  - version: 1.1.0
+    channels:
+    - stable
+    references:
+      container: v1.1.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -160,13 +224,18 @@ spec:
   type: container
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/mqttdemo
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/mqttdemo
   versions:
   - version: 1.0.0
     channels:
     - stable
     references:
       container: v1
+  - version: 1.1.0
+    channels:
+    - stable
+    references:
+      container: v1.1.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -180,13 +249,18 @@ spec:
   type: container
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/tinyml
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/tinyml
   versions:
   - version: 1.0.0
     channels:
     - stable
     references:
       container: v1
+  - version: 1.1.0
+    channels:
+    - stable
+    references:
+      container: v1.1.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -200,13 +274,18 @@ spec:
   type: container
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/tinymlp
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/tinymlp
   versions:
   - version: 1.0.0
     channels:
     - stable
     references:
       container: v1
+  - version: 1.1.0
+    channels:
+    - stable
+    references:
+      container: v1.1.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -220,10 +299,15 @@ spec:
   type: container
   artifacts:
   - type: container
-    uri: ${HOST_IP}:5001/flightctl-mcu/trend
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/trend
   versions:
   - version: 1.0.0
     channels:
     - stable
     references:
       container: v1
+  - version: 1.1.0
+    channels:
+    - stable
+    references:
+      container: v1.1.0

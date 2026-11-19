@@ -47,7 +47,7 @@ Another chip Espressif or Zephyr supports, with 384 KB of SRAM or more, should w
 
 *An ESP32-C6 as Flight Control shows it: the system (`esp-idf` on `riscv32-esp32c6`), the firmware it runs and its config sources; then what the device reports of itself: heap, stack margins, traffic, temperature, WiFi signal (the MAC is hidden here).*
 
-With ESP-IDF 6.0.3 and mbedTLS 4, and with Zephyr 4.5 and MCUboot ([ZEPHYR.md](ZEPHYR.md)); what was verified on each is in [RESULTS.md](RESULTS.md#what-works), the heap in [RAM](RESULTS.md#ram):
+Verified with ESP-IDF 6.0.3 and 6.1.1 on the five ESP-IDF chips, and with Zephyr 4.5 and MCUboot ([ZEPHYR.md](ZEPHYR.md)); what was verified on each is in [RESULTS.md](RESULTS.md#what-works), the heap in [RAM](RESULTS.md#ram):
 
 | Chip | Core | ESP-IDF | Zephyr |
 |---|---|---|---|
