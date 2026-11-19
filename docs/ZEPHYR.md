@@ -124,7 +124,7 @@ What it is not: there is no MCUboot and no firmware update, and no random genera
 
 ## On an ESP32-S3
 
-An ESP32-S3-DevKitC (Xtensa LX7, 512 KB of RAM, 8 MB of flash, WiFi in the chip): the board the ESP-IDF firmware runs on, here with Zephyr's own WiFi driver, MCUboot and TF-PSA-Crypto instead of Espressif's.
+The Zephyr board is an ESP32-S3-DevKitC N8R8 with 8 MiB each of flash and octal PSRAM. It runs Zephyr’s WiFi driver, MCUboot and TF-PSA-Crypto. The ESP-IDF measurements use a separate S3 N4R2. [Board results](RESULTS.md#coremark)
 
 ![The ESP32-S3 with Zephyr in Flight Control's UI](img/zephyr-device.png)
 *The ESP32-S3 with Zephyr in Flight Control: operating system `zephyr`, architecture `xtensa`, the firmware `z26` from its fleet, and the WASM app `alarm` running.*
@@ -153,7 +153,7 @@ For the internal-RAM CoreMark run on the N8R8, the application and MCUboot overl
 
 What it took, beyond the board's two files in `port/zephyr/boards/`:
 
-- **Memory by hand.** Zephyr gives the first core 372 KB for data. The kernel heap is the larger of what the application asks and what the drivers add: the WiFi driver's 51 KB are not added to a size that is set, and with 64 KB there were 28 KB left for thread stacks. It is 92 KiB, the C heap 120,112 B, made smaller for what the PSRAM driver (below), the device's 4 KB log and 1 KB for Zephyr's lines on their way into it take of the region, the status thread's stack 12 KB, the main thread's, where the spec loop runs, 16 KB. The ordinary N8R8 image leaves 4,992 B of the region at link time; what the stacks use is in [RESULTS.md](RESULTS.md#ram).
+- **Internal DRAM.** On the N8R8, the kernel heap is 92 KiB and the C heap is 120,112 B. The status thread has a 12 KiB stack and the main thread has 16 KiB for the spec loop. The remaining link-time margin is reported with the [firmware size](RESULTS.md#firmware-size).
 - **PSRAM for apps and TLS.** The N8R8 has 8 MiB of octal PSRAM. The board configuration gives 2 MiB to the shared heap. WAMR takes app linear memories of 16 KiB or more from this heap when available. On the N8R8 software-crypto build, the TLS pool also prefers this heap for its two 17 KiB receive records. Both allocators fall back to internal RAM when needed. The PSRAM driver costs about 4 KiB of internal RAM. With MQTT connected, the board needs 32 POSIX mutexes for an OTLP client-certificate handshake to complete. [Memory and CoreMark measurements](RESULTS.md#ram)
 - **The WiFi driver joins after the request returns**, and chooses the access point itself (`CONFIG_ESP32_WIFI_STA_SCAN_ALL`: the strongest).
 - **A kept connection the server closed** is `ENOTCONN` to Zephyr's TCP, not a reset: the port took it for an error and warned at every request, before the core opened another connection as it should.

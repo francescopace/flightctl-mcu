@@ -1,21 +1,25 @@
 # Writing a WASM app
 
-An app is a WebAssembly module that Flight Control deploys as a container application, with a WASM OCI artifact as its image. The device runs it with WAMR, one thread per app, and replaces it without a reboot. The app reaches the device only through the functions in [wasm-apps/sdk/fc_app.h](../wasm-apps/sdk/fc_app.h) (import module `fc`) and a small [C library](#the-c-library) (import module `env`), version 1 of the interface. Until the v1.0.0 tag it can still change; after that, functions are only added.
+An app is a WebAssembly module deployed as a WASM OCI artifact. The device runs it with WAMR, one thread per app, and can replace it without rebooting. The table lists the imports available to apps. For the C signatures, arguments, return values, event types and error codes of the `fc` module, see the [SDK header](../wasm-apps/sdk/fc_app.h). A C function such as `fc_gpio_irq` imports `gpio_irq` from `fc`. The app interface is version 1. It can change before the project’s v1.0.0 tag. After that, changes within interface version 1 are additive.
 
 | Group | Functions | Granted by |
 |---|---|---|
 | State, log and info | `fc_set_state`, `fc_log`, `fc_info` | always |
-| Time | `fc_time_ms`, `fc_time_unix_ms`, `fc_timer_start`, `fc_sleep_ms`, `fc_random` | always |
+| Time and timers | `fc_time_ms`, `fc_time_unix_ms`, `fc_timer_start`, `fc_sleep_ms`, `fc_random` | always |
+| Handles | `fc_close` | an open handle owned by the app |
 | Config | `fc_config_get` | always |
 | Storage | `fc_kv_get`, `fc_kv_set`, `fc_kv_del` | always |
-| GPIO and LEDs | `fc_gpio_open/read/write/irq`, `fc_led_open/rgb` | a name in `FC_ALLOW` |
-| Buses | `fc_i2c_*`, `fc_spi_*`, `fc_uart_*` | a name in `FC_ALLOW` |
-| Analog | `fc_adc_*`, `fc_pwm_*` | a name in `FC_ALLOW` |
+| GPIO and LEDs | `fc_gpio_open`, `fc_gpio_read`, `fc_gpio_write`, `fc_gpio_irq`, `fc_led_open`, `fc_led_rgb` | a name in `FC_ALLOW` |
+| I²C | `fc_i2c_open`, `fc_i2c_read`, `fc_i2c_write`, `fc_i2c_write_read` | a name in `FC_ALLOW` |
+| SPI | `fc_spi_open`, `fc_spi_transfer` | a name in `FC_ALLOW` |
+| UART | `fc_uart_open`, `fc_uart_read`, `fc_uart_write` | a name in `FC_ALLOW` |
+| ADC and PWM | `fc_adc_open`, `fc_adc_read_mv`, `fc_pwm_open`, `fc_pwm_duty` | a name in `FC_ALLOW` |
 | Chip sensors | `fc_sensor_read` (`die_temp`) | always |
 | Metrics | `fc_metric` | `metrics` |
-| MQTT | `fc_mqtt_publish/subscribe/topic`, `fc_event_data` | `mqtt` |
-| C library | `string.h`, `stdio.h` (`snprintf`, `printf` to the log), `stdlib.h` (with a `malloc` built into the app), `ctype.h`, `math.h` (`expf`, `logf`, `tanhf`) from [wasm-apps/sdk/libc](../wasm-apps/sdk/libc/) | always |
-| Arduino | `pinMode`, `digitalWrite`, `delay`, `millis`, `getPinLED`, `print` (import module `arduino`), for [wasm3-arduino's examples](#the-blink-of-wasm3-arduino) | a name in `FC_ALLOW` |
+| MQTT | `fc_mqtt_publish`, `fc_mqtt_subscribe`, `fc_mqtt_topic`, `fc_event_data` | `mqtt` |
+| C library (`env`) | Functions from `string.h`, `stdio.h`, `stdlib.h`, `ctype.h` and `math.h`. [Function list](#the-c-library) | always |
+| Clock (`env`) | `clock_ms` | always |
+| Arduino (`arduino`) | `pinMode`, `digitalWrite`, `getPinLED`, `delay`, `millis`, `print`, `getGreeting`. [Arduino interface](#the-blink-of-wasm3-arduino) | GPIO and LED access use names in `FC_ALLOW` |
 
 A firmware without [MQTT](#mqtt) returns `FC_ENOTSUP` from its functions, so an app written for it loads and can tell. What each port has is under [Ports](#ports).
 
@@ -44,18 +48,17 @@ A trap is the app's; a crash of the firmware is the device's, and it restarts. T
 A module built for no device in particular, such as a benchmark, runs as it was published. The fleet names the export to call in the app's env var `FC_ENTRY`; a module with neither `tick` nor `on_event` that exports `_start` needs none. The device calls that export once, with no arguments:
 
 - once the agent has had nothing on hand for 2 s (no status update due or being sent, no spec being applied), and at most 30 s after the app started, so that a benchmark does not share the CPU with the agent's first status updates; until then the app is `Preparing`. Its memory is taken as soon as the app starts; if it does not fit, the app waits for the heap ([below](#size-and-limits));
-- with no instruction budget. On ESP-IDF this entry runs at the normal app priority. The interpreter checks the system tick every 4,096 operations and pauses all computing apps in the same short window so the idle task can service the watchdog. Removing or updating the app stops it at its next branch or call;
-- on the app's thread, at the priority of the agent's threads, so they take turns on the CPU;
+- on the app’s thread, with no instruction budget. On ESP-IDF it runs at normal app priority. Every 4,096 interpreter operations the ESP-IDF runner checks whether to yield so the idle task can service the watchdog. Concurrent one-shot apps share this idle window. Removing or updating the app stops it.
 - when it returns, the app is `Completed` and not run again until its image or env vars change, or the device restarts. What it returned is its state, in `customInfo["app.<name>"]`, such as `run() returned 12.500`; a float is given to the thousandth. A trap is an `Error`, and it is run again after a few seconds, as any app.
 
 Such a module may import `env.clock_ms`, as CoreMark does: the milliseconds since the app started, as an i32 or an i64. `env` is the module that clang's `wasm-ld --allow-undefined` and Emscripten import from by default; there the device has `clock_ms` and the functions of its [C library](#the-c-library), and refuses any other when the module is downloaded. It may also use tail calls (`return_call`). It may not yet import from `fc`: its call has none of an app's events or limits on waits around it. It may import from `arduino`, as [wasm3-arduino's blink](#the-blink-of-wasm3-arduino) does.
 
-[CoreMark](../wasm-apps/coremark/fetch.sh) runs that way, from either published build: wasm3's, 7.7 KB with 64 KB of memory, or wasm-coremark's, 12.5 KB with 128 KB. Neither exports `__heap_base`, so the device holds all their memory, in one block (see below): the ESP-IDF port can serve the 64 KiB linear memory from an exactly 65,536 B block. The app thread and the agent need additional free RAM elsewhere. `run()` runs for at least 10 seconds and returns the score, in iterations per second (0 when the run was not valid); the scores measured are in [RESULTS.md](RESULTS.md#coremark):
+The MCU lab catalog provides two unmodified CoreMark builds. The wasm3 module needs a contiguous 64 KiB block of linear memory. The wasm-coremark module (`v1.1.0-wasm-coremark`) needs 128 KiB. The app thread and agent need additional free RAM. Both modules export `run()`, which returns iterations per second after at least 10 s of timed work, or zero for an invalid run. [Scores by board](RESULTS.md#coremark)
 
 ```yaml
         - name: coremark
           appType: container
-          image: <registry>/flightctl-mcu/coremark:wasm3
+          image: <registry>/flightctl-mcu/coremark:v1.1.0-wasm3
           envVars:
             FC_ENTRY: run
 ```
@@ -196,8 +199,8 @@ CI tests the ESP-IDF drivers against virtual peripherals on the S3 (GPIO interru
 | | |
 |---|---|
 | Apps per device | 2 |
-| Module | what the heap can load beside the agent: a quarter of the internal heap free less 40 KB, 64 KB at most (below) |
-| Linear memory | one 64 KB page, shrunk to what the module uses (see below), the arena of its `malloc` included; a module that does not export `__heap_base` and `__data_end` keeps all it declares, as does one whose `__data_end`, which WAMR rounds up to 16 bytes, is past its `__heap_base` |
+| WASM file | Up to 64 KiB per download. With the app heap check enabled, the limit is the smaller of 64 KiB and one quarter of the free heap above the agent’s 40 KiB reserve. |
+| Linear memory | The SDK build declares one 64 KiB page, including the app’s stack and any `malloc` arena. Other modules can declare more. WAMR can shrink the allocation when the module exports `__heap_base` and `__data_end` and the 16-byte-aligned data end fits below or at the heap base. |
 | Open handles per app (GPIOs, LEDs, timers...) | 12 |
 | Timers per app | 4 |
 | Storage per app | 4 KB |
@@ -216,7 +219,7 @@ The second app can start once the primary has obtained its fixed memory, subject
 
 The instruction budget counts WAMR's fast-interpreter operations: 5 million last about a second on the boards ([RESULTS.md](RESULTS.md#timings) has each chip's figure). The device's functions run natively, outside that count: the time spent in them, the waits and the C library ([below](#the-c-library)), has its own limit of a second per call, and only that time counts against it. So a call that loops and calls them is stopped by whichever runs out first, and lasts at most the budget plus a second. A longer computation is split across ticks. Code run as the module is instantiated is stopped the same way.
 
-What limits an app on a small chip is the heap. Each app takes the module as WAMR's fast interpreter loads it (about 2.5 to 3.5 times the `.wasm`), its linear memory (static data and the 1 KB stack), about 3.5 KB for the instance and 8 KB for its thread ([RESULTS.md](RESULTS.md#ram)). So the device takes a `.wasm` of at most a quarter of the heap it has free, less the agent's 40 KB (below): what loading it takes, the `.wasm` included until it is loaded. With 77 KB free, as a C3 running the `alarm` app, that is 9 KB; never more than 64 KB. A larger one is refused before it is downloaded, `layer is 12540 bytes (max 9472 with this heap)`, and not tried again until the spec changes. A version of the app that runs keeps its part of the heap meanwhile. The thread's stack is 8 KB; apps were seen to use 2.5 to 3.4 KB of it, `printf` of `%f` included ([RESULTS.md](RESULTS.md#ram)).
+On ESP-IDF the decoded module typically takes 2.5–3.5 times its file size. For example, a C3 with 77 KiB of free internal heap can download a module of about 9 KiB. During an update the running version still occupies memory while its replacement loads. Starting the new app also needs contiguous linear memory, about 3.5 KiB for the instance and an 8 KiB thread stack. [RAM measurements](RESULTS.md#ram)
 
 On ESP-IDF, an app instance must leave 40 KiB of internal RAM for the agent to reconnect and receive a spec. The agent measures free internal RAM after creating the instance, before reopening its connection. It reports the minimum observed afterward in `customInfo.heapAgentBytes`. An export waits for 20 KiB above the floor. MQTT requires room for its connection as well. PSRAM on an ESP32-S3 has its own budget. Zephyr can enable the same app check with `CONFIG_FC_APP_HEAP_CHECK`. [RAM measurements](RESULTS.md#ram)
 
@@ -224,7 +227,7 @@ On ESP-IDF builds for the C5 and C6 without PSRAM, the loader can shorten its te
 
 The app's status reports whether an allocation lacked a large enough contiguous block or would have left too little memory for the agent. Every 30 s the agent checks for the required block, the app thread's stack and the heap floor. A primary can release idle management TLS for its retry. If its own loaded module divides the heap, the agent can unload it and read the same committed bytes back from flash, with one further idle TLS turn after unloading. An active request or console session retains its connection. If the required memory is still unavailable, the app waits. A change of image, app environment or firmware, or a device restart, can also trigger a new attempt.
 
-`fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `fc_config_double`, `fc_config_milli`, `FC_STR`). They are compiled into the app, so they can change without touching the interface. Build and push with `wasm-apps/build.sh <app> <version>`, and keep its link flags. Exporting `__heap_base` and `__data_end` lets WAMR shrink the WebAssembly memory page to what the module actually uses, without which an app does not fit on a C3. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses. Tail calls are the one feature beyond the MVP it has.
+`fc_app.h` has a few helpers (`fc_fmt_int`, `fc_config_int`, `fc_config_double`, `fc_config_milli`, `FC_STR`). They are compiled into the app, so they can change without touching the interface. Build and push with `wasm-apps/build.sh <app> <version>`, and keep its link flags. Exporting `__heap_base` and `__data_end` lets WAMR shrink eligible modules to the memory they use. This is especially useful on the C3 when two apps share the heap. It also builds for the WebAssembly MVP (`-mcpu=mvp`): the firmware's WAMR has no reference types, and clang 20 and later otherwise encode indirect calls in a way it refuses. Tail calls are the one feature beyond the MVP it has.
 
 An app that imports a function only a newer firmware has goes out in the same spec as that firmware. The device installs the firmware first, and once the new one is confirmed after its restart, applies the spec's apps with it. While the firmware's download is to be tried again, the apps stay as they are; a firmware refused or rolled back leaves them to the one that runs. Published alone to a fleet whose firmware lacks the function, the app is refused (`imports env.strrchr, which this firmware does not have`) and the version that runs is kept.
 
@@ -242,7 +245,7 @@ The firmware has a small C library for apps, part of the interface: WAMR's libc-
 
 They run as native code, outside the app's instruction budget, and take nothing from the app's memory or the heap. A call into the app may spend at most a second in them, counted with the device's waits: the time each takes is added up, and the one that passes the second stops the app (`a call spent more than 1 s in the device's functions`), so a loop of `memset` or `strstr` over a large buffer cannot run on. The app's own instructions between them do not count there, only against the budget. A module run once (`FC_ENTRY`) has no such limit. A pointer or a length that leaves the app's memory stops the app, as a trap does; so does `abort()`. `printf`, `puts` and `putchar` write to the app's log at INFO, as `fc_log` does, a line at a time: a line longer than 96 characters is split, one `printf` writes at most 127, and a line without its newline is logged when the call into the app returns. The formats are C's (`%d`, `%ld`, `%u`, `%x`, `%s`, `%c`, `%f`, widths and precisions); each conversion is formatted by the firmware's own C library. On Zephyr that is picolibc, built with floating point for it (`CONFIG_PICOLIBC_IO_FLOAT`); without it `%f` would print `*float*`. The library passes its tests on Zephyr too, on `native_sim` and on an emulated Cortex-M3 (`mps2/an385` in QEMU), with `trend` and `hwcheck` (`tests/zephyr-apps.sh`). It takes no static RAM beyond a 100-byte line buffer per app: its table of functions, as the `fc` one, is const, in flash. What it costs in flash is in [RESULTS.md](RESULTS.md#firmware-size).
 
-`malloc`, `calloc`, `realloc` and `free` are in `stdlib.h`, but not the device's: a small allocator built into the app, over an arena in the app's own memory whose size the app gives once, at file scope: `FC_HEAP(4096);`. The arena is static data, so the device counts it with the app's memory before loading the app, and WAMR still shrinks the page to what the module uses; wasi-libc's `malloc` grows the memory instead (`memory.grow`), and a module that may grow keeps its whole 64 KB page. The allocator adds 0.3 KB of `.wasm` for `malloc` and `free`, 0.7 KB with `calloc` and `realloc`. Each block takes 4 bytes more than asked, rounded up to 8, and `malloc` gives NULL when no free block is large enough. An app that does not call it has neither its code nor the arena.
+`malloc`, `calloc`, `realloc` and `free` are in `stdlib.h`, but not the device's: a small allocator built into the app, over an arena in the app's own memory whose size the app gives once, at file scope: `FC_HEAP(4096);`. The arena is static data, so the device counts it with the app's memory before loading the app, and WAMR still shrinks the page to what the module uses; wasi-libc's `malloc` grows the memory instead (`memory.grow`), and a module that uses it keeps its declared initial memory. The allocator adds 0.3 KB of `.wasm` for `malloc` and `free`, 0.7 KB with `calloc` and `realloc`. Each block takes 4 bytes more than asked, rounded up to 8, and `malloc` gives NULL when no free block is large enough. An app that does not call it has neither its code nor the arena.
 
 Of `math.h` the device has `expf`, `logf` and `tanhf`, which emlearn's neural networks need ([tinymlp](#tinyml-with-emlearn)): native and timed as the others. Built into the app, musl's take 2.1 KB of `.wasm`, which takes 2.5 to 3.5 times as much heap as the module loads, and 0.6 KB of tables in the app's memory. An inference of `tinymlp`'s network takes 2,954 instructions of a call's budget with the device's, 5,465 with musl's. The others an app needs most are WebAssembly instructions, declared in `math.h` with no import: `sqrtf`, `fabsf`, `floorf`, `ceilf`, `truncf`, `rintf`, `nearbyintf`, `copysignf`, `fminf`, `fmaxf`, and the same for `double`. The device's results may differ from another C library's in the last bit.
 
@@ -259,7 +262,7 @@ There is no `vsnprintf`, no other math function and no files. `build.sh` passes 
 - [mqttdemo](../wasm-apps/mqttdemo/mqttdemo.c): MQTT both ways ([MQTT](#mqtt)). Granted `mqtt` (and `led0`), it publishes the temperature on `temp` every `period_ms`, takes commands on `cmd/#` and on the fleet's `cmd`, answers each on `ack`, and turns `led0` on and off for `led on` and `led off`. On a firmware without MQTT its state says so and it stays idle. About 1.9 KB.
 - [tinyml](../wasm-apps/tinyml/tinyml.c): a TinyML model from emlearn ([below](#tinyml-with-emlearn)). No grants needed. About 4.1 KB.
 - [tinymlp](../wasm-apps/tinymlp/tinymlp.c): the same with a small neural network ([below](#tinyml-with-emlearn)). No grants needed. It imports `expf`, `logf` and `tanhf`. About 6.8 KB.
-- [CoreMark](../wasm-apps/coremark/fetch.sh), as published, not rebuilt: `wasm-apps/coremark/fetch.sh` downloads both builds and checks them against their SHA-256, then `wasm-apps/push.sh coremark wasm3` pushes one. See [Modules built for no device](#modules-built-for-no-device).
+- The [CoreMark fetch script](../wasm-apps/coremark/fetch.sh) downloads both published modules and verifies their SHA-256 hashes. To publish the 64 KiB variant with the catalog tag, run `wasm-apps/push.sh coremark wasm3 v1.1.0-wasm3`. [Deployment example](#modules-built-for-no-device)
 - [The blink of wasm3-arduino](../wasm-apps/arduino/fetch.sh), as published, not rebuilt ([below](#the-blink-of-wasm3-arduino)).
 
 ### TinyML with emlearn
@@ -278,7 +281,7 @@ The model is the C that emlearn writes ([model.h](../wasm-apps/tinyml/model.h)),
 
 ### The blink of wasm3-arduino
 
-[wasm3-arduino](https://github.com/wasm3/wasm3-arduino) publishes its blink built four ways, each importing only from a module `arduino`: Rust (283 B), C++ (369 B), AssemblyScript (2.2 KB) and TinyGo (5.2 KB). The device has that module, so they run as published: `wasm-apps/arduino/fetch.sh` downloads them and checks their SHA-256, then `wasm-apps/push.sh arduino rust` pushes one. Give the app `FC_ALLOW: "led0"`.
+[wasm3-arduino](https://github.com/wasm3/wasm3-arduino) publishes its blink built four ways, each importing only from a module `arduino`: Rust (283 B), C++ (369 B), AssemblyScript (2.2 KB) and TinyGo (5.2 KB). The device has that module, so they run as published: `wasm-apps/arduino/fetch.sh` downloads them and checks their SHA-256, then `wasm-apps/push.sh arduino rust v1.1.0-rust` publishes the Rust build with its catalog tag. Give the app `FC_ALLOW: "led0"`.
 
 | Function | On the device |
 |---|---|
@@ -289,4 +292,4 @@ The model is the C that emlearn writes ([model.h](../wasm-apps/tinyml/model.h)),
 | `print(s, len)` | the app's log, a line at a time, as `printf` |
 | `getGreeting(buf, len)` | `Hello from Flight Control` |
 
-They return nothing, as Arduino's: a pin with no name in `FC_ALLOW`, or written before `pinMode`, is logged once. Each build exports `_start()`, which never returns, so the device runs it once with no instruction budget ([Modules built for no device](#modules-built-for-no-device)): the app is `Running` until it is removed. In an app with `tick()` or `on_event()`, a `delay` counts against the call's second in the device's functions. Each build keeps its whole 64 KB of memory, in one block: the C++ and AssemblyScript ones do not export `__heap_base`, and the Rust one's `__heap_base` is below its `__data_end` rounded up to 16 bytes. So it may not fit beside another app on the classic ESP32 and the C5 ([RESULTS.md](RESULTS.md#apps-on-the-boards)).
+Only `getPinLED()` and `millis()` return a value. The firmware logs a pin access error once for an ungranted pin or a write before `pinMode`. Each build exports `_start()`, which never returns, so the device runs it once with no instruction budget ([Modules built for no device](#modules-built-for-no-device)): the app is `Running` until it is removed. In an app with `tick()` or `on_event()`, a `delay` counts against the call's second in the device's functions. Each build keeps its whole 64 KB of memory, in one block: the C++ and AssemblyScript ones do not export `__heap_base`, and the Rust one's `__heap_base` is below its `__data_end` rounded up to 16 bytes. So it may not fit beside another app on the classic ESP32 and the C5 ([RESULTS.md](RESULTS.md#apps-on-the-boards)).

@@ -11,9 +11,10 @@
  * An app is a WebAssembly module (wasm32, MVP, no WASI) deployed by
  * Flight Control as a container application whose image is a WASM OCI
  * artifact. The device runs it with WAMR, one thread per app. Everything the
- * app can reach goes through the functions below (import module "fc"), and
- * a small C library in libc/ (string.h, stdio.h, stdlib.h, ctype.h; import
- * module "env"): no malloc, no math functions.
+ * app can reach through the device API is declared below (import module "fc").
+ * The SDK's libc/ headers declare the native functions imported from "env",
+ * including expf, logf and tanhf. stdlib.h also provides an allocator in the
+ * app's linear memory. Declare its arena with FC_HEAP(bytes) at file scope.
  *
  * ---- What the app exports ----------------------------------------------------
  *
@@ -65,7 +66,8 @@
  *
  * Strings and buffers are a pointer and a length; strings need no NUL.
  * Functions that open something return a handle (>= 0), the others 0 or a
- * count of bytes; on failure all return a negative FC_E* code. A handle is
+ * count of bytes unless documented otherwise. Calls that report errors return
+ * a negative FC_E* code. A handle is
  * released with fc_close(): that stops a timer and ends a subscription.
  *
  * ---- When the app stops ---------------------------------------------------------
@@ -219,9 +221,8 @@ FC_IMPORT("led_rgb") int32_t fc_led_rgb(int32_t h, int32_t r, int32_t g, int32_t
 
 /* ---- I2C ---------------------------------------------------------------------------
  * A bus by name; pins and speed are in the board map. addr is 7-bit. Each
- * call returns 0, FC_EIO (no acknowledge: no device at addr, or it refused)
- * or FC_ETIMEDOUT (the bus held low), and moves at most FC_I2C_MAX bytes
- * each way. */
+ * transfer moves at most FC_I2C_MAX bytes each way and returns 0 on success.
+ * Transfer errors include FC_EIO for a NACK and FC_ETIMEDOUT for a timeout. */
 #define FC_I2C_MAX 1024
 FC_IMPORT("i2c_open") int32_t fc_i2c_open(const char *bus, int32_t blen);
 FC_IMPORT("i2c_write") int32_t fc_i2c_write(int32_t h, int32_t addr, const void *data, int32_t len);

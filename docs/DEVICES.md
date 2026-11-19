@@ -59,7 +59,7 @@ Verified with ESP-IDF 6.0.3 and 6.1.1 on the five ESP-IDF chips, and with Zephyr
 
 The C6 DevKitC flashes only over its native USB port, started in download mode (plug them in holding BOOT).
 
-PSRAM is not used, so a single image runs on every board variant of a chip, except on the ESP32-S3, where it holds the memory of apps too large for internal RAM. An S3 comes with no PSRAM, 2 MB of quad PSRAM (N4R2, N8R2) or 8 MB of octal (N8R8, N16R8), and the mode is fixed at build time, so a release has two S3 images: `esp32s3`, for quad PSRAM, which boots without it on the other boards, and `esp32s3-r8` (`VARIANT=r8`), for octal. A board takes updates for the image it runs: an N8R8 is flashed once over USB with `esp32s3-r8`, and then updates from it over the air. Tried on an N4R2 and an N8R8. The Zephyr build for the S3 uses the N8R8's octal PSRAM the same way ([ZEPHYR.md](ZEPHYR.md)).
+On ESP-IDF, only the S3 builds use PSRAM. The `esp32s3` image supports 2 MiB quad PSRAM (N4R2 and N8R2) and can boot with internal RAM alone. The `esp32s3-r8` image (`VARIANT=r8`) supports 8 MiB octal PSRAM (N8R8 and N16R8). OTA matches the platform of the installed image. To use octal PSRAM on ESP-IDF, flash the R8 build once over USB and include that platform in subsequent releases. The measured ESP-IDF lab release includes the quad S3 image. The sixth board runs the [Zephyr N8R8 build](ZEPHYR.md#on-an-esp32-s3).
 
 The firmware images, what takes the space and the agent's own share are in [RESULTS.md](RESULTS.md#firmware-size).
 

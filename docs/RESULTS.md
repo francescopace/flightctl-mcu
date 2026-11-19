@@ -1,6 +1,6 @@
 # Results
 
-Six boards were tested with Flight Control 1.4.0. The firmware sizes and CoreMark scores below are for `v3.15-rc2` on five ESP-IDF chips (ESP-IDF 6.1.1) and `z32` on the ESP32-S3 N8R8 (Zephyr 4.5.0). Both releases use WAMR 2.4.6. The operating measurements identify their firmware or test conditions separately.
+Six boards were tested with Flight Control 1.4.0. The firmware sizes are for `v3.15.0` on the five ESP-IDF boards (ESP-IDF 6.1.1) and `z32` on the Zephyr ESP32-S3 N8R8 (Zephyr 4.5.0). Both use WAMR 2.4.6.
 
 ## What works
 
@@ -30,7 +30,7 @@ For scale, an earlier speed-optimized C3 build used about 430 KiB of flash for W
 
 ## CoreMark
 
-<a id="scores-by-board"></a>The same two unmodified WASM modules ran as the sole app on each board, with metrics export off. Scores are iterations per second on WAMR’s fast interpreter. Each score passed the CRC checks with at least 10 s timed. The column sizes are the contiguous linear memory each module needs. [Benchmark modules](APPS.md#modules-built-for-no-device)
+<a id="scores-by-board"></a>The same two unmodified WASM modules ran as the sole app on each board, with metrics export off, on ESP-IDF firmware `v3.15-rc2` and Zephyr firmware `z32`. Scores are iterations per second on WAMR’s fast interpreter. Each score passed the CRC checks with at least 10 s timed. The column sizes are the contiguous linear memory each module needs. [Benchmark modules](APPS.md#modules-built-for-no-device)
 
 | Board | 64 KiB | 128 KiB |
 |---|---:|---:|
@@ -41,11 +41,11 @@ For scale, an earlier speed-optimized C3 build used about 430 KiB of flash for W
 | ESP32-S3 N4R2, 2 MiB quad PSRAM | 17.586 | 21.081 |
 | Zephyr ESP32-S3 N8R8, 8 MiB octal PSRAM | 17.864 | 21.637 |
 
-<a id="memory-placement-on-c5-and-c6"></a>The C5 and C6 each completed six fresh 64 KiB installs on one boot. The table gives their medians. Scores ranged from 21.313 to 21.413 on C5 and 11.827 to 11.867 on C6. Earlier instrumented runs placed the decoded bytecode and native stack in main SRAM on both chips.
+<a id="memory-placement-on-c5-and-c6"></a>The 64 KiB scores for C5 and C6 are medians of six installs per board on a single boot. The ranges were 21.313–21.413 on C5 and 11.827–11.867 on C6. At 64 KiB, all five ESP-IDF boards scored within 5% of their `v3.14-rc12` baseline.
 
-At 64 KiB, throughput increased by 53–95% across the five ESP-IDF boards compared with `v3.15-rc1`. Scores were within 5% of `v3.14-rc12` on every board. On an instrumented C6, two continuous WASM workloads ran together at normal priority. The longest measured interval between idle task executions was 0.50 s. The 5 s watchdog recorded zero timeouts. Each app could be removed while the other kept running. [One-shot execution](APPS.md#modules-built-for-no-device)
+On an instrumented ESP-IDF C6, two continuous WASM apps ran together at normal priority. The longest measured interval between idle task executions was 0.50 s with a 5 s watchdog. [One-shot execution](APPS.md#modules-built-for-no-device)
 
-On Zephyr an N8R8 build with PSRAM disabled reached 17.885 at 64 KiB, with 26,400 B of C heap free after instantiation.
+A separate N8R8 build with PSRAM disabled reached 17.885 iterations/s at 64 KiB and had 26,400 B of C heap free after instantiation.
 
 ## RAM
 
