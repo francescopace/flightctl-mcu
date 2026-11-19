@@ -19,7 +19,7 @@ Testing is still pending on the following boards.
 - [ ] **[Security]** Verify flash encryption for stored credentials and app data on a supported Zephyr target. [Current protections](SECURITY.md#zephyr)
 - [ ] **[Benchmark]** On one ESP32-C6, compare Toit and WASM with Richards and DeltaBlue, then WAMR AOT and interpreter performance with CoreMark.
 - [ ] **[Firmware]** Support opt-in coredump uploads after reboot to an operator-selected destination.
-- [ ] **[Firmware]** Evaluate fleet-scheduled sleep with RTC, GPIO or timer wakeups. Verify device status after the [disconnect timeout](FLIGHTCTL-LIMITATIONS.md).
+- [ ] **[Firmware]** Evaluate fleet-scheduled sleep with RTC, GPIO or timer wakeups. Verify device status after the [disconnect timeout](FLIGHTCTL-LIMITATIONS.md#5-fixed-5-minute-disconnect-timeout-devicedisconnectedtimeout).
 - [ ] **[WASM]** Read a sensor with a BLE GATT client. Assess GATT server, HID, radio, mesh and Matter as deployments require.
 - [ ] **[WASM]** Assess local TCP and UDP sockets with fleet-approved destinations and limits on connections and buffers.
 - [ ] **[WASM]** Evaluate display drawing and private, quota-limited files with random access.

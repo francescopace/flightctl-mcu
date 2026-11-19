@@ -9,11 +9,11 @@ These findings cover Flight Control 1.4.0.
 The official agent 1.0.0 release depends on the Flight Control changes listed below.
 Each entry describes what works and what still needs a server change or release. [Release roadmap](ROADMAP.md#v100-in-progress)
 
-### 1. Fixed 5-minute disconnect timeout (`DeviceDisconnectedTimeout`)
+### 1. A device cannot enroll again under its own name
 
-- **Works today.** For normally connected devices, operators can use the five-minute timeout to identify a missed check-in.
-- **Feature limit.** A battery-powered device that reports only on wake-up would appear `Unknown` after five minutes of sleep, even if its next check-in were due hours later. Waking it just to send status would defeat the planned sleep schedule.
-- **Server change.** Flight Control decides when a device is overdue. It needs to honor an expected contact interval, configured per fleet or device or reported by the agent.
+- **Works today.** Routine renewal preserves identity. If the management certificate expires offline, a device with a valid enrollment credential can re-enroll under a new key and name.
+- **Feature limit.** The returning device appears under a new record. Its old record remains until an operator deletes it, so the operator loses continuity under the original name.
+- **Server change.** Enrollment approval cannot overwrite an existing `Device` record. The upstream issue proposes letting an operator approve a new management certificate when the device proves possession of its original key, preserving the same record. [Upstream issue #3942](https://github.com/flightctl/flightctl/issues/3942)
 
 ### 2. An enrollment certificate cannot be revoked
 
@@ -33,15 +33,15 @@ Each entry describes what works and what still needs a server change or release.
 - **Feature limit.** Selecting Zephyr firmware through the fleet’s `spec.template.spec.os.catalogItemRef` gave the device an empty `os` field. The agent had no image to fetch, so the device could appear `UpToDate` while still running the old firmware.
 - **Server change.** When building the device spec from the fleet template, `assembleDesiredSpec` copies only `os.image` (`internal/tasks/desired_spec.go`). The proposed fix preserves `os.catalogItemRef` so the existing renderer can resolve it to an image the agent can fetch. [Upstream PR #3937](https://github.com/flightctl/flightctl/pull/3937)
 
-### 5. A device cannot enroll again under its own name
-
-- **Works today.** Routine renewal preserves identity. If the management certificate expires offline, a device with a valid enrollment credential can re-enroll under a new key and name.
-- **Feature limit.** The returning device appears under a new record. Its old record remains until an operator deletes it, so the operator loses continuity under the original name.
-- **Server change.** The enrollment handler rejects any request for an existing device name with `ErrDuplicateName`. Flight Control needs a way for an operator to approve re-enrollment against the existing record.
-
 ---
 
 ## Non-blocking for agent v1.0.0
+
+### 5. Fixed 5-minute disconnect timeout (`DeviceDisconnectedTimeout`)
+
+- **Impact.** Flight Control marks a device as `Unknown` after five minutes without contact, even when a battery-powered device is sleeping until its next scheduled check-in.
+- **Today.** For normally connected devices, operators use the five-minute timeout to detect a missed check-in.
+- **Why v1.0 can proceed.** Fleet-scheduled sleep is planned for v2.0. To distinguish scheduled sleep from a missed check-in, Flight Control would need to take the device's expected contact interval into account.
 
 ### 6. `matchExpressions` in the fleet selector is accepted but ignored
 
