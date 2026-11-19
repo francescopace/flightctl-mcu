@@ -61,7 +61,7 @@ third_party/fetch-wamr.sh
 ```
 
 ```bash
-LOCAL=0 TARGET=esp32c3 FW_VERSION=v3.15-rc1 port/espidf/build.sh
+LOCAL=0 TARGET=esp32c3 FW_VERSION=v3.15-rc2 port/espidf/build.sh
 ```
 
 ```bash
@@ -109,7 +109,7 @@ In an empty registry, these commands publish the C3 image built in step 3 and th
 `apply.sh` fills in the registry address from `.secrets/registry/host` and adds the registry CA and password to the fleet as config files. Set `REGISTRY=host:port` to use another registry.
 
 ```bash
-tools/fw-push.py localhost:5001/flightctl-mcu/fw:v3.15-rc1 esp32c3
+tools/fw-push.py localhost:5001/flightctl-mcu/fw:v3.15-rc2 esp32c3
 ```
 
 It also pushes each image's ELF, which devices never pull: after a crash, `tools/fw-elf.py <registry>/flightctl-mcu/fw:<tag> <chip>` gets it back to decode the device's `lastFatalError` with `addr2line`.

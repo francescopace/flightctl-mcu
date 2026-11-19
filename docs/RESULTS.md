@@ -1,6 +1,6 @@
 # Results
 
-Six boards were tested with Flight Control 1.4.0. The firmware sizes and CoreMark scores below are for `v3.15-rc1` on five ESP-IDF chips (ESP-IDF 6.1.1) and `z32` on the ESP32-S3 N8R8 (Zephyr 4.5.0). Both releases use WAMR 2.4.6. The operating measurements identify their firmware or test conditions separately.
+Six boards were tested with Flight Control 1.4.0. The firmware sizes and CoreMark scores below are for `v3.15-rc2` on five ESP-IDF chips (ESP-IDF 6.1.1) and `z32` on the ESP32-S3 N8R8 (Zephyr 4.5.0). Both releases use WAMR 2.4.6. The operating measurements identify their firmware or test conditions separately.
 
 ## What works
 
@@ -18,11 +18,11 @@ ESP-IDF OTA slots are 1,703,936 B each. The firmware was built for size, with WA
 
 | ESP-IDF target | Image (B) | OTA slot free |
 |---|---:|---:|
-| ESP32 | 1,174,416 | 31.1% |
-| ESP32-C3 | 1,242,672 | 27.1% |
-| ESP32-C5 | 1,337,072 | 21.5% |
-| ESP32-C6 | 1,341,136 | 21.3% |
-| ESP32-S3 N4R2 | 1,184,400 | 30.5% |
+| ESP32 | 1,178,496 | 30.8% |
+| ESP32-C3 | 1,245,136 | 26.9% |
+| ESP32-C5 | 1,339,696 | 21.4% |
+| ESP32-C6 | 1,343,600 | 21.1% |
+| ESP32-S3 N4R2 | 1,188,112 | 30.3% |
 
 <a id="zephyr-on-the-esp32-s3"></a>On the **Zephyr S3 N8R8** with PSRAM, the signed image is **1,038,647 B**. It uses 376,800 of 380,672 B of internal DRAM at link time, leaving **3,872 B** for build changes. The linked image already includes the 120,112 B C heap and 94,208 B kernel heap. [Zephyr board configuration](ZEPHYR.md#on-an-esp32-s3)
 
@@ -34,16 +34,18 @@ For scale, an earlier speed-optimized C3 build used about 430 KiB of flash for W
 
 | Board | 64 KiB | 128 KiB |
 |---|---:|---:|
-| ESP32, 240 MHz | 9.217 | Allocation failed (64 KiB largest block) |
-| ESP32-C3, 160 MHz | 7.102 | Allocation failed (80 KiB largest block) |
-| ESP32-C5, 240 MHz | 11.128 | Allocation failed (64 KiB largest block) |
-| ESP32-C6, 160 MHz | 6.090 | 7.374 |
-| ESP32-S3 N4R2, 2 MiB quad PSRAM | 11.485 | 13.808 |
+| ESP32, 240 MHz | 14.773 | Allocation failed (72 KiB largest block) |
+| ESP32-C3, 160 MHz | 13.871 | Allocation failed (88 KiB largest block) |
+| ESP32-C5, 240 MHz | 21.393 | Allocation failed (76 KiB largest block) |
+| ESP32-C6, 160 MHz | 11.840 | 14.294 |
+| ESP32-S3 N4R2, 2 MiB quad PSRAM | 17.586 | 21.081 |
 | Zephyr ESP32-S3 N8R8, 8 MiB octal PSRAM | 17.864 | 21.637 |
 
-<a id="memory-placement-on-c5-and-c6"></a>The C5 and C6 each completed six fresh 64 KiB installs on one boot. The table gives their medians. Scores ranged from 11.059 to 11.148 on C5 and 6.068 to 6.113 on C6. With the module-sized reservation, earlier instrumented runs placed all decoded bytecode and the native stack in main SRAM on both chips.
+<a id="memory-placement-on-c5-and-c6"></a>The C5 and C6 each completed six fresh 64 KiB installs on one boot. The table gives their medians. Scores ranged from 21.313 to 21.413 on C5 and 11.827 to 11.867 on C6. Earlier instrumented runs placed the decoded bytecode and native stack in main SRAM on both chips.
 
-At 64 KiB the five ESP-IDF scores fell 35–50% from `v3.14-rc12`. The release also moved one-shot apps to idle priority. The C5 and C6 medians are within 1% of earlier runs at that priority on ESP-IDF 6.0.3. On Zephyr the score fell 0.27% from `z29`. An N8R8 build with PSRAM disabled reached 17.885 at 64 KiB, with 26,400 B of C heap free after instantiation.
+At 64 KiB, throughput increased by 53–95% across the five ESP-IDF boards compared with `v3.15-rc1`. Scores were within 5% of `v3.14-rc12` on every board. On an instrumented C6, two continuous WASM workloads ran together at normal priority. The longest measured interval between idle task executions was 0.50 s. The 5 s watchdog recorded zero timeouts. Each app could be removed while the other kept running. [One-shot execution](APPS.md#modules-built-for-no-device)
+
+On Zephyr an N8R8 build with PSRAM disabled reached 17.885 at 64 KiB, with 26,400 B of C heap free after instantiation.
 
 ## RAM
 
@@ -57,7 +59,7 @@ On ESP-IDF an app must leave **40 KiB of free internal RAM** after its instance 
 
 On a C3, an established MQTT connection used about 10 KiB. An open console session used up to 25 KiB on ESP-IDF. On Zephyr N8R8 with PSRAM and metrics off, one fixed-size app left 67,932 B of C heap free (61,516 B contiguous). Two left 56,016 B free (38,284 B contiguous).
 
-<a id="the-registry-with-tls-and-decommissioning-on-boards"></a>**Full firmware download over TLS.** Instrumented builds downloaded the signed releases above with `alarm` resident and metrics off. Minimum free heap covers manifest resolution through connection close. The largest free block was sampled during image writes, approximately every 16 KiB.
+<a id="the-registry-with-tls-and-decommissioning-on-boards"></a>**Full firmware download over TLS.** Instrumented builds downloaded the signed `v3.15-rc1` (C3) and `z32` (N8R8) releases with `alarm` resident and metrics off. Minimum free heap covers manifest resolution through connection close. The largest free block was sampled during image writes, approximately every 16 KiB.
 
 | Board and allocator | Free at start (B) | Minimum free (B) | Smallest sampled largest block during writes (B) |
 |---|---:|---:|---:|

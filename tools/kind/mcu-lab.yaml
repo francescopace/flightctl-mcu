@@ -137,6 +137,11 @@ spec:
     - candidate
     references:
       container: v3.15-rc1
+  - version: 3.15.0-rc.2
+    channels:
+    - candidate
+    references:
+      container: v3.15-rc2
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem

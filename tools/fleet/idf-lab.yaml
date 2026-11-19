@@ -38,7 +38,7 @@ spec:
     spec:
       # Multi-chip OCI index (tools/fw-push.py): each device picks its chip.
       os:
-        image: ${REGISTRY}/flightctl-mcu/fw:v3.15-rc1
+        image: ${REGISTRY}/flightctl-mcu/fw:v3.15-rc2
       # The alarm as a WASM app (wasm-apps/alarm): replaced without reboot.
       applications:
         - name: alarm
