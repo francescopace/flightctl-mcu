@@ -25,6 +25,10 @@ void tick(void)
     fc_kv_get(b, 1, b, 8);
     fc_kv_set(b, 1, b, 8);
     fc_kv_del(b, 1);
+    uint32_t id;
+    fc_queue_push(b, 1, b, 8);
+    fc_queue_peek(b, 1, b, 8, &id);
+    fc_queue_ack(b, 1, id);
     fc_close(0);
     fc_gpio_open(b, 1, 0);
     fc_gpio_read(0);

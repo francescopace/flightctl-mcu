@@ -115,12 +115,19 @@ int fc_port_kv_get(const char *key, char **out, size_t *len)
     return 0;
 }
 
+size_t stub_app_writes, stub_app_bytes;
+
 int fc_port_kv_set(const char *key, const void *data, size_t len)
 {
     if (stub_kv_set_fails) {
         return -1;
     }
-    return put(s_kv, key, data, len);
+    int rc = put(s_kv, key, data, len);
+    if (rc == 0 && strncmp(key, "akv:", 4) == 0) {
+        __atomic_fetch_add(&stub_app_writes, 1, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&stub_app_bytes, len, __ATOMIC_RELAXED);
+    }
+    return rc;
 }
 
 int fc_port_kv_del(const char *key)

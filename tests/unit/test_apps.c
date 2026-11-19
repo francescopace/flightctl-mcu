@@ -132,7 +132,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/t_startloop", s_startloop, sizeof(s_startloop)},
         {"reg/growing", s_growing, sizeof(s_growing)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
-        V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
+        V(t_queue), V(app_sampler), V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_sensor), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_battery), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(app_tinymlp), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
         V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_libcmath), V(t_malloc), V(t_ctorloop), V(t_ctorfc), V(t_mqtt),
@@ -1020,8 +1020,14 @@ static void kv_storage_errors(app_t *app)
     int32_t (*get)(wasm_exec_env_t, const char *, int32_t, void *, int32_t) = NULL;
     int32_t (*set)(wasm_exec_env_t, const char *, int32_t, const void *, int32_t) = NULL;
     int32_t (*del)(wasm_exec_env_t, const char *, int32_t) = NULL;
+    int32_t (*push)(wasm_exec_env_t, const char *, int32_t, const void *, int32_t) = NULL;
+    int32_t (*ack)(wasm_exec_env_t, const char *, int32_t, uint32_t) = NULL;
     for (int i = 0; i < count; i++) {
-        if (strcmp(api[i].symbol, "kv_get") == 0) {
+        if (strcmp(api[i].symbol, "queue_push") == 0) {
+            push = api[i].func_ptr;
+        } else if (strcmp(api[i].symbol, "queue_ack") == 0) {
+            ack = api[i].func_ptr;
+        } else if (strcmp(api[i].symbol, "kv_get") == 0) {
             get = api[i].func_ptr;
         } else if (strcmp(api[i].symbol, "kv_set") == 0) {
             set = api[i].func_ptr;
@@ -1029,8 +1035,8 @@ static void kv_storage_errors(app_t *app)
             del = api[i].func_ptr;
         }
     }
-    CHECK(get && set && del);
-    if (!get || !set || !del) return;
+    CHECK(get && set && del && push && ack);
+    if (!get || !set || !del || !push || !ack) return;
     char err[128], value;
     wasm_module_inst_t inst = wasm_runtime_instantiate(app->module, WASM_STACK, 0, err, sizeof(err));
     CHECK(inst != NULL);
@@ -1062,6 +1068,22 @@ static void kv_storage_errors(app_t *app)
     CHECK_INT(del(env, "x", 1), 0);
     CHECK_INT(get(env, "x", 1, &value, 1), FC_HW_ENOENT);
 
+    /* An interrupted write leaves both the FIFO head and an adjacent KV
+     * entry intact. Corrupt queues are never silently reinitialized. */
+    CHECK_INT(push(env, "q", 1, "abc", 3), 0);
+    CHECK_INT(set(env, "x", 1, "a", 1), 0);
+    stub_kv_set_fails = 1;
+    CHECK_INT(ack(env, "q", 1, 1), FC_HW_EIO);
+    CHECK_INT(push(env, "q", 1, "lost", 4), FC_HW_EIO);
+    stub_kv_set_fails = 0;
+    CHECK_INT(ack(env, "q", 1, 1), 0);
+    CHECK_INT(ack(env, "q", 1, 2), FC_HW_ENOENT);
+    CHECK_INT(get(env, "x", 1, &value, 1), 1);
+    CHECK_INT(value, 'a');
+    CHECK_INT(push(env, "x", 1, "b", 1), FC_HW_EIO);
+    CHECK_INT(set(env, "q", 1, "FQ01abcdefgh", 12), 0);
+    CHECK_INT(ack(env, "q", 1, 1), FC_HW_EIO);
+
     const unsigned char truncated[] = {1, 'x', 3, 0, 'a'};
     CHECK_INT(fc_port_kv_set("akv:kv-test", truncated, sizeof(truncated)), 0);
     CHECK_INT(set(env, "x", 1, "b", 1), FC_HW_EIO);
@@ -1084,6 +1106,26 @@ static void test_fc_kv(void)
     kv_storage_errors(find("k"));
     remove_all();
     CHECK(stub_kv("akv:k") == NULL); /* removed with the app */
+}
+
+static void test_queue_recovery(void)
+{
+    char err[160];
+    size_t writes = stub_app_writes, bytes = stub_app_bytes;
+    CHECK_INT(apply_one("spool", "reg/t_queue", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("spool", "Running full", 3000), "Running full");
+    CHECK_INT(stub_app_writes - writes, 680);
+    CHECK_INT(stub_app_bytes - bytes, 680 * 18 + 6 * 680 * 681 / 2);
+    const char *config = "{\"drain\":1}";
+    CHECK_INT(fc_port_write_file("/etc/fc-app/spool.json", config, strlen(config)), 0);
+    writes = stub_app_writes;
+    bytes = stub_app_bytes;
+    power_cycle();
+    CHECK_STR(wait_state_of("spool", "Running replayed", 3000), "Running replayed");
+    CHECK_INT(stub_app_writes - writes, 681);  /* 680 acks, one new sample */
+    CHECK_INT(stub_app_bytes - bytes, 680 * 18 + 6 * 679 * 680 / 2 + 24);
+    remove_all();
+    CHECK(stub_kv("akv:spool") == NULL);
 }
 
 static void test_fc_gpio(void)
@@ -1314,7 +1356,7 @@ static int b_packet(unsigned char *b, size_t cap, size_t *len)
 
 /* Expects a packet of type `first` whose topic or filter (after a packet id
  * for (UN)SUBSCRIBE) is `topic`; for a PUBLISH, its payload is `payload`. */
-static void b_expect(int first, const char *topic, const char *payload)
+static void b_expect_data(int first, const char *topic, const void *payload, size_t length)
 {
     unsigned char b[512];
     size_t n = 0;
@@ -1335,7 +1377,7 @@ static void b_expect(int first, const char *topic, const char *payload)
     }
     if (payload != NULL) {
         size_t off = at + 2 + tl + ((first & 0x06) ? 2 : 0);
-        CHECK(n - off == strlen(payload) && memcmp(b + off, payload, n - off) == 0);
+        CHECK(n >= off && n - off == length && memcmp(b + off, payload, length) == 0);
         if ((first & 0x06) != 0) {
             unsigned char ack[4] = {0x40, 2, b[at + 2 + tl], b[at + 3 + tl]};
             CHECK_INT(write(b_fd, ack, sizeof(ack)), 4);
@@ -1343,10 +1385,15 @@ static void b_expect(int first, const char *topic, const char *payload)
     }
 }
 
-static void b_publish(const char *topic, const char *payload, int qos)
+static void b_expect(int first, const char *topic, const char *payload)
+{
+    b_expect_data(first, topic, payload, payload ? strlen(payload) : 0);
+}
+
+static void b_publish_data(const char *topic, const void *payload, size_t pl, int qos)
 {
     unsigned char b[300];
-    size_t tl = strlen(topic), pl = strlen(payload), n = 0;
+    size_t tl = strlen(topic), n = 0;
     b[n++] = (unsigned char)(0x30 | qos << 1);
     b[n++] = (unsigned char)(2 + tl + (qos ? 2 : 0) + pl);
     b[n++] = 0;
@@ -1365,6 +1412,11 @@ static void b_publish(const char *topic, const char *payload, int qos)
         size_t len;
         CHECK_INT(b_packet(ack, sizeof(ack), &len), 0x40);
     }
+}
+
+static void b_publish(const char *topic, const char *payload, int qos)
+{
+    b_publish_data(topic, payload, strlen(payload), qos);
 }
 
 /* The agent: idle, and held from a claim to the end of the handshake. */
@@ -1480,6 +1532,25 @@ static void test_fc_mqtt(void)
     b_expect(0xa2, "fleet/f/m/cmd", NULL);
     fc_mqtt_stats(&st);
     CHECK_INT(st.pool_used, 0);
+
+    /* The consumer commits sample 1, but its receipt is lost. A retry sends
+     * the same ID. Only the application receipt releases sample 2. */
+    __atomic_store_n(&f_temp, 41000, __ATOMIC_RELEASE);
+    CHECK_INT(apply_one("sampler", "reg/app_sampler", "{\"FC_ALLOW\":\"mqtt\"}", err, sizeof(err)), 0);
+    b_expect(0x82, "flightctl/dev1/sampler/ack", NULL);
+    uint32_t packet[2] = {1, 41000};
+    b_expect_data(0x32, "flightctl/dev1/sampler/sample", packet, sizeof(packet));
+    __atomic_store_n(&f_temp, 42000, __ATOMIC_RELEASE);
+    fc_apps_post(find("sampler"), EV_TIMER, 0, 0);
+    b_expect_data(0x32, "flightctl/dev1/sampler/sample", packet, sizeof(packet));
+    b_publish_data("flightctl/dev1/sampler/ack", packet, 4, 0);
+    packet[0] = 2;
+    packet[1] = 42000;
+    b_expect_data(0x32, "flightctl/dev1/sampler/sample", packet, sizeof(packet));
+    b_publish_data("flightctl/dev1/sampler/ack", packet, 4, 0);
+    remove_all();
+    b_expect(0xa2, "flightctl/dev1/sampler/ack", NULL);
+    __atomic_store_n(&f_temp, 41000, __ATOMIC_RELEASE);
 
     fc_port_remove_file(FC_MQTT_CONFIG);
     CHECK_INT(fc_mqtt_configure("dev1"), 0);
@@ -3020,6 +3091,7 @@ int main(void)
     RUN(test_fc_timer);
     RUN(test_fc_config);
     RUN(test_fc_kv);
+    RUN(test_queue_recovery);
     RUN(test_fc_gpio);
     RUN(test_fc_metric);
     RUN(test_fc_bus);

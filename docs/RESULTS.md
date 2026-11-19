@@ -16,6 +16,20 @@ Six boards were tested with Flight Control 1.4.0. Firmware sizes are for release
 | Operations | Both ports delivered device logs, remote console output and OTLP metrics. Decommissioning wiped the device key and certificate in 2.4–3 s. The resident app kept running. |
 | Crash dumps | A physical Zephyr S3 with `alarm` produced an 8,535 B dump. Emulated ESP-IDF C3 dumps measured 11,200–14,080 B with zero or two apps. Both were retrieved and decoded. [Download and decode a dump](CONSOLE.md#download-a-crash-dump) |
 
+## Persistent samples
+
+A WAMR app using the in-memory test port filled a queue named `samples` with 680 four-byte readings. The next push returned `FC_ENOSPC`. Reinitializing the runtime from the saved catalog recovered all 680 readings in insertion order. A delayed acknowledgement left the next head intact. The MQTT consumer test received the same ID twice when it withheld its receipt, then received the next sample after confirming the first.
+
+| Operation on the 680 samples | Successful writes at the port KV interface | Record bytes submitted |
+|---|---:|---:|
+| Fill the queue | 680 | 1,401,480 |
+| Peek and acknowledge every head | 680 | 1,397,400 |
+| Peek, reject a stale ID or reject a full queue | 0 | 0 |
+
+On all six physical boards, a signed test module stored three known samples on the candidate firmware. After a device reboot it recovered and acknowledged all three in order.
+
+The complete record ranged from 18 B when empty to 4,098 B when full, including the three-byte KV entry header outside the quota. Filesystem metadata, wear leveling and flash erase cycles depend on the port. [Queue API and delivery protocol](APPS.md#persistent-sample-queues)
+
 ## Battery telemetry
 
 The `v0.9.1-rc.battery1` images used the same `battery` module (1,466 B) across ESP32, C3, C5, C6 and S3 N4R2 with ESP-IDF, and S3 N8R8 with Zephyr. The companion `alarm` module was 2,926 B. [Sensor API and fleet configuration](APPS.md#battery-channels)

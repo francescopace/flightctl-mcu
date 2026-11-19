@@ -40,6 +40,7 @@ extern int stub_kv_set_fails;     /* 1: fc_port_kv_set fails, as a full or broke
 struct mbedtls_pk_context;
 int stub_ec_key(struct mbedtls_pk_context *pk);
 
+extern size_t stub_app_writes, stub_app_bytes; /* successful app KV record writes */
 void stub_reset(void);
 /* Whether the log since the start has this whole line (the last 4 KB). */
 int stub_log_has(const char *line);

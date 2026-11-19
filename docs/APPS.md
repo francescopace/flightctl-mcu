@@ -10,7 +10,7 @@ For C apps, start with [alarm.c](../wasm-apps/alarm/alarm.c). Build and publish 
 | Time and timers | `fc_time_ms`, `fc_time_unix_ms`, `fc_timer_start`, `fc_sleep_ms`, `fc_random` | always |
 | Handles | `fc_close` | an open handle owned by the app |
 | Config | `fc_config_get` | always |
-| Storage | `fc_kv_get`, `fc_kv_set`, `fc_kv_del` | always |
+| Private storage | `fc_kv_get`, `fc_kv_set`, `fc_kv_del`, `fc_queue_push`, `fc_queue_peek`, `fc_queue_ack` | always |
 | GPIO and LEDs | `fc_gpio_open`, `fc_gpio_read`, `fc_gpio_write`, `fc_gpio_irq`, `fc_led_open`, `fc_led_rgb` | a name in `FC_ALLOW` |
 | I²C | `fc_i2c_open`, `fc_i2c_read`, `fc_i2c_write`, `fc_i2c_write_read` | a name in `FC_ALLOW` |
 | SPI | `fc_spi_open`, `fc_spi_transfer` | a name in `FC_ALLOW` |
@@ -184,6 +184,16 @@ During an update, flash must hold the replacement alongside resident modules and
 
 `fc_info` returns device and app names, firmware version and board. Before enrollment the device name returns `FC_EAGAIN`.
 
+### Persistent sample queues
+
+Choose a private KV key for each FIFO. Push one nonempty binary sample with `fc_queue_push`. It returns 0 once stored. When the quota is full it returns `FC_ENOSPC` and preserves the samples already queued. Queues share the app's 4,096-byte KV quota. Each uses the key length, an 8-byte header and 2 bytes per payload. A queue named `samples` fits 680 four-byte readings when it has the quota to itself. Reserve other keys for settings.
+
+`fc_queue_peek` copies the oldest payload and its 32-bit ID, returning the payload length. An empty queue gives `FC_ENOENT`. A short buffer gives `FC_ENOSPC` and leaves both outputs untouched. After the consumer confirms delivery, call `fc_queue_ack` with that ID. It removes only the matching head. A stale ID gives `FC_EAGAIN` while another head exists. A failed storage operation gives `FC_EIO`. Re-read the head before retrying.
+
+The head survives an app restart, firmware reboot and upgrade under the same app name. A crash after delivery and before acknowledgement can repeat the sample. Deduplicate by device, app, queue and ID. IDs start at 1, advance modulo 2³² and survive an empty queue. Removing the app or deleting its queue key resets the sequence. Each push and successful acknowledgement rewrites the app's KV record. Peeking does no writes. Select a sampling interval or batch several readings per payload to fit the flash write budget. [Measured writes](RESULTS.md#persistent-samples)
+
+The [sampler example](../wasm-apps/sampler/sampler.c) reads `die_temp` at startup and every 60 seconds by default. Its startup settings are `sensor` and `sample_ms` (minimum 1,000). With the `mqtt` grant and a configured broker, it publishes the head on its relative `sample` topic at connection, on each sample timer and after an acknowledgement. The payload is an unsigned 32-bit ID followed by signed millidegrees Celsius, both little-endian. After storing a sample, the consumer publishes its four ID bytes on the same app's relative `ack` topic, with retain off. It should acknowledge duplicates too. A transport-level MQTT PUBACK leaves the head intact.
+
 ## Where the data goes
 
 - Use `fc_set_state` for occasional changes such as `calibrating` or `alarm`. Flight Control displays the text under `customInfo["app.<name>"]` and records changes as events.
@@ -300,6 +310,7 @@ The SDK also maps common math operations such as `sqrtf` and `fabsf` directly to
 |---|---|
 | [alarm](../wasm-apps/alarm/alarm.c) | Set `sensor` (default `die_temp`), `threshold_c`, `hysteresis_c` and `sample_ms` in `/etc/fc-app/alarm.json`. Grant `led0` for a blue warning 2 °C below the threshold and a blinking alarm. |
 | [battery](../wasm-apps/battery/battery.c) | Polls named battery channels and publishes voltage, low-battery, relative charge and charging gauges. [Configuration](#battery-channels) |
+| [sampler](../wasm-apps/sampler/sampler.c) | Queues temperature readings for acknowledged MQTT delivery. [Persistent sample queues](#persistent-sample-queues) |
 | [trend](../wasm-apps/trend/trend.c) | Reports temperature and rate of change. Grant `metrics` to export both. Like `alarm`, it stays idle on chips without a temperature sensor. |
 | [libccheck](../wasm-apps/libccheck/libccheck.c) | Exercises libc. A passing run reports `bad=0`. |
 | [hwcheck](../wasm-apps/hwcheck/hwcheck.c) | Grant `i2c0 spi0 uart0 adc0 pwm0` to inspect bus responses, UART loopback, ADC voltage and PWM output. |

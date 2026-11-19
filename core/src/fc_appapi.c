@@ -361,48 +361,59 @@ static int32_t fc_kv_get(wasm_exec_env_t env, const char *k, int32_t klen, void 
     return rc;
 }
 
+/* Resize one entry in the private copy loaded from flash. Other keys keep
+ * their data and order. The caller fills in the value before committing. */
+static int kv_resize(kv_rec_t *r, const char *key, size_t kl, size_t vl)
+{
+    if (vl > APP_KV_QUOTA || r->used + kl + vl > APP_KV_QUOTA) {
+        return FC_HW_ENOSPC;
+    }
+    size_t header = 3 + kl;
+    size_t old_end = r->at == r->len ? r->len : r->at + header + r->vlen;
+    size_t new_end = r->at + header + vl;
+    size_t size = new_end + r->len - old_end;
+    if (size > r->len) {
+        unsigned char *data = realloc(r->data, size);
+        if (!data) {
+            return FC_HW_EIO;
+        }
+        r->data = data;
+    }
+    memmove(r->data + new_end, r->data + old_end, r->len - old_end);
+    unsigned char *p = r->data + r->at;
+    p[0] = (unsigned char)kl;
+    memcpy(p + 1, key, kl);
+    p[header - 2] = (unsigned char)vl;
+    p[header - 1] = (unsigned char)(vl >> 8);
+    r->len = size;
+    r->vlen = vl;
+    return 0;
+}
+
 static int32_t fc_kv_set(wasm_exec_env_t env, const char *k, int32_t klen, const void *v, int32_t len)
 {
-    app_t *a = app_of(env);
     if (!valid_kv_key(klen) || len < 0) {
         return FC_HW_EINVAL;
     }
     if (len > APP_KV_QUOTA) {
         return FC_HW_ENOSPC;
     }
+    app_t *a = app_of(env);
     kv_rec_t r;
-    if (kv_load(a, k, (size_t)klen, &r) != 0) {
-        return FC_HW_EIO;
+    int rc = kv_load(a, k, (size_t)klen, &r);
+    if (rc != 0) {
+        return rc;
     }
-    if (r.used + (size_t)klen + (size_t)len > APP_KV_QUOTA) {
-        free(r.data);
-        return FC_HW_ENOSPC;
-    }
-    size_t header = 3 + (size_t)klen;
-    size_t old = r.at == r.len ? 0 : header + r.vlen;
-    if (old && r.vlen == (size_t)len && memcmp(r.data + r.at + header, v, r.vlen) == 0) {
+    size_t value_at = r.at + 3 + klen;
+    if (r.at != r.len && r.vlen == (size_t)len && memcmp(r.data + value_at, v, r.vlen) == 0) {
         free(r.data);
         return 0;
     }
-    size_t n = r.len - old;
-    unsigned char *out = malloc(n + header + (size_t)len);
-    if (out == NULL) {
-        free(r.data);
-        return FC_HW_EIO;
+    rc = kv_resize(&r, k, klen, len);
+    if (rc == 0) {
+        memcpy(r.data + value_at, v, len);
+        rc = kv_store(a, r.data, r.len);
     }
-    if (r.data != NULL) {
-        memcpy(out, r.data, r.at);
-        memcpy(out + r.at, r.data + r.at + old, n - r.at);
-    }
-    out[n++] = (unsigned char)klen;
-    memcpy(out + n, k, (size_t)klen);
-    n += (size_t)klen;
-    out[n++] = (unsigned char)(len & 0xff);
-    out[n++] = (unsigned char)(len >> 8);
-    memcpy(out + n, v, (size_t)len);
-    n += (size_t)len;
-    int rc = kv_store(a, out, n);
-    free(out);
     free(r.data);
     return rc;
 }
@@ -422,6 +433,130 @@ static int32_t fc_kv_del(wasm_exec_env_t env, const char *k, int32_t klen)
         size_t elen = 3 + (size_t)klen + r.vlen;
         memmove(r.data + r.at, r.data + r.at + elen, r.len - r.at - elen);
         rc = kv_store(a, r.data, r.len - elen);
+    }
+    free(r.data);
+    return rc;
+}
+
+/* A queue is an ordinary private KV value. "FQ01", a little-endian
+ * head sequence, then [uint16 length, payload] for each sample. Keep the
+ * sequence when empty so a delayed acknowledgement cannot drop a new head. */
+#define QUEUE_HEADER 8
+
+static int queue_load(app_t *a, const char *key, int32_t kl, kv_rec_t *r)
+{
+    if (!valid_kv_key(kl)) {
+        return FC_HW_EINVAL;
+    }
+    int rc = kv_load(a, key, kl, r);
+    if (rc || r->at == r->len) {
+        return rc;
+    }
+    unsigned char *p = r->data + r->at + 3 + kl;
+    if (r->vlen >= QUEUE_HEADER && memcmp(p, "FQ01", 4) == 0) {
+        size_t off = QUEUE_HEADER;
+        while (off + 2 <= r->vlen) {
+            size_t n = p[off] | (size_t)p[off + 1] << 8;
+            if (!n || n > r->vlen - off - 2) {
+                break;
+            }
+            off += 2 + n;
+        }
+        if (off == r->vlen) {
+            return 0;
+        }
+    }
+    free(r->data);
+    return FC_HW_EIO;
+}
+
+static int32_t fc_queue_push(wasm_exec_env_t env, const char *key, int32_t kl, const void *sample, int32_t n)
+{
+    if (n <= 0) {
+        return FC_HW_EINVAL;
+    }
+    if (n > APP_KV_QUOTA) {
+        return FC_HW_ENOSPC;
+    }
+    app_t *a = app_of(env);
+    kv_rec_t r;
+    int rc = queue_load(a, key, kl, &r);
+    if (rc) {
+        return rc;
+    }
+    size_t old = r.vlen;
+    size_t off = old ? old : QUEUE_HEADER;
+    rc = kv_resize(&r, key, kl, off + 2 + n);
+    if (!rc) {
+        unsigned char *p = r.data + r.at + 3 + kl;
+        if (!old) {
+            memcpy(p, "FQ01\x01\0\0\0", QUEUE_HEADER);
+        }
+        p[off] = (unsigned char)n;
+        p[off + 1] = (unsigned char)(n >> 8);
+        memcpy(p + off + 2, sample, n);
+        rc = kv_store(a, r.data, r.len);
+    }
+    free(r.data);
+    return rc;
+}
+
+static uint32_t queue_id(const unsigned char *p)
+{
+    return p[4] | (uint32_t)p[5] << 8 | (uint32_t)p[6] << 16 | (uint32_t)p[7] << 24;
+}
+
+static int32_t fc_queue_peek(wasm_exec_env_t env, const char *key, int32_t kl, void *buf, int32_t cap, int32_t id_at)
+{
+    wasm_module_inst_t inst = wasm_runtime_get_module_inst(env);
+    if (!wasm_runtime_validate_app_addr(inst, (uint32_t)id_at, sizeof(uint32_t))) {
+        return 0;
+    }
+    kv_rec_t r;
+    int rc = queue_load(app_of(env), key, kl, &r);
+    if (rc) {
+        return rc;
+    }
+    rc = FC_HW_ENOENT;
+    if (r.vlen > QUEUE_HEADER) {
+        unsigned char *p = r.data + r.at + 3 + kl;
+        int n = p[8] | p[9] << 8;
+        rc = FC_HW_ENOSPC;
+        if (cap >= n) {
+            uint32_t id = queue_id(p);
+            memcpy(buf, p + QUEUE_HEADER + 2, n);
+            memcpy(wasm_runtime_addr_app_to_native(inst, (uint32_t)id_at), &id, sizeof(id));
+            rc = n;
+        }
+    }
+    free(r.data);
+    return rc;
+}
+
+static int32_t fc_queue_ack(wasm_exec_env_t env, const char *key, int32_t kl, uint32_t id)
+{
+    app_t *a = app_of(env);
+    kv_rec_t r;
+    int rc = queue_load(a, key, kl, &r);
+    if (rc) {
+        return rc;
+    }
+    rc = FC_HW_ENOENT;
+    if (r.vlen > QUEUE_HEADER) {
+        unsigned char *p = r.data + r.at + 3 + kl;
+        rc = FC_HW_EAGAIN;
+        if (queue_id(p) == id) {
+            uint32_t next = id + 1;
+            for (int i = 0; i < 4; i++) {
+                p[4 + i] = (unsigned char)(next >> (8 * i));
+            }
+            size_t drop = 2 + (p[8] | p[9] << 8);
+            memmove(p + QUEUE_HEADER, p + QUEUE_HEADER + drop, r.vlen - QUEUE_HEADER - drop);
+            rc = kv_resize(&r, key, kl, r.vlen - drop);
+            if (!rc) {
+                rc = kv_store(a, r.data, r.len);
+            }
+        }
     }
     free(r.data);
     return rc;
@@ -1200,6 +1335,9 @@ static const NativeSymbol s_natives[] = {
     {"mqtt_topic", (void *)app_mqtt_topic, "(*~)i", NULL},
     {"pwm_duty", (void *)fc_pwm_duty, "(ii)i", NULL},
     {"pwm_open", (void *)fc_pwm_open, "(*~i)i", NULL},
+    {"queue_ack", (void *)fc_queue_ack, "(*~i)i", NULL},
+    {"queue_peek", (void *)fc_queue_peek, "(*~*~i)i", NULL},
+    {"queue_push", (void *)fc_queue_push, "(*~*~)i", NULL},
     {"random", (void *)fc_random, "(*~)i", NULL},
     {"sensor_read", (void *)fc_sensor_read, "(*~i)i", NULL},
     {"sensor_subscribe", (void *)fc_sensor_subscribe, "(*~iii)i", NULL},

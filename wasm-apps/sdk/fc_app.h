@@ -189,6 +189,14 @@ FC_IMPORT("kv_get") int32_t fc_kv_get(const char *key, int32_t klen, void *buf, 
 FC_IMPORT("kv_set") int32_t fc_kv_set(const char *key, int32_t klen, const void *data, int32_t len);
 FC_IMPORT("kv_del") int32_t fc_kv_del(const char *key, int32_t klen);
 
+/* Durable per-app FIFO at a private KV key. Push a nonempty sample (0 on
+ * success), peek its length and ID, then acknowledge that ID after delivery.
+ * Empty: FC_ENOENT. Full or short buffer: FC_ENOSPC. Stale ID: FC_EAGAIN.
+ * Quota includes the key, an 8-byte header and 2 bytes per sample. */
+FC_IMPORT("queue_push") int32_t fc_queue_push(const char *key, int32_t klen, const void *data, int32_t len);
+FC_IMPORT("queue_peek") int32_t fc_queue_peek(const char *key, int32_t klen, void *buf, int32_t cap, uint32_t *id);
+FC_IMPORT("queue_ack") int32_t fc_queue_ack(const char *key, int32_t klen, uint32_t id);
+
 /* ---- Handles -------------------------------------------------------------------- */
 
 /* At most FC_MAX_HANDLES open at once per app: FC_ENOSPC past that. */
