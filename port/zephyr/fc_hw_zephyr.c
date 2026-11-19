@@ -3,7 +3,8 @@
  * the children of the node with compatible "flightctl,app-hw"
  * (dts/bindings/flightctl,app-hw.yaml) are the board map's names, and each
  * child's properties say what it is (a GPIO, an ADC channel, a PWM, an I2C
- * bus, an SPI device, a UART). The core gets them as {"dt": name} entries
+ * bus, an SPI device, a UART or a temperature probe). The core gets them
+ * as {"dt": name} entries
  * and passes a node's index where it takes a pin.
  *
  * A board without that node has none of them: apps still have led0 and
@@ -25,6 +26,9 @@
 #include "cJSON.h"
 #include "fc_hw.h"
 
+#ifdef CONFIG_SENSOR
+#include <zephyr/drivers/sensor.h>
+#endif
 #ifdef CONFIG_GPIO
 #include <zephyr/drivers/gpio.h>
 #endif
@@ -59,8 +63,11 @@ typedef struct {
 #ifdef CONFIG_PWM
     struct pwm_dt_spec pwm;
 #endif
+#ifdef CONFIG_SENSOR
+    bool die_temperature;
+#endif
     bool has_de;
-    const struct device *bus; /* I2C, SPI, UART */
+    const struct device *bus; /* I2C, SPI, UART or a temperature sensor */
     int mode, hz, baud;
 } node_t;
 
@@ -74,12 +81,19 @@ typedef struct {
     (COND_CODE_1(DT_NODE_HAS_PROP(n, pwms), (FC_HW_KIND_PWM),                                                  \
     (COND_CODE_1(DT_NODE_HAS_PROP(n, i2c_bus), (FC_HW_KIND_I2C),                                               \
     (COND_CODE_1(DT_NODE_HAS_PROP(n, spi_bus), (FC_HW_KIND_SPI),                                               \
-    (COND_CODE_1(DT_NODE_HAS_PROP(n, uart), (FC_HW_KIND_UART), (0))))))))))))
+    (COND_CODE_1(DT_NODE_HAS_PROP(n, uart), (FC_HW_KIND_UART),                                             \
+    (COND_CODE_1(DT_NODE_HAS_PROP(n, temperature_sensor), (FC_HW_KIND_SENSOR), (0))))))))))))))
+
+#ifdef CONFIG_SENSOR
+#define NODE_SENSOR(n) DEVICE_DT_GET_OR_NULL(DT_PHANDLE(n, temperature_sensor))
+#else
+#define NODE_SENSOR(n) NULL
+#endif
 
 #define NODE_BUS(n)                                                                                             \
     COND_CODE_1(DT_NODE_HAS_PROP(n, i2c_bus), (DEVICE_DT_GET(DT_PHANDLE(n, i2c_bus))),                         \
     (COND_CODE_1(DT_NODE_HAS_PROP(n, spi_bus), (DEVICE_DT_GET(DT_PHANDLE(n, spi_bus))),                        \
-    (COND_CODE_1(DT_NODE_HAS_PROP(n, uart), (DEVICE_DT_GET(DT_PHANDLE(n, uart))), (NULL))))))
+    (COND_CODE_1(DT_NODE_HAS_PROP(n, uart), (DEVICE_DT_GET(DT_PHANDLE(n, uart))), (NODE_SENSOR(n)))))))
 
 #define NODE(n)                                                                                                 \
     {                                                                                                           \
@@ -89,6 +103,7 @@ typedef struct {
                                  .de = GPIO_DT_SPEC_GET_OR(n, de_gpios, {0}),))                                 \
         IF_ENABLED(CONFIG_ADC, (.adc = COND_CODE_1(DT_NODE_HAS_PROP(n, io_channels), (ADC_DT_SPEC_GET(n)), ({0})),)) \
         IF_ENABLED(CONFIG_PWM, (.pwm = COND_CODE_1(DT_NODE_HAS_PROP(n, pwms), (PWM_DT_SPEC_GET(n)), ({0})),))  \
+        IF_ENABLED(CONFIG_SENSOR, (.die_temperature = DT_PROP(n, die_temperature),))                            \
         .has_de = DT_NODE_HAS_PROP(n, de_gpios), .bus = NODE_BUS(n),                                           \
         .mode = DT_PROP_OR(n, spi_mode, 0), .hz = DT_PROP_OR(n, clock_frequency, 0),                           \
         .baud = DT_PROP_OR(n, current_speed, 0),                                                                \
@@ -125,6 +140,8 @@ static int fz_built(int kind)
     switch (kind) {
     case FC_HW_KIND_GPIO:
         return IS_ENABLED(CONFIG_GPIO);
+    case FC_HW_KIND_SENSOR:
+        return IS_ENABLED(CONFIG_SENSOR);
     case FC_HW_KIND_ADC:
         return IS_ENABLED(CONFIG_ADC);
     case FC_HW_KIND_PWM:
@@ -156,7 +173,7 @@ static int fz_dt_find(int kind, const char *name)
 
 static const char *fz_section(int kind)
 {
-    static const char *const s[] = {"", "gpio", "led", "i2c", "spi", "uart", "adc", "pwm"};
+    static const char *const s[] = {"", "gpio", "led", "i2c", "spi", "uart", "adc", "pwm", "sensor"};
     return kind > 0 && kind < (int)ARRAY_SIZE(s) ? s[kind] : NULL;
 }
 
@@ -190,6 +207,118 @@ static char *fz_board_defaults(void)
     cJSON_Delete(doc);
     return s;
 }
+
+#ifdef CONFIG_SENSOR
+/* Zephyr's fetch and channel_get share a sample buffer in the driver. */
+K_MUTEX_DEFINE(fz_sensor_lock);
+
+static int fz_sensor_read(int id, int32_t *value)
+{
+    const node_t *n = fz_node(id, FC_HW_KIND_SENSOR);
+    if (!n || !device_is_ready(n->bus)) {
+        return FC_HW_ENOTSUP;
+    }
+    enum sensor_channel chan = n->die_temperature ? SENSOR_CHAN_DIE_TEMP : SENSOR_CHAN_AMBIENT_TEMP;
+    struct sensor_value sample;
+    k_mutex_lock(&fz_sensor_lock, K_FOREVER);
+    int rc = sensor_sample_fetch(n->bus);
+    if (rc == 0) {
+        rc = sensor_channel_get(n->bus, chan, &sample);
+    }
+    k_mutex_unlock(&fz_sensor_lock);
+    if (rc != 0) {
+        return rc == -ENOTSUP ? FC_HW_ENOTSUP : FC_HW_EIO;
+    }
+    *value = (int32_t)sensor_value_to_milli(&sample);
+    return 0;
+}
+
+/* Drivers may keep the trigger pointer beyond a call. These descriptors
+ * are immutable, including while a delayed driver callback is finishing. */
+static const struct sensor_trigger fz_triggers[2][2] = {
+    {{SENSOR_TRIG_DATA_READY, SENSOR_CHAN_AMBIENT_TEMP}, {SENSOR_TRIG_THRESHOLD, SENSOR_CHAN_AMBIENT_TEMP}},
+    {{SENSOR_TRIG_DATA_READY, SENSOR_CHAN_DIE_TEMP}, {SENSOR_TRIG_THRESHOLD, SENSOR_CHAN_DIE_TEMP}},
+};
+static struct {
+    const struct sensor_trigger *trigger;
+    void (*notify)(void *);
+    void *ctx;
+} fz_watches[NODES ? NODES : 1];
+K_MUTEX_DEFINE(fz_dispatch_lock);
+
+static void fz_sensor_triggered(const struct device *dev, const struct sensor_trigger *trigger)
+{
+    k_mutex_lock(&fz_dispatch_lock, K_FOREVER);
+    for (int i = 0; i < (int)NODES; i++) {
+        if (s_nodes[i].bus == dev && fz_watches[i].trigger == trigger && fz_watches[i].notify) {
+            fz_watches[i].notify(fz_watches[i].ctx);
+            break;
+        }
+    }
+    k_mutex_unlock(&fz_dispatch_lock);
+}
+
+static void fz_watch_set(int id, const struct sensor_trigger *trigger, void (*notify)(void *), void *ctx)
+{
+    k_mutex_lock(&fz_dispatch_lock, K_FOREVER);
+    fz_watches[id].trigger = trigger;
+    fz_watches[id].notify = notify;
+    fz_watches[id].ctx = ctx;
+    k_mutex_unlock(&fz_dispatch_lock);
+}
+
+static int fz_sensor_subscribe(int id, int mode, int32_t low, int32_t high, void (*notify)(void *), void *ctx)
+{
+    const node_t *n = fz_node(id, FC_HW_KIND_SENSOR);
+    if (!n || !device_is_ready(n->bus) || !DEVICE_API_GET(sensor, n->bus)->trigger_set) {
+        return FC_HW_ENOTSUP;
+    }
+    if (mode != FC_HW_SENSOR_READY && (mode != FC_HW_SENSOR_THRESHOLD || low >= high)) {
+        return FC_HW_EINVAL;
+    }
+    k_mutex_lock(&fz_sensor_lock, K_FOREVER);
+    /* Two names wired to the same chip share its trigger registers. */
+    for (int i = 0; i < (int)NODES; i++) {
+        if (s_nodes[i].bus == n->bus && fz_watches[i].trigger) {
+            k_mutex_unlock(&fz_sensor_lock);
+            return FC_HW_EBUSY;
+        }
+    }
+    const struct sensor_trigger *trig = &fz_triggers[n->die_temperature][mode == FC_HW_SENSOR_THRESHOLD];
+    int rc = 0;
+    if (mode == FC_HW_SENSOR_THRESHOLD) {
+        struct sensor_value v;
+        sensor_value_from_milli(&v, low);
+        rc = sensor_attr_set(n->bus, trig->chan, SENSOR_ATTR_LOWER_THRESH, &v);
+        if (rc == 0) {
+            sensor_value_from_milli(&v, high);
+            rc = sensor_attr_set(n->bus, trig->chan, SENSOR_ATTR_UPPER_THRESH, &v);
+        }
+    }
+    if (rc == 0) {
+        fz_watch_set(id, trig, notify, ctx);
+        rc = sensor_trigger_set(n->bus, trig, fz_sensor_triggered);
+        if (rc != 0) {
+            fz_watch_set(id, NULL, NULL, NULL);
+        }
+    }
+    k_mutex_unlock(&fz_sensor_lock);
+    if (rc == -ENOTSUP || rc == -ENOSYS) {
+        return FC_HW_ENOTSUP;
+    }
+    return rc == 0 ? id : rc == -EINVAL ? FC_HW_EINVAL : FC_HW_EIO;
+}
+
+static void fz_sensor_unsubscribe(int id)
+{
+    k_mutex_lock(&fz_sensor_lock, K_FOREVER);
+    const struct sensor_trigger *trigger = fz_watches[id].trigger;
+    fz_watch_set(id, NULL, NULL, NULL); /* drains a running callback before releasing ctx */
+    sensor_trigger_set(s_nodes[id].bus, trigger, NULL);
+    k_mutex_unlock(&fz_sensor_lock);
+}
+
+#endif
 
 /* ---- GPIO --------------------------------------------------------------------------- */
 
@@ -813,6 +942,11 @@ void fc_hw_zephyr_fill(fc_hw_t *hw)
 {
     hw->dt_find = fz_dt_find;
     hw->board_defaults = fz_board_defaults;
+#ifdef CONFIG_SENSOR
+    hw->sensor_read_dt = fz_sensor_read;
+    hw->sensor_subscribe = fz_sensor_subscribe;
+    hw->sensor_unsubscribe = fz_sensor_unsubscribe;
+#endif
 #ifdef CONFIG_GPIO
     hw->gpio_setup = fz_gpio_setup;
     hw->gpio_read = fz_gpio_read;

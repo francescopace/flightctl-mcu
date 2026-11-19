@@ -1,16 +1,16 @@
 /*
  * "alarm" WASM app: the line temperature alarm (docs/APPS.md).
  *
- * It reads the chip's temperature and drives the LED "led0" against the
- * fleet's threshold, from its config file /etc/fc-app/alarm.json:
+ * It reads the configured temperature sensor (default die_temp) and drives
+ * "led0" against the threshold from /etc/fc-app/alarm.json:
  *
  *   {"threshold_c": 40.5, "hysteresis_c": 1, "sample_ms": 2000}
  *
  * The release uses hysteresis, a dim pre-alarm 2 C below the threshold and a
  * blinking alarm. The OTA app-update demo also builds a solid LED variant.
  *
- * Grants: "led0" in FC_ALLOW. Without it the alarm still runs and reports its
- * state, with no LED. It has no tick(): a timer samples, another blinks, and
+ * Grant the board-map sensor and "led0" in FC_ALLOW. Without led0 the app
+ * reports its state. It has no tick(): a timer samples, another blinks, and
  * the app sleeps in between. Blue only, so boards with a single-colour LED
  * (most are blue) and RGB boards look the same: solid or blinking is what
  * matters.
@@ -31,6 +31,8 @@ enum { OK, PREALARM, ALARM };
 static int32_t led = -1, sampler = -1, blinker = -1, blink_on;
 static int32_t sample_ms, threshold_mc, hysteresis_mc;
 static int32_t level = -1;
+static char sensor[23]; /* maximum board-map name */
+static int32_t sensor_len, subscription = -1;
 
 static void set_led(int32_t blue)
 {
@@ -42,10 +44,25 @@ static void set_led(int32_t blue)
 /* Reads the config and (re)starts the sampling timer when its period changes. */
 static void configure(void)
 {
+    sensor_len = fc_config_get(FC_STR("sensor"), sensor, sizeof(sensor));
     int32_t ms = fc_config_int(FC_STR("sample_ms"), 2000);
     ms = ms < 100 ? 100 : ms > 60000 ? 60000 : ms;
     threshold_mc = fc_config_milli(FC_STR("threshold_c"), 45000);
     hysteresis_mc = fc_config_milli(FC_STR("hysteresis_c"), 1000);
+    if (subscription >= 0) {
+        fc_close(subscription);
+        subscription = -1;
+    }
+    if (sensor_len > 0) {
+        int64_t low = (int64_t)threshold_mc - hysteresis_mc;
+        if (low >= INT32_MIN && low < threshold_mc) {
+            subscription = fc_sensor_subscribe(sensor, sensor_len, FC_SENSOR_THRESHOLD, (int32_t)low, threshold_mc);
+        }
+        if (subscription < 0) {
+            subscription = fc_sensor_subscribe(sensor, sensor_len, FC_SENSOR_READY, 0, 0);
+        }
+    }
+    /* Poll too: pre-alarm has its own boundary and notifications may coalesce. */
     if (ms != sample_ms || sampler < 0) {
         if (sampler >= 0) {
             fc_close(sampler);
@@ -91,29 +108,59 @@ static void show(int32_t next)
 static void sample(void)
 {
     int32_t t;
-    if (fc_sensor_read(FC_STR("die_temp"), &t) < 0) {
-        FC_LOG(FC_LOG_WARN, "cannot read die_temp");
+    int rc;
+    if (sensor_len == FC_ENOENT) {
+        rc = fc_sensor_read(FC_STR("die_temp"), &t);
+    } else {
+        rc = sensor_len > 0 ? fc_sensor_read(sensor, sensor_len, &t) : FC_EINVAL;
+    }
+    if (rc < 0) {
+        if (rc == FC_EIO || rc == FC_EAGAIN || rc == FC_ETIMEDOUT) {
+            FC_LOG(FC_LOG_WARN, "temperature read failed");
+            return;
+        }
+        if (blinker >= 0) {
+            fc_close(blinker);
+            blinker = -1;
+        }
+        if (led >= 0) {
+            fc_close(led);
+            led = -1;
+        }
+        level = -1;
+        if (rc == FC_EPERM) {
+            FC_STATE("sensor access denied");
+        } else if (rc == FC_ENOTSUP) {
+            FC_STATE("no temperature sensor on this chip");
+        } else {
+            FC_STATE("unknown temperature sensor");
+        }
+        if (subscription >= 0) {
+            fc_close(subscription);
+            subscription = -1;
+        }
+        if (sampler >= 0) {
+            fc_close(sampler);
+            sampler = -1;
+        }
         return;
+    }
+    if (level < 0) {
+        led = fc_led_open(FC_STR("led0"));
+        if (led < 0) {
+            FC_LOG(FC_LOG_INFO, "no led0 granted: state only");
+        }
     }
 #if FC_ALARM_SOLID_DEMO
     show(t >= threshold_mc ? ALARM : OK);
 #else
-    int32_t on = level == ALARM ? t >= threshold_mc - hysteresis_mc : t >= threshold_mc;
-    show(on ? ALARM : t >= threshold_mc - PREALARM_C * 1000 ? PREALARM : OK);
+    int32_t on = level == ALARM ? t >= (int64_t)threshold_mc - hysteresis_mc : t >= threshold_mc;
+    show(on ? ALARM : t >= (int64_t)threshold_mc - PREALARM_C * 1000 ? PREALARM : OK);
 #endif
 }
 
 int32_t init(void)
 {
-    int32_t t;
-    if (fc_sensor_read(FC_STR("die_temp"), &t) == FC_ENOTSUP) {
-        FC_STATE("no temperature sensor on this chip");
-        return 0; /* no timer: the app stays idle */
-    }
-    led = fc_led_open(FC_STR("led0"));
-    if (led < 0) {
-        FC_LOG(FC_LOG_INFO, "no led0 granted: state only");
-    }
     configure();
     sample();
     return 0;
@@ -122,7 +169,7 @@ int32_t init(void)
 void on_event(int32_t type, int32_t h, int32_t value)
 {
     (void)value;
-    if (type == FC_EV_TIMER && h == sampler) {
+    if ((type == FC_EV_SENSOR && h == subscription) || (type == FC_EV_TIMER && h == sampler)) {
         sample();
     } else if (type == FC_EV_TIMER && h == blinker) {
         blink_on = !blink_on;

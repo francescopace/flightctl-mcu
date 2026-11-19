@@ -42,3 +42,17 @@
 &psram0 {
 	size = <DT_SIZE_M(8)>;
 };
+
+&coretemp {
+	status = "okay";
+};
+
+/ {
+	fc-hw {
+		compatible = "flightctl,app-hw";
+		core-temperature {
+			temperature-sensor = <&coretemp>;
+			die-temperature;
+		};
+	};
+};

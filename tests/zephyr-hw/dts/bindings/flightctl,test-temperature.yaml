@@ -1,0 +1,3 @@
+description: Test temperature probe with explicit data-ready and window triggers.
+compatible: "flightctl,test-temperature"
+include: sensor-device.yaml

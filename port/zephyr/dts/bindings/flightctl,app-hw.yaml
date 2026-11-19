@@ -20,6 +20,12 @@ compatible: "flightctl,app-hw"
 child-binding:
   description: One name of the board map.
   properties:
+    temperature-sensor:
+      type: phandle
+      description: Temperature sensor supplying SENSOR_CHAN_AMBIENT_TEMP, or SENSOR_CHAN_DIE_TEMP with die-temperature.
+    die-temperature:
+      type: boolean
+      description: Read the die temperature channel of temperature-sensor.
     gpios:
       type: phandle-array
       description: A GPIO; its active level makes the app's levels logical.

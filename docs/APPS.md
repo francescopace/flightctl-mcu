@@ -16,7 +16,7 @@ For C apps, start with [alarm.c](../wasm-apps/alarm/alarm.c). Build and publish 
 | SPI | `fc_spi_open`, `fc_spi_transfer` | a name in `FC_ALLOW` |
 | UART | `fc_uart_open`, `fc_uart_read`, `fc_uart_write` | a name in `FC_ALLOW` |
 | ADC and PWM | `fc_adc_open`, `fc_adc_read_mv`, `fc_pwm_open`, `fc_pwm_duty` | a name in `FC_ALLOW` |
-| Chip sensors | `fc_sensor_read` (`die_temp`) | always |
+| Sensors | `fc_sensor_read` (millidegrees Celsius), `fc_sensor_subscribe` (temperature triggers) | board-map name in `FC_ALLOW`; built-in `die_temp` needs no grant |
 | Metrics | `fc_metric` | `metrics` |
 | MQTT | `fc_mqtt_publish`, `fc_mqtt_subscribe`, `fc_mqtt_topic`, `fc_event_data` | `mqtt` |
 | C library (`env`) | Functions from `string.h`, `stdio.h`, `stdlib.h`, `ctype.h` and `math.h`. [Function list](#the-c-library) | always |
@@ -35,7 +35,7 @@ Declare the ABI with `FC_APP_ABI()`. Implement `tick`, `on_event`, or both. The 
 |---|---|
 | `init()` | Once after loading. A nonzero return fails startup. |
 | `tick()` | Every `TICK_MS` milliseconds (10–60,000, default 100). |
-| `on_event(type, handle, value)` | On a GPIO edge, timer, UART or MQTT input, config change or broker connection change. |
+| `on_event(type, handle, value)` | On a sensor notification, GPIO edge, timer, UART or MQTT input, config change or broker connection change. |
 
 Callbacks run one at a time. Use a timer for periodic work and `fc_close` to stop it. An event-only app sleeps between events. Callback [limits](#size-and-limits) also apply to module initialization, including C++ constructors.
 
@@ -87,6 +87,7 @@ Names are unique across the map. A fleet template can use labels to select pins 
 | I²C | `sda`, `scl`, optional `hz` (default 100 kHz). |
 | SPI | `sck`, `mosi`, `miso` (one data pin may be omitted), `cs`, `mode` (0–3), `hz` (default 1 MHz). Devices with matching bus pins share the bus. |
 | UART | `tx`, `rx` (one may be omitted), optional RS-485 driver-enable pin `de`. `baud` defaults to 115200 when the app requests 0. |
+| Sensor | `"source": "die_temp"` selects the built-in temperature source. On Zephyr, `"dt"` selects a temperature probe declared in the app hardware devicetree. |
 | PWM | `hz` defaults to 1 kHz when the app requests 0. |
 
 For a firmware-defined name, `"pin": -1` (or omitted bus pins) keeps its original wiring. The device rejects invalid field types, unknown sections, reserved or nonexistent pins, and conflicting pin assignments. A valid map change restarts apps using the interface. Opening an unknown name returns `FC_ENOENT`.
@@ -95,7 +96,25 @@ For a firmware-defined name, `"pin": -1` (or omitted bus pins) keeps its origina
 
 Set `FC_ALLOW` to space-separated hardware names and any `mqtt` or `metrics` grants. With no grants, the app can still use state, logging, info, clocks, config, storage and chip sensors.
 
-Only one app can hold a name at a time. A second opener receives `FC_EBUSY`. An I²C grant covers the whole bus. SPI grants cover individual devices and the bus serializes their transfers. Holding chip select holds the bus until the callback returns.
+Multiple apps can read the same sensor. Each needs its own grant for that name. Only one app can hold an open peripheral at a time. A second opener receives `FC_EBUSY`. An I²C grant covers the whole bus. SPI grants cover individual devices and the bus serializes their transfers. Holding chip select holds the bus until the callback returns.
+
+For an alarm deployed across boards, set `"sensor": "line_temp"` in `/etc/fc-app/alarm.json` and grant `FC_ALLOW: "line_temp led0"`. The board map selects the probe:
+
+| Board | `/etc/fc/board.json` |
+|---|---|
+| ESP-IDF with a die temperature sensor | `{"sensor":{"line_temp":{"source":"die_temp"}}}` |
+| Zephyr ESP32-S3 DevKitC | `{"sensor":{"line_temp":{"dt":"core-temperature"}}}` |
+
+A Zephyr board can expose an ambient probe by adding a child with `temperature-sensor = <&probe>;` to its `flightctl,app-hw` node and enabling the sensor driver. Set `die-temperature;` for a probe providing the die temperature channel. The alarm samples the selected probe every `sample_ms`. If the name exists but the app lacks its grant, Flight Control reports `sensor access denied`.
+
+Use `fc_sensor_subscribe` to receive hardware notifications on a granted board-map name. The call returns a handle. `on_event(FC_EV_SENSOR, handle, mode)` tells the app to read the latest sample with `fc_sensor_read`. Pending events coalesce per subscription. One subscription owns the physical probe's trigger settings, and other granted apps can still read it. `fc_close(handle)`, app stop and grant revocation cancel the subscription and discard its queued events.
+
+| Mode | Arguments and support |
+|---|---|
+| `FC_SENSOR_READY` | A new sample is available. Pass zero for both bounds. Requires a driver with a data-ready trigger. |
+| `FC_SENSOR_THRESHOLD` | Supply a lower and upper bound in millidegrees Celsius. The driver signals its threshold condition. The ESP-IDF C6 die probe accepts whole degrees from −10 to 80 °C. Zephyr probes need threshold attributes and a trigger-capable driver. |
+
+The physical Zephyr S3 die probe returns `FC_ENOTSUP` for both modes. The C6 die probe returns it for data-ready. The example alarm uses hardware notifications when available and keeps its sampling timer for pre-alarm and recovery. Install firmware providing `sensor_subscribe` before deploying a module that imports it. For rollback, restore the older module first to keep the app running through the firmware change.
 
 Grants persist across reboots. Changing an app's environment restarts it.
 
@@ -180,7 +199,7 @@ For a local broker, `tools/mqtt/up.sh` starts Mosquitto at `mqtt.<LAN IP>.nip.io
 
 ## Ports
 
-On Zephyr, the fleet can alias a hardware node in the board map. Grant the alias in `FC_ALLOW`. The shipped S3 overlay exposes only simulated LED and temperature to apps. [Zephyr hardware configuration](ZEPHYR.md#hardware-for-apps)
+On Zephyr, the fleet can alias a hardware node in the board map. Grant the alias in `FC_ALLOW`. The S3 overlay exposes the physical die probe as `core-temperature`. The legacy `die_temp` reading and LED remain simulated on Zephyr. [Zephyr hardware configuration](ZEPHYR.md#hardware-for-apps)
 
 | | ESP-IDF | Zephyr | Host simulator |
 |---|---|---|---|
@@ -244,7 +263,7 @@ The SDK also maps common math operations such as `sqrtf` and `fabsf` directly to
 
 | App | What to try |
 |---|---|
-| [alarm](../wasm-apps/alarm/alarm.c) | Set `threshold_c`, `hysteresis_c` and `sample_ms` in `/etc/fc-app/alarm.json`. Grant `led0` for a blue warning 2 °C below the threshold and a blinking alarm. |
+| [alarm](../wasm-apps/alarm/alarm.c) | Set `sensor` (default `die_temp`), `threshold_c`, `hysteresis_c` and `sample_ms` in `/etc/fc-app/alarm.json`. Grant `led0` for a blue warning 2 °C below the threshold and a blinking alarm. |
 | [trend](../wasm-apps/trend/trend.c) | Reports temperature and rate of change. Grant `metrics` to export both. Like `alarm`, it stays idle on chips without a temperature sensor. |
 | [libccheck](../wasm-apps/libccheck/libccheck.c) | Exercises libc. A passing run reports `bad=0`. |
 | [hwcheck](../wasm-apps/hwcheck/hwcheck.c) | Grant `i2c0 spi0 uart0 adc0 pwm0` to inspect bus responses, UART loopback, ADC voltage and PWM output. |

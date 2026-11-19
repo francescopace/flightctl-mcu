@@ -46,6 +46,7 @@ void tick(void)
     fc_pwm_open(b, 1, 0);
     fc_pwm_duty(0, 0);
     fc_sensor_read(b, 1, &v);
+    fc_sensor_subscribe(b, 1, FC_SENSOR_READY, 0, 0);
     fc_metric(b, 1, 0, 1.0);
     fc_mqtt_publish(b, 1, b, 1, 0, 0);
     fc_mqtt_subscribe(0, b, 1, 0);

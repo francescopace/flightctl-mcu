@@ -64,7 +64,12 @@ enum {
     FC_HW_KIND_UART,
     FC_HW_KIND_ADC,
     FC_HW_KIND_PWM,
+    FC_HW_KIND_SENSOR,
 };
+
+/* Sensor notification modes (as FC_SENSOR_* in the WASM SDK). */
+#define FC_HW_SENSOR_READY     1
+#define FC_HW_SENSOR_THRESHOLD 2
 
 /* UART framings, as FC_UART_* in fc_app.h. */
 #define FC_HW_UART_8N1 0
@@ -108,6 +113,14 @@ typedef struct {
 
     /* A sensor of the chip by name ("die_temp", milli-degrees C). */
     int (*sensor_read)(const char *name, int32_t *value);
+
+    /* Read a devicetree temperature sensor in millidegrees Celsius. */
+    int (*sensor_read_dt)(int id, int32_t *value);
+    /* id is the devicetree id or -1 for a mapped die_temp. One subscription
+     * per physical probe. notify runs in task context. On failure or after
+     * unsubscribe returns the port must never use ctx again. */
+    int (*sensor_subscribe)(int id, int mode, int32_t low_mc, int32_t high_mc, void (*notify)(void *), void *ctx);
+    void (*sensor_unsubscribe)(int subscription);
 
     /* The functions below return a port handle (>= 0) from open, or an
      * FC_HW_E* code; the core keeps it in the app's handle and gives it back.

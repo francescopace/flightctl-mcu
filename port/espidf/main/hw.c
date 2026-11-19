@@ -30,6 +30,10 @@
 #include "soc/uart_pins.h"
 
 int fc_port_temperature(float *celsius);
+#if SOC_TEMPERATURE_SENSOR_INTR_SUPPORT
+int fc_idf_sensor_subscribe(int id, int mode, int32_t low, int32_t high, void (*notify)(void *), void *ctx);
+void fc_idf_sensor_unsubscribe(int subscription);
+#endif
 
 static const char *TAG = "hw";
 
@@ -252,6 +256,10 @@ const fc_hw_t *hw_espidf(void)
         .led_rgb = led_rgb,
         .led_close = led_close,
         .sensor_read = sensor_read,
+#if SOC_TEMPERATURE_SENSOR_INTR_SUPPORT
+        .sensor_subscribe = fc_idf_sensor_subscribe,
+        .sensor_unsubscribe = fc_idf_sensor_unsubscribe,
+#endif
         .restart_was_crash = restart_was_crash,
     };
     hw_bus_fill(&hw);

@@ -436,7 +436,8 @@ static int logical(const fc_board_entry_t *e, int level)
 
 static int not_of_handle(const app_event_t *e, int i)
 {
-    return !((e->type == EV_GPIO || e->type == EV_TIMER || e->type == EV_UART || e->type == EV_MQTT) && e->handle == i);
+    return !((e->type == EV_GPIO || e->type == EV_TIMER || e->type == EV_UART || e->type == EV_MQTT ||
+              e->type == EV_SENSOR) && e->handle == i);
 }
 
 static void close_handle(app_t *a, int i)
@@ -474,6 +475,8 @@ static void close_handle(app_t *a, int i)
             hw->pwm_close(h->port); /* low, as an app's PWM is when it stops */
         }
         fc_board_release(h->res);
+    } else if (h->kind == H_SENSOR && h->subscription >= 0) {
+        hw->sensor_unsubscribe(h->subscription);
     } else if (h->kind == H_MQTT) {
         fc_mqtt_unsubscribe(a->sync, h->port); /* no message for it from now on */
     }
@@ -666,7 +669,7 @@ static int32_t fc_led_rgb(wasm_exec_env_t env, int32_t h, int32_t r, int32_t g, 
     return g_fc_hw->led_rgb(&l->res->led, byte(r), byte(g), byte(b));
 }
 
-/* ---- the chip's sensors ----------------------------------------------------------------------- */
+/* ---- named sensors ----------------------------------------------------------------------- */
 
 static int32_t fc_sensor_read(wasm_exec_env_t env, const char *name, int32_t nlen, int32_t value_at)
 {
@@ -675,23 +678,78 @@ static int32_t fc_sensor_read(wasm_exec_env_t env, const char *name, int32_t nle
     if (!wasm_runtime_validate_app_addr(inst, (uint64_t)(uint32_t)value_at, 4)) {
         return 0; /* the exception is set: the app traps */
     }
-    char n[24];
-    if (nlen <= 0 || (size_t)nlen >= sizeof(n)) {
-        return FC_HW_ENOENT;
+    const fc_hw_t *hw = g_fc_hw;
+    fc_board_entry_t *sensor = NULL;
+    if (!key_is(name, nlen, "die_temp")) {
+        int rc = lookup(app_of(env), name, nlen, FC_RES_SENSOR, &sensor);
+        if (rc != 0) {
+            return rc;
+        }
     }
-    memcpy(n, name, (size_t)nlen);
-    n[nlen] = '\0';
-    if (g_fc_hw == NULL || g_fc_hw->sensor_read == NULL) {
-        return FC_HW_ENOTSUP;
+    int32_t v;
+    int rc;
+    if (sensor && sensor->has_dt) {
+        if (!hw || !hw->sensor_read_dt) {
+            return FC_HW_ENOTSUP;
+        }
+        int64_t t0 = fc_apps_now_us();
+        rc = hw->sensor_read_dt(sensor->dt_id, &v);
+        fc_apps_native_time(env, app_of(env), t0);
+    } else {
+        rc = hw && hw->sensor_read ? hw->sensor_read("die_temp", &v) : FC_HW_ENOTSUP;
     }
-    int32_t v = 0;
-    int rc = g_fc_hw->sensor_read(n, &v);
     if (rc != 0) {
         return rc;
     }
     int32_t *out = wasm_runtime_addr_app_to_native(inst, (uint64_t)(uint32_t)value_at);
     memcpy(out, &v, sizeof(v));
     return 0;
+}
+
+static void sensor_notify(void *arg)
+{
+    app_irq_ctx_t *c = arg;
+    app_t *a = c->app;
+    pthread_mutex_lock(&a->sync->lock);
+    app_handle_t *h = &a->io->h[c->handle];
+    if (h->kind == H_SENSOR) {
+        fc_apps_post_locked(a, EV_SENSOR, c->handle, h->trigger, NULL);
+    }
+    pthread_mutex_unlock(&a->sync->lock);
+}
+
+static int32_t fc_sensor_subscribe(wasm_exec_env_t env, const char *name, int32_t nlen, int32_t mode,
+                                   int32_t low, int32_t high)
+{
+    app_t *a = app_of(env);
+    fc_board_entry_t *e;
+    int rc = lookup(a, name, nlen, FC_RES_SENSOR, &e);
+    if (rc < 0) {
+        return rc;
+    }
+    if (mode != FC_HW_SENSOR_READY && (mode != FC_HW_SENSOR_THRESHOLD || low >= high)) {
+        return FC_HW_EINVAL;
+    }
+    if (!g_fc_hw || !g_fc_hw->sensor_subscribe || !g_fc_hw->sensor_unsubscribe) {
+        return FC_HW_ENOTSUP;
+    }
+    int i = new_handle(a, H_SENSOR);
+    if (i < 0) {
+        return i;
+    }
+    app_handle_t *h = &a->io->h[i];
+    app_irq_ctx_t *ctx = &a->io->irq_ctx[i];
+    *ctx = (app_irq_ctx_t){.app = a, .handle = i};
+    h->trigger = mode;
+    int64_t start = fc_apps_now_us();
+    h->subscription = g_fc_hw->sensor_subscribe(e->dt_id, mode, low, high, sensor_notify, ctx);
+    fc_apps_native_time(env, a, start);
+    if (h->subscription < 0) {
+        rc = h->subscription;
+        close_handle(a, i);
+        return rc;
+    }
+    return i;
 }
 
 /* ---- I2C, ADC and PWM ---------------------------------------------------------------------------- */
@@ -1089,6 +1147,7 @@ static const NativeSymbol s_natives[] = {
     {"pwm_open", (void *)fc_pwm_open, "(*~i)i", NULL},
     {"random", (void *)fc_random, "(*~)i", NULL},
     {"sensor_read", (void *)fc_sensor_read, "(*~i)i", NULL},
+    {"sensor_subscribe", (void *)fc_sensor_subscribe, "(*~iii)i", NULL},
     {"set_state", (void *)fc_apps_set_state_native, "(*~)", NULL},
     {"sleep_ms", (void *)fc_sleep_ms, "(i)i", NULL},
     {"spi_open", (void *)fc_spi_open, "(*~)i", NULL},

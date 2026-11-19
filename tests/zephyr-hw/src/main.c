@@ -11,6 +11,7 @@
 #include <zephyr/drivers/adc/adc_emul.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
 #include <zephyr/drivers/pwm/pwm_fake.h>
+#include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/fff.h>
 #include <zephyr/kernel.h>
@@ -58,6 +59,66 @@ static int s_edges;
 static void on_edge(void *ctx)
 {
     (*(int *)ctx)++;
+}
+
+/* A Zephyr sensor driver whose conversions and interrupts the test controls. */
+static const struct sensor_trigger *probe_trigger;
+static sensor_trigger_handler_t probe_handler;
+static int32_t probe_low, probe_high;
+
+static int probe_set(const struct device *dev, enum sensor_channel channel, enum sensor_attribute attr,
+                     const struct sensor_value *value)
+{
+    if (channel != SENSOR_CHAN_AMBIENT_TEMP) return -ENOTSUP;
+    if (attr == SENSOR_ATTR_LOWER_THRESH) {
+        probe_low = sensor_value_to_milli(value);
+    } else if (attr == SENSOR_ATTR_UPPER_THRESH) {
+        probe_high = sensor_value_to_milli(value);
+    } else {
+        return -ENOTSUP;
+    }
+    return 0;
+}
+
+static int probe_arm(const struct device *dev, const struct sensor_trigger *trigger, sensor_trigger_handler_t handler)
+{
+    probe_trigger = trigger;
+    probe_handler = handler;
+    return 0;
+}
+
+static DEVICE_API(sensor, probe_api) = {.attr_set = probe_set, .trigger_set = probe_arm};
+SENSOR_DEVICE_DT_DEFINE(DT_NODELABEL(test_probe), NULL, NULL, NULL, NULL, POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &probe_api);
+
+ZTEST(fc_hw, test_sensor_triggers)
+{
+    const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(test_probe));
+    int probe = id(FC_HW_KIND_SENSOR, "probe"), alias = id(FC_HW_KIND_SENSOR, "probe-alias"), delivered = 0;
+    zassert_true(probe >= 0 && alias >= 0);
+    int token = hw.sensor_subscribe(probe, FC_HW_SENSOR_READY, 0, 0, on_edge, &delivered);
+    zassert_true(token >= 0);
+    zassert_equal(probe_trigger->type, SENSOR_TRIG_DATA_READY);
+    zassert_equal(probe_trigger->chan, SENSOR_CHAN_AMBIENT_TEMP);
+    probe_handler(dev, probe_trigger);
+    zassert_equal(delivered, 1);
+    zassert_equal(hw.sensor_subscribe(alias, FC_HW_SENSOR_THRESHOLD, -2500, 21250, on_edge, &delivered), FC_HW_EBUSY);
+    sensor_trigger_handler_t late = probe_handler;
+    const struct sensor_trigger *old = probe_trigger;
+    hw.sensor_unsubscribe(token);
+    zassert_is_null(probe_handler);
+    late(dev, old);
+    zassert_equal(delivered, 1);
+    token = hw.sensor_subscribe(alias, FC_HW_SENSOR_THRESHOLD, -2500, 21250, on_edge, &delivered);
+    zassert_true(token >= 0);
+    zassert_equal(probe_low, -2500);
+    zassert_equal(probe_high, 21250);
+    zassert_equal(probe_trigger->type, SENSOR_TRIG_THRESHOLD);
+    late(dev, old);
+    zassert_equal(delivered, 1);
+    probe_handler(dev, probe_trigger);
+    zassert_equal(delivered, 2);
+    hw.sensor_unsubscribe(token);
+    zassert_is_null(probe_handler);
 }
 
 ZTEST(fc_hw, test_gpio)

@@ -1,12 +1,14 @@
 # Results
 
-Six boards were tested with Flight Control 1.4.0. Firmware sizes are for release `v0.9.0`, built with ESP-IDF 6.1.1 or Zephyr 4.5.0 and WAMR 2.4.6. Delta, CoreMark, RAM, timing and traffic measurements come from earlier builds. [Firmware versions used for those measurements](https://github.com/francescopace/flightctl-mcu/blob/aaf93f36891556c3d0913dcd40e50a7d6a843be0/docs/RESULTS.md)
+Six boards were tested with Flight Control 1.4.0. Firmware sizes are for release `v0.9.0`, built with ESP-IDF 6.1.1 or Zephyr 4.5.0 and WAMR 2.4.6. Named temperature probes and their notifications were tested on development firmware for v0.9.1. Delta, CoreMark, RAM, timing and traffic measurements come from earlier builds. [Firmware versions used for those measurements](https://github.com/francescopace/flightctl-mcu/blob/aaf93f36891556c3d0913dcd40e50a7d6a843be0/docs/RESULTS.md)
 
 ## What works
 
 | Capability | Verified coverage |
 |---|---|
 | Fleet management | Both ports enrolled over mTLS, reported status, applied config and ran signed WASM apps. Firmware updates preserved device identity. Certificate renewal was also verified on a physical C6. |
+| Named temperature sensors | The same signed WASM alarm read `line_temp` on the ESP-IDF C6 and the Zephyr S3 N8R8. Both used their physical die probes. Both reported access denied without the grant, entered alarm at a 5 °C threshold, cleared at 120 °C and reported denial again after revocation. [Sensor mapping](APPS.md#what-an-app-may-use) |
+| Sensor notifications | A signed WASM probe on the physical ESP-IDF C6 received a threshold interrupt with a 4–5 °C window, closed its subscription and received another interrupt after reopening. Revoking the grant returned `FC_EPERM`. The physical Zephyr S3 die driver returned `FC_ENOTSUP` for both triggers and the alarm continued sampling. Zephyr `native_sim` exercised data-ready and threshold callbacks with an emulated sensor driver. |
 | Firmware updates | Both ports installed full and delta images from a TLS registry, confirmed the new firmware after reboot and rolled back a failed release. [Measured deltas](#firmware-deltas) |
 | <a id="http2"></a>HTTP/2 | Spec and status shared a connection on all six boards. Registry logs confirmed HTTP/2 app and firmware downloads on classic ESP32, C5, C6 and S3 with ESP-IDF, and on S3 with Zephyr. |
 | Wi-Fi provisioning | A phone provisioned the C6 with ESP-IDF and the S3 with Zephyr. After a password retry, C6 joined in about 2 s, closed its AP about 8 s later and rejoined after reset. The Zephyr S3 joined in 8 s and was online with its app running 1 s after its AP closed. [Provisioning](PROVISIONING.md) |
@@ -26,6 +28,8 @@ ESP-IDF OTA slots are 1,703,936 B each. The firmware was built for size, with WA
 | ESP32-S3 N4R2 | 1,188,112 | 30.3% |
 
 <a id="zephyr-on-the-esp32-s3"></a>On the **Zephyr S3 N8R8** with PSRAM, the signed image is **1,038,663 B**. It uses 376,800 of 380,672 B of internal DRAM at link time, leaving **3,872 B** for build changes. The linked image already includes the 120,112 B C heap and 94,208 B kernel heap. [Zephyr board configuration](ZEPHYR.md#on-an-esp32-s3)
+
+The Zephyr S3 development build with the named temperature probe uses 377,008 B of internal DRAM, leaving 3,664 B at link time. Its signed image is 1,039,959 B.
 
 MQTT added 12.9 KB flash on C3 and 12.7 KB on Zephyr S3. Field provisioning added 17.4 KB flash and 16 B static RAM to an ESP-IDF 6.0.3 S3 debug build.
 

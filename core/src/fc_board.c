@@ -21,7 +21,7 @@ static const struct {
     int kind;
 } s_sections[] = {
     {"gpio", FC_RES_GPIO}, {"led", FC_RES_LED}, {"i2c", FC_RES_I2C}, {"spi", FC_RES_SPI},
-    {"uart", FC_RES_UART}, {"adc", FC_RES_ADC}, {"pwm", FC_RES_PWM},
+    {"uart", FC_RES_UART}, {"adc", FC_RES_ADC}, {"pwm", FC_RES_PWM}, {"sensor", FC_RES_SENSOR},
 };
 
 /* Members that are pins, in any kind of entry: all are checked against the
@@ -75,6 +75,20 @@ static int valid_name(const char *n)
 static int valid_order(const char *o)
 {
     return strlen(o) == 3 && strchr(o, 'r') && strchr(o, 'g') && strchr(o, 'b');
+}
+
+static int parse_sensor(const cJSON *o, fc_board_entry_t *e, const fc_hw_t *hw)
+{
+    const cJSON *src = cJSON_GetObjectItemCaseSensitive(o, "source");
+    const cJSON *dt = cJSON_GetObjectItemCaseSensitive(o, "dt");
+    const int fields = cJSON_GetArraySize(o);
+    if (strcmp(e->name, "die_temp") == 0) {
+        return -1;
+    }
+    if (e->has_dt) {
+        return fields == 1 && valid_name(dt->valuestring) && hw && hw->dt_find ? 0 : -1;
+    }
+    return fields == 1 && cJSON_IsString(src) && strcmp(src->valuestring, "die_temp") == 0 ? 0 : -1;
 }
 
 /* One entry from its JSON object. */
@@ -143,6 +157,10 @@ static int parse_entry(const fc_hw_t *hw, int check, int kind, const cJSON *o, f
     const cJSON *dt = cJSON_GetObjectItemCaseSensitive(o, "dt");
     e->has_dt = cJSON_IsString(dt);
     e->dt_id = -1;
+    if (kind == FC_RES_SENSOR && parse_sensor(o, e, hw) < 0) {
+        snprintf(err, err_len, "%s: invalid sensor source", e->name);
+        return -1;
+    }
     if (e->has_dt) {
         snprintf(e->dt, sizeof(e->dt), "%s", dt->valuestring);
         if (hw != NULL && hw->dt_find != NULL && (e->dt_id = hw->dt_find(kind, e->dt)) < 0) {
@@ -275,7 +293,7 @@ static int merge(const fc_hw_t *hw, int check, const char *json, fc_board_entry_
             /* No pin (or -1) for a name the firmware has: its pin, so that a
              * template can change an LED's colour order without knowing the
              * board's pin. */
-            if (at < *count && map[at].kind == e.kind && e.pin < 0 && !e.has_dt) {
+            if (at < *count && map[at].kind == e.kind && kind != FC_RES_SENSOR && e.pin < 0 && !e.has_dt) {
                 e.pin = map[at].pin;
                 e.has_dt = map[at].has_dt;
                 e.dt_id = map[at].dt_id;

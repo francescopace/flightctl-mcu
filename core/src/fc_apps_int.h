@@ -27,9 +27,9 @@
 #define APP_KV_KEY    31
 
 /* Events, as FC_EV_* in fc_app.h. */
-enum { EV_GPIO = 1, EV_TIMER = 2, EV_UART = 3, EV_MQTT = 4, EV_CONFIG = 5, EV_NET = 6, EV_OVERFLOW = 7 };
+enum { EV_GPIO = 1, EV_TIMER = 2, EV_UART = 3, EV_MQTT = 4, EV_CONFIG = 5, EV_NET = 6, EV_OVERFLOW = 7, EV_SENSOR = 8 };
 
-enum { H_FREE = 0, H_TIMER, H_GPIO, H_LED, H_I2C, H_ADC, H_PWM, H_SPI, H_UART, H_MQTT };
+enum { H_FREE = 0, H_TIMER, H_GPIO, H_LED, H_I2C, H_ADC, H_PWM, H_SPI, H_UART, H_MQTT, H_SENSOR };
 
 struct app;
 
@@ -56,6 +56,10 @@ typedef struct {
             int32_t period_ms;
             bool periodic;
             bool fired;
+        };
+        struct {              /* sensor notification */
+            int subscription;
+            int trigger;
         };
         struct {              /* buses, ADC, PWM and MQTT */
             int port;

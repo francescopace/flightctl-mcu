@@ -22,6 +22,7 @@ typedef enum {
     FC_RES_UART = FC_HW_KIND_UART,
     FC_RES_ADC = FC_HW_KIND_ADC,
     FC_RES_PWM = FC_HW_KIND_PWM,
+    FC_RES_SENSOR = FC_HW_KIND_SENSOR,
 } fc_res_kind_t;
 
 typedef struct {

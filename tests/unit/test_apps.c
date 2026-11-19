@@ -133,7 +133,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/growing", s_growing, sizeof(s_growing)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
         V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
-        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(app_tinymlp), V(t_env),
+        V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_sensor), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(app_tinymlp), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
         V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_libcmath), V(t_malloc), V(t_ctorloop), V(t_ctorfc), V(t_mqtt),
         V(t_arduino), V(t_arduinotick), V(arduino_rust), V(arduino_cpp), V(arduino_assemblyscript), V(arduino_tinygo),
@@ -1494,6 +1494,10 @@ static void test_board_map(void)
     CHECK(strstr(err, "pin 11 is used by the firmware") != NULL);
     CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"gpio\": {\"x\": {\"pin\": 8}}}", err, sizeof(err)), -1);
     CHECK(strstr(err, "led0 and x are both on pin 8") != NULL || strstr(err, "x and led0") != NULL);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"sensor\":{\"line_temp\":{\"source\":\"die_temp\"}}}", err, sizeof(err)), 0);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"sensor\":{\"line_temp\":{\"source\":\"missing\"}}}", err, sizeof(err)), -1);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"sensor\":{\"die_temp\":{\"source\":\"die_temp\"}}}", err, sizeof(err)), -1);
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"sensor\":{\"line_temp\":{\"dt\":\"missing\"}}}", err, sizeof(err)), -1);
     CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"sensors\": {}}", err, sizeof(err)), -1);
     CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"gpio\": {\"mqtt\": {\"pin\": 3}}}", err, sizeof(err)), -1);
     CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, "{\"led\": {\"l\": {\"pin\": 3, \"order\": \"rgx\"}}}", err,
@@ -1575,7 +1579,8 @@ static int f_dt_find(int kind, const char *name)
         const char *name;
         int id;
     } nodes[] = {{FC_HW_KIND_GPIO, "relay_node", 5}, {FC_HW_KIND_GPIO, "button_node", 9},
-                 {FC_HW_KIND_GPIO, "spare_node", 6}, {FC_HW_KIND_LED, "led_node", 8}};
+                 {FC_HW_KIND_GPIO, "spare_node", 6}, {FC_HW_KIND_LED, "led_node", 8},
+                 {FC_HW_KIND_SENSOR, "probe", 3}};
     for (size_t i = 0; i < sizeof(nodes) / sizeof(nodes[0]); i++) {
         if (nodes[i].kind == kind && strcmp(nodes[i].name, name) == 0) {
             return nodes[i].id;
@@ -1583,6 +1588,15 @@ static int f_dt_find(int kind, const char *name)
     }
     return -1;
 }
+static int f_sensor_dt(int id, int32_t *value)
+{
+    if (id != 3) {
+        return FC_HW_ENOENT;
+    }
+    *value = -1250;
+    return 0;
+}
+
 static char *f_dt_defaults(void)
 {
     return strdup("{\"gpio\": {\"relay1\": {\"dt\": \"relay_node\", \"safe\": 0},"
@@ -1637,9 +1651,104 @@ static void test_board_dt(void)
     fc_board_entry_t *e = fc_board_find("relay1", 6);
     CHECK(e != NULL && e->pin == -1 && e->dt_id == 6 && fc_board_pin(e) == 6);
     remove_all();
+    /* The mapped probe is at -1.25 C while the legacy source reads 41 C. */
+    s_fake.sensor_read_dt = f_sensor_dt;
+    map = "{\"sensor\":{\"line_temp\":{\"dt\":\"probe\"}}}";
+    CHECK_INT(fc_apps_check_file(FC_BOARD_PATH, map, err, sizeof(err)), 0);
+    CHECK_INT(fc_port_write_file(FC_BOARD_PATH, map, strlen(map)), 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    const char *cfg = "{\"sensor\":\"line_temp\",\"threshold_c\":0}";
+    CHECK_INT(fc_port_write_file("/etc/fc-app/alarm.json", cfg, strlen(cfg)), 0);
+    CHECK_INT(apply_one("alarm", "reg/app_alarm_v2", "{\"FC_ALLOW\":\"line_temp\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("alarm", "Running pre-alarm (dim blue)", 3000), "Running pre-alarm (dim blue)");
+    remove_all();
+    s_fake.sensor_read_dt = NULL;
     s_fake.dt_find = NULL;
     s_fake.board_defaults = f_defaults;
     fc_port_write_file(FC_BOARD_PATH, "{}", 2);
+    fc_apps_file_changed(FC_BOARD_PATH);
+}
+
+/* A driver may signal before subscribe returns. Its lock also drains a
+ * callback before the runtime can free the instance. */
+static void (*f_sensor_notify)(void *);
+static void *f_sensor_ctx;
+static int f_sensor_mode, f_sensor_closes;
+static int f_subscribe(int id, int mode, int32_t low, int32_t high, void (*notify)(void *), void *ctx)
+{
+    pthread_mutex_lock(&f_lock);
+    int rc = FC_HW_EBUSY;
+    if (!f_sensor_notify) {
+        CHECK_INT(id, -1);
+        if (mode == FC_HW_SENSOR_THRESHOLD) {
+            CHECK_INT(low, 4000);
+            CHECK_INT(high, 5000);
+        }
+        f_sensor_notify = notify;
+        f_sensor_ctx = ctx;
+        f_sensor_mode = mode;
+        notify(ctx);
+        rc = 17;
+    }
+    pthread_mutex_unlock(&f_lock);
+    return rc;
+}
+
+static void f_unsubscribe(int token)
+{
+    CHECK_INT(token, 17);
+    pthread_mutex_lock(&f_lock);
+    f_sensor_notify = NULL;
+    f_sensor_ctx = NULL;
+    f_sensor_closes++;
+    pthread_mutex_unlock(&f_lock);
+}
+
+static void test_sensor_events(void)
+{
+    char err[160];
+    const char *cfg = "/etc/fc-app/watch.json", *grant = "{\"FC_ALLOW\":\"line_temp\"}";
+    const char *map = "{\"sensor\":{\"line_temp\":{\"source\":\"die_temp\"}}}";
+    CHECK_INT(fc_port_write_file(FC_BOARD_PATH, map, strlen(map)), 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    s_fake.sensor_subscribe = f_subscribe;
+    s_fake.sensor_unsubscribe = f_unsubscribe;
+
+    CHECK_INT(apply_one("watch", "reg/t_sensor", grant, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("watch", "Running threshold interrupt", 3000), "Running threshold interrupt");
+    const char *two[] = {"watch", "reg/t_sensor", grant, "other", "reg/t_sensor", grant, NULL};
+    CHECK_INT(apply_apps(two, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("other", "Running subscribe -4", 3000), "Running subscribe -4");
+    CHECK_INT(apply_one("watch", "reg/t_sensor", NULL, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("watch", "Running subscribe -3", 3000), "Running subscribe -3");
+    CHECK(f_sensor_notify == NULL && f_sensor_closes == 1);
+
+    const char *ready = "{\"mode\":1}";
+    CHECK_INT(fc_port_write_file(cfg, ready, strlen(ready)), 0);
+    fc_apps_file_changed(cfg);
+    CHECK_INT(apply_one("watch", "reg/t_sensor", grant, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("watch", "Running data ready", 3000), "Running data ready");
+    CHECK_INT(f_sensor_mode, FC_HW_SENSOR_READY);
+    fc_apps_file_changed(cfg); /* explicit close */
+    CHECK_STR(wait_state_of("watch", "Running closed", 3000), "Running closed");
+    CHECK(f_sensor_notify == NULL && f_sensor_closes == 2);
+    remove_all();
+    CHECK_INT(apply_one("watch", "reg/t_sensor", grant, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("watch", "Running data ready", 3000), "Running data ready");
+    remove_all(); /* stop with the subscription active */
+    CHECK(f_sensor_notify == NULL && f_sensor_closes == 3);
+    const char *bad = "{\"low_mc\":5000,\"high_mc\":5000}";
+    CHECK_INT(fc_port_write_file(cfg, bad, strlen(bad)), 0);
+    CHECK_INT(apply_one("watch", "reg/t_sensor", grant, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("watch", "Running subscribe -1", 3000), "Running subscribe -1");
+    remove_all();
+    CHECK_INT(fc_port_write_file(cfg, ready, strlen(ready)), 0);
+    s_fake.sensor_subscribe = NULL;
+    s_fake.sensor_unsubscribe = NULL;
+    CHECK_INT(apply_one("watch", "reg/t_sensor", grant, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("watch", "Running subscribe -8", 3000), "Running subscribe -8");
+    remove_all();
+    CHECK_INT(fc_port_write_file(FC_BOARD_PATH, "{}", 2), 0);
     fc_apps_file_changed(FC_BOARD_PATH);
 }
 
@@ -1664,6 +1773,40 @@ static void test_example_apps(void)
     CHECK_STR(wait_state_of("alarm", "Running ok", 3000), "Running ok");
     CHECK(f_led[2] == 0);
     remove_all();
+    /* A fleet can select a probe and grant only its board-map name. */
+    const char *map = "{\"sensor\":{\"line_temp\":{\"source\":\"die_temp\"}}}";
+    CHECK_INT(fc_port_write_file(FC_BOARD_PATH, map, strlen(map)), 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
+    cfg = "{\"sensor\":\"line_temp\",\"threshold_c\":40.5,\"hysteresis_c\":1,\"sample_ms\":100}";
+    CHECK_INT(fc_port_write_file("/etc/fc-app/alarm.json", cfg, strlen(cfg)), 0);
+    CHECK_INT(apply_one("alarm", "reg/app_alarm_v2", "{\"FC_ALLOW\":\"led0 line_temp2\"}", err, sizeof(err)), 0);
+    const char *denied = "Running sensor access denied";
+    CHECK_STR(wait_state_of("alarm", denied, 3000), denied);
+    CHECK_INT(f_led_open, 0); /* an app without a sensor leaves the LED available */
+    /* A config change wakes a denied app without an image or grant change. */
+    const char *legacy = "{\"threshold_c\":40.5}";
+    CHECK_INT(fc_port_write_file("/etc/fc-app/alarm.json", legacy, strlen(legacy)), 0);
+    fc_apps_file_changed("/etc/fc-app/alarm.json");
+    CHECK_STR(wait_state_of("alarm", "Running ok", 3000), "Running ok");
+    CHECK_INT(fc_port_write_file("/etc/fc-app/alarm.json", cfg, strlen(cfg)), 0);
+    fc_apps_file_changed("/etc/fc-app/alarm.json");
+    CHECK_STR(wait_state_of("alarm", denied, 3000), denied);
+    __atomic_store_n(&f_temp, 40500, __ATOMIC_RELEASE);
+    CHECK_INT(apply_one("alarm", "reg/app_alarm_v2", "{\"FC_ALLOW\":\"line_temp\"}", err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("alarm", "Running alarm (blinking blue)", 3000), "Running alarm (blinking blue)");
+    __atomic_store_n(&f_temp, 39500, __ATOMIC_RELEASE); /* release boundary is inclusive */
+    __atomic_store_n(&f_temp_reads, 2, __ATOMIC_RELEASE);
+    for (int i = 0; i < 300 && __atomic_load_n(&f_temp_reads, __ATOMIC_ACQUIRE) != 0; i++) {
+        usleep(10000);
+    }
+    CHECK_INT(__atomic_load_n(&f_temp_reads, __ATOMIC_ACQUIRE), 0);
+    CHECK_STR(state_of("alarm"), "Running alarm (blinking blue)");
+    __atomic_store_n(&f_temp, 39499, __ATOMIC_RELEASE);
+    __atomic_store_n(&f_temp_reads, -1, __ATOMIC_RELEASE);
+    CHECK_STR(wait_state_of("alarm", "Running pre-alarm (dim blue)", 3000), "Running pre-alarm (dim blue)");
+    remove_all();
+    CHECK_INT(fc_port_write_file(FC_BOARD_PATH, "{}", 2), 0);
+    fc_apps_file_changed(FC_BOARD_PATH);
     /* hwcheck: the fake board has an I2C bus with one device, and none of
      * the other names it looks for. */
     CHECK_INT(apply_one("hw", "reg/app_hwcheck", "{\"FC_ALLOW\": \"i2c0 spi0 uart0 adc0 pwm0\", \"TICK_MS\": \"100\"}",
@@ -2782,6 +2925,7 @@ int main(void)
     RUN(test_fc_mqtt);
     RUN(test_board_map);
     RUN(test_board_dt);
+    RUN(test_sensor_events);
     RUN(test_example_apps);
     RUN(test_tinyml);
     RUN(test_tinymlp);

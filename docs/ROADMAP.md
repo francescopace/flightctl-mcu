@@ -4,7 +4,6 @@
 
 Release 1.0 depends on [five Flight Control changes](FLIGHTCTL-LIMITATIONS.md#upstream-blockers-for-agent-100). We need to open upstream issues and submit patches for the outstanding changes.
 
-- [ ] **[WASM]** Grant per-app access to named sensors via `FC_ALLOW`. Test one alarm on ESP-IDF and Zephyr with different probes sharing a name and reporting millidegrees Celsius. Support direct reads and, where the driver supports them, data-ready and threshold notifications through `on_event`.
 - [ ] **[WASM]** Queue offline samples within each app's quota. Deliver oldest first, delete after delivery, verify restart recovery and measure capacity and flash writes.
 - [ ] **[WASM]** Expose read-only battery voltage via named sensors, plus charge level and charging status when available. Report low battery via `fc_metric`.
 - [ ] **[WASM]** Pass readings between local sensor and alarm apps while the broker is offline. Bound the queue, define overflow behavior and measure both apps' RAM use together.

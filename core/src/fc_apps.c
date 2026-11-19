@@ -260,10 +260,10 @@ int fc_apps_post_locked(app_t *a, int32_t type, int32_t handle, int32_t value, f
     if (!a->accepting) {
         return -1;
     }
-    /* An edge replaces the one still queued for the same GPIO. */
-    for (int k = 0; type == EV_GPIO && k < a->ev_count; k++) {
+    /* A pending hardware notification already asks the app to read this handle. */
+    for (int k = 0; (type == EV_GPIO || type == EV_SENSOR) && k < a->ev_count; k++) {
         app_event_t *e = &a->io->ev[(a->ev_head + k) % APP_EVENTS];
-        if (e->type == EV_GPIO && e->handle == handle) {
+        if (e->type == type && e->handle == handle) {
             e->value = value;
             return 0;
         }

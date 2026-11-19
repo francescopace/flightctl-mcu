@@ -40,8 +40,8 @@
  *   on the slowest chip, and spend at most FC_CALL_LIMIT_MS in the device's
  *   functions (fc_sleep_ms..., the C library), which the budget does not
  *   count; past either, the app is stopped as if it had trapped. Events wait in a queue of FC_EVENT_QUEUE
- *   entries. A GPIO edge replaces the one still queued for the same GPIO; for
- *   the others, when the queue is full, the oldest are dropped and the next
+ *   entries. GPIO edges and sensor notifications coalesce by handle. When
+ *   the queue is full, the oldest event is dropped and the next
  *   event is FC_EV_OVERFLOW with the number lost.
  *
  * ---- Hardware: names, not pin numbers --------------------------------------
@@ -55,7 +55,8 @@
  *
  * An app reaches only what its fleet grants it, in envVars.FC_ALLOW: names from
  * the board map, plus "mqtt" and "metrics", separated by spaces. Several apps
- * may be granted a name, but only one holds it at a time: an app that opens a
+ * may read a granted sensor concurrently. Only one app can hold an open
+ * peripheral at a time: an app that opens a
  * name held by another gets FC_EBUSY. Without FC_ALLOW an app has log, state,
  * info, config, storage, time, timers and the chip's sensors, and no GPIO, bus
  * or network.
@@ -123,6 +124,7 @@ FC_EXPORT("on_event") void on_event(int32_t type, int32_t handle, int32_t value)
 #define FC_EV_CONFIG   5 /* -1                0: the app's config changed */
 #define FC_EV_NET      6 /* -1                1 connected to the broker, 0 lost */
 #define FC_EV_OVERFLOW 7 /* -1                events dropped */
+#define FC_EV_SENSOR   8 /* subscription      FC_SENSOR_READY or FC_SENSOR_THRESHOLD */
 
 #define FC_EVENT_QUEUE 16
 
@@ -274,11 +276,23 @@ FC_IMPORT("adc_read_mv") int32_t fc_adc_read_mv(int32_t h);
 FC_IMPORT("pwm_open") int32_t fc_pwm_open(const char *name, int32_t nlen, int32_t freq_hz);
 FC_IMPORT("pwm_duty") int32_t fc_pwm_duty(int32_t h, int32_t duty);
 
-/* ---- Sensors the chip has ------------------------------------------------------------------
- * What is inside the chip or on the board and has no bus of its own: "die_temp"
- * (milli-degrees C) on the chips that have one. External sensors are read by
- * the app over I2C or SPI. Needs no grant. */
+/* ---- Named sensors ------------------------------------------------------
+ * Read temperature in millidegrees Celsius. On error *value is unchanged
+ * (FC_ENOENT: unmapped, FC_EPERM: missing grant). A mapped name needs its
+ * own FC_ALLOW grant. Multiple apps can read it. The built-in "die_temp"
+ * remains available without a grant where supported. */
 FC_IMPORT("sensor_read") int32_t fc_sensor_read(const char *name, int32_t nlen, int32_t *value);
+
+/* Subscribe to a granted board-map name. The event prompts a fresh
+ * fc_sensor_read; repeated notifications coalesce while queued. For a
+ * threshold window give low < high in millidegrees; READY ignores both.
+ * Driver resolution and interrupt timing are hardware-specific. Direct reads
+ * remain shared. A second subscription to the probe gets FC_EBUSY.
+ * FC_ENOTSUP means the driver cannot deliver this trigger. fc_close stops it. */
+#define FC_SENSOR_READY     1
+#define FC_SENSOR_THRESHOLD 2
+FC_IMPORT("sensor_subscribe")
+int32_t fc_sensor_subscribe(const char *name, int32_t nlen, int32_t mode, int32_t low_mc, int32_t high_mc);
 
 /* ---- Metrics (granted by "metrics") ----------------------------------------------------------
  * A number for Flight Control's Telemetry Gateway (OpenTelemetry), which adds

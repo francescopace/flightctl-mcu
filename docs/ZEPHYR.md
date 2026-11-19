@@ -38,6 +38,7 @@ Define each app peripheral as a child of a `flightctl,app-hw` node in the board 
 		compatible = "flightctl,app-hw";
 		relay1 { gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>; safe = <0>; };
 		button0 { gpios = <&gpio0 6 GPIO_ACTIVE_LOW>; };
+		core-temperature { temperature-sensor = <&coretemp>; die-temperature; };
 		level { io-channels = <&adc0 0>; };
 		fan { pwms = <&pwm0 0 1000000>; };
 		sensors { i2c-bus = <&i2c0>; clock-frequency = <100000>; };
@@ -51,7 +52,7 @@ A GPIO's active level becomes the board map's `active_low`. The fleet's `/etc/fc
 
 The port reserves the console UART. On the ESP32-S3, an application UART can supply `de-gpios` for half-duplex RS-485. The port changes direction after both the FIFO and the transmit shift register are idle. The GPIO polarity comes from the devicetree. Other controllers that specify `de-gpios` return `FC_ENOTSUP`. Zephyr's I2C and SPI calls take no timeout, so a transfer lasts as long as the driver makes it; an SPI device waiting for another app's to let go of the bus gives up after 100 ms, as on ESP-IDF.
 
-The production S3 overlay exposes no physical app peripherals. Adding drivers uses internal DRAM. Check the [link-time margin](RESULTS.md#firmware-size) when changing an overlay. [Peripheral tests](TESTING.md#peripheral-tests)
+The ESP32-S3 overlay exposes the on-chip temperature probe as `core-temperature`. Grant it by name or map the probe to a fleet-wide sensor name. Adding drivers uses internal DRAM. Check the [link-time margin](RESULTS.md#firmware-size) when changing an overlay. [Peripheral tests](TESTING.md#peripheral-tests)
 
 ## On an emulated Arm Cortex-M3
 

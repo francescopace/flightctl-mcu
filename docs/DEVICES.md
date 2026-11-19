@@ -33,7 +33,7 @@ If ESP-IDF supports the chip, it is mostly configuration:
 
 1. Build for it: `TARGET=esp32c61 FW_VERSION="${NEW_TAG:?set the new firmware tag}" port/espidf/build.sh`. The build directory is `port/espidf/build-<target>`.
 2. Put board-specific defaults in `port/espidf/sdkconfig.defaults.<target>`. For example the LED pin: see `sdkconfig.defaults.esp32c3` or `sdkconfig.defaults.esp32`.
-3. If the chip has no temperature sensor, `port/espidf` already falls back to a simulated one (`SOC_TEMP_SENSOR_SUPPORTED`).
+3. On chips without a temperature sensor (`SOC_TEMP_SENSOR_SUPPORTED` is false), ESP-IDF reports a simulated temperature in `customInfo`. WASM reads of `die_temp` return `FC_ENOTSUP`.
 4. `tools/fw-push.py` picks up every `build-*` directory, so the chip ends up in the next firmware index on its own.
 
 Per-device differences, such as a different LED pin on a clone board, don't need a separate build. Set a label on the device (`led-gpio=38`, `led-order=rgb`, `led-ws2812=false`) and the fleet template passes it into the config.

@@ -1,7 +1,12 @@
 /* The board map's names on native_sim's emulated drivers. */
 / {
+	test_probe: temperature-probe {
+		compatible = "flightctl,test-temperature";
+	};
 	fc-hw {
 		compatible = "flightctl,app-hw";
+		probe { temperature-sensor = <&test_probe>; };
+		probe-alias { temperature-sensor = <&test_probe>; };
 		relay1 {
 			gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
 			safe = <0>;
