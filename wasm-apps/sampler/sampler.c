@@ -24,11 +24,14 @@ static void sample(void)
 {
     int32_t value;
     if (fc_sensor_read(sensor, sensor_len, &value) == 0) {
+        int local = fc_local_send(FC_STR("localalarm"), value);
         int rc = fc_queue_push(FC_STR("samples"), &value, sizeof(value));
         if (rc == FC_ENOSPC) {
             FC_STATE("sample queue full");
         } else if (rc < 0) {
             FC_STATE("sample storage error");
+        } else if (local == 0) {
+            FC_STATE("queued and sent locally");
         } else {
             FC_STATE("queued");
         }

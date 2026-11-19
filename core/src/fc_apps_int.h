@@ -27,7 +27,7 @@
 #define APP_KV_KEY    31
 
 /* Events, as FC_EV_* in fc_app.h. */
-enum { EV_GPIO = 1, EV_TIMER = 2, EV_UART = 3, EV_MQTT = 4, EV_CONFIG = 5, EV_NET = 6, EV_OVERFLOW = 7, EV_SENSOR = 8 };
+enum { EV_GPIO = 1, EV_TIMER = 2, EV_UART = 3, EV_MQTT = 4, EV_CONFIG = 5, EV_NET = 6, EV_OVERFLOW = 7, EV_SENSOR = 8, EV_LOCAL = 9 };
 
 enum { H_FREE = 0, H_TIMER, H_GPIO, H_LED, H_I2C, H_ADC, H_PWM, H_SPI, H_UART, H_MQTT, H_SENSOR };
 
@@ -176,6 +176,8 @@ int64_t fc_apps_now_us(void);
 int fc_apps_native_time(wasm_exec_env_t env, app_t *a, int64_t t0);
 int fc_apps_stopping(const app_t *a);
 const char *fc_apps_device_name(void);
+
+int32_t fc_apps_local_send(wasm_exec_env_t env, const char *peer, int32_t len, int32_t value);
 
 /* fc_set_state. */
 void fc_apps_set_state_native(wasm_exec_env_t env, const char *s, int32_t len);

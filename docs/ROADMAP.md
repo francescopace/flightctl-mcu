@@ -4,7 +4,6 @@
 
 Release 1.0 depends on some [Flight Control changes](FLIGHTCTL-LIMITATIONS.md#upstream-blockers-for-agent-100). We need to open upstream issues and submit patches for the outstanding changes.
 
-- [ ] **[WASM]** Pass readings between local sensor and alarm apps while the broker is offline. Bound the queue, define overflow behavior and measure both apps' RAM use together.
 - [ ] **[Test]** ST NUCLEO-F767ZI — Enroll over Ethernet, verify status and reconnect with the same identity after a power cycle.
 - [ ] **[Test]** Raspberry Pi Pico 2 W (SC1634) — Enroll over Wi-Fi, run a signed WASM app and measure minimum free heap.
 - [ ] **[Test]** Nordic nRF7002-DK — Enroll over Wi-Fi, verify status, run a signed WASM app and measure minimum free heap.

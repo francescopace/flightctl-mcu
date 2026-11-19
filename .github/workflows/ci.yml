@@ -41,7 +41,7 @@ jobs:
       - uses: ./.github/actions/mbedtls
         id: mbedtls
       - run: third_party/fetch-wamr.sh
-      - name: WASM apps (alarm v1 and v2, trend, battery and sampler v1)
+      - name: WASM apps (alarm v1 and v2, trend, battery, sampler and localalarm v1)
         run: |
           export PATH="$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)"):$PATH"
           ALARM_SOLID_DEMO=1 NO_PUSH=1 wasm-apps/build.sh alarm v1
@@ -49,6 +49,7 @@ jobs:
           NO_PUSH=1 wasm-apps/build.sh trend v1
           NO_PUSH=1 wasm-apps/build.sh battery v1
           NO_PUSH=1 wasm-apps/build.sh sampler v1
+          NO_PUSH=1 wasm-apps/build.sh localalarm v1
       - name: host agent
         run: MBEDTLS_DIR=${{ steps.mbedtls.outputs.dir }} port/host/build-ci.sh
       - uses: actions/upload-artifact@v7

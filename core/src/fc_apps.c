@@ -3455,6 +3455,43 @@ static void mqtt_on_link(int up)
     pthread_mutex_unlock(&s_lock);
 }
 
+/* The caller's runner holds no slot lock. Pin the destination descriptor
+ * with s_lock until its event has been queued, just as for MQTT delivery. */
+int32_t fc_apps_local_send(wasm_exec_env_t env, const char *peer, int32_t len, int32_t value)
+{
+    app_t *from = wasm_runtime_get_user_data(env);
+    if (len <= 0 || len > FC_APP_NAME_MAX || memchr(peer, 0, len) || memchr(peer, ' ', len)) {
+        return FC_HW_EINVAL;
+    }
+    char grant[sizeof("local.from:") + FC_APP_NAME_MAX];
+    snprintf(grant, sizeof(grant), "local.to:%.*s", (int)len, peer);
+    const char *name = grant + sizeof("local.to:") - 1;
+    if (strcmp(from->name, name) == 0) {
+        return FC_HW_EINVAL;
+    }
+    pthread_mutex_lock(&s_lock);
+    int rc = FC_HW_EPERM;
+    if (fc_appapi_allowed(from, grant)) {
+        app_t *to = find(name);
+        rc = FC_HW_ENOENT;
+        if (to) {
+            snprintf(grant, sizeof(grant), "local.from:%s", from->name);
+            rc = FC_HW_EPERM;
+            if (fc_appapi_allowed(to, grant)) {
+                pthread_mutex_lock(&to->sync->lock);
+                rc = FC_HW_EAGAIN;
+                if (to->accepting && to->ev_count < APP_EVENTS) {
+                    fc_apps_post_locked(to, EV_LOCAL, -1, value, NULL);
+                    rc = 0;
+                }
+                pthread_mutex_unlock(&to->sync->lock);
+            }
+        }
+    }
+    pthread_mutex_unlock(&s_lock);
+    return rc;
+}
+
 /* A delivery may already be in flight when an app unsubscribes. The
  * owner's slot lock has a permanent address; subscription IDs carry a
  * generation, so a new occupant cannot receive a previous app's message. */

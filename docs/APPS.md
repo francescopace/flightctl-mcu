@@ -11,6 +11,7 @@ For C apps, start with [alarm.c](../wasm-apps/alarm/alarm.c). Build and publish 
 | Handles | `fc_close` | an open handle owned by the app |
 | Config | `fc_config_get` | always |
 | Private storage | `fc_kv_get`, `fc_kv_set`, `fc_kv_del`, `fc_queue_push`, `fc_queue_peek`, `fc_queue_ack` | always |
+| Local readings | `fc_local_send`, `FC_EV_LOCAL` | `local.to:<receiver>` on the sender and `local.from:<sender>` on the receiver |
 | GPIO and LEDs | `fc_gpio_open`, `fc_gpio_read`, `fc_gpio_write`, `fc_gpio_irq`, `fc_led_open`, `fc_led_rgb` | a name in `FC_ALLOW` |
 | I²C | `fc_i2c_open`, `fc_i2c_read`, `fc_i2c_write`, `fc_i2c_write_read` | a name in `FC_ALLOW` |
 | SPI | `fc_spi_open`, `fc_spi_transfer` | a name in `FC_ALLOW` |
@@ -35,7 +36,7 @@ Declare the ABI with `FC_APP_ABI()`. Implement `tick`, `on_event`, or both. The 
 |---|---|
 | `init()` | Once after loading. A nonzero return fails startup. |
 | `tick()` | Every `TICK_MS` milliseconds (10–60,000, default 100). |
-| `on_event(type, handle, value)` | On a sensor notification, GPIO edge, timer, UART or MQTT input, config change or broker connection change. |
+| `on_event(type, handle, value)` | On a local reading, sensor notification, GPIO edge, timer, UART or MQTT input, config change or broker connection change. |
 
 Callbacks run one at a time. Use a timer for periodic work and `fc_close` to stop it. An event-only app sleeps between events. Callback [limits](#size-and-limits) also apply to module initialization, including C++ constructors.
 
@@ -94,7 +95,7 @@ For a firmware-defined name, `"pin": -1` (or omitted bus pins) keeps its origina
 
 ## What an app may use
 
-Set `FC_ALLOW` to space-separated hardware names and any `mqtt` or `metrics` grants. With no grants, the app can still use state, logging, info, clocks, config, storage and chip sensors.
+Set `FC_ALLOW` to space-separated hardware names and the grants an app needs (`mqtt`, `metrics`, `local.to:<receiver>`, `local.from:<sender>`). With no grants, the app can still use state, logging, info, clocks, config, storage and chip sensors.
 
 Multiple apps can read the same sensor. Each needs its own grant for that name. Only one app can hold an open peripheral at a time. A second opener receives `FC_EBUSY`. An I²C grant covers the whole bus. SPI grants cover individual devices and the bus serializes their transfers. Holding chip select holds the bus until the callback returns.
 
@@ -194,6 +195,17 @@ The head survives an app restart, firmware reboot and upgrade under the same app
 
 The [sampler example](../wasm-apps/sampler/sampler.c) reads `die_temp` at startup and every 60 seconds by default. Its startup settings are `sensor` and `sample_ms` (minimum 1,000). With the `mqtt` grant and a configured broker, it publishes the head on its relative `sample` topic at connection, on each sample timer and after an acknowledgement. The payload is an unsigned 32-bit ID followed by signed millidegrees Celsius, both little-endian. After storing a sample, the consumer publishes its four ID bytes on the same app's relative `ack` topic, with retain off. It should acknowledge duplicates too. A transport-level MQTT PUBACK leaves the head intact.
 
+### Pass readings between local apps
+
+`fc_local_send(peer, len, value)` queues one signed 32-bit reading on the other app's device-local event queue. Use the peer name from the fleet spec (1–47 bytes, with no spaces or NUL). In the [local alarm example](../wasm-apps/localalarm/localalarm.c), the receiver handles `on_event(FC_EV_LOCAL, -1, value)` and compares the reading with `threshold_c` (default 45 °C). The receiver needs an `on_event` export. Both apps must run together. Install firmware supporting the new imports before deploying the modules.
+
+| App name in the spec | `FC_ALLOW` for local temperature readings |
+|---|---|
+| `sampler` | `local.to:localalarm` |
+| `localalarm` | `local.from:sampler` |
+
+These grants work with MQTT disabled. Add the sensor grant on the sender if sampling a named probe. A missing grant at either end gives `FC_EPERM`. An absent peer gives `FC_ENOENT`. A stopped peer or full queue gives `FC_EAGAIN`. Local sends keep FIFO order and reject the incoming reading when all 16 event slots are occupied. Other event types retain the runtime's usual overflow behavior and can evict an older event. Stopping the receiver discards pending events. A successful send confirms enqueueing. The receiver's callback runs asynchronously.
+
 ## Where the data goes
 
 - Use `fc_set_state` for occasional changes such as `calibrating` or `alarm`. Flight Control displays the text under `customInfo["app.<name>"]` and records changes as events.
@@ -267,7 +279,7 @@ On Zephyr, the fleet can alias a hardware node in the board map. Grant the alias
 | Open handles per app (GPIOs, LEDs, timers...) | 12 |
 | Timers per app | 4 |
 | Storage per app | 4 KB |
-| Queued events | 16 per app; past that the oldest go, and the app hears how many with `FC_EV_OVERFLOW` |
+| Queued events | 16 per app. A full queue rejects a local send with `FC_EAGAIN`. Other incoming events can evict the oldest and report the count through `FC_EV_OVERFLOW`. |
 | One call of `init`, `tick` or `on_event` | 5 million instructions, and 1 s in the device's functions (waits, and the C library) |
 | The export in `FC_ENTRY`, or `_start` | no limit, stopped when the app is removed or updated |
 | One wait (`fc_sleep_ms`, `fc_uart_read`), one I2C transfer, one UART write, or waiting for another app's SPI device | 100 ms |
@@ -310,7 +322,7 @@ The SDK also maps common math operations such as `sqrtf` and `fabsf` directly to
 |---|---|
 | [alarm](../wasm-apps/alarm/alarm.c) | Set `sensor` (default `die_temp`), `threshold_c`, `hysteresis_c` and `sample_ms` in `/etc/fc-app/alarm.json`. Grant `led0` for a blue warning 2 °C below the threshold and a blinking alarm. |
 | [battery](../wasm-apps/battery/battery.c) | Polls named battery channels and publishes voltage, low-battery, relative charge and charging gauges. [Configuration](#battery-channels) |
-| [sampler](../wasm-apps/sampler/sampler.c) | Queues temperature readings for acknowledged MQTT delivery. [Persistent sample queues](#persistent-sample-queues) |
+| [sampler](../wasm-apps/sampler/sampler.c) and [localalarm](../wasm-apps/localalarm/localalarm.c) | Queue temperature for acknowledged MQTT delivery and pass live readings to an alarm on the same device. [Local grants](#pass-readings-between-local-apps) |
 | [trend](../wasm-apps/trend/trend.c) | Reports temperature and rate of change. Grant `metrics` to export both. Like `alarm`, it stays idle on chips without a temperature sensor. |
 | [libccheck](../wasm-apps/libccheck/libccheck.c) | Exercises libc. A passing run reports `bad=0`. |
 | [hwcheck](../wasm-apps/hwcheck/hwcheck.c) | Grant `i2c0 spi0 uart0 adc0 pwm0` to inspect bus responses, UART loopback, ADC voltage and PWM output. |

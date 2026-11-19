@@ -1328,6 +1328,7 @@ static const NativeSymbol s_natives[] = {
     {"kv_set", (void *)fc_kv_set, "(*~*~)i", NULL},
     {"led_open", (void *)fc_led_open, "(*~)i", NULL},
     {"led_rgb", (void *)fc_led_rgb, "(iiii)i", NULL},
+    {"local_send", (void *)fc_apps_local_send, "(*~i)i", NULL},
     {"log", (void *)fc_log, "(i*~)", NULL},
     {"metric", (void *)fc_metric, "(*~iF)i", NULL},
     {"mqtt_publish", (void *)app_mqtt_publish, "(*~*~ii)i", NULL},

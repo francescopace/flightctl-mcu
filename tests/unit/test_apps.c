@@ -132,7 +132,7 @@ int fc_oci_fetch_layer(const char *image, const char *arch, const char *layer_ty
         {"reg/t_startloop", s_startloop, sizeof(s_startloop)},
         {"reg/growing", s_growing, sizeof(s_growing)},
 #define V(n) {"reg/" #n, w_##n, sizeof(w_##n)}
-        V(t_queue), V(app_sampler), V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
+        V(t_queue), V(app_sampler), V(app_localalarm), V(t_imports), V(t_timer), V(t_config), V(t_kv), V(t_gpio), V(t_perm), V(t_sleep), V(t_oob),
         V(t_badsig), V(t_unknown), V(t_mixed), V(t_events), V(t_sensor), V(t_neglen), V(t_info), V(app_alarm_v1), V(app_alarm_v2), V(app_battery), V(app_trend), V(app_hwcheck), V(app_mqttdemo), V(app_tinyml), V(app_tinymlp), V(t_env),
         V(t_entry), V(t_start), V(t_tail), V(t_envtype), V(t_envother), V(t_bus), V(t_serial),
         V(t_libc), V(t_libcoob_1), V(t_libcoob_2), V(t_libcoob_3), V(t_libcoob_4), V(t_libcoob_5), V(t_libcloop), V(t_libcmix), V(t_libcmath), V(t_malloc), V(t_ctorloop), V(t_ctorfc), V(t_mqtt),
@@ -1011,6 +1011,38 @@ static void test_fc_config(void)
     remove_all();
 }
 
+/* Keep the recipient stationary to exercise the exact queue boundary. */
+static void local_backpressure(wasm_exec_env_t env, app_t *sender)
+{
+    int slot = free_slot(0);
+    CHECK(slot >= 0);
+    if (slot < 0) return;
+    app_io_t io = {0};
+    app_t target = {.slot = slot, .name = "sink", .allow = "local.from:kv-test", .io = &io, .sync = &s_sync[slot]};
+    pthread_mutex_lock(&s_lock);
+    s_apps[slot] = &target;
+    pthread_mutex_unlock(&s_lock);
+    strcpy(sender->allow, "local.to:sink");
+    CHECK_INT(fc_apps_local_send(env, "sink", 4, 0), FC_HW_EAGAIN);
+    target.accepting = true;
+    for (int i = 0; i < APP_EVENTS; i++) {
+        CHECK_INT(fc_apps_local_send(env, "sink", 4, i), 0);
+    }
+    CHECK_INT(fc_apps_local_send(env, "sink", 4, -1), FC_HW_EAGAIN);
+    CHECK_INT(target.ev_count, APP_EVENTS);
+    CHECK_INT(target.ev_lost, 0);
+    for (int i = 0; i < APP_EVENTS; i++) {
+        app_event_t e;
+        CHECK(next_event(&target, &e));
+        CHECK_INT(e.type, EV_LOCAL);
+        CHECK_INT(e.value, i);
+    }
+    pthread_mutex_lock(&s_lock);
+    s_apps[slot] = NULL;
+    pthread_mutex_unlock(&s_lock);
+    CHECK_INT(fc_apps_local_send(env, "sink", 4, 0), FC_HW_ENOENT);
+}
+
 /* Call the registered KV imports on an isolated instance so each storage
  * failure can be injected between two calls, independently of app startup. */
 static void kv_storage_errors(app_t *app)
@@ -1049,6 +1081,7 @@ static void kv_storage_errors(app_t *app)
     }
     app_t owner = {.name = "kv-test"};
     wasm_runtime_set_user_data(env, &owner);
+    local_backpressure(env, &owner);
 
     CHECK_INT(set(env, "x", 1, "a", 1), 0);
     stub_kv_set_fails = 1;
@@ -1126,6 +1159,33 @@ static void test_queue_recovery(void)
     CHECK_INT(stub_app_bytes - bytes, 680 * 18 + 6 * 679 * 680 / 2 + 24);
     remove_all();
     CHECK(stub_kv("akv:spool") == NULL);
+}
+
+static void test_local_readings(void)
+{
+    char err[160];
+    const char *pair[] = {"localalarm", "reg/app_localalarm", "{\"FC_ALLOW\":\"local.from:sampler\"}",
+                          "sampler", "reg/app_sampler", "{\"FC_ALLOW\":\"local.to:localalarm\"}", NULL};
+    CHECK_INT(apply_one(pair[0], pair[1], pair[2], err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("localalarm", "Running waiting for sample", 3000), "Running waiting for sample");
+    __atomic_store_n(&f_temp, 45123, __ATOMIC_RELEASE);
+    CHECK_INT(apply_apps(pair, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("sampler", "Running queued and sent locally", 3000), "Running queued and sent locally");
+    CHECK_STR(wait_state_of("localalarm", "Running alarm", 3000), "Running alarm");
+    /* Drive the app's timer explicitly, with the broker still disabled. */
+    __atomic_store_n(&f_temp, -1200, __ATOMIC_RELEASE);
+    fc_apps_post(find("sampler"), EV_TIMER, 0, 0);
+    CHECK_STR(wait_state_of("localalarm", "Running ok", 3000), "Running ok");
+    pair[5] = "{\"FC_ALLOW\":\"local.to:localalarm2\"}";
+    CHECK_INT(apply_apps(pair, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("sampler", "Running queued", 3000), "Running queued");
+    pair[2] = NULL;
+    pair[5] = "{\"FC_ALLOW\":\"local.to:localalarm\"}";
+    CHECK_INT(apply_apps(pair, err, sizeof(err)), 0);
+    CHECK_STR(wait_state_of("sampler", "Running queued", 3000), "Running queued");
+    CHECK_STR(state_of("localalarm"), "Running waiting for sample");
+    remove_all();
+    __atomic_store_n(&f_temp, 41000, __ATOMIC_RELEASE);
 }
 
 static void test_fc_gpio(void)
@@ -3092,6 +3152,7 @@ int main(void)
     RUN(test_fc_config);
     RUN(test_fc_kv);
     RUN(test_queue_recovery);
+    RUN(test_local_readings);
     RUN(test_fc_gpio);
     RUN(test_fc_metric);
     RUN(test_fc_bus);

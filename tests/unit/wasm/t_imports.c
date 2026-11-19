@@ -29,6 +29,7 @@ void tick(void)
     fc_queue_push(b, 1, b, 8);
     fc_queue_peek(b, 1, b, 8, &id);
     fc_queue_ack(b, 1, id);
+    fc_local_send(b, 1, 0);
     fc_close(0);
     fc_gpio_open(b, 1, 0);
     fc_gpio_read(0);

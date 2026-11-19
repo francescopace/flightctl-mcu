@@ -41,8 +41,8 @@
  *   functions (fc_sleep_ms..., the C library), which the budget does not
  *   count; past either, the app is stopped as if it had trapped. Events wait in a queue of FC_EVENT_QUEUE
  *   entries. GPIO edges and sensor notifications coalesce by handle. When
- *   the queue is full, the oldest event is dropped and the next
- *   event is FC_EV_OVERFLOW with the number lost.
+ *   the queue is full, a local send returns FC_EAGAIN. Other incoming events
+ *   can displace the oldest and report the number lost through FC_EV_OVERFLOW.
  *
  * ---- Hardware: names, not pin numbers --------------------------------------
  *
@@ -54,7 +54,8 @@
  * names it uses.
  *
  * An app reaches only what its fleet grants it, in envVars.FC_ALLOW: names from
- * the board map, plus "mqtt" and "metrics", separated by spaces. Several apps
+ * the board map, "mqtt", "metrics", "local.to:<peer>" and "local.from:<peer>",
+ * separated by spaces. Several apps
  * may read a granted sensor concurrently. Only one app can hold an open
  * peripheral at a time: an app that opens a
  * name held by another gets FC_EBUSY. Without FC_ALLOW an app has log, state,
@@ -125,6 +126,7 @@ FC_EXPORT("on_event") void on_event(int32_t type, int32_t handle, int32_t value)
 #define FC_EV_NET      6 /* -1                1 connected to the broker, 0 lost */
 #define FC_EV_OVERFLOW 7 /* -1                events dropped */
 #define FC_EV_SENSOR   8 /* subscription      FC_SENSOR_READY or FC_SENSOR_THRESHOLD */
+#define FC_EV_LOCAL    9 /* -1                signed reading from the other app */
 
 #define FC_EVENT_QUEUE 16
 
@@ -196,6 +198,11 @@ FC_IMPORT("kv_del") int32_t fc_kv_del(const char *key, int32_t klen);
 FC_IMPORT("queue_push") int32_t fc_queue_push(const char *key, int32_t klen, const void *data, int32_t len);
 FC_IMPORT("queue_peek") int32_t fc_queue_peek(const char *key, int32_t klen, void *buf, int32_t cap, uint32_t *id);
 FC_IMPORT("queue_ack") int32_t fc_queue_ack(const char *key, int32_t klen, uint32_t id);
+
+/* Send a signed reading to the other app on this device. Configure the sender
+ * with local.to:<peer> and the receiver with local.from:<sender>. Returns 0
+ * when queued, FC_EAGAIN if the recipient is stopped or its queue is full. */
+FC_IMPORT("local_send") int32_t fc_local_send(const char *peer, int32_t len, int32_t value);
 
 /* ---- Handles -------------------------------------------------------------------- */
 

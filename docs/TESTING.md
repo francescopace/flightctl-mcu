@@ -6,7 +6,7 @@ The [end-to-end workflow](../.github/workflows/e2e.yml) uses those artifacts and
 
 ## Unit tests and fuzzing
 
-- [Unit tests](../tests/unit.sh) run the C core with ASan and UBSan against an in-memory port. They cover management, OCI, deltas, apps, hardware, console, MQTT, metrics and recovery. The WASM suite also fills and restores the sample FIFO, counts record writes and withholds MQTT receipts. Python tests cover publishing and provisioning tools.
+- [Unit tests](../tests/unit.sh) run the C core with ASan and UBSan against an in-memory port. They cover management, OCI, deltas, apps, hardware, console, MQTT, metrics and recovery. The WASM suite also fills and restores the sample FIFO, counts record writes, withholds MQTT receipts and exercises two local apps with the broker offline. Python tests cover publishing and provisioning tools.
 - [Fuzz targets](../tests/fuzz.sh) exercise HTTP responses, OCI manifests and signatures, rendered specs, certificates, deltas and console input. CI gives each target 30 s on code pushes. The [nightly workflow](../.github/workflows/fuzz-nightly.yml) defaults to 20 min per target and retains its corpus. Regression inputs live in `tests/fuzz/corpus`.
 
 ## End-to-end tests

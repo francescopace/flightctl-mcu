@@ -26,7 +26,7 @@ A WAMR app using the in-memory test port filled a queue named `samples` with 680
 | Peek and acknowledge every head | 680 | 1,397,400 |
 | Peek, reject a stale ID or reject a full queue | 0 | 0 |
 
-On all six physical boards, a signed test module stored three known samples on the candidate firmware. After a device reboot it recovered and acknowledged all three in order.
+On all six physical boards, a signed test module stored three known samples on the candidate firmware. After a device reboot it recovered and acknowledged all three in order, forwarded the last value to a second app and triggered its alarm with MQTT disabled. This also exercised local delivery on the classic ESP32, which lacks a die temperature probe. [Local app memory measurements](#two-apps-exchanging-local-readings)
 
 The complete record ranged from 18 B when empty to 4,098 B when full, including the three-byte KV entry header outside the quota. Filesystem metadata, wear leveling and flash erase cycles depend on the port. [Queue API and delivery protocol](APPS.md#persistent-sample-queues)
 
@@ -117,6 +117,21 @@ On Zephyr N8R8 with PSRAM and metrics off, one fixed-size app left 67,932 B of C
 | Zephyr S3 N8R8, C heap | 97,176 | 31,064 | 75,748 |
 
 With PSRAM disabled, a Zephyr S3 N8R8 running one app had only **368 B** of free C heap during a failed firmware update. In a separate run with MQTT connected, it had 32,012 B free and skipped telemetry because the export requires 61,440 B. [Zephyr board configuration](ZEPHYR.md#on-an-esp32-s3)
+
+### Two apps exchanging local readings
+
+All six boards ran the same signed `sampler` (1,581 B) and `localalarm` (1,049 B) on `v0.9.1-rc.samples1`, with zero reported app restarts and no MQTT grant. Five read the physical die probe and entered alarm at a 5 °C threshold. The classic ESP32 reported `sensor unavailable` and its receiver waited for input. [Peer grants and overflow](APPS.md#pass-readings-between-local-apps)
+
+| Physical board | Free with zero apps (B) | Free with both apps (B) | Decrease (B) |
+|---|---:|---:|---:|
+| ESP32, ESP-IDF | 119,132 | 81,672 | 37,460 |
+| ESP32-C3, ESP-IDF | 138,320 | 101,376 | 36,944 |
+| ESP32-C5, ESP-IDF | 118,016 | 77,592 | 40,424 |
+| ESP32-C6, ESP-IDF | 213,824 | 173,108 | 40,716 |
+| ESP32-S3 N4R2, ESP-IDF | 2,255,000 | 2,216,104 | 38,896 |
+| ESP32-S3 N8R8, Zephyr | 91,860 | 71,440 | 20,420 |
+
+Values are live console `status` readings on the same firmware before and after the pair started. They include the running agent and console. ESP-IDF totals include available PSRAM, and Zephyr reports its C heap. Local readings share the receiver's existing 16 event slots. The Zephyr S3 link used 377,008 of 380,672 B internal DRAM.
 
 ## Apps on the boards
 

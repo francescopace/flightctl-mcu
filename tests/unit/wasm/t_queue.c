@@ -6,6 +6,11 @@ FC_APP_ABI()
 #define Q FC_STR("samples")
 #define COUNT 680
 
+/* A shorter run for physical flash. On the next boot, replay the samples
+ * automatically and forward the last confirmed test reading to the peer. */
+static int relay;
+static int32_t last;
+
 int32_t init(void)
 {
     uint32_t id = 0;
@@ -32,6 +37,8 @@ int32_t init(void)
     }
     if (fc_queue_peek(Q, &value, 4, &id) != FC_ENOENT) return 7;
     if (count < COUNT) {
+        relay = 1;
+        last = value;
         FC_STATE("replayed");
         return 0;
     }
@@ -41,4 +48,10 @@ int32_t init(void)
     return 0;
 }
 
-void tick(void) {}
+void tick(void)
+{
+    if (relay && fc_local_send(FC_STR("localalarm"), last) == 0) {
+        relay = 0;
+        FC_STATE("replayed and sent");
+    }
+}
