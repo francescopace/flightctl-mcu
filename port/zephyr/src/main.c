@@ -199,7 +199,7 @@ int main(void)
         .enrollment_key_pem = str(creds, "enroll_key"),
         .signing_pub_pem = str(creds, "signing_pub"),
         .labels = labels,
-        .agent_version = "flightctl-mcu/0.1.0",
+        .agent_version = FC_AGENT_VERSION,
         .status_interval_s = 60,
         .metrics_interval_s = CONFIG_FC_METRICS_INTERVAL,
         .ota_verify_timeout_s = CONFIG_FC_OTA_VERIFY_TIMEOUT,

@@ -138,7 +138,8 @@ third_party/fetch-zephyr-sdk.sh
 ```
 
 ```bash
-BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 port/zephyr/build.sh
+BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 port/zephyr/build.sh -- '-Dzephyr_CONFIG_FC_FW_VERSION="v0.9.0"' \
+  '-Dzephyr_CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="0.9.0"'
 ```
 
 ```bash
@@ -158,7 +159,7 @@ What it took, beyond the board's two files in `port/zephyr/boards/`:
 - **The WiFi driver joins after the request returns**, and chooses the access point itself (`CONFIG_ESP32_WIFI_STA_SCAN_ALL`: the strongest).
 - **A kept connection the server closed** is `ENOTCONN` to Zephyr's TCP, not a reset: the port took it for an error and warned at every request, before the core opened another connection as it should.
 
-Zephyr boards go in a fleet of their own (the example is `tools/fleet/zephyr-lab.yaml`). A release is one OCI index with an image for each Zephyr board, named by the board's `CONFIG_FC_FW_PLATFORM`:
+Zephyr boards go in a fleet of their own (the example is `tools/fleet/zephyr-lab.yaml`). Firmware v0.9.0 uses one OCI index for both ports. Each Zephyr image is identified by the board’s `CONFIG_FC_FW_PLATFORM`. To publish a Zephyr-only index under a new tag:
 
 ```bash
 tools/fw-push.py --delta-from <running tag> <registry>/flightctl-mcu/fw:<new tag> esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin

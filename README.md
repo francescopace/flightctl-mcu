@@ -119,6 +119,8 @@ On ESP-IDF 6.1 (the ESP32, S3, C3, C5 and C6, with Secure Boot, flash encryption
 
 The support levels, the boards tried and how to add a chip, a board or an RTOS are in [docs/DEVICES.md](docs/DEVICES.md).
 
+Release `v0.9.0` uses the same version for both firmware ports and all nine catalog apps. Arduino builds and the two CoreMark memory sizes have variant-specific tags. The WASM app ABI is version 1. [Release catalog](tools/kind/mcu-lab.yaml)
+
 ## Try it
 
 [docs/QUICKSTART.md](docs/QUICKSTART.md) sets up Flight Control on [kind](https://kind.sigs.k8s.io/) and a local registry, then enrolls a device: an Espressif board, or a simulated one on your machine if you have no board. kind is only the quickest way to try it: Flight Control also installs on Kubernetes or OpenShift, or on a Fedora or RHEL host as Podman quadlets, and the device works with any of them. For a Zephyr board, the build and flash steps are in [docs/ZEPHYR.md](docs/ZEPHYR.md).

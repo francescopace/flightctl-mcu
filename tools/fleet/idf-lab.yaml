@@ -3,7 +3,7 @@
 #   REGISTRY=$(cat .secrets/registry/host) tools/fleet/apply.sh tools/fleet/idf-lab.yaml
 # Example fleet: the boards with the ESP-IDF firmware, running the "line
 # temperature alarm" app. (The ones with the Zephyr build are in
-# zephyr-lab.yaml: the two are released apart for now.)
+# zephyr-lab.yaml: both fleets select their platform from the same firmware index.)
 # Change threshold_c and re-apply: devices pick it up on the next long-poll,
 # without reboot. The app's fields: threshold_c, hysteresis_c, sample_ms.
 # Per-device LED, led0 in /etc/fc/board.json: label the device led-gpio=<n>
@@ -38,12 +38,12 @@ spec:
     spec:
       # Multi-chip OCI index (tools/fw-push.py): each device picks its chip.
       os:
-        image: ${REGISTRY}/flightctl-mcu/fw:v3.15.0
+        image: ${REGISTRY}/flightctl-mcu/fw:v0.9.0
       # The alarm as a WASM app (wasm-apps/alarm): replaced without reboot.
       applications:
         - name: alarm
           appType: container
-          image: ${REGISTRY}/flightctl-mcu/alarm:v2.4.0
+          image: ${REGISTRY}/flightctl-mcu/alarm:v0.9.0
           envVars:
             FC_ALLOW: "led0"
       config:

@@ -14,13 +14,14 @@ mkdir -p "$OUT"
 # (sdk/libc: libc.syms lets wasm-ld import just those functions), and __data_end +
 # __heap_base exported so WAMR shrinks the 64 KB linear memory page to what
 # the module really uses (a few KB), which the C3/C5 heap can satisfy.
-# APP_VERSION is the major version from the tag (v2.1 -> 2), for apps that
-# build several behaviours from one source (alarm).
+# APP_VERSION exposes the numeric major version to apps. Only ALARM_SOLID_DEMO=1
+# selects the solid LED fixture for the app-update test.
 # -I"$DIR/$APP": headers the app brings with it, as tinymlp's from emlearn.
 # -mcpu=mvp: the device's WAMR has no reference types, and clang 20 and later
 # otherwise encode call_indirect in a way it refuses ("zero byte expected"),
 # so any app with a function pointer would not load.
 clang --target=wasm32 -mcpu=mvp -O2 -nostdlib -I"$DIR/sdk" -I"$DIR/sdk/libc" -I"$DIR/$APP" -Wl,--allow-undefined-file="$DIR/sdk/libc/libc.syms" -DAPP_VERSION="$(echo "${VER#v}" | cut -d. -f1 | tr -cd '0-9')" \
+  -DFC_ALARM_SOLID_DEMO="${ALARM_SOLID_DEMO:-0}" \
   -Wl,--no-entry -Wl,--export=__heap_base -Wl,--export=__data_end -Wl,--stack-first -Wl,-z,stack-size=1024 \
   -Wl,--initial-memory=65536 -Wl,--max-memory=65536 -Wl,--strip-all \
   -o "$OUT/$APP.wasm" "$DIR/$APP/$APP.c"

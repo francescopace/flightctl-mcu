@@ -53,12 +53,12 @@ A module built for no device in particular, such as a benchmark, runs as it was 
 
 Such a module may import `env.clock_ms`, as CoreMark does: the milliseconds since the app started, as an i32 or an i64. `env` is the module that clang's `wasm-ld --allow-undefined` and Emscripten import from by default; there the device has `clock_ms` and the functions of its [C library](#the-c-library), and refuses any other when the module is downloaded. It may also use tail calls (`return_call`). It may not yet import from `fc`: its call has none of an app's events or limits on waits around it. It may import from `arduino`, as [wasm3-arduino's blink](#the-blink-of-wasm3-arduino) does.
 
-The MCU lab catalog provides two unmodified CoreMark builds. The wasm3 module needs a contiguous 64 KiB block of linear memory. The wasm-coremark module (`v1.1.0-wasm-coremark`) needs 128 KiB. The app thread and agent need additional free RAM. Both modules export `run()`, which returns iterations per second after at least 10 s of timed work, or zero for an invalid run. [Scores by board](RESULTS.md#coremark)
+The MCU lab catalog provides two unmodified CoreMark builds. The wasm3 module needs a contiguous 64 KiB block of linear memory. The wasm-coremark module (`v0.9.0-wasm-coremark`) needs 128 KiB. The app thread and agent need additional free RAM. Both modules export `run()`, which returns iterations per second after at least 10 s of timed work, or zero for an invalid run. [Scores by board](RESULTS.md#coremark)
 
 ```yaml
         - name: coremark
           appType: container
-          image: <registry>/flightctl-mcu/coremark:v1.1.0-wasm3
+          image: <registry>/flightctl-mcu/coremark:v0.9.0-wasm3
           envVars:
             FC_ENTRY: run
 ```
@@ -255,14 +255,14 @@ There is no `vsnprintf`, no other math function and no files. `build.sh` passes 
 
 `alarm` and `trend` have no `tick`: timers wake them, and they sleep in between. On a chip without a temperature sensor both set their state to say so and stay idle, with no timer running. What the examples did on the boards is in [RESULTS.md](RESULTS.md#apps-on-the-boards).
 
-- [alarm](../wasm-apps/alarm/alarm.c): the line temperature alarm. It reads `die_temp`, takes `threshold_c`, `hysteresis_c` and `sample_ms` from `/etc/fc-app/alarm.json`, and applies a new file without restarting. It drives `led0` when the fleet grants it (`FC_ALLOW: "led0"`); without the grant it reports only its state. The same source builds two images, to show an app updated without a reboot: `alarm:v1` lights the LED solid blue above the threshold, and `alarm:v2` adds a pre-alarm (dim blue, 2 °C below) and blinks with a second timer. Blue only, so boards with a single-colour LED look the same as RGB ones. About 2 KB of `.wasm`.
+- [alarm](../wasm-apps/alarm/alarm.c): the line temperature alarm. It reads `die_temp`, takes `threshold_c`, `hysteresis_c` and `sample_ms` from `/etc/fc-app/alarm.json`, and applies a new file without restarting. It drives `led0` when the fleet grants it (`FC_ALLOW: "led0"`); without the grant it reports only its state. The release shows a dim blue pre-alarm 2 °C below the threshold and blinks in alarm. The app-update test enables `ALARM_SOLID_DEMO=1` to build a solid LED variant. Blue only, so boards with a single-colour LED look the same as RGB ones. About 2 KB of `.wasm`.
 - [trend](../wasm-apps/trend/trend.c): no grants needed. It reports whether the temperature is rising or falling, and how fast. With `metrics` granted it also sends the temperature and the rate as metrics (`app_<name>_temp_c`, `app_<name>_rate_c_per_min`). It formats its state with `snprintf` and logs with `printf` ([the C library](#the-c-library)). About 1.6 KB.
 - [libccheck](../wasm-apps/libccheck/libccheck.c): no grants needed. It runs the [C library](#the-c-library)'s functions and gives what they returned as its state, with `bad=0` when each gave what C says. About 2 KB.
 - [hwcheck](../wasm-apps/hwcheck/hwcheck.c): a board's buses and channels, checked. Granted `i2c0 spi0 uart0 adc0 pwm0` (names the fleet's `board.json` gives), it says every 2 s what each answers: the I2C devices that acknowledge, an SPI transfer, the UART's bytes written and read back, the ADC's millivolts, the PWM set to half. About 1.3 KB.
 - [mqttdemo](../wasm-apps/mqttdemo/mqttdemo.c): MQTT both ways ([MQTT](#mqtt)). Granted `mqtt` (and `led0`), it publishes the temperature on `temp` every `period_ms`, takes commands on `cmd/#` and on the fleet's `cmd`, answers each on `ack`, and turns `led0` on and off for `led on` and `led off`. On a firmware without MQTT its state says so and it stays idle. About 1.9 KB.
 - [tinyml](../wasm-apps/tinyml/tinyml.c): a TinyML model from emlearn ([below](#tinyml-with-emlearn)). No grants needed. About 4.1 KB.
 - [tinymlp](../wasm-apps/tinymlp/tinymlp.c): the same with a small neural network ([below](#tinyml-with-emlearn)). No grants needed. It imports `expf`, `logf` and `tanhf`. About 6.8 KB.
-- The [CoreMark fetch script](../wasm-apps/coremark/fetch.sh) downloads both published modules and verifies their SHA-256 hashes. To publish the 64 KiB variant with the catalog tag, run `wasm-apps/push.sh coremark wasm3 v1.1.0-wasm3`. [Deployment example](#modules-built-for-no-device)
+- The [CoreMark fetch script](../wasm-apps/coremark/fetch.sh) downloads both published modules and verifies their SHA-256 hashes. To publish the 64 KiB variant with the catalog tag, run `wasm-apps/push.sh coremark wasm3 v0.9.0-wasm3`. [Deployment example](#modules-built-for-no-device)
 - [The blink of wasm3-arduino](../wasm-apps/arduino/fetch.sh), as published, not rebuilt ([below](#the-blink-of-wasm3-arduino)).
 
 ### TinyML with emlearn
@@ -281,7 +281,7 @@ The model is the C that emlearn writes ([model.h](../wasm-apps/tinyml/model.h)),
 
 ### The blink of wasm3-arduino
 
-[wasm3-arduino](https://github.com/wasm3/wasm3-arduino) publishes its blink built four ways, each importing only from a module `arduino`: Rust (283 B), C++ (369 B), AssemblyScript (2.2 KB) and TinyGo (5.2 KB). The device has that module, so they run as published: `wasm-apps/arduino/fetch.sh` downloads them and checks their SHA-256, then `wasm-apps/push.sh arduino rust v1.1.0-rust` publishes the Rust build with its catalog tag. Give the app `FC_ALLOW: "led0"`.
+[wasm3-arduino](https://github.com/wasm3/wasm3-arduino) publishes its blink built four ways, each importing only from a module `arduino`: Rust (283 B), C++ (369 B), AssemblyScript (2.2 KB) and TinyGo (5.2 KB). The device has that module, so they run as published: `wasm-apps/arduino/fetch.sh` downloads them and checks their SHA-256, then `wasm-apps/push.sh arduino rust v0.9.0-rust` publishes the Rust build with its catalog tag. Give the app `FC_ALLOW: "led0"`.
 
 | Function | On the device |
 |---|---|

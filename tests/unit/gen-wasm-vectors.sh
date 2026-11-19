@@ -37,8 +37,8 @@ for src in "$ROOT"/tests/unit/wasm/*.c; do
 done
 # The example apps with the C library, as wasm-apps/build.sh builds them.
 LIBC=(-I"$SDK/libc" -Wl,--allow-undefined-file="$SDK/libc/libc.syms")
-build app_alarm_v1 "$ROOT/wasm-apps/alarm/alarm.c" "$SDK" "${LIBC[@]}" -DAPP_VERSION=1
-build app_alarm_v2 "$ROOT/wasm-apps/alarm/alarm.c" "$SDK" "${LIBC[@]}" -DAPP_VERSION=2
+build app_alarm_v1 "$ROOT/wasm-apps/alarm/alarm.c" "$SDK" "${LIBC[@]}" -DFC_ALARM_SOLID_DEMO=1
+build app_alarm_v2 "$ROOT/wasm-apps/alarm/alarm.c" "$SDK" "${LIBC[@]}"
 build app_trend "$ROOT/wasm-apps/trend/trend.c" "$SDK" "${LIBC[@]}"
 build app_hwcheck "$ROOT/wasm-apps/hwcheck/hwcheck.c" "$SDK" "${LIBC[@]}"
 build app_mqttdemo "$ROOT/wasm-apps/mqttdemo/mqttdemo.c" "$SDK" "${LIBC[@]}"

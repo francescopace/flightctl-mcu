@@ -6,12 +6,8 @@
  *
  *   {"threshold_c": 40.5, "hysteresis_c": 1, "sample_ms": 2000}
  *
- * One source, two behaviours, chosen by the image's tag: wasm-apps/build.sh
- * passes its major version as APP_VERSION. They show an app being updated
- * without a reboot; they are not versions of the interface, which is
- * FC_APP_ABI_VERSION.
- *   alarm:v1  LED solid blue at or above the threshold.
- *   alarm:v2  hysteresis, dim solid blue pre-alarm 2 C below, blinking blue alarm.
+ * The release uses hysteresis, a dim pre-alarm 2 C below the threshold and a
+ * blinking alarm. The OTA app-update demo also builds a solid LED variant.
  *
  * Grants: "led0" in FC_ALLOW. Without it the alarm still runs and reports its
  * state, with no LED. It has no tick(): a timer samples, another blinks, and
@@ -23,8 +19,8 @@
 
 FC_APP_ABI()
 
-#ifndef APP_VERSION
-#define APP_VERSION 1
+#ifndef FC_ALARM_SOLID_DEMO
+#define FC_ALARM_SOLID_DEMO 0
 #endif
 
 #define BLINK_MS   250 /* 2 Hz */
@@ -69,25 +65,25 @@ static void show(int32_t next)
         fc_close(blinker);
         blinker = -1;
     }
-#if APP_VERSION == 1
+#if FC_ALARM_SOLID_DEMO
     set_led(next == ALARM ? 40 : 0);
     if (next == ALARM) {
-        FC_STATE("v1 alarm (solid blue)");
+        FC_STATE("demo alarm (solid blue)");
     } else {
-        FC_STATE("v1 ok");
+        FC_STATE("demo ok");
     }
 #else
     if (next == ALARM) {
         blink_on = 1;
         set_led(40);
         blinker = fc_timer_start(BLINK_MS, 1);
-        FC_STATE("v2 alarm (blinking blue)");
+        FC_STATE("alarm (blinking blue)");
     } else if (next == PREALARM) {
         set_led(8);
-        FC_STATE("v2 pre-alarm (dim blue)");
+        FC_STATE("pre-alarm (dim blue)");
     } else {
         set_led(0);
-        FC_STATE("v2 ok");
+        FC_STATE("ok");
     }
 #endif
 }
@@ -99,7 +95,7 @@ static void sample(void)
         FC_LOG(FC_LOG_WARN, "cannot read die_temp");
         return;
     }
-#if APP_VERSION == 1
+#if FC_ALARM_SOLID_DEMO
     show(t >= threshold_mc ? ALARM : OK);
 #else
     int32_t on = level == ALARM ? t >= threshold_mc - hysteresis_mc : t >= threshold_mc;

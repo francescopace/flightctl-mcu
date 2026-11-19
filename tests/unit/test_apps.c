@@ -1652,16 +1652,16 @@ static void test_example_apps(void)
     const char *apps[] = {"alarm", "reg/app_alarm_v2", "{\"FC_ALLOW\": \"led0\"}", "trend", "reg/app_trend", NULL,
                           NULL};
     CHECK_INT(apply_apps(apps, err, sizeof(err)), 0);
-    CHECK_STR(wait_state_of("alarm", "Running v2 alarm (blinking blue)", 3000), "Running v2 alarm (blinking blue)");
+    CHECK_STR(wait_state_of("alarm", "Running alarm (blinking blue)", 3000), "Running alarm (blinking blue)");
     CHECK_STR(wait_state_of("trend", "Running steady (41.0 C)", 3000), "Running steady (41.0 C)");
     int before = f_led_writes;
     usleep(600 * 1000);
     CHECK(f_led_writes - before >= 2); /* blinking */
     __atomic_store_n(&f_temp, 39000, __ATOMIC_RELEASE); /* within 2 C of the threshold */
-    CHECK_STR(wait_state_of("alarm", "Running v2 pre-alarm (dim blue)", 3000), "Running v2 pre-alarm (dim blue)");
+    CHECK_STR(wait_state_of("alarm", "Running pre-alarm (dim blue)", 3000), "Running pre-alarm (dim blue)");
     CHECK(f_led[2] == 8);
     __atomic_store_n(&f_temp, 30000, __ATOMIC_RELEASE);
-    CHECK_STR(wait_state_of("alarm", "Running v2 ok", 3000), "Running v2 ok");
+    CHECK_STR(wait_state_of("alarm", "Running ok", 3000), "Running ok");
     CHECK(f_led[2] == 0);
     remove_all();
     /* hwcheck: the fake board has an I2C bus with one device, and none of

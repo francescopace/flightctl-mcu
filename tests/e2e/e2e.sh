@@ -179,9 +179,11 @@ tools/signing/keygen.sh "$WORK/signing" >/dev/null
 export SIGNING_KEY="$WORK/signing/signing.key"
 # WASM apps: built here, or taken as they are from wasm-apps/build
 # (PREBUILT_APPS=1: CI's WASM job), then pushed and signed under test tags.
-for a in alarm-v1 alarm-v2 trend-v1; do
-  [[ -n "${PREBUILT_APPS:-}" ]] || NO_PUSH=1 wasm-apps/build.sh "${a%-*}" "${a##*-}" >/dev/null
-done
+if [[ -z "${PREBUILT_APPS:-}" ]]; then
+  ALARM_SOLID_DEMO=1 NO_PUSH=1 wasm-apps/build.sh alarm v1 >/dev/null
+  NO_PUSH=1 wasm-apps/build.sh alarm v2 >/dev/null
+  NO_PUSH=1 wasm-apps/build.sh trend v1 >/dev/null
+fi
 wasm-apps/push.sh alarm v1 "v1.$TAG" "$REGISTRY" >/dev/null
 wasm-apps/push.sh alarm v2 "v2.$TAG" "$REGISTRY" >/dev/null
 # The unsigned image must differ from every signed one: same content means
@@ -275,14 +277,14 @@ wait_for 180 "missing credentials reported" "st['updated']['status'] == 'OutOfDa
 
 log "fleet: config + app v1"
 apply_fleet 40 "v1.$TAG"
-wait_for 180 "app v1 running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v1')"
+wait_for 180 "app v1 running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('demo ')"
 wait_for 60 "device up to date" "st['updated']['status'] == 'UpToDate'"
 config_stored 40 1 "config file written" "config file not written"
 
 log "app update v1 -> v2 (no restart)"
 pid_before=$AGENT_PID
 apply_fleet 40 "v2.$TAG"
-wait_for 180 "app v2 running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v2')"
+wait_for 180 "app v2 running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm') in ('ok', 'pre-alarm (dim blue)', 'alarm (blinking blue)')"
 kill -0 "$pid_before" 2>/dev/null || fail "agent restarted"
 grep -q "updating app alarm" "$WORK/agent.log" || fail "no in-place update in the agent log"
 echo "ok: updated in place"
@@ -296,14 +298,14 @@ config_stored 35 2 "config file updated" "new config not written"
 log "unsigned app rejected"
 apply_fleet 35 "v2.$TAG-unsigned"
 wait_for 180 "unsigned app rejected" "st['updated']['status'] == 'OutOfDate' and 'not signed' in st['updated'].get('info', '')"
-wait_for 10 "signed app still running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v2')"
+wait_for 10 "signed app still running" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm') in ('ok', 'pre-alarm (dim blue)', 'alarm (blinking blue)')"
 
 log "registry down during an update"
 docker stop fc-registry-tls >/dev/null
 apply_fleet 35 "v1.$TAG"
 wait_for 120 "download failure reported" "st['updated']['status'] == 'OutOfDate' and 'registry' in st['updated'].get('info', '')"
 docker start fc-registry-tls >/dev/null
-wait_for 180 "update done once the registry is back" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v1') and st['updated']['status'] == 'UpToDate'"
+wait_for 180 "update done once the registry is back" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('demo ') and st['updated']['status'] == 'UpToDate'"
 
 log "app removal"
 apply_fleet 35 ""
@@ -499,7 +501,7 @@ spec:
   targetRevision: main
   path: /fleets
 EOF
-wait_for 420 "fleet from Git applied, app pulled" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('v1') and st['updated']['status'] == 'UpToDate'"
+wait_for 420 "fleet from Git applied, app pulled" "apps and apps[0]['status'] == 'Running' and ci.get('app.alarm', '').startswith('demo ') and st['updated']['status'] == 'UpToDate'"
 (( $(grep -Fc 'config: wrote /etc/containers/auth.json' "$WORK/agent.log") > auth_writes_before )) \
   || fail "the credentials did not come from the secret"
 (( $(grep -Fc 'config: wrote /etc/containers/certs.d/' "$WORK/agent.log") > ca_writes_before )) \

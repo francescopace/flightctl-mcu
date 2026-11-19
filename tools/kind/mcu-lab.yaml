@@ -19,16 +19,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/alarm
   versions:
-  - version: 2.2.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: v2.2
-  - version: 2.4.0
-    channels:
-    - stable
-    references:
-      container: v2.4.0
+      container: v0.9.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -44,31 +39,26 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/arduino
   versions:
-  - version: 1.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: rust
-  - version: 1.1.0
-    channels:
-    - stable
-    references:
-      container: v1.1.0-rust
-  - version: 1.1.0-cpp
+      container: v0.9.0-rust
+  - version: 0.9.0-cpp
     channels:
     - cpp
     references:
-      container: v1.1.0-cpp
-  - version: 1.1.0-assemblyscript
+      container: v0.9.0-cpp
+  - version: 0.9.0-assemblyscript
     channels:
     - assemblyscript
     references:
-      container: v1.1.0-assemblyscript
-  - version: 1.1.0-tinygo
+      container: v0.9.0-assemblyscript
+  - version: 0.9.0-tinygo
     channels:
     - tinygo
     references:
-      container: v1.1.0-tinygo
+      container: v0.9.0-tinygo
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -84,21 +74,16 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/coremark
   versions:
-  - version: 1.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: wasm3
-  - version: 1.1.0
-    channels:
-    - stable
-    references:
-      container: v1.1.0-wasm3
-  - version: 1.1.0-128k
+      container: v0.9.0-wasm3
+  - version: 0.9.0-128k
     channels:
     - large-memory
     references:
-      container: v1.1.0-wasm-coremark
+      container: v0.9.0-wasm-coremark
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -113,11 +98,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
-  - version: 32.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: z32
+      container: v0.9.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -132,21 +117,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
-  - version: 3.15.0-rc.1
-    channels:
-    - candidate
-    references:
-      container: v3.15-rc1
-  - version: 3.15.0-rc.2
-    channels:
-    - candidate
-    references:
-      container: v3.15-rc2
-  - version: 3.15.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: v3.15.0
+      container: v0.9.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -161,16 +136,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
-  - version: 29.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: z29
-  - version: 32.0.0
-    channels:
-    - stable
-    references:
-      container: z32
+      container: v0.9.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -186,16 +156,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/hwcheck
   versions:
-  - version: 1.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: v1
-  - version: 1.1.0
-    channels:
-    - stable
-    references:
-      container: v1.1.0
+      container: v0.9.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -211,16 +176,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/libccheck
   versions:
-  - version: 1.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: v1
-  - version: 1.1.0
-    channels:
-    - stable
-    references:
-      container: v1.1.0
+      container: v0.9.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -236,16 +196,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/mqttdemo
   versions:
-  - version: 1.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: v1
-  - version: 1.1.0
-    channels:
-    - stable
-    references:
-      container: v1.1.0
+      container: v0.9.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -261,16 +216,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/tinyml
   versions:
-  - version: 1.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: v1
-  - version: 1.1.0
-    channels:
-    - stable
-    references:
-      container: v1.1.0
+      container: v0.9.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -286,16 +236,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/tinymlp
   versions:
-  - version: 1.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: v1
-  - version: 1.1.0
-    channels:
-    - stable
-    references:
-      container: v1.1.0
+      container: v0.9.0
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -311,13 +256,8 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/trend
   versions:
-  - version: 1.0.0
+  - version: 0.9.0
     channels:
     - stable
     references:
-      container: v1
-  - version: 1.1.0
-    channels:
-    - stable
-    references:
-      container: v1.1.0
+      container: v0.9.0

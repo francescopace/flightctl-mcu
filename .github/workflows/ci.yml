@@ -44,7 +44,7 @@ jobs:
       - name: WASM apps (alarm v1 and v2, trend v1)
         run: |
           export PATH="$(dirname "$(ls /usr/lib/llvm-*/bin/wasm-ld | tail -1)"):$PATH"
-          NO_PUSH=1 wasm-apps/build.sh alarm v1
+          ALARM_SOLID_DEMO=1 NO_PUSH=1 wasm-apps/build.sh alarm v1
           NO_PUSH=1 wasm-apps/build.sh alarm v2
           NO_PUSH=1 wasm-apps/build.sh trend v1
       - name: host agent

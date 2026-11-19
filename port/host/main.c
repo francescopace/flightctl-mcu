@@ -237,7 +237,7 @@ static void host_uart_close(int h)
 
 static const fc_hw_t s_hw = {
     .board = "host",
-    .firmware = "flightctl-mcu/0.1.0",
+    .firmware = FC_AGENT_VERSION,
     .board_defaults = host_board,
     .pin_reserved = host_pin_reserved,
     .gpio_setup = host_gpio_setup,
@@ -348,7 +348,7 @@ int main(int argc, char **argv)
         .enrollment_key_pem = read_file(key),
         .signing_pub_pem = signing ? read_file(signing) : NULL,
         .labels = labels,
-        .agent_version = "flightctl-mcu/0.1.0",
+        .agent_version = FC_AGENT_VERSION,
         .status_interval_s = 60,
         .hw = &s_hw,
     };

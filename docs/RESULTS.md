@@ -1,6 +1,6 @@
 # Results
 
-Six boards were tested with Flight Control 1.4.0. The firmware sizes are for `v3.15.0` on the five ESP-IDF boards (ESP-IDF 6.1.1) and `z32` on the Zephyr ESP32-S3 N8R8 (Zephyr 4.5.0). Both use WAMR 2.4.6.
+Six boards were tested with Flight Control 1.4.0. Firmware sizes are for release `v0.9.0`, built with ESP-IDF 6.1.1 or Zephyr 4.5.0 and WAMR 2.4.6.
 
 ## What works
 
@@ -24,7 +24,7 @@ ESP-IDF OTA slots are 1,703,936 B each. The firmware was built for size, with WA
 | ESP32-C6 | 1,343,600 | 21.1% |
 | ESP32-S3 N4R2 | 1,188,112 | 30.3% |
 
-<a id="zephyr-on-the-esp32-s3"></a>On the **Zephyr S3 N8R8** with PSRAM, the signed image is **1,038,647 B**. It uses 376,800 of 380,672 B of internal DRAM at link time, leaving **3,872 B** for build changes. The linked image already includes the 120,112 B C heap and 94,208 B kernel heap. [Zephyr board configuration](ZEPHYR.md#on-an-esp32-s3)
+<a id="zephyr-on-the-esp32-s3"></a>On the **Zephyr S3 N8R8** with PSRAM, the signed image is **1,038,663 B**. It uses 376,800 of 380,672 B of internal DRAM at link time, leaving **3,872 B** for build changes. The linked image already includes the 120,112 B C heap and 94,208 B kernel heap. [Zephyr board configuration](ZEPHYR.md#on-an-esp32-s3)
 
 For scale, an earlier speed-optimized C3 build used about 430 KiB of flash for Wi-Fi and networking, 197 KiB for cryptography and TLS, 68 KiB for WAMR and 62 KiB for the agent core. The apps’ C library occupied 7.7 KiB.
 

@@ -61,7 +61,7 @@ third_party/fetch-wamr.sh
 ```
 
 ```bash
-LOCAL=0 TARGET=esp32c3 FW_VERSION=v3.15.0 port/espidf/build.sh
+LOCAL=0 TARGET=esp32c3 FW_VERSION=v0.9.0 port/espidf/build.sh
 ```
 
 ```bash
@@ -104,18 +104,18 @@ tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
 
 ## 6. Give it firmware, config and an app
 
-In an empty registry, these commands publish the C3 image built in step 3 and the alarm app using the tags in `tools/fleet/idf-lab.yaml`. In the populated MCU lab, the firmware tag already contains all five ESP-IDF platforms and the alarm image is signed. Skip both publish commands there. For a new release, build each target in the fleet, pass all those targets to one `fw-push.py` invocation under a fresh tag, then update the fleet reference.
+In an empty registry, these commands publish the C3 image built in step 3 and the alarm app using the tags in `tools/fleet/idf-lab.yaml`. In the populated MCU lab, the signed firmware index covers all five ESP-IDF platforms and the Zephyr S3. The signed alarm image is also available. Skip both publish commands there. For a new release, build each target in the fleet, pass all those targets to one `fw-push.py` invocation under a fresh tag, then update the fleet reference.
 
 `apply.sh` fills in the registry address from `.secrets/registry/host` and adds the registry CA and password to the fleet as config files. Set `REGISTRY=host:port` to use another registry.
 
 ```bash
-tools/fw-push.py localhost:5001/flightctl-mcu/fw:v3.15.0 esp32c3
+tools/fw-push.py localhost:5001/flightctl-mcu/fw:v0.9.0 esp32c3
 ```
 
 It also pushes each image's ELF, which devices never pull: after a crash, `tools/fw-elf.py <registry>/flightctl-mcu/fw:<tag> <chip>` gets it back to decode the device's `lastFatalError` with `addr2line`.
 
 ```bash
-wasm-apps/build.sh alarm v2.4.0
+wasm-apps/build.sh alarm v0.9.0
 ```
 
 ```bash
