@@ -30,7 +30,7 @@ The official agent 1.0.0 release depends on the five Flight Control changes belo
 
 - **Works today.** Operators deploy firmware by setting `os.image` directly. Catalog references also work for apps, as verified with the `alarm` app.
 - **Feature limit.** Selecting Zephyr firmware through the fleet’s `spec.template.spec.os.catalogItemRef` gave the device an empty `os` field. The agent had no image to fetch, so the device could appear `UpToDate` while still running the old firmware.
-- **Server change.** When building the device spec from the fleet template, `assembleDesiredSpec` copies only `os.image` (`internal/tasks/desired_spec.go`). Flight Control needs to carry the firmware catalog reference through and resolve it to an image the agent can fetch, as it does for apps.
+- **Server change.** When building the device spec from the fleet template, `assembleDesiredSpec` copies only `os.image` (`internal/tasks/desired_spec.go`). The proposed fix preserves `os.catalogItemRef` so the existing renderer can resolve it to an image the agent can fetch. [Upstream PR #3937](https://github.com/flightctl/flightctl/pull/3937)
 
 ### 5. A device cannot enroll again under its own name
 
