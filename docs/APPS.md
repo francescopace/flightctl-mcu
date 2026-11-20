@@ -173,7 +173,7 @@ A successful read returns 0 and writes the value. On failure the output stays un
 
 The example `battery` app uses the names above. Set `FC_ALLOW` to `battery_mv battery_pct battery_charging metrics` and configure the threshold for your pack in `/etc/fc-app/battery.json`, for example `{"low_mv":3300,"sample_ms":30000}`. It samples at startup, on config change and every 30 seconds by default (minimum 1 second). It reports `app.battery.low_battery` as 1 below a positive threshold and 0 at or above it. Without a configured threshold it skips that gauge. Other gauges are `voltage_mv`, `charge_pct` and `charging` under the same prefix. Each updates only on a valid reading. The telemetry gateway may continue to receive the last good value after a read error. Flight Control shows `battery unavailable` when the voltage channel is absent or unsupported, `battery access denied` for a missing grant, and `battery read failed` for a transient error.
 
-On an emulated ESP32-C3 running a development build, the app used a 3,600 mV threshold. With a 2:1 divider and ESP-IDF ADC calibration, a 1,650 mV input gave a pack reading of 3,280 mV and set the low-battery flag. At 1,980 mV the app reported 3,924 mV and cleared the flag. An emulated Smart Battery gauge at 3,700 mV and +14 mA reported 62% charge and a charging state. [Physical board results](RESULTS.md#apps-on-the-boards)
+[Measured battery readings and alarm transitions](TESTING.md#end-to-end-tests)
 
 ## Config and storage
 
@@ -187,11 +187,11 @@ During an update, flash must hold the replacement alongside resident modules and
 
 ### Persistent sample queues
 
-Choose a private KV key for each FIFO. Push one nonempty binary sample with `fc_queue_push`. It returns 0 once stored. When the quota is full it returns `FC_ENOSPC` and preserves the samples already queued. Queues share the app's 4,096-byte KV quota. Each uses the key length, an 8-byte header and 2 bytes per payload. A queue named `samples` fits 680 four-byte readings when it has the quota to itself. Reserve other keys for settings.
+Choose a private KV key for each FIFO. Push one nonempty binary sample with `fc_queue_push`. It returns 0 once stored. When the quota is full it returns `FC_ENOSPC` and preserves the samples already queued. Queues share the app's 4,096-byte KV quota. Each uses the key length, an 8-byte header and 2 bytes per payload. Reserve room for settings when sizing the queue. [Measured queue capacity](RESULTS.md#ram)
 
 `fc_queue_peek` copies the oldest payload and its 32-bit ID, returning the payload length. An empty queue gives `FC_ENOENT`. A short buffer gives `FC_ENOSPC` and leaves both outputs untouched. After the consumer confirms delivery, call `fc_queue_ack` with that ID. It removes only the matching head. A stale ID gives `FC_EAGAIN` while another head exists. A failed storage operation gives `FC_EIO`. Re-read the head before retrying.
 
-The head survives an app restart, firmware reboot and upgrade under the same app name. A crash after delivery and before acknowledgement can repeat the sample. Deduplicate by device, app, queue and ID. IDs start at 1, advance modulo 2³² and survive an empty queue. Removing the app or deleting its queue key resets the sequence. Each push and successful acknowledgement rewrites the app's KV record. Peeking does no writes. Select a sampling interval or batch several readings per payload to fit the flash write budget. [Measured writes](RESULTS.md#persistent-samples)
+The head survives an app restart, firmware reboot and upgrade under the same app name. A crash after delivery and before acknowledgement can repeat the sample. Deduplicate by device, app, queue and ID. IDs start at 1, advance modulo 2³² and survive an empty queue. Removing the app or deleting its queue key resets the sequence. Each push and successful acknowledgement rewrites the app's KV record. Peeking does no writes. Filling the `samples` queue took 680 writes (1,401,480 B) and acknowledging every reading took another 680 (1,397,400 B) on the in-memory KV port. Flash wear depends on the filesystem and wear leveling. Adjust the sampling interval or batch readings to fit the write budget. All six physical boards recovered three queued readings in order after reboot. [Queue test](../tests/unit/test_apps.c)
 
 The [sampler example](../wasm-apps/sampler/sampler.c) reads `die_temp` at startup and every 60 seconds by default. Its startup settings are `sensor` and `sample_ms` (minimum 1,000). With the `mqtt` grant and a configured broker, it publishes the head on its relative `sample` topic at connection, on each sample timer and after an acknowledgement. The payload is an unsigned 32-bit ID followed by signed millidegrees Celsius, both little-endian. After storing a sample, the consumer publishes its four ID bytes on the same app's relative `ack` topic, with retain off. It should acknowledge duplicates too. A transport-level MQTT PUBACK leaves the head intact.
 
@@ -250,7 +250,7 @@ The device substitutes `{device}` and `{app}` in each prefix and adds a trailing
 | Incoming queue | 4 KB shared. One app can hold half. Up to 16 subscriptions across all apps. |
 | Reconnect | First retry after 1–2 s, backing off to two minutes. Subscriptions are restored. Apps receive `FC_EV_NET` on connection (1) or loss (0). |
 
-After enrollment the agent starts the client before the apps. Changing either config file restarts it. The handshake waits for an accepted status, idle management traffic, a contiguous 24 KiB block and 12 KiB free above the agent's reserve. Once connected, MQTT stays up during downloads. [Board measurements](RESULTS.md#apps-on-the-boards)
+After enrollment the agent starts the client before the apps. Changing either config file restarts it. The handshake waits for an accepted status, idle management traffic, a contiguous 24 KiB block and 12 KiB free above the agent's reserve. Once connected, MQTT stays up during downloads. [Acknowledgement latency](RESULTS.md#app-benchmarks) · [Delivery tests](TESTING.md#mqtt-broker)
 
 For a local broker, `tools/mqtt/up.sh` starts Mosquitto at `mqtt.<LAN IP>.nip.io:8883`. It creates a CA and a user restricted to `flightctl/#`. Use `tools/fleet/mqtt-config.py` to add the two config files to a fleet.
 
@@ -294,7 +294,7 @@ On Zephyr, the fleet can alias a hardware node in the board map. Grant the alias
 
 **Build flags.** Keep the flags from `wasm-apps/build.sh`, including `-mcpu=mvp` and exports for `__heap_base` and `__data_end`. WAMR supports tail calls but lacks reference types. If an app needs a new firmware import, deploy the firmware and app in the same spec. The agent installs and confirms firmware first. An unsupported import rejects the app update and preserves the installed version. Rebuild legacy apps that import `env.set_state`, `env.log` or `env.led`.
 
-Split long computations across callbacks. The instruction limit counts interpreter operations. A counting loop took 0.66 s on C5, 0.90 s on S3, 1.06 s on C3, 1.20 s on ESP32 and 1.30 s on C6 to execute five million instructions. Native calls and waits share a separate time allowance per callback. Hitting either limit stops the app.
+Split long computations across callbacks. The instruction limit counts interpreter operations. Native calls and waits share a separate time allowance per callback. Hitting either limit stops the app. [Counting-loop times by chip](TESTING.md#app-benchmark-methods)
 
 ### The C library
 
@@ -331,7 +331,7 @@ The SDK also maps common math operations such as `sqrtf` and `fabsf` directly to
 
 ### TinyML with emlearn
 
-[tinyml](../wasm-apps/tinyml/tinyml.c) classifies 12 temperature samples as steady, warming, cooling or unstable. The random forest has five trees and 193 nodes. It uses 1.2 KB of linear memory in a 4.1 KB module. [tinymlp](../wasm-apps/tinymlp/tinymlp.c) uses the same features with a 236-parameter neural network and also reports confidence. It imports `expf`, `logf` and `tanhf` and uses 2.4 KB of linear memory in a 6.8 KB module. Neither needs grants.
+[tinyml](../wasm-apps/tinyml/tinyml.c) classifies 12 temperature samples as steady, warming, cooling or unstable. The random forest has five trees and 193 nodes. [tinymlp](../wasm-apps/tinymlp/tinymlp.c) uses the same features with a 236-parameter neural network and also reports confidence. It imports `expf`, `logf` and `tanhf`. Neither needs grants. [Inference benchmarks](RESULTS.md#app-benchmarks) · [Model memory use](RESULTS.md#ram)
 
 The models assume 5 s between samples. Setting `sample_ms` changes the sampling interval without retraining. To reproduce the forest, use the pinned [training requirements](../wasm-apps/tinyml/requirements.txt) and [training script](../wasm-apps/tinyml/train.py). For your own forest, `dtype="float"` preserves fractional thresholds. The [feature adapter](../wasm-apps/tinyml/features.h) accounts for the difference between strict and inclusive thresholds on integer inputs. emlearn uses majority votes, so close calls can differ from scikit-learn's averaged probabilities.
 
@@ -353,4 +353,4 @@ wasm-apps/push.sh arduino rust "${ARDUINO_TAG:?}"
 | `print(s, len)` | the app's log, a line at a time, as `printf` |
 | `getGreeting(buf, len)` | `Hello from Flight Control` |
 
-Only `getPinLED()` and `millis()` return values. Each blink exports a non-returning `_start()` and stays `Running` until stopped. In a callback, `delay` counts toward its native-call limit. Each build needs 64 KiB of contiguous memory, which can prevent a second app from starting. [Board results](RESULTS.md#apps-on-the-boards)
+Only `getPinLED()` and `millis()` return values. Each blink exports a non-returning `_start()` and stays `Running` until stopped. In a callback, `delay` counts toward its native-call limit. Each build needs 64 KiB of contiguous memory, which can prevent a second app from starting. [Blink memory by board](RESULTS.md#app-combinations)

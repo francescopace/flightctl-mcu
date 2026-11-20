@@ -6,32 +6,14 @@ These findings cover Flight Control 1.4.0.
 
 ## Upstream blockers for agent v1.0.0
 
-The official agent 1.0.0 release depends on the Flight Control changes listed below.
-Each entry describes what works and what still needs a server change or release. [Release roadmap](ROADMAP.md#v100-in-progress)
+Upstream status on 20 November 2026. Fixed means merged into `main`.
 
-### 1. A device cannot enroll again under its own name
-
-- **Works today.** Routine renewal preserves identity. If the management certificate expires offline, a device with a valid enrollment credential can re-enroll under a new key and name.
-- **Feature limit.** The returning device appears under a new record. Its old record remains until an operator deletes it, so the operator loses continuity under the original name.
-- **Server change.** Enrollment approval cannot overwrite an existing `Device` record. The upstream issue proposes letting an operator approve a new management certificate when the device proves possession of its original key, preserving the same record. [Upstream issue #3942](https://github.com/flightctl/flightctl/issues/3942)
-
-### 2. An enrollment certificate cannot be revoked
-
-- **Works today.** Operators can issue a short-lived certificate per batch and approve devices from an allow list. A leaked certificate can still submit enrollment requests until expiry.
-- **Feature limit.** Deleting the CertificateSigningRequest leaves a leaked certificate usable. Operators have no way to revoke it immediately on 1.4.0.
-- **Server change.** The 1.4.0 enrollment endpoint checks the signer and expiry. On Flight Control’s main branch, an operator can revoke the certificate through its CertificateSigningRequest, and enrollment checks the CSR’s approval and revocation status (`CSRStatusAllowsEnrollment`). Operators need a server release containing that API. On 1.4.0, running `tools/enrollment.sh` issues a certificate and leaves earlier certificates valid until expiry. [Upstream PR #3817](https://github.com/flightctl/flightctl/pull/3817)
-
-### 3. A device with an RSA key cannot enroll
-
-- **Works today.** The ESP32-S3, C3 and C6 can enroll with an ECDSA device key kept in storage.
-- **Feature limit.** Their Digital Signature peripheral signs only with RSA. Approval of an enrollment request using that key fails with HTTP 400, so the agent keeps this hardware-key option disabled.
-- **Server change.** Flight Control's ECDSA certificate authority copies the RSA request's signature algorithm into the certificate template (`internal/crypto/internal_ca.go`). The proposed fix leaves `SignatureAlgorithm` unset when the device and issuer use different key types, allowing the CA to certify the device's RSA public key with its ECDSA key. [Upstream PR #3940](https://github.com/flightctl/flightctl/pull/3940)
-
-### 4. A fleet's OS image cannot come from the software catalog
-
-- **Works today.** Operators deploy firmware by setting `os.image` directly. Catalog references also work for apps, as verified with the `alarm` app.
-- **Feature limit.** Selecting Zephyr firmware through the fleet’s `spec.template.spec.os.catalogItemRef` gave the device an empty `os` field. The agent had no image to fetch, so the device could appear `UpToDate` while still running the old firmware.
-- **Server change.** When building the device spec from the fleet template, `assembleDesiredSpec` copies only `os.image` (`internal/tasks/desired_spec.go`). The proposed fix preserves `os.catalogItemRef` so the existing renderer can resolve it to an image the agent can fetch. [Upstream PR #3937](https://github.com/flightctl/flightctl/pull/3937)
+| Requirement | Status | Target Flight Control release | Upstream |
+| --- | --- | --- | --- |
+| 1. Re-enroll under the original device name | Pending | Unassigned | [Issue #3942](https://github.com/flightctl/flightctl/issues/3942) |
+| 2. Revoke an enrollment certificate | Fixed | 1.5 | [PR #3817](https://github.com/flightctl/flightctl/pull/3817) |
+| 3. Enroll with an RSA device key | Pending | 1.5 | [PR #3940](https://github.com/flightctl/flightctl/pull/3940) |
+| 4. Deploy a fleet OS image from the catalog | Fixed | 1.5 | [PR #3937](https://github.com/flightctl/flightctl/pull/3937) |
 
 ---
 

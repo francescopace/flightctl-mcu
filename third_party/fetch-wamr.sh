@@ -21,6 +21,8 @@
 #   the second wrote past its buffer: an ESP32-C6 restarted at every boot
 #   while loading alarm:v2.3, other chips by the luck of the heap's layout.
 #   The patch moves the data to the new offset.
+#   wamr-espidf-stack-info.patch: get the current task's stack base without
+#   asking FreeRTOS to scan the stack for its high-water mark on each call.
 #   wamr-metering-stop.patch: with instruction metering and no thread manager,
 #   a call in progress cannot be stopped from another thread (the count is a
 #   local of the interpreter). The patch checks, at branches and calls, as the

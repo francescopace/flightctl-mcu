@@ -20,7 +20,7 @@ For a batch with field Wi-Fi setup, provision the merged image with a proof of p
 tools/provision.py --image port/espidf/build-esp32c3-secure/merged-binary.bin --secrets .secrets/batch-2026-11-a --pop <secret>
 ```
 
-Choose a certificate lifetime that covers production and the longest expected offline interval before enrollment or re-enrollment. Use an allow list to approve devices. A leaked credential can submit requests until expiry on Flight Control 1.4.0. [Revocation limits](FLIGHTCTL-LIMITATIONS.md#2-an-enrollment-certificate-cannot-be-revoked)
+Choose a certificate lifetime that covers production and the longest expected offline interval before enrollment or re-enrollment. Use an allow list to approve devices. A leaked credential can submit requests until expiry on Flight Control 1.4.0. [Revocation limits](FLIGHTCTL-LIMITATIONS.md#upstream-blockers-for-agent-v100)
 
 ![Pending enrollment request](img/enrollment-pending.png)
 <img src="img/enrollment-approve.png" alt="Reviewing device labels before approval" width="420">

@@ -1,0 +1,12 @@
+--- a/core/shared/platform/esp-idf/espidf_platform.c
++++ b/core/shared/platform/esp-idf/espidf_platform.c
+@@ -77,7 +77,8 @@
+ {
+ #if defined(CONFIG_FREERTOS_USE_TRACE_FACILITY)
+     TaskStatus_t pxTaskStatus;
+-    vTaskGetInfo(xTaskGetCurrentTaskHandle(), &pxTaskStatus, pdTRUE, eInvalid);
++    /* Only the base is used. The high-water mark requires scanning the stack. */
++    vTaskGetInfo(xTaskGetCurrentTaskHandle(), &pxTaskStatus, pdFALSE, eInvalid);
+     return pxTaskStatus.pxStackBase;
+ #else // !defined(CONFIG_FREERTOS_USE_TRACE_FACILITY)
+     return NULL;
