@@ -3,6 +3,7 @@ CONFIG_FC_LED_GPIO=48
 
 # The chip's highest clock (ESP-IDF's default is 160 MHz).
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_16KB=y
 
 # PSRAM. The S3 comes with none, 2 MB of quad PSRAM (N4R2, N8R2) or 8 MB of
 # octal (N8R8, N16R8), and the mode is set at build time: this image takes

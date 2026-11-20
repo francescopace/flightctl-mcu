@@ -111,4 +111,6 @@ endif()
 # WAMR, which runs the apps, optimized for speed (-O2, after Zephyr's -Os);
 # the rest stays optimized for size. With -O2 for everything the ESP32-S3's
 # data is 5.6 KB larger than its RAM.
-set_source_files_properties(${WAMR_RUNTIME_LIB_SOURCE} PROPERTIES COMPILE_OPTIONS "-O2")
+set_source_files_properties(${WAMR_RUNTIME_LIB_SOURCE} PROPERTIES
+    COMPILE_OPTIONS "-O2"
+    COMPILE_DEFINITIONS WASM_ENABLE_COMPACT_DISPATCH=1)

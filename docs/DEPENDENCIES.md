@@ -12,7 +12,7 @@ The 1.0 development builds use Flight Control 1.4.0 and ESP-IDF 6.1.1. From 1.0 
 |---|---|---|---|
 | [mbedTLS](https://github.com/Mbed-TLS/mbedtls) | 4.1.1 | supplied by ESP-IDF and Zephyr, checked in `core/include/fc_crypto.h` on every port and in `CMakeLists.txt` for host builds | Host and both SDKs use TF-PSA-Crypto 1.1.1. |
 | [cJSON](https://github.com/DaveGamble/cJSON) | 1.7.19 | a copy in `third_party/cjson`, unmodified | On every port, ESP-IDF 6 included (it no longer has its own). |
-| [WAMR](https://github.com/wasm-micro-runtime/wasm-micro-runtime) | 2.4.6 | `WAMR_TAG` in `third_party/fetch-wamr.sh` | Fetched and patched at build time. Fast interpreter with instruction metering and tail calls. AOT, JIT, WASI, SIMD and reference types are disabled. [App libc](APPS.md#the-c-library) |
+| [WAMR](https://github.com/wasm-micro-runtime/wasm-micro-runtime) | 2.4.6 | `WAMR_TAG` in `third_party/fetch-wamr.sh` | Fetched and patched at build time. Fast interpreter with instruction metering and tail calls. ESP-IDF and 32-bit Zephyr MCU builds use [compact dispatch](RESULTS.md#coremark). AOT, JIT, WASI, SIMD and reference types are disabled. [App libc](APPS.md#the-c-library) |
 
 The core implements HTTP, MQTT, OTLP encoding, field provisioning and the firmware delta decoder.
 

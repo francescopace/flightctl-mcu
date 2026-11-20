@@ -54,12 +54,12 @@ The module allocates memory at startup and stays in `Preparing` until the agent 
 
 On return, the app becomes `Completed` and records its result in `customInfo["app.<name>"]`. It runs again after an image or env change or a device restart. A trap triggers the usual retry.
 
-Both catalog CoreMark modules export `run`. The wasm3 build needs 64 KiB of contiguous linear memory and the wasm-coremark build needs 128 KiB, plus space for the agent and app thread. A valid run returns iterations per second. [Scores by board](RESULTS.md#coremark)
+Both catalog CoreMark modules export `run`. The wasm3 build needs 64 KiB of contiguous linear memory and the wasm-coremark build needs 128 KiB, plus space for the agent and app thread. A valid run returns iterations per second. Use the wasm3 entry’s `references.container` value for `<wasm3-tag>` below. [Lab catalog](../tools/kind/mcu-lab.yaml) · [Scores by board](RESULTS.md#coremark)
 
 ```yaml
         - name: coremark
           appType: container
-          image: <registry>/flightctl-mcu/coremark:v0.9.1-wasm3
+          image: <registry>/flightctl-mcu/coremark:<wasm3-tag>
           envVars:
             FC_ENTRY: run
 ```
@@ -133,7 +133,7 @@ spec:
       applications:
         - name: pump
           appType: container
-          image: registry.example.com/flightctl-mcu/pump:v1
+          image: registry.example.com/flightctl-mcu/pump:<app-tag>
           envVars:
             FC_ALLOW: "relay1 button0 led0"
 ```
@@ -327,7 +327,7 @@ The SDK also maps common math operations such as `sqrtf` and `fabsf` directly to
 | [libccheck](../wasm-apps/libccheck/libccheck.c) | Exercises libc. A passing run reports `bad=0`. |
 | [hwcheck](../wasm-apps/hwcheck/hwcheck.c) | Grant `i2c0 spi0 uart0 adc0 pwm0` to inspect bus responses, UART loopback, ADC voltage and PWM output. |
 | [mqttdemo](../wasm-apps/mqttdemo/mqttdemo.c) | Grant `mqtt` to publish temperature on `temp` and receive commands on device `cmd/#` and fleet `cmd`. Replies appear on `ack`. Grant `led0` for LED commands. |
-| [CoreMark](../wasm-apps/coremark/fetch.sh) | Fetch both verified modules. Publish the smaller one with `wasm-apps/push.sh coremark wasm3 v0.9.1-wasm3`. See [one-shot deployment](#standalone-modules). |
+| [CoreMark](../wasm-apps/coremark/fetch.sh) | Fetch both verified modules. Set `COREMARK_TAG` to the wasm3 tag in the lab catalog and run `wasm-apps/push.sh coremark wasm3 "${COREMARK_TAG:?}"`. See [one-shot deployment](#standalone-modules). |
 
 ### TinyML with emlearn
 
@@ -337,11 +337,11 @@ The models assume 5 s between samples. Setting `sample_ms` changes the sampling 
 
 ### The blink of wasm3-arduino
 
-The device runs the [wasm3-arduino blink](https://github.com/wasm3/wasm3-arduino) as published in Rust (283 B), C++ (369 B), AssemblyScript (2.2 KB) and TinyGo (5.2 KB). Grant `FC_ALLOW: "led0"`. To fetch the modules, verify their SHA-256 and publish the Rust build:
+The device runs the [wasm3-arduino blink](https://github.com/wasm3/wasm3-arduino) as published in Rust (283 B), C++ (369 B), AssemblyScript (2.2 KB) and TinyGo (5.2 KB). Grant `FC_ALLOW: "led0"`. To fetch the modules, verify their SHA-256 and publish the Rust build, set `ARDUINO_TAG` to its full Rust tag in the [lab catalog](../tools/kind/mcu-lab.yaml).
 
 ```bash
 wasm-apps/arduino/fetch.sh
-wasm-apps/push.sh arduino rust v0.9.1-rust
+wasm-apps/push.sh arduino rust "${ARDUINO_TAG:?}"
 ```
 
 | Function | On the device |

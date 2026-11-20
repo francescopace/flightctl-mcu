@@ -87,16 +87,16 @@ sequenceDiagram
   participant FC as Flight Control
   participant D as Device
   participant R as Registry
-  FC->>D: spec: fw v3
-  D->>R: pull v3
+  FC->>D: desired firmware image
+  D->>R: pull image
   D->>FC: Updating
-  D->>D: reboot into v3
+  D->>D: boot new image
   alt status accepted
-    D->>FC: running v3
-    D->>D: confirm v3
+    D->>FC: report running image
+    D->>D: confirm image
   else no answer in 150 s
     D->>D: roll back, reboot
-    D->>FC: v3 failed
+    D->>FC: report failed update
   end
 ```
 

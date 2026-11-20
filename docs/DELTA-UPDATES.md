@@ -5,10 +5,10 @@ Publish a delta to reduce the download for devices on a known release. Keep the 
 ## Publishing a release with deltas
 
 ```bash
-tools/fw-push.py --delta-from v0.9.0 "$REGISTRY/flightctl-mcu/fw:$NEW_TAG"
+tools/fw-push.py --delta-from "$OLD_TAG" "$REGISTRY/flightctl-mcu/fw:$NEW_TAG"
 ```
 
-Set `REGISTRY` to the registry host and `NEW_TAG` to a fresh tag. Repeat `--delta-from` for each source tag or digest in the same repository. For each platform, the publisher generates a sequential, heatshrink-compressed patch and includes it only if smaller than the new image. The fleet still sets `spec.os.image` to the new release.
+Set `REGISTRY` to the registry host, `OLD_TAG` to the installed release tag and `NEW_TAG` to a fresh tag. Repeat `--delta-from` for each source tag or digest in the same repository. For each platform, the publisher generates a sequential, heatshrink-compressed patch and includes it only if smaller than the new image. The fleet still sets `spec.os.image` to the new release.
 
 The publisher installs detools in `build/detools-venv` if needed. Its C extensions require a compiler and Python headers. The device uses the [core decoder](../core/src/fc_delta.c).
 

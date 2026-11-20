@@ -86,8 +86,10 @@ The Zephyr board is an ESP32-S3-DevKitC N8R8 with 8 MiB each of flash and octal 
 third_party/fetch-wamr.sh
 third_party/fetch-zephyr.sh
 third_party/fetch-zephyr-sdk.sh
-BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 port/zephyr/build.sh -- '-Dzephyr_CONFIG_FC_FW_VERSION="v0.9.1"' \
-  '-Dzephyr_CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="0.9.1"'
+FW_TAG=$(sed -n 's|^[[:space:]]*image: .*/flightctl-mcu/fw:||p' tools/fleet/zephyr-lab.yaml)
+BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 port/zephyr/build.sh -- \
+  "-Dzephyr_CONFIG_FC_FW_VERSION=\"$FW_TAG\"" \
+  "-Dzephyr_CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION=\"${FW_TAG#v}\""
 ```
 
 Match the board by USB serial number. For a fresh device, flash MCUboot, the signed app and credentials through the UART port (115200 baud console). `ERASE=1` erases the entire flash, including any existing identity. The label selects the example Zephyr fleet.
@@ -102,7 +104,7 @@ For the internal-RAM CoreMark run on the N8R8, the application and MCUboot overl
 
 The N8R8 reserves 2 MiB of PSRAM for the shared heap. WAMR prefers it for linear memories of at least 16 KiB. Software TLS also prefers it for two 17 KiB receive records. Both can fall back to internal RAM. The board uses 32 POSIX mutexes so telemetry can authenticate while MQTT is connected. [RAM by workload](RESULTS.md#ram)
 
-Zephyr boards go in a fleet of their own (the example is `tools/fleet/zephyr-lab.yaml`). Firmware v0.9.1 uses one OCI index for both ports. Each Zephyr image is identified by the board’s `CONFIG_FC_FW_PLATFORM`. To publish a Zephyr-only index under a new tag:
+Zephyr boards go in a fleet of their own (the example is `tools/fleet/zephyr-lab.yaml`). The lab fleets share one firmware OCI index. Each Zephyr image is identified by the board’s `CONFIG_FC_FW_PLATFORM`. To publish a Zephyr-only index under a new tag:
 
 ```bash
 tools/fw-push.py --delta-from <running tag> <registry>/flightctl-mcu/fw:<new tag> esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin

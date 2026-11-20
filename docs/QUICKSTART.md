@@ -10,6 +10,13 @@ Set up Flight Control first, then choose a board or the simulator.
 
 Install Docker, kind, Helm, kubectl, the [flightctl CLI](https://github.com/flightctl/flightctl/releases), ORAS and Python 3 with PyYAML. Flashing an ESP-IDF board needs esptool. Building apps needs clang with the wasm32 target and `wasm-ld` (`brew install lld` on macOS). The simulator also needs CMake and Ninja.
 
+Run these commands from the repository root in each terminal where you build or publish images or apply the simulator fleet. They read the firmware and alarm tags independently from the [lab fleet manifest](../tools/fleet/idf-lab.yaml).
+
+```bash
+FW_TAG=$(sed -n 's|^[[:space:]]*image: .*/flightctl-mcu/fw:||p' tools/fleet/idf-lab.yaml)
+ALARM_TAG=$(sed -n 's|^[[:space:]]*image: .*/flightctl-mcu/alarm:||p' tools/fleet/idf-lab.yaml)
+```
+
 ### 1. Control plane
 
 Start Flight Control on kind and the local registry. Replace `<your-ip>` with the host's LAN address. For an existing Flight Control installation, skip `tools/kind/up.sh`, log in to that installation and pass its agent endpoint to `tools/provision.py --server` in step 4.
@@ -49,7 +56,7 @@ On the ESP32-C6 DevKitC, hold BOOT while connecting the native USB port to enter
 
 ```bash
 third_party/fetch-wamr.sh
-LOCAL=0 TARGET=esp32c3 FW_VERSION=v0.9.1 port/espidf/build.sh
+LOCAL=0 TARGET=esp32c3 FW_VERSION="$FW_TAG" port/espidf/build.sh
 port/espidf/flash.sh /dev/cu.usbmodem1101
 ```
 
@@ -88,19 +95,19 @@ tools/auto-approve/auto-approve.py tools/auto-approve/allowlist.yaml --watch 10
 If the registry already contains the signed lab firmware for your platform and the signed alarm app, skip the publish commands and apply the fleet below. For an empty local registry, publish the alarm app once for either port.
 
 ```bash
-wasm-apps/build.sh alarm v0.9.1
+wasm-apps/build.sh alarm "$ALARM_TAG"
 ```
 
 **ESP-IDF.** Publish the firmware from step 3. With no platform argument the publisher includes each built default-profile image, including `esp32s3` and `esp32s3-r8` when present. If you built the release profile, add `--variant release` before the registry reference.
 
 ```bash
-tools/fw-push.py localhost:5001/flightctl-mcu/fw:v0.9.1
+tools/fw-push.py "localhost:5001/flightctl-mcu/fw:$FW_TAG"
 ```
 
 **Zephyr S3.** For a Zephyr-only registry, publish the MCUboot-signed image from the S3 build.
 
 ```bash
-tools/fw-push.py localhost:5001/flightctl-mcu/fw:v0.9.1 esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
+tools/fw-push.py "localhost:5001/flightctl-mcu/fw:$FW_TAG" esp32s3_devkitc=port/zephyr/build-esp32s3/zephyr/zephyr/zephyr.signed.bin
 ```
 
 If you deploy both ports, publish a single index in one invocation, listing the ESP-IDF platforms you built (for example `esp32c3 esp32s3-r8`) and the Zephyr `esp32s3_devkitc=…` argument together. Each publish replaces the index at that tag. Use a fresh tag for subsequent firmware releases and update the fleet’s `os.image` to match.
@@ -149,10 +156,10 @@ Start the simulator with the label used by the host fleet. Replace `<your-ip>` w
 build/host/fc-host-agent --server agent-api.<your-ip>.nip.io:8443 --ca .secrets/ca.crt --enroll-cert .secrets/enroll.crt --enroll-key .secrets/enroll.key --signing-key .secrets/signing.pub --label app=host-lab
 ```
 
-In a second terminal, approve the request as in [step 5](#5-approve-it). If the registry is empty, run `wasm-apps/build.sh alarm v0.9.1`. Apply this fleet from the repository root and check that the simulator reports `alarm` as running.
+In a second terminal, approve the request as in [step 5](#5-approve-it). If the registry is empty, run `wasm-apps/build.sh alarm "$ALARM_TAG"`. Apply this fleet from the repository root and check that the simulator reports `alarm` as running.
 
 ```bash
-tools/fleet/apply.sh /dev/stdin <<'YAML'
+tools/fleet/apply.sh /dev/stdin <<YAML
 apiVersion: flightctl.io/v1beta1
 kind: Fleet
 metadata:
@@ -166,7 +173,7 @@ spec:
       applications:
         - name: alarm
           appType: container
-          image: ${REGISTRY}/flightctl-mcu/alarm:v0.9.1
+          image: \${REGISTRY}/flightctl-mcu/alarm:${ALARM_TAG:?}
           envVars:
             FC_ALLOW: led0
       config:
@@ -177,4 +184,4 @@ spec:
 YAML
 ```
 
-**Optional firmware download.** To test the download path, publish a platform image as in [step 6](#6-give-it-firmware-config-and-an-app). Restart the host command with `FC_FW_PLATFORM` set to that platform (for example `FC_FW_PLATFORM=esp32c3`). Add `os: {image: "${REGISTRY}/flightctl-mcu/fw:v0.9.1"}` under `spec.template.spec` in the host fleet example and apply it again. The simulator saves the image to `build/host-data/ota-next.bin` and exits at reboot. On the next start the host reports rollback because it cannot boot the MCU image. Use a board or an emulator with OTA slots to test confirmation.
+**Optional firmware download.** To test the download path, publish a platform image as in [step 6](#6-give-it-firmware-config-and-an-app). Restart the host command with `FC_FW_PLATFORM` set to that platform (for example `FC_FW_PLATFORM=esp32c3`). Add `os: {image: "\${REGISTRY}/flightctl-mcu/fw:${FW_TAG:?}"}` under `spec.template.spec` in the host fleet example and apply it again. The simulator saves the image to `build/host-data/ota-next.bin` and exits at reboot. On the next start the host reports rollback because it cannot boot the MCU image. Use a board or an emulator with OTA slots to test confirmation.

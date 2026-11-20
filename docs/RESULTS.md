@@ -2,18 +2,18 @@
 
 ## Firmware size
 
-The latest firmware tested on these boards uses ESP-IDF 6.1.1 or Zephyr 4.5.0, both with WAMR 2.4.6.
+The measured firmware uses ESP-IDF 6.1.1 or Zephyr 4.5.0, both with WAMR 2.4.6.
 Each ESP-IDF OTA slot holds 1,703,936 B. The ESP-IDF builds optimize for size and compile WAMR with `-O2`.
 
 | ESP-IDF target | Image (B) | OTA slot free |
 |---|---:|---:|
-| ESP32 | 1,180,960 | 30.7% |
-| ESP32-C3 | 1,247,984 | 26.8% |
-| ESP32-C5 | 1,344,784 | 21.1% |
-| ESP32-C6 | 1,348,800 | 20.8% |
-| ESP32-S3 N4R2 | 1,190,640 | 30.1% |
+| ESP32 | 1,193,136 | 30.0% |
+| ESP32-C3 | 1,265,712 | 25.7% |
+| ESP32-C5 | 1,362,928 | 20.0% |
+| ESP32-C6 | 1,365,904 | 19.8% |
+| ESP32-S3 N4R2 | 1,202,896 | 29.4% |
 
-On the Zephyr S3 N8R8 with PSRAM, the signed image is 1,040,184 B. Only **3,664 B of internal DRAM** remain at link time for additional drivers and other build changes. The image already uses 377,008 of 380,672 B, including the 120,112 B C heap and the 94,208 B kernel heap. [Zephyr board configuration](ZEPHYR.md#on-an-esp32-s3)
+On the Zephyr S3 N8R8 with PSRAM, the signed image is 1,041,735 B. Only **3,456 B of internal DRAM** remain at link time for additional drivers and other build changes. The image already uses 377,216 of 380,672 B, including the 120,112 B C heap and the 94,208 B kernel heap. [Zephyr board configuration](ZEPHYR.md#on-an-esp32-s3)
 
 ## RAM
 
@@ -56,24 +56,24 @@ Heap used by the pair is the drop in free heap after both apps started. The cons
 
 ## Firmware deltas
 
-All five ESP-IDF boards and the Zephyr S3 applied a signed delta from the previous release to the latest tested firmware. Downloads ranged from 56,007 to 78,541 B (4.5–6.1% of the full image for each board). All six kept their device identities after reboot. Earlier ESP-IDF deltas on ESP32, C5, C6 and S3 ranged from 2–3% for fixes to 12–15% for larger changes. [Delta sizes and download times](DELTA-UPDATES.md#what-was-verified)
+All five ESP-IDF boards and the Zephyr S3 applied a signed delta from the preceding lab release. Downloads ranged from 82,957 to 104,703 B (6.6–8.7% of the full image for each board). All six kept their device identities after reboot. Earlier ESP-IDF deltas on ESP32, C5, C6 and S3 ranged from 2–3% for fixes to 12–15% for larger changes. [Delta sizes and download times](DELTA-UPDATES.md#what-was-verified)
 
 ## CoreMark
 
-All six boards ran the module with 64 KiB of contiguous linear memory. Only the C6 and the two S3s could allocate 128 KiB. Scores are iterations per second on the latest tested firmware, using WAMR’s fast interpreter with one module running and metrics export off. Failed allocations show the largest free block. [Benchmark modules](APPS.md#standalone-modules)
+All six boards ran the module with 64 KiB of contiguous linear memory. Only the C6 and the two S3s could allocate 128 KiB. Each score is the median of three fresh module installs on the measured firmware, in iterations per second, with one module running and metrics export off. Failed allocations show the largest free block. [Benchmark modules](APPS.md#standalone-modules)
 
 | Board | 64 KiB | 128 KiB |
 |---|---:|---:|
-| ESP32, 240 MHz | 14.751 | Failed (64 KiB) |
-| ESP32-C3, 160 MHz | 13.877 | Failed (80 KiB) |
-| ESP32-C5, 240 MHz | 21.431 | Failed (58 KiB) |
-| ESP32-C6, 160 MHz | 11.856 | 14.267 |
-| ESP32-S3 N4R2, 2 MiB quad PSRAM | 17.594 | 21.072 |
-| Zephyr ESP32-S3 N8R8, 8 MiB octal PSRAM | 17.876 | 21.636 |
+| ESP32, 240 MHz | 18.751 | Failed (76 KiB) |
+| ESP32-C3, 160 MHz | 15.229 | Failed (88 KiB) |
+| ESP32-C5, 240 MHz | 24.343 | Failed (64 KiB) |
+| ESP32-C6, 160 MHz | 14.597 | 18.600 |
+| ESP32-S3 N4R2, 2 MiB quad PSRAM | 22.862 | 28.912 |
+| Zephyr ESP32-S3 N8R8, 8 MiB octal PSRAM | 20.443 | 25.633 |
 
-The nine scores were within 0.2% of the baseline for the same binaries. The 64 KiB scores for C5 and C6 are medians of six installs on a single boot per board. C5 ranged from 20.320 to 21.492 iterations/s and C6 from 11.829 to 11.868. All other results in the table are from one install each. [Baseline measurements](https://github.com/francescopace/flightctl-mcu/blob/aaf93f36891556c3d0913dcd40e50a7d6a843be0/docs/RESULTS.md#coremark)
+WAMR uses 16-bit handler offsets and dispatches frequent instruction pairs directly. The ESP-IDF S3 keeps its 16 KiB instruction cache. [Interpreter patch](../third_party/patches/wamr-wasm32-compact-dispatch.patch)
 
-With PSRAM disabled, the Zephyr S3 N8R8 ran the 64 KiB module at 17.885 iterations/s and had 26,400 B of C heap free after instantiation.
+In an earlier build with PSRAM disabled, the Zephyr S3 N8R8 ran the 64 KiB module at 17.885 iterations/s and had 26,400 B of C heap free after instantiation.
 
 ## Persistent samples
 

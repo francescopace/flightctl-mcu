@@ -23,14 +23,14 @@ The manufacturer assesses the finished product against the requirements that app
 - The **OCI signing key** (ECDSA P-256, `tools/signing/keygen.sh`) signs firmware releases and WASM artifacts in cosign format. Provision the publisher’s `signing.pub` to enable verification before the agent downloads the payload. If the key is absent, provisioning warns and the agent skips OCI signature checks for both firmware and apps. [Provisioning credentials](PROVISIONING.md#at-the-factory-over-usb)
 - The **Secure Boot key** (RSA-3072) signs the bootloader and firmware binary. The ROM and bootloader verify the boot chain, and the OTA path checks the firmware signature. Keep production signing keys offline or in an HSM.
 
-To build using a Secure Boot key file:
+Set `FW_TAG` to the firmware release tag before building with a Secure Boot key file.
 
 ```bash
 espsecure generate-signing-key --version 2 --scheme rsa3072 secure_boot_key.pem
 ```
 
 ```bash
-TARGET=esp32c3 FW_VERSION=v0.9.1 VARIANT=secure SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
+TARGET=esp32c3 FW_VERSION="${FW_TAG:?}" VARIANT=secure SECURE_BOOT_KEY=secure_boot_key.pem port/espidf/build.sh
 ```
 
 `VARIANT=secure-release` gives the release profile of the same, and `fw-push.py --variant secure-release` pushes it. With the OCI public key provisioned, a firmware update passes both the OCI signature check and the Secure Boot image check.

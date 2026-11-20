@@ -77,4 +77,6 @@ target_include_directories(app PRIVATE
     ${ROOT}/core/include ${ROOT}/core/src ${ROOT}/third_party/cjson ${PORT} src)
 target_include_directories(app PRIVATE ${ZEPHYR_BINARY_DIR}/include/generated/zephyr)
 target_compile_definitions(app PRIVATE CJSON_NESTING_LIMIT=32 FC_LOG_KEEP=1)
-set_source_files_properties(${WAMR_RUNTIME_LIB_SOURCE} PROPERTIES COMPILE_OPTIONS "-O2")
+set_source_files_properties(${WAMR_RUNTIME_LIB_SOURCE} PROPERTIES
+    COMPILE_OPTIONS "-O2"
+    COMPILE_DEFINITIONS WASM_ENABLE_COMPACT_DISPATCH=1)

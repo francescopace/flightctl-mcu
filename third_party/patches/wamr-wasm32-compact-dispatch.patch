@@ -1,0 +1,1268 @@
+Compact dispatch for 32-bit MCU fast interpreters using two-byte-aligned records.
+Enable with WASM_ENABLE_COMPACT_DISPATCH. The loader verifies the linked
+handler offsets before emitting private decoded records.
+
+--- a/core/iwasm/interpreter/wasm_opcode.h
++++ b/core/iwasm/interpreter/wasm_opcode.h
+@@ -7,6 +7,22 @@
+ #define _WASM_OPCODE_H
+ 
+ #include "wasm.h"
++
++/* Compact dispatch requires the two-byte-aligned 32-bit interpreter format.
++ * Other runtime configurations
++ * retain WAMR's original decoder and interpreter. */
++#if defined(WASM_ENABLE_COMPACT_DISPATCH) && WASM_ENABLE_COMPACT_DISPATCH \
++    && UINTPTR_MAX == UINT32_MAX && WASM_ENABLE_FAST_INTERP \
++    && WASM_ENABLE_LABELS_AS_VALUES && !WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS \
++    && WASM_ENABLE_INSTRUCTION_METERING && !WASM_ENABLE_MINI_LOADER \
++    && !WASM_ENABLE_DEBUG_INTERP && !WASM_ENABLE_OPCODE_COUNTER \
++    && !WASM_ENABLE_GC && !WASM_ENABLE_SIMDE && !WASM_ENABLE_MEMORY64 \
++    && !WASM_ENABLE_SHARED_HEAP && !WASM_ENABLE_THREAD_MGR \
++    && !WASM_ENABLE_AOT && !WASM_ENABLE_FAST_JIT && !WASM_ENABLE_JIT
++#define WASM_COMPACT_DISPATCH_ACTIVE 1
++#else
++#define WASM_COMPACT_DISPATCH_ACTIVE 0
++#endif
+ 
+ #ifdef __cplusplus
+ extern "C" {
+@@ -805,8 +821,94 @@
+ /*
+  * Macro used to generate computed goto tables for the C interpreter.
+  */
++#if WASM_COMPACT_DISPATCH_ACTIVE
++/* Private decoded instructions emitted only after validation. */
++enum {
++    FAST_BR0 = 0xe4,
++    FAST_BR_IF0,
++    FAST_I32_LOAD0,
++    FAST_I32_STORE0,
++    FAST_I32_LOAD8_U0,
++    FAST_I32_LOAD8_S0,
++    FAST_I32_LOAD16_U0,
++    FAST_I32_LOAD16_S0,
++    FAST_I32_STORE80,
++    FAST_I32_STORE160,
++    FAST_I32_EQZ_BR0,
++    FAST_I32_EQ_BR0,
++    FAST_I32_NE_BR0,
++    FAST_I32_LT_S_BR0,
++    FAST_I32_LT_U_BR0,
++    FAST_I32_GT_S_BR0,
++    FAST_I32_GT_U_BR0,
++    FAST_I32_LE_S_BR0,
++    FAST_I32_LE_U_BR0,
++    FAST_I32_GE_S_BR0,
++    FAST_I32_GE_U_BR0,
++    FAST_ADD_ADD,
++    FAST_IMM_ADD = 256,
++    FAST_IMM_SUB,
++    FAST_IMM_MUL,
++    FAST_IMM_AND,
++    FAST_IMM_OR,
++    FAST_IMM_XOR,
++    FAST_IMM_SHL,
++    FAST_IMM_SHR_U,
++    FAST_IMM_SHR_S,
++    FAST_SMALL_I32_LOAD,
++    FAST_SMALL_I32_STORE,
++    FAST_SMALL_I32_LOAD8_U,
++    FAST_SMALL_I32_LOAD8_S,
++    FAST_SMALL_I32_LOAD16_U,
++    FAST_SMALL_I32_LOAD16_S,
++    FAST_SMALL_I32_STORE8,
++    FAST_SMALL_I32_STORE16,
++    FAST_PAIR_LOAD_COPY,
++    FAST_PAIR_LOAD_STORE,
++    FAST_PAIR_LOAD_BYTE,
++    FAST_PAIR_LOAD_ADD,
++    FAST_PAIR_LOADN_COPY,
++    FAST_PAIR_LOADN_STORE,
++    FAST_PAIR_ADDI_ADD,
++    FAST_PAIR_ADDI_ADDI,
++    FAST_PAIR_ADDI_COPY,
++    FAST_PAIR_ADDI_STORE,
++    FAST_PAIR_ADDI_LOAD,
++    FAST_PAIR_ADDI_HALF,
++    FAST_PAIR_ADDI_HALF_U,
++    FAST_PAIR_ADD_ADDI,
++    FAST_PAIR_ADD_COPY,
++    FAST_PAIR_ADD_STORE,
++    FAST_PAIR_ADD_HALF,
++    FAST_PAIR_ADD_HALF_U,
++    FAST_PAIR_ADD_ANDI,
++    FAST_PAIR_BYTE_COPY,
++    FAST_PAIR_BYTE_ANDI,
++    FAST_PAIR_COPY_COPY,
++    FAST_PAIR_COPY_LOAD,
++    FAST_PAIR_COPY_LOADN,
++    FAST_PAIR_COPY_BR,
++    FAST_PAIR_COPY_ADDI,
++    FAST_PAIR_SHR_ANDI,
++    FAST_PAIR_SHR_AND,
++    FAST_PAIR_SHL_ADD,
++    FAST_PAIR_SHL_ADDI,
++    FAST_PAIR_HALF_MUL,
++    FAST_PAIR_HALF_U_MUL,
++    FAST_PAIR_MUL_ADD,
++    FAST_PAIR_MUL_ADDI,
++    FAST_PAIR_MUL_COPY,
++    FAST_PAIR_STORE_BR
++};
++#define WAMR_EXTRA_LABELS
++#define WASM_INSTRUCTION_NUM 309
++#else
+ #define WASM_INSTRUCTION_NUM 256
+-
++#endif
++
++#ifndef WAMR_EXTRA_LABELS
++#define WAMR_EXTRA_LABELS
++#endif
+ #define DEFINE_GOTO_TABLE(type, _name)                          \
+     static type _name[WASM_INSTRUCTION_NUM] = {                 \
+         HANDLE_OPCODE(WASM_OP_UNREACHABLE),          /* 0x00 */ \
+@@ -1029,6 +1131,7 @@
+         HANDLE_OPCODE(EXT_OP_IF),                    /* 0xd9 */ \
+         HANDLE_OPCODE(EXT_OP_BR_TABLE_CACHE),        /* 0xda */ \
+         HANDLE_OPCODE(EXT_OP_TRY),                   /* 0xdb */ \
++        WAMR_EXTRA_LABELS \
+         SET_GOTO_TABLE_ELEM(WASM_OP_GC_PREFIX),      /* 0xfb */ \
+         SET_GOTO_TABLE_ELEM(WASM_OP_MISC_PREFIX),    /* 0xfc */ \
+         SET_GOTO_TABLE_ELEM(WASM_OP_SIMD_PREFIX),    /* 0xfd */ \
+--- a/core/iwasm/interpreter/wasm_loader.c
++++ b/core/iwasm/interpreter/wasm_loader.c
+@@ -6117,6 +6117,12 @@
+ wasm_interp_get_handle_table(void);
+ 
+ static void **handle_table;
++#if WASM_COMPACT_DISPATCH_ACTIVE
++static inline uint16 handler_delta(unsigned id)
++{
++    return (uint16)((uintptr_t)handle_table[id] - (uintptr_t)handle_table[0]);
++}
++#endif
+ #endif
+ 
+ static bool
+@@ -6490,6 +6496,19 @@
+             }
+         }
+     }
++
++#if WASM_COMPACT_DISPATCH_ACTIVE
++    void **handlers = wasm_interp_get_handle_table();
++    for (unsigned op = 0; op < WASM_INSTRUCTION_NUM; ++op) {
++        if (handlers[op]) {
++            intptr_t diff = (intptr_t)handlers[op] - (intptr_t)handlers[0];
++            if (diff < INT16_MIN || diff > INT16_MAX) {
++                set_error_buf(error_buf, error_buf_size, "fast interpreter handler outside compact range");
++                return false;
++            }
++        }
++    }
++#endif
+ 
+ #if WASM_ENABLE_FAST_INTERP != 0 && WASM_ENABLE_LABELS_AS_VALUES != 0
+     handle_table = wasm_interp_get_handle_table();
+@@ -9210,6 +9229,13 @@
+         LOG_OP("\nemit_op [%02x]\t", opcode);                                  \
+     } while (0)
+ #else
++#if WASM_COMPACT_DISPATCH_ACTIVE
++#define emit_label(opcode)                                                        \
++    do {                                                                          \
++        wasm_loader_emit_int16(loader_ctx, (int16)handler_delta(opcode));          \
++        LOG_OP("\nemit_op [%02x]\t", opcode);                                      \
++    } while (0)
++#else
+ #define emit_label(opcode)                                           \
+     do {                                                             \
+         uint32 label_addr = (uint32)(uintptr_t)handle_table[opcode]; \
+@@ -9218,11 +9244,20 @@
+         LOG_OP("\nemit_op [%02x]\t", opcode);                        \
+     } while (0)
+ #endif
++#endif
++#if WASM_COMPACT_DISPATCH_ACTIVE
++#define skip_label()                                           \
++    do {                                                       \
++        wasm_loader_emit_backspace(loader_ctx, sizeof(uint16)); \
++        LOG_OP("\ndelete last op\n");                          \
++    } while (0)
++#else
+ #define skip_label()                                           \
+     do {                                                       \
+         wasm_loader_emit_backspace(loader_ctx, sizeof(int32)); \
+         LOG_OP("\ndelete last op\n");                          \
+     } while (0)
++#endif
+ #endif /* end of WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS */
+ #else  /* else of WASM_ENABLE_LABELS_AS_VALUES */
+ #define emit_label(opcode)                          \
+@@ -11638,6 +11673,10 @@
+ #if WASM_ENABLE_FAST_INTERP != 0
+     int16 operand_offset = 0;
+     uint8 last_op = 0;
++#if WASM_COMPACT_DISPATCH_ACTIVE
++    uint8 *op_start = NULL, *previous_start = NULL;
++    uint8 previous_opcode = 0;
++#endif
+     bool disable_emit, preserve_local = false, if_condition_available = true;
+     float32 f32_const;
+     float64 f64_const;
+@@ -11814,6 +11853,9 @@
+ #if WASM_ENABLE_FAST_INTERP != 0
+         p_org = p;
+         disable_emit = false;
++#if WASM_COMPACT_DISPATCH_ACTIVE
++        op_start = loader_ctx->p_code_compiled;
++#endif
+         emit_label(opcode);
+ #endif
+         switch (opcode) {
+@@ -13192,7 +13234,9 @@
+ #else
+                             if (loader_ctx->p_code_compiled) {
+                                 uint8 opcode_tmp = WASM_OP_SELECT_64;
+-#if WASM_ENABLE_LABELS_AS_VALUES != 0
++#if WASM_COMPACT_DISPATCH_ACTIVE
++                                STORE_U16(p_code_compiled_tmp - sizeof(uint16), handler_delta(opcode_tmp));
++#elif WASM_ENABLE_LABELS_AS_VALUES != 0
+ #if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
+                                 *(void **)(p_code_compiled_tmp
+                                            - sizeof(void *)) =
+@@ -13225,7 +13269,9 @@
+ #if WASM_ENABLE_SIMDE != 0
+                             if (loader_ctx->p_code_compiled) {
+                                 uint8 opcode_tmp = WASM_OP_SELECT_128;
+-#if WASM_ENABLE_LABELS_AS_VALUES != 0
++#if WASM_COMPACT_DISPATCH_ACTIVE
++                                STORE_U16(p_code_compiled_tmp - sizeof(uint16), handler_delta(opcode_tmp));
++#elif WASM_ENABLE_LABELS_AS_VALUES != 0
+ #if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
+                                 *(void **)(p_code_compiled_tmp
+                                            - sizeof(void *)) =
+@@ -13361,7 +13407,9 @@
+                         if (wasm_is_type_reftype(type))
+                             opcode_tmp = WASM_OP_SELECT_T;
+ #endif
+-#if WASM_ENABLE_LABELS_AS_VALUES != 0
++#if WASM_COMPACT_DISPATCH_ACTIVE
++                        STORE_U16(p_code_compiled_tmp - sizeof(uint16), handler_delta(opcode_tmp));
++#elif WASM_ENABLE_LABELS_AS_VALUES != 0
+ #if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
+                         *(void **)(p_code_compiled_tmp - sizeof(void *)) =
+                             handle_table[opcode_tmp];
+@@ -14199,7 +14247,45 @@
+                     goto fail;
+                 }
+ #if WASM_ENABLE_FAST_INTERP != 0
++#if WASM_COMPACT_DISPATCH_ACTIVE
++                uint8 simple = 0;
++                if (mem_offset == 0) {
++                    switch (opcode) {
++                        case WASM_OP_I32_LOAD: simple = FAST_I32_LOAD0; break;
++                        case WASM_OP_I32_STORE: simple = FAST_I32_STORE0; break;
++                        case WASM_OP_I32_LOAD8_U: simple = FAST_I32_LOAD8_U0; break;
++                        case WASM_OP_I32_LOAD8_S: simple = FAST_I32_LOAD8_S0; break;
++                        case WASM_OP_I32_LOAD16_U: simple = FAST_I32_LOAD16_U0; break;
++                        case WASM_OP_I32_LOAD16_S: simple = FAST_I32_LOAD16_S0; break;
++                        case WASM_OP_I32_STORE8: simple = FAST_I32_STORE80; break;
++                        case WASM_OP_I32_STORE16: simple = FAST_I32_STORE160; break;
++                    }
++                }
++                unsigned small = 0, width = 0;
++                if (mem_offset && mem_offset <= UINT16_MAX - 4) {
++                    switch (opcode) {
++                    case WASM_OP_I32_LOAD: small = FAST_SMALL_I32_LOAD; width = 4; break;
++                    case WASM_OP_I32_STORE: small = FAST_SMALL_I32_STORE; width = 4; break;
++                    case WASM_OP_I32_LOAD8_U: small = FAST_SMALL_I32_LOAD8_U; width = 1; break;
++                    case WASM_OP_I32_LOAD8_S: small = FAST_SMALL_I32_LOAD8_S; width = 1; break;
++                    case WASM_OP_I32_LOAD16_U: small = FAST_SMALL_I32_LOAD16_U; width = 2; break;
++                    case WASM_OP_I32_LOAD16_S: small = FAST_SMALL_I32_LOAD16_S; width = 2; break;
++                    case WASM_OP_I32_STORE8: small = FAST_SMALL_I32_STORE8; width = 1; break;
++                    case WASM_OP_I32_STORE16: small = FAST_SMALL_I32_STORE16; width = 2; break;
++                    }
++                }
++                if (simple) { skip_label(); emit_label(simple); }
++                else if (small) {
++                    skip_label();
++                    emit_label(small);
++                    wasm_loader_emit_int16(loader_ctx, (int16)(mem_offset + width));
++                }
++                else {
++                    emit_uint32(loader_ctx, mem_offset);
++                }
++#else
+                 emit_uint32(loader_ctx, mem_offset);
++#endif
+ #endif
+ #if WASM_ENABLE_JIT != 0 || WASM_ENABLE_WAMR_COMPILER != 0
+                 func->has_memory_operations = true;
+@@ -16836,6 +16922,117 @@
+         }
+ 
+ #if WASM_ENABLE_FAST_INTERP != 0
++#if WASM_COMPACT_DISPATCH_ACTIVE
++        /* The normal record for a branch carrying no values contains only
++         * the arity word and absolute target after the optional condition. */
++        if (op_start && (opcode == WASM_OP_BR || opcode == WASM_OP_BR_IF)) {
++            unsigned args = opcode == WASM_OP_BR_IF ? 2 : 0;
++            if (loader_ctx->p_code_compiled - op_start == (int)(2 + args + 8)
++                && LOAD_U32(op_start + 2 + args) == 0) {
++                STORE_U16(op_start, handler_delta(args ? FAST_BR_IF0 : FAST_BR0));
++            }
++        }
++        if (op_start && loader_ctx->p_code_compiled - op_start == 8) {
++            unsigned id = 0;
++            bool commutative = false;
++            switch (opcode) {
++                case WASM_OP_I32_ADD: id = FAST_IMM_ADD; commutative = true; break;
++                case WASM_OP_I32_SUB: id = FAST_IMM_SUB; break;
++                case WASM_OP_I32_MUL: id = FAST_IMM_MUL; commutative = true; break;
++                case WASM_OP_I32_AND: id = FAST_IMM_AND; commutative = true; break;
++                case WASM_OP_I32_OR: id = FAST_IMM_OR; commutative = true; break;
++                case WASM_OP_I32_XOR: id = FAST_IMM_XOR; commutative = true; break;
++                case WASM_OP_I32_SHL: id = FAST_IMM_SHL; break;
++                case WASM_OP_I32_SHR_U: id = FAST_IMM_SHR_U; break;
++                case WASM_OP_I32_SHR_S: id = FAST_IMM_SHR_S; break;
++            }
++            if (id && *(uint16 *)op_start == handler_delta(opcode)) {
++                int16 rhs = *(int16 *)(op_start + 2);
++                int16 lhs = *(int16 *)(op_start + 4);
++                if (commutative && rhs >= 0 && lhs < 0) {
++                    int16 tmp = lhs; lhs = rhs; rhs = tmp;
++                }
++                if (rhs < 0 && (uint32)(-(int)rhs) <= loader_ctx->i32_const_num) {
++                    int32 val = loader_ctx->i32_consts[loader_ctx->i32_const_num + rhs];
++                    if (val >= INT16_MIN && val <= INT16_MAX) {
++                        STORE_U16(op_start, handler_delta(id));
++                        STORE_U16(op_start + 2, (uint16)val);
++                        STORE_U16(op_start + 4, (uint16)lhs);
++                    }
++                }
++            }
++        }
++        if (previous_start && op_start && opcode == WASM_OP_BR_IF
++            && loader_ctx->p_code_compiled - op_start == 12
++            && *(uint16 *)op_start == handler_delta(FAST_BR_IF0)
++            && previous_opcode >= WASM_OP_I32_EQZ && previous_opcode <= WASM_OP_I32_GE_U
++            && op_start - previous_start == (previous_opcode == WASM_OP_I32_EQZ ? 6 : 8)
++            && *(uint16 *)previous_start == handler_delta(previous_opcode)
++            && *(int16 *)(op_start - 2) == *(int16 *)(op_start + 2)) {
++            STORE_U16(previous_start, handler_delta(FAST_I32_EQZ_BR0 + previous_opcode - WASM_OP_I32_EQZ));
++        }
++        if (previous_start && op_start && opcode == WASM_OP_I32_ADD && previous_opcode == WASM_OP_I32_ADD
++            && op_start - previous_start == 8 && loader_ctx->p_code_compiled - op_start == 8
++            && *(uint16 *)previous_start == handler_delta(previous_opcode)
++            && *(uint16 *)op_start == handler_delta(opcode)) {
++            STORE_U16(previous_start, handler_delta(FAST_ADD_ADD));
++        }
++        if (previous_start && op_start && loader_ctx->p_code_compiled > op_start) {
++            /* Match only complete adjacent records. The second record remains
++             * a legal target when another path enters it directly. */
++            static const struct { uint16 first, second, fused; uint8 left_len, right_len; } rules[] = {
++                { FAST_I32_LOAD0, EXT_OP_TEE_LOCAL_FAST, FAST_PAIR_LOAD_COPY, 6, 6 },
++                { FAST_I32_LOAD0, FAST_I32_STORE0, FAST_PAIR_LOAD_STORE, 6, 6 },
++                { FAST_I32_LOAD0, FAST_I32_LOAD8_U0, FAST_PAIR_LOAD_BYTE, 6, 6 },
++                { FAST_I32_LOAD0, WASM_OP_I32_ADD, FAST_PAIR_LOAD_ADD, 6, 8 },
++                { FAST_SMALL_I32_LOAD, EXT_OP_TEE_LOCAL_FAST, FAST_PAIR_LOADN_COPY, 8, 6 },
++                { FAST_SMALL_I32_LOAD, FAST_I32_STORE0, FAST_PAIR_LOADN_STORE, 8, 6 },
++                { FAST_IMM_ADD, WASM_OP_I32_ADD, FAST_PAIR_ADDI_ADD, 8, 8 },
++                { FAST_IMM_ADD, FAST_IMM_ADD, FAST_PAIR_ADDI_ADDI, 8, 8 },
++                { FAST_IMM_ADD, EXT_OP_TEE_LOCAL_FAST, FAST_PAIR_ADDI_COPY, 8, 6 },
++                { FAST_IMM_ADD, FAST_I32_STORE0, FAST_PAIR_ADDI_STORE, 8, 6 },
++                { FAST_IMM_ADD, FAST_I32_LOAD0, FAST_PAIR_ADDI_LOAD, 8, 6 },
++                { FAST_IMM_ADD, FAST_I32_LOAD16_S0, FAST_PAIR_ADDI_HALF, 8, 6 },
++                { FAST_IMM_ADD, FAST_I32_LOAD16_U0, FAST_PAIR_ADDI_HALF_U, 8, 6 },
++                { WASM_OP_I32_ADD, FAST_IMM_ADD, FAST_PAIR_ADD_ADDI, 8, 8 },
++                { WASM_OP_I32_ADD, EXT_OP_TEE_LOCAL_FAST, FAST_PAIR_ADD_COPY, 8, 6 },
++                { WASM_OP_I32_ADD, FAST_I32_STORE0, FAST_PAIR_ADD_STORE, 8, 6 },
++                { WASM_OP_I32_ADD, FAST_I32_LOAD16_S0, FAST_PAIR_ADD_HALF, 8, 6 },
++                { WASM_OP_I32_ADD, FAST_I32_LOAD16_U0, FAST_PAIR_ADD_HALF_U, 8, 6 },
++                { WASM_OP_I32_ADD, FAST_IMM_AND, FAST_PAIR_ADD_ANDI, 8, 8 },
++                { FAST_I32_LOAD8_U0, EXT_OP_TEE_LOCAL_FAST, FAST_PAIR_BYTE_COPY, 6, 6 },
++                { FAST_I32_LOAD8_U0, FAST_IMM_AND, FAST_PAIR_BYTE_ANDI, 6, 8 },
++                { EXT_OP_TEE_LOCAL_FAST, EXT_OP_TEE_LOCAL_FAST, FAST_PAIR_COPY_COPY, 6, 6 },
++                { EXT_OP_TEE_LOCAL_FAST, FAST_I32_LOAD0, FAST_PAIR_COPY_LOAD, 6, 6 },
++                { EXT_OP_TEE_LOCAL_FAST, FAST_SMALL_I32_LOAD, FAST_PAIR_COPY_LOADN, 6, 8 },
++                { EXT_OP_TEE_LOCAL_FAST, FAST_BR_IF0, FAST_PAIR_COPY_BR, 6, 12 },
++                { EXT_OP_TEE_LOCAL_FAST, FAST_IMM_ADD, FAST_PAIR_COPY_ADDI, 6, 8 },
++                { FAST_IMM_SHR_U, FAST_IMM_AND, FAST_PAIR_SHR_ANDI, 8, 8 },
++                { FAST_IMM_SHR_U, WASM_OP_I32_AND, FAST_PAIR_SHR_AND, 8, 8 },
++                { FAST_IMM_SHL, WASM_OP_I32_ADD, FAST_PAIR_SHL_ADD, 8, 8 },
++                { FAST_IMM_SHL, FAST_IMM_ADD, FAST_PAIR_SHL_ADDI, 8, 8 },
++                { FAST_I32_LOAD16_S0, WASM_OP_I32_MUL, FAST_PAIR_HALF_MUL, 6, 8 },
++                { FAST_I32_LOAD16_U0, WASM_OP_I32_MUL, FAST_PAIR_HALF_U_MUL, 6, 8 },
++                { WASM_OP_I32_MUL, WASM_OP_I32_ADD, FAST_PAIR_MUL_ADD, 8, 8 },
++                { WASM_OP_I32_MUL, FAST_IMM_ADD, FAST_PAIR_MUL_ADDI, 8, 8 },
++                { WASM_OP_I32_MUL, EXT_OP_TEE_LOCAL_FAST, FAST_PAIR_MUL_COPY, 8, 6 },
++                { FAST_I32_STORE0, FAST_BR_IF0, FAST_PAIR_STORE_BR, 6, 12 },
++            };
++            for (unsigned k = 0; k < sizeof(rules)/sizeof(rules[0]); ++k) {
++                if (op_start - previous_start == rules[k].left_len
++                    && loader_ctx->p_code_compiled - op_start == rules[k].right_len
++                    && *(uint16 *)previous_start == handler_delta(rules[k].first)
++                    && *(uint16 *)op_start == handler_delta(rules[k].second)) {
++                    STORE_U16(previous_start, handler_delta(rules[k].fused));
++                    break;
++                }
++            }
++        }
++        if (op_start && loader_ctx->p_code_compiled != op_start) {
++            previous_start = op_start;
++            previous_opcode = opcode;
++        }
++#endif
+         last_op = opcode;
+ #endif
+     }
+--- a/core/iwasm/interpreter/wasm_interp_fast.c
++++ b/core/iwasm/interpreter/wasm_interp_fast.c
+@@ -1493,6 +1493,18 @@
+         goto *p_label_addr;                                               \
+     } while (0)
+ #else
++#if WASM_COMPACT_DISPATCH_ACTIVE
++#define FETCH_OPCODE_AND_DISPATCH()                                      \
++    do {                                                                 \
++        const void *p_label_addr;                                        \
++        bh_assert(((uintptr_t)frame_ip & 1) == 0);                       \
++        /* Signed byte displacement from the first handler. */          \
++        p_label_addr = ((uint8 *)&&HANDLE_WASM_OP_UNREACHABLE + *(const int16 *)frame_ip); \
++        frame_ip += sizeof(uint16);                                       \
++        CHECK_INSTRUCTION_LIMIT();                                       \
++        goto *p_label_addr;                                              \
++    } while (0)
++#else
+ #define FETCH_OPCODE_AND_DISPATCH()                                      \
+     do {                                                                 \
+         const void *p_label_addr;                                        \
+@@ -1503,6 +1515,7 @@
+         CHECK_INSTRUCTION_LIMIT();                                       \
+         goto *p_label_addr;                                              \
+     } while (0)
++#endif
+ #endif
+ #endif /* end of WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS */
+ #define HANDLE_OP_END() FETCH_OPCODE_AND_DISPATCH()
+@@ -1625,6 +1638,85 @@
+ 
+ #if WASM_ENABLE_LABELS_AS_VALUES != 0
+ #define HANDLE_OPCODE(op) &&HANDLE_##op
++#if WASM_COMPACT_DISPATCH_ACTIVE
++
++#undef WAMR_EXTRA_LABELS
++#define WAMR_EXTRA_LABELS SET_GOTO_TABLE_ELEM(FAST_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_BR_IF0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_LOAD0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_STORE0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_LOAD8_U0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_LOAD8_S0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_LOAD16_U0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_LOAD16_S0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_STORE80), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_STORE160), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_EQZ_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_EQ_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_NE_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_LT_S_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_LT_U_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_GT_S_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_GT_U_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_LE_S_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_LE_U_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_GE_S_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_I32_GE_U_BR0), \
++    SET_GOTO_TABLE_ELEM(FAST_ADD_ADD), \
++    SET_GOTO_TABLE_ELEM(FAST_IMM_ADD), \
++    SET_GOTO_TABLE_ELEM(FAST_IMM_SUB), \
++    SET_GOTO_TABLE_ELEM(FAST_IMM_MUL), \
++    SET_GOTO_TABLE_ELEM(FAST_IMM_AND), \
++    SET_GOTO_TABLE_ELEM(FAST_IMM_OR), \
++    SET_GOTO_TABLE_ELEM(FAST_IMM_XOR), \
++    SET_GOTO_TABLE_ELEM(FAST_IMM_SHL), \
++    SET_GOTO_TABLE_ELEM(FAST_IMM_SHR_U), \
++    SET_GOTO_TABLE_ELEM(FAST_IMM_SHR_S), \
++    SET_GOTO_TABLE_ELEM(FAST_SMALL_I32_LOAD), \
++    SET_GOTO_TABLE_ELEM(FAST_SMALL_I32_STORE), \
++    SET_GOTO_TABLE_ELEM(FAST_SMALL_I32_LOAD8_U), \
++    SET_GOTO_TABLE_ELEM(FAST_SMALL_I32_LOAD8_S), \
++    SET_GOTO_TABLE_ELEM(FAST_SMALL_I32_LOAD16_U), \
++    SET_GOTO_TABLE_ELEM(FAST_SMALL_I32_LOAD16_S), \
++    SET_GOTO_TABLE_ELEM(FAST_SMALL_I32_STORE8), \
++    SET_GOTO_TABLE_ELEM(FAST_SMALL_I32_STORE16), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_LOAD_COPY), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_LOAD_STORE), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_LOAD_BYTE), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_LOAD_ADD), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_LOADN_COPY), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_LOADN_STORE), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADDI_ADD), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADDI_ADDI), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADDI_COPY), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADDI_STORE), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADDI_LOAD), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADDI_HALF), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADDI_HALF_U), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADD_ADDI), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADD_COPY), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADD_STORE), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADD_HALF), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADD_HALF_U), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_ADD_ANDI), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_BYTE_COPY), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_BYTE_ANDI), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_COPY_COPY), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_COPY_LOAD), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_COPY_LOADN), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_COPY_BR), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_COPY_ADDI), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_SHR_ANDI), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_SHR_AND), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_SHL_ADD), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_SHL_ADDI), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_HALF_MUL), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_HALF_U_MUL), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_MUL_ADD), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_MUL_ADDI), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_MUL_COPY), \
++    SET_GOTO_TABLE_ELEM(FAST_PAIR_STORE_BR),
++#endif
+     DEFINE_GOTO_TABLE(const void *, handle_table);
+ #undef HANDLE_OPCODE
+     if (exec_env == NULL) {
+@@ -3771,6 +3863,731 @@
+             }
+ #endif
+ 
++#if WASM_COMPACT_DISPATCH_ACTIVE
++            HANDLE_OP(FAST_I32_LOAD0)
++            {
++                uint32 offset, addr;
++                const uint32 extent = 4;
++                offset = 0;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(4);
++                }
++                frame_lp[addr_ret] = LOAD_I32(maddr);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_SMALL_I32_LOAD)
++            {
++                uint32 offset, addr;
++                uint32 extent = *(uint16 *)frame_ip;
++                frame_ip += 2;
++                offset = extent - 4;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(4);
++                }
++                frame_lp[addr_ret] = LOAD_I32(maddr);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_I32_STORE0)
++            {
++                uint32 offset, addr;
++                uint32 sval;
++                const uint32 extent = 4;
++                offset = 0;
++                sval = GET_OPERAND(uint32, I32, 0);
++                addr = GET_OPERAND(uint32, I32, 2);
++                frame_ip += 4;
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(4);
++                }
++                STORE_U32(maddr, sval);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_SMALL_I32_STORE)
++            {
++                uint32 offset, addr;
++                uint32 sval;
++                uint32 extent = *(uint16 *)frame_ip;
++                frame_ip += 2;
++                offset = extent - 4;
++                sval = GET_OPERAND(uint32, I32, 0);
++                addr = GET_OPERAND(uint32, I32, 2);
++                frame_ip += 4;
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(4);
++                }
++                STORE_U32(maddr, sval);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_I32_LOAD8_U0)
++            {
++                uint32 offset, addr;
++                const uint32 extent = 1;
++                offset = 0;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(1);
++                }
++                frame_lp[addr_ret] = (uint32)(*(uint8 *)(maddr));
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_SMALL_I32_LOAD8_U)
++            {
++                uint32 offset, addr;
++                uint32 extent = *(uint16 *)frame_ip;
++                frame_ip += 2;
++                offset = extent - 1;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(1);
++                }
++                frame_lp[addr_ret] = (uint32)(*(uint8 *)(maddr));
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_I32_LOAD8_S0)
++            {
++                uint32 offset, addr;
++                const uint32 extent = 1;
++                offset = 0;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(1);
++                }
++                frame_lp[addr_ret] = sign_ext_8_32(*(int8 *)maddr);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_SMALL_I32_LOAD8_S)
++            {
++                uint32 offset, addr;
++                uint32 extent = *(uint16 *)frame_ip;
++                frame_ip += 2;
++                offset = extent - 1;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(1);
++                }
++                frame_lp[addr_ret] = sign_ext_8_32(*(int8 *)maddr);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_I32_LOAD16_U0)
++            {
++                uint32 offset, addr;
++                const uint32 extent = 2;
++                offset = 0;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(2);
++                }
++                frame_lp[addr_ret] = (uint32)(LOAD_U16(maddr));
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_SMALL_I32_LOAD16_U)
++            {
++                uint32 offset, addr;
++                uint32 extent = *(uint16 *)frame_ip;
++                frame_ip += 2;
++                offset = extent - 2;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(2);
++                }
++                frame_lp[addr_ret] = (uint32)(LOAD_U16(maddr));
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_I32_LOAD16_S0)
++            {
++                uint32 offset, addr;
++                const uint32 extent = 2;
++                offset = 0;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(2);
++                }
++                frame_lp[addr_ret] = sign_ext_16_32(LOAD_I16(maddr));
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_SMALL_I32_LOAD16_S)
++            {
++                uint32 offset, addr;
++                uint32 extent = *(uint16 *)frame_ip;
++                frame_ip += 2;
++                offset = extent - 2;
++                addr = GET_OPERAND(uint32, I32, 0);
++                frame_ip += 2;
++                addr_ret = GET_OFFSET();
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(2);
++                }
++                frame_lp[addr_ret] = sign_ext_16_32(LOAD_I16(maddr));
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_I32_STORE80)
++            {
++                uint32 offset, addr;
++                uint32 sval;
++                const uint32 extent = 1;
++                offset = 0;
++                sval = GET_OPERAND(uint32, I32, 0);
++                addr = GET_OPERAND(uint32, I32, 2);
++                frame_ip += 4;
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(1);
++                }
++                STORE_U8(maddr, (uint8_t)sval);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_SMALL_I32_STORE8)
++            {
++                uint32 offset, addr;
++                uint32 sval;
++                uint32 extent = *(uint16 *)frame_ip;
++                frame_ip += 2;
++                offset = extent - 1;
++                sval = GET_OPERAND(uint32, I32, 0);
++                addr = GET_OPERAND(uint32, I32, 2);
++                frame_ip += 4;
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(1);
++                }
++                STORE_U8(maddr, (uint8_t)sval);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_I32_STORE160)
++            {
++                uint32 offset, addr;
++                uint32 sval;
++                const uint32 extent = 2;
++                offset = 0;
++                sval = GET_OPERAND(uint32, I32, 0);
++                addr = GET_OPERAND(uint32, I32, 2);
++                frame_ip += 4;
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(2);
++                }
++                STORE_U16(maddr, (uint16)sval);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_SMALL_I32_STORE16)
++            {
++                uint32 offset, addr;
++                uint32 sval;
++                uint32 extent = *(uint16 *)frame_ip;
++                frame_ip += 2;
++                offset = extent - 2;
++                sval = GET_OPERAND(uint32, I32, 0);
++                addr = GET_OPERAND(uint32, I32, 2);
++                frame_ip += 4;
++                /* Unsigned subtraction gives a cheap sufficient test. The full
++                 * WAMR check handles every remaining address and memory size. */
++                uint32 limit = (uint32)get_linear_mem_size();
++                if (extent <= limit && addr <= limit - extent)
++                    maddr = memory->memory_data + addr + offset;
++                else {
++                    CHECK_MEMORY_OVERFLOW(2);
++                }
++                STORE_U16(maddr, (uint16)sval);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_BR0)
++            {
++                CHECK_SUSPEND_FLAGS();
++                frame_ip = (uint8 *)LOAD_PTR(frame_ip + 4);
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_BR_IF0)
++            {
++                CHECK_SUSPEND_FLAGS();
++                cond = frame_lp[GET_OFFSET()];
++                goto branch_if_empty;
++            branch_if_empty:
++                if (cond) frame_ip = (uint8 *)LOAD_PTR(frame_ip + 4);
++                else frame_ip += 8;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_I32_EQZ_BR0)
++            {
++                cond = GET_OPERAND(uint32, I32, 0) == 0;
++                SET_OPERAND(I32, 2, cond);
++                frame_ip += 4 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_EQ_BR0)
++            {
++                cond = GET_OPERAND(uint32, I32, 2) == GET_OPERAND(uint32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_NE_BR0)
++            {
++                cond = GET_OPERAND(uint32, I32, 2) != GET_OPERAND(uint32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_LT_S_BR0)
++            {
++                cond = GET_OPERAND(int32, I32, 2) < GET_OPERAND(int32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_LT_U_BR0)
++            {
++                cond = GET_OPERAND(uint32, I32, 2) < GET_OPERAND(uint32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_GT_S_BR0)
++            {
++                cond = GET_OPERAND(int32, I32, 2) > GET_OPERAND(int32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_GT_U_BR0)
++            {
++                cond = GET_OPERAND(uint32, I32, 2) > GET_OPERAND(uint32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_LE_S_BR0)
++            {
++                cond = GET_OPERAND(int32, I32, 2) <= GET_OPERAND(int32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_LE_U_BR0)
++            {
++                cond = GET_OPERAND(uint32, I32, 2) <= GET_OPERAND(uint32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_GE_S_BR0)
++            {
++                cond = GET_OPERAND(int32, I32, 2) >= GET_OPERAND(int32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_I32_GE_U_BR0)
++            {
++                cond = GET_OPERAND(uint32, I32, 2) >= GET_OPERAND(uint32, I32, 0);
++                SET_OPERAND(I32, 4, cond);
++                frame_ip += 6 + 2 + 2;
++                CHECK_INSTRUCTION_LIMIT();
++                CHECK_SUSPEND_FLAGS();
++                goto branch_if_empty;
++            }
++            HANDLE_OP(FAST_ADD_ADD)
++            {
++                DEF_OP_NUMERIC(uint32, uint32, I32, +);
++                frame_ip += 2;
++                CHECK_INSTRUCTION_LIMIT();
++                DEF_OP_NUMERIC(uint32, uint32, I32, +);
++                HANDLE_OP_END();
++            }
++
++            HANDLE_OP(FAST_IMM_ADD)
++            {
++                SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) + ((uint32)(int32)*(int16 *)frame_ip));
++                frame_ip += 6;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_IMM_SUB)
++            {
++                SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) - ((uint32)(int32)*(int16 *)frame_ip));
++                frame_ip += 6;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_IMM_MUL)
++            {
++                SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) * ((uint32)(int32)*(int16 *)frame_ip));
++                frame_ip += 6;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_IMM_AND)
++            {
++                SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) & ((uint32)(int32)*(int16 *)frame_ip));
++                frame_ip += 6;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_IMM_OR)
++            {
++                SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) | ((uint32)(int32)*(int16 *)frame_ip));
++                frame_ip += 6;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_IMM_XOR)
++            {
++                SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) ^ ((uint32)(int32)*(int16 *)frame_ip));
++                frame_ip += 6;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_IMM_SHL)
++            {
++                SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) << (((uint32)(int32)*(int16 *)frame_ip & 31)));
++                frame_ip += 6;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_IMM_SHR_U)
++            {
++                SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) >> (((uint32)(int32)*(int16 *)frame_ip & 31)));
++                frame_ip += 6;
++                HANDLE_OP_END();
++            }
++            HANDLE_OP(FAST_IMM_SHR_S)
++            {
++                SET_OPERAND(I32, 4, GET_OPERAND(int32, I32, 2) >> (((uint32)(int32)*(int16 *)frame_ip & 31)));
++                frame_ip += 6;
++                HANDLE_OP_END();
++            }
++            /* A pair executes the first operation, charges the second, and
++             * enters its ordinary handler. Both original entry points remain valid. */
++#define COMPACT_PAIR_LOAD(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        uint32 offset, addr; \
++        const uint32 extent = 4; \
++        offset = 0; \
++        addr = GET_OPERAND(uint32, I32, 0); \
++        frame_ip += 2; \
++        addr_ret = GET_OFFSET(); \
++        uint32 limit = (uint32)get_linear_mem_size(); \
++        if (extent <= limit && addr <= limit - extent) \
++            maddr = memory->memory_data + addr + offset; \
++        else { \
++            CHECK_MEMORY_OVERFLOW(4); \
++        } \
++        frame_lp[addr_ret] = LOAD_I32(maddr); \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_LOADN(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        uint32 offset, addr; \
++        uint32 extent = *(uint16 *)frame_ip; \
++        frame_ip += 2; \
++        offset = extent - 4; \
++        addr = GET_OPERAND(uint32, I32, 0); \
++        frame_ip += 2; \
++        addr_ret = GET_OFFSET(); \
++        uint32 limit = (uint32)get_linear_mem_size(); \
++        if (extent <= limit && addr <= limit - extent) \
++            maddr = memory->memory_data + addr + offset; \
++        else { \
++            CHECK_MEMORY_OVERFLOW(4); \
++        } \
++        frame_lp[addr_ret] = LOAD_I32(maddr); \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_ADDI(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) + ((uint32)(int32)*(int16 *)frame_ip)); \
++        frame_ip += 6; \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_ADD(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        DEF_OP_NUMERIC(uint32, uint32, I32, +); \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_BYTE(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        uint32 offset, addr; \
++        const uint32 extent = 1; \
++        offset = 0; \
++        addr = GET_OPERAND(uint32, I32, 0); \
++        frame_ip += 2; \
++        addr_ret = GET_OFFSET(); \
++        uint32 limit = (uint32)get_linear_mem_size(); \
++        if (extent <= limit && addr <= limit - extent) \
++            maddr = memory->memory_data + addr + offset; \
++        else { \
++            CHECK_MEMORY_OVERFLOW(1); \
++        } \
++        frame_lp[addr_ret] = (uint32)(*(uint8 *)(maddr)); \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_COPY(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        local_offset = *frame_ip; \
++        frame_ip += 2; \
++        *(uint32 *)(frame_lp + local_offset) = \
++            GET_OPERAND(uint32, I32, 0); \
++        frame_ip += 2; \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_SHR(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) >> (((uint32)(int32)*(int16 *)frame_ip & 31))); \
++        frame_ip += 6; \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_SHL(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        SET_OPERAND(I32, 4, GET_OPERAND(uint32, I32, 2) << (((uint32)(int32)*(int16 *)frame_ip & 31))); \
++        frame_ip += 6; \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_HALF(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        uint32 offset, addr; \
++        const uint32 extent = 2; \
++        offset = 0; \
++        addr = GET_OPERAND(uint32, I32, 0); \
++        frame_ip += 2; \
++        addr_ret = GET_OFFSET(); \
++        uint32 limit = (uint32)get_linear_mem_size(); \
++        if (extent <= limit && addr <= limit - extent) \
++            maddr = memory->memory_data + addr + offset; \
++        else { \
++            CHECK_MEMORY_OVERFLOW(2); \
++        } \
++        frame_lp[addr_ret] = sign_ext_16_32(LOAD_I16(maddr)); \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_HALF_U(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        uint32 offset, addr; \
++        const uint32 extent = 2; \
++        offset = 0; \
++        addr = GET_OPERAND(uint32, I32, 0); \
++        frame_ip += 2; \
++        addr_ret = GET_OFFSET(); \
++        uint32 limit = (uint32)get_linear_mem_size(); \
++        if (extent <= limit && addr <= limit - extent) \
++            maddr = memory->memory_data + addr + offset; \
++        else { \
++            CHECK_MEMORY_OVERFLOW(2); \
++        } \
++        frame_lp[addr_ret] = (uint32)(LOAD_U16(maddr)); \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_MUL(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        DEF_OP_NUMERIC(uint32, uint32, I32, *); \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++#define COMPACT_PAIR_STORE(opcode, target) \
++    HANDLE_OP(opcode) \
++    { \
++        uint32 offset, addr; \
++        uint32 sval; \
++        const uint32 extent = 4; \
++        offset = 0; \
++        sval = GET_OPERAND(uint32, I32, 0); \
++        addr = GET_OPERAND(uint32, I32, 2); \
++        frame_ip += 4; \
++        uint32 limit = (uint32)get_linear_mem_size(); \
++        if (extent <= limit && addr <= limit - extent) \
++            maddr = memory->memory_data + addr + offset; \
++        else { \
++            CHECK_MEMORY_OVERFLOW(4); \
++        } \
++        STORE_U32(maddr, sval); \
++        frame_ip += sizeof(uint16); \
++        CHECK_INSTRUCTION_LIMIT(); \
++        goto target; \
++    }
++            COMPACT_PAIR_LOAD(FAST_PAIR_LOAD_COPY, HANDLE_EXT_OP_TEE_LOCAL_FAST)
++            COMPACT_PAIR_LOAD(FAST_PAIR_LOAD_STORE, HANDLE_FAST_I32_STORE0)
++            COMPACT_PAIR_LOAD(FAST_PAIR_LOAD_BYTE, HANDLE_FAST_I32_LOAD8_U0)
++            COMPACT_PAIR_LOAD(FAST_PAIR_LOAD_ADD, HANDLE_WASM_OP_I32_ADD)
++            COMPACT_PAIR_LOADN(FAST_PAIR_LOADN_COPY, HANDLE_EXT_OP_TEE_LOCAL_FAST)
++            COMPACT_PAIR_LOADN(FAST_PAIR_LOADN_STORE, HANDLE_FAST_I32_STORE0)
++            COMPACT_PAIR_ADDI(FAST_PAIR_ADDI_ADD, HANDLE_WASM_OP_I32_ADD)
++            COMPACT_PAIR_ADDI(FAST_PAIR_ADDI_ADDI, HANDLE_FAST_IMM_ADD)
++            COMPACT_PAIR_ADDI(FAST_PAIR_ADDI_COPY, HANDLE_EXT_OP_TEE_LOCAL_FAST)
++            COMPACT_PAIR_ADDI(FAST_PAIR_ADDI_STORE, HANDLE_FAST_I32_STORE0)
++            COMPACT_PAIR_ADDI(FAST_PAIR_ADDI_LOAD, HANDLE_FAST_I32_LOAD0)
++            COMPACT_PAIR_ADDI(FAST_PAIR_ADDI_HALF, HANDLE_FAST_I32_LOAD16_S0)
++            COMPACT_PAIR_ADDI(FAST_PAIR_ADDI_HALF_U, HANDLE_FAST_I32_LOAD16_U0)
++            COMPACT_PAIR_ADD(FAST_PAIR_ADD_ADDI, HANDLE_FAST_IMM_ADD)
++            COMPACT_PAIR_ADD(FAST_PAIR_ADD_COPY, HANDLE_EXT_OP_TEE_LOCAL_FAST)
++            COMPACT_PAIR_ADD(FAST_PAIR_ADD_STORE, HANDLE_FAST_I32_STORE0)
++            COMPACT_PAIR_ADD(FAST_PAIR_ADD_HALF, HANDLE_FAST_I32_LOAD16_S0)
++            COMPACT_PAIR_ADD(FAST_PAIR_ADD_HALF_U, HANDLE_FAST_I32_LOAD16_U0)
++            COMPACT_PAIR_ADD(FAST_PAIR_ADD_ANDI, HANDLE_FAST_IMM_AND)
++            COMPACT_PAIR_BYTE(FAST_PAIR_BYTE_COPY, HANDLE_EXT_OP_TEE_LOCAL_FAST)
++            COMPACT_PAIR_BYTE(FAST_PAIR_BYTE_ANDI, HANDLE_FAST_IMM_AND)
++            COMPACT_PAIR_COPY(FAST_PAIR_COPY_COPY, HANDLE_EXT_OP_TEE_LOCAL_FAST)
++            COMPACT_PAIR_COPY(FAST_PAIR_COPY_LOAD, HANDLE_FAST_I32_LOAD0)
++            COMPACT_PAIR_COPY(FAST_PAIR_COPY_LOADN, HANDLE_FAST_SMALL_I32_LOAD)
++            COMPACT_PAIR_COPY(FAST_PAIR_COPY_BR, HANDLE_FAST_BR_IF0)
++            COMPACT_PAIR_COPY(FAST_PAIR_COPY_ADDI, HANDLE_FAST_IMM_ADD)
++            COMPACT_PAIR_SHR(FAST_PAIR_SHR_ANDI, HANDLE_FAST_IMM_AND)
++            COMPACT_PAIR_SHR(FAST_PAIR_SHR_AND, HANDLE_WASM_OP_I32_AND)
++            COMPACT_PAIR_SHL(FAST_PAIR_SHL_ADD, HANDLE_WASM_OP_I32_ADD)
++            COMPACT_PAIR_SHL(FAST_PAIR_SHL_ADDI, HANDLE_FAST_IMM_ADD)
++            COMPACT_PAIR_HALF(FAST_PAIR_HALF_MUL, HANDLE_WASM_OP_I32_MUL)
++            COMPACT_PAIR_HALF_U(FAST_PAIR_HALF_U_MUL, HANDLE_WASM_OP_I32_MUL)
++            COMPACT_PAIR_MUL(FAST_PAIR_MUL_ADD, HANDLE_WASM_OP_I32_ADD)
++            COMPACT_PAIR_MUL(FAST_PAIR_MUL_ADDI, HANDLE_FAST_IMM_ADD)
++            COMPACT_PAIR_MUL(FAST_PAIR_MUL_COPY, HANDLE_EXT_OP_TEE_LOCAL_FAST)
++            COMPACT_PAIR_STORE(FAST_PAIR_STORE_BR, HANDLE_FAST_BR_IF0)
++#undef COMPACT_PAIR_LOAD
++#undef COMPACT_PAIR_LOADN
++#undef COMPACT_PAIR_ADDI
++#undef COMPACT_PAIR_ADD
++#undef COMPACT_PAIR_BYTE
++#undef COMPACT_PAIR_COPY
++#undef COMPACT_PAIR_SHR
++#undef COMPACT_PAIR_SHL
++#undef COMPACT_PAIR_HALF
++#undef COMPACT_PAIR_HALF_U
++#undef COMPACT_PAIR_MUL
++#undef COMPACT_PAIR_STORE
++#endif
+             /* memory load instructions */
+             HANDLE_OP(WASM_OP_I32_LOAD)
+             {

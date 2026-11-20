@@ -51,6 +51,8 @@
 #   or more): the function ran with the stack 4 bytes off what C requires.
 #   An app's snprintf (five arguments) then gave a double to the C library's
 #   own snprintf from the wrong place, and %f printed nonsense.
+#   wamr-wasm32-compact-dispatch.patch: apply after the loader fixes. Compact
+#   the decoded instructions and dispatch frequent pairs directly on 32-bit MCUs.
 # WAMR 2.4.6 fixes the guest-facing realloc wrapper. The ESP-IDF port's
 # os_realloc still needs the alignment fix above.
 set -euo pipefail
