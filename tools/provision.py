@@ -29,15 +29,17 @@ image is the file given to zephyr.exe --flash=).
 
 The firmware is the same for every installation: change the credentials, not the build.
 The partition is generated with ESP-IDF's NVS partition generator: the pip package
-esp-idf-nvs-partition-gen when it is installed, else nvs_partition_gen.py in the espressif/idf
+esp-idf-nvs-partition-gen when it is installed, else the generator in the espressif/idf
 image ($IDF_IMAGE, default espressif/idf:v6.1.1). It holds the enrollment key: treat the output
 like the key itself.
 """
 import argparse
+import importlib.util
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -73,69 +75,45 @@ def local_ip():
     return out.stdout.strip()
 
 
-def csv_rows(keys, port, base):
-    """nvs_partition_gen CSV: namespace fc, one string entry per file in
-    `base` (named after its key), and the port as an integer."""
-    rows = ["key,type,encoding,value", "fc,namespace,,"]
-    rows += [f"{key},file,string,{base}/{key}" for key in keys]
-    rows.append(f"server_port,data,i32,{int(port)}")
-    return rows
-
-
 def build_partition(args, size):
     secrets = os.path.abspath(args.secrets)
-    for name in ("ca.crt", "enroll.crt", "enroll.key"):
-        if not os.path.exists(os.path.join(secrets, name)):
-            sys.exit(f"{secrets}/{name} missing (tools/enrollment.sh creates it)")
+    values = {}
+    for key, name in (("ca", "ca.crt"), ("enroll_crt", "enroll.crt"), ("enroll_key", "enroll.key"),
+                      ("signing_pub", "signing.pub")):
+        path = os.path.join(secrets, name)
+        if not os.path.exists(path):
+            if key == "signing_pub":
+                print("warning: no signing.pub, the device will not check image signatures", file=sys.stderr)
+                continue
+            sys.exit(f"{path} missing (tools/enrollment.sh creates it)")
+        with open(path, encoding="utf-8", newline="") as f:
+            values[key] = f.read()
     host, port = args.server.rsplit(":", 1) if ":" in args.server else (args.server, "8443")
+    values.update(server_host=host, labels=args.labels)
+    if args.wifi_ssid:
+        values["wifi_ssid"] = args.wifi_ssid
+        if args.wifi_password:
+            values["wifi_pass"] = args.wifi_password
+    if args.pop:
+        values["prov_pop"] = args.pop
 
-    # Inside the repo, so the ESP-IDF container sees it; removed afterwards.
-    os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
-    work = tempfile.mkdtemp(prefix="provision-", dir=os.path.join(ROOT, "build"))
-    try:
-        entries = [("ca", "ca.crt"), ("enroll_crt", "enroll.crt"), ("enroll_key", "enroll.key")]
-        for key, name in entries:
-            shutil.copy(os.path.join(secrets, name), os.path.join(work, key))
-        if os.path.exists(os.path.join(secrets, "signing.pub")):
-            shutil.copy(os.path.join(secrets, "signing.pub"), os.path.join(work, "signing_pub"))
-            entries.append(("signing_pub", None))
-        else:
-            print("warning: no signing.pub, the device will not check image signatures", file=sys.stderr)
-        # Strings go in files too, so commas and quotes need no CSV escaping.
-        values = {"server_host": host, "labels": args.labels}
-        if args.wifi_ssid:
-            values["wifi_ssid"] = args.wifi_ssid
-            values["wifi_pass"] = args.wifi_password or ""
-        if args.pop:
-            values["prov_pop"] = args.pop
-        for key, value in values.items():
-            with open(os.path.join(work, key), "w") as f:
-                f.write(value)
-        local = subprocess.run([sys.executable, "-c", "import esp_idf_nvs_partition_gen"],
-                               capture_output=True).returncode == 0
-        keys = [key for key, _ in entries] + [key for key in values if values[key] != ""]  # no password: open AP
-        rows = csv_rows(keys, port, work if local else "/w")
-        with open(os.path.join(work, "creds.csv"), "w") as f:
-            f.write("\n".join(rows) + "\n")
-        if local:
-            gen = subprocess.run([sys.executable, "-m", "esp_idf_nvs_partition_gen", "generate",
-                                  f"{work}/creds.csv", f"{work}/creds.bin", f"{size:#x}"],
-                                 capture_output=True, text=True)
-        else:
-            gen = subprocess.run(["docker", "run", "--rm", "-v", f"{work}:/w", IDF_IMAGE, "bash", "-c",
-                                  "python $IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py "
-                                  f"generate /w/creds.csv /w/creds.bin {size:#x}"],
-                                 capture_output=True, text=True)
-        if gen.returncode != 0:
-            sys.exit(f"nvs_partition_gen failed:\n{gen.stdout}{gen.stderr}")
-        with open(os.path.join(work, "creds.bin"), "rb") as f:
-            data = f.read()
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+    # Give the generator the credentials through stdin and collect its binary
+    # from stdout. Both routes use the same encoder and need no staging files.
+    encoder = os.path.join(ROOT, "tools", "provision-nvs.py")
+    if importlib.util.find_spec("esp_idf_nvs_partition_gen") is not None:
+        cmd = [sys.executable, encoder]
+    else:
+        cmd = ["docker", "run", "--rm", "-i", "--network=none", "-v", f"{encoder}:/encoder.py:ro",
+               "--entrypoint", "bash", IDF_IMAGE, "-c",
+               '. "$IDF_PATH/export.sh" >&2 && exec python /encoder.py']
+    gen = subprocess.run(cmd, input=json.dumps([size, int(port), values]).encode(),
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if gen.returncode or len(gen.stdout) != size:
+        sys.exit(f"NVS partition generation failed (expected {size} bytes, exit {gen.returncode})")
     print(f"fc_creds: {host}:{port}, labels {args.labels}, "
-          f"signing key {'yes' if any(k == 'signing_pub' for k, _ in entries) else 'no'}, "
+          f"signing key {'yes' if 'signing_pub' in values else 'no'}, "
           f"WiFi {'provisioned' if args.wifi_ssid else 'set in the field' if args.pop else 'from the build'}")
-    return data
+    return gen.stdout
 
 
 def zephyr_partition(board):
@@ -192,6 +170,29 @@ def build_zephyr_partition(args, size):
     return data + b"\xff" * (size - len(data))
 
 
+def write_provisioned_file(path, data, offset=None):
+    """Publish a private partition or patched image only once it is complete."""
+    path = os.path.realpath(path)
+    if os.path.exists(path) and not stat.S_ISREG(os.stat(path).st_mode):
+        sys.exit(f"expected a regular file: {path}")
+    # Even an already-open descriptor for a previously shared image must
+    # keep pointing at the original, unprovisioned contents.
+    out = tempfile.NamedTemporaryFile(mode="wb", dir=os.path.dirname(path), delete=False)
+    try:
+        with out:
+            if offset is not None:
+                with open(path, "rb") as src:
+                    shutil.copyfileobj(src, out)
+                if out.tell() < offset:
+                    out.write(b"\xff" * (offset - out.tell()))
+                out.seek(offset)
+            out.write(data)
+        os.replace(out.name, path)
+    except BaseException:
+        os.unlink(out.name)
+        raise
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--format", choices=("esp-idf", "zephyr"), default="esp-idf")
@@ -225,15 +226,9 @@ def main():
         offset, size = partition()
         data = build_partition(args, size)
     if args.out:
-        with open(args.out, "wb") as f:
-            f.write(data)
+        write_provisioned_file(args.out, data)
     elif args.image:
-        with open(args.image, "r+b") as f:
-            f.seek(0, os.SEEK_END)
-            if f.tell() < offset:
-                f.write(b"\xff" * (offset - f.tell()))
-            f.seek(offset)
-            f.write(data)
+        write_provisioned_file(args.image, data, offset)
         print(f"written into {args.image} at {offset:#x}")
     else:
         with tempfile.NamedTemporaryFile(suffix=".bin") as f:

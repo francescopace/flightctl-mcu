@@ -14,6 +14,9 @@ on:
     paths-ignore: ["**.md", "docs/**", "LICENSE"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # A newer push to the same branch makes the running workflow pointless.
 # A re-run (the e2e job) is a group of its own: it neither cancels a newer
 # push's run nor is cancelled by it.

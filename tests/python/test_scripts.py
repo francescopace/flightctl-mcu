@@ -74,12 +74,27 @@ class ProvisionTest(unittest.TestCase):
     def test_partition_from_the_table(self):
         self.assertEqual(provision.partition(), (0x1a000, 0x6000))
 
-    def test_csv_rows(self):
-        rows = provision.csv_rows(["ca", "labels"], "8443", "/w")
-        self.assertEqual(rows[:2], ["key,type,encoding,value", "fc,namespace,,"])
-        self.assertIn("ca,file,string,/w/ca", rows)
-        self.assertIn("labels,file,string,/w/labels", rows)
-        self.assertEqual(rows[-1], "server_port,data,i32,8443")
+    def test_partition_and_image_are_private_when_replacing_a_shared_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d, "flash.bin")
+            for offset, expected in ((None, b"abcd"), (2, b"01abcd67"), (10, b"01234567\xff\xffabcd")):
+                with self.subTest(offset=offset):
+                    path.write_bytes(b"01234567")
+                    path.chmod(0o644)
+                    with path.open("rb") as old:
+                        provision.write_provisioned_file(path, b"abcd", offset)
+                        self.assertEqual(old.read(), b"01234567")
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                    self.assertEqual(path.read_bytes(), expected)
+
+    def test_failed_image_write_preserves_original_and_removes_temp_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d, "image")
+            path.write_bytes(b"original")
+            with patch.object(provision.os, "replace", side_effect=OSError), self.assertRaises(OSError):
+                provision.write_provisioned_file(path, b"new", 2)
+            self.assertEqual(path.read_bytes(), b"original")
+            self.assertEqual(list(Path(d).iterdir()), [path])
 
     def test_sdkconfig_local_values(self):
         with tempfile.NamedTemporaryFile("w", suffix=".local", delete=False) as f:
@@ -203,6 +218,14 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(base64.b64decode(registry.basic_for("reg.example:5443", "team/app")), b"t:q")
         self.assertEqual(registry.basic_for("reg.example:5443", "teams/app"), "dTpw")
         self.assertIsNone(registry.basic_for("other:5443", "app"))
+
+    def test_oras_cli_prints_only_flags_and_paths(self):
+        directory = Path(self.dir.name)
+        result = subprocess.run([sys.executable, registry.__file__, "oras-args", "reg.example:5443"],
+                                env={**os.environ, "REGISTRY_SECRETS": str(directory)},
+                                check=True, capture_output=True, text=True)
+        self.assertEqual(result.stdout, f"--ca-file {directory}/ca.crt --registry-config {directory}/auth.json\n")
+        self.assertEqual(result.stderr, "")
 
     def test_challenges(self):
         scheme, params = registry._challenge('Bearer realm="https://r/token",service="r",scope="repository:a:pull,push"')

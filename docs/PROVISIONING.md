@@ -6,6 +6,8 @@ Provision the Flight Control credentials at the factory. Supply Wi-Fi there too,
 
 `tools/provision.py` writes the CA, enrollment certificate and key, image-signing **public key**, agent endpoint and labels to `fc_creds`. Each device generates its own management key on first boot. For a P-256 key, the Flight Control device name is `lower(base32hex_nopad(sha256(X || Y)))`. Use `--port` for one board, `--image` to provision a merged image, or `--out` for a partition file. [Single-board example](QUICKSTART.md#4-provision-it)
 
+Both output formats contain the enrollment key and any provisioned Wi-Fi password in clear text on the provisioning host. The tool writes `--out` and `--image` with owner-only permissions (0600). Patching an image requires temporary space for a second copy in the same directory. Store provisioned images on encrypted storage.
+
 ### One enrollment certificate per batch
 
 Generate the batch enrollment credential. Place the publisher's `signing.pub` in that same directory before provisioning. Without it the provisioning script warns that OCI signatures will not be checked.

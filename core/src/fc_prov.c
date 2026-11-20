@@ -38,6 +38,7 @@
 
 #include "fc_crypto.h"
 #include "fc_port.h"
+#include "mbedtls/platform_util.h"
 
 #define HEAD_MAX 1024 /* request line and headers */
 #define BODY_MAX 1024 /* the largest message: a network, 32 + 64 bytes and framing */
@@ -283,10 +284,10 @@ static size_t session_cmd0(prov_t *p, const uint8_t *sc0, size_t sc0_len)
         fc_sha256_update(&h, p->cfg->pop, strlen(p->cfg->pop));
         ok = fc_sha256_finish(&h, digest) == 0;
     }
-    for (int i = 0; i < 32; i++) {
-        shared[i] ^= digest[i];
-    }
     if (ok) {
+        for (size_t i = 0; i < sizeof(shared); i++) {
+            shared[i] ^= digest[i];
+        }
         psa_key_attributes_t a = PSA_KEY_ATTRIBUTES_INIT;
         psa_set_key_type(&a, PSA_KEY_TYPE_AES);
         psa_set_key_bits(&a, 256);
@@ -297,7 +298,8 @@ static size_t session_cmd0(prov_t *p, const uint8_t *sc0, size_t sc0_len)
              psa_cipher_encrypt_setup(&p->ctr, p->aes, PSA_ALG_CTR) == PSA_SUCCESS &&
              psa_cipher_set_iv(&p->ctr, p->iv, sizeof(p->iv)) == PSA_SUCCESS;
     }
-    memset(shared, 0, sizeof(shared));
+    mbedtls_platform_zeroize(shared, sizeof(shared));
+    mbedtls_platform_zeroize(digest, sizeof(digest));
     if (!ok) {
         fc_port_log(FC_LOG_ERROR, "provisioning: cannot set up the session");
         return 0;

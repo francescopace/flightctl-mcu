@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       run-id:
-        description: id of the CI run whose builds to test (default the last successful one on main)
+        description: successful CI run on main to test (default the latest successful push)
         required: false
         default: ""
   workflow_call:
@@ -32,6 +32,10 @@ permissions:
   contents: read
   actions: read
 
+# Jobs that check out or execute a CI build can restore compiler caches.
+# Only the separate job recording a successful run needs to save anything.
+cache-mode: read
+
 env:
   FLIGHTCTL_VERSION: v1.4.0
   ESP_EMU_VERSION: 1.1.0
@@ -42,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run-id: ${{ steps.pick.outputs.run-id }}
-      sha: ${{ steps.pick.outputs.sha }}
+      verified_revision: ${{ steps.pick.outputs.verified_revision }}
       skip: ${{ steps.done.outputs.cache-hit == 'true' }}
     steps:
       - id: pick
@@ -55,10 +59,30 @@ jobs:
               --status success --limit 1 --json databaseId -q '.[0].databaseId')
             [[ -n "$RUN_ID" ]] || { echo "no successful CI run on main"; exit 1; }
           fi
-          SHA=$(gh run view -R "$GITHUB_REPOSITORY" "$RUN_ID" --json headSha -q .headSha)
-          echo "CI run $RUN_ID, commit $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "invalid CI run id"; exit 1; }
+          if [[ "$RUN_ID" == "$GITHUB_RUN_ID" && "$GITHUB_WORKFLOW_REF" == "$GITHUB_REPOSITORY/.github/workflows/ci.yml@"* ]]; then
+            # Called by ci.yml. On a PR, CI built the merge commit.
+            revision=$GITHUB_SHA
+          else
+            # An independently selected run must come from this repo's main,
+            # including its artifacts. A fork can also name its branch main.
+            candidate=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" |
+              jq -er --arg repo "$GITHUB_REPOSITORY" '
+                select(.path == ".github/workflows/ci.yml" and
+                       .head_repository.full_name == $repo and .head_branch == "main" and
+                       (.event == "push" or .event == "workflow_dispatch") and .conclusion == "success")
+                | .head_sha | select(test("^[0-9a-f]{40}$"))') ||
+              { echo "expected a successful CI run from main"; exit 1; }
+            # The run API reports a short ref name even for a tag. Verify
+            # that main actually contains the selected commit.
+            revision=$(gh api "repos/$GITHUB_REPOSITORY/compare/$candidate...main" |
+              jq -er --arg candidate "$candidate" '
+                .merge_base_commit.sha | select(. == $candidate)') ||
+              { echo "selected commit is outside main's history"; exit 1; }
+          fi
+          echo "CI run $RUN_ID, commit $revision" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "run-id=$RUN_ID" >> "$GITHUB_OUTPUT"
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "verified_revision=$revision" >> "$GITHUB_OUTPUT"
       # A commit that passed is not tested again by the nightly run (a marker
       # in the Actions cache, saved by the last job). By hand it always runs.
       - id: done
@@ -66,7 +90,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .e2e-passed
-          key: e2e-passed-${{ steps.pick.outputs.sha }}
+          key: e2e-passed-${{ steps.pick.outputs.verified_revision }}
           lookup-only: true
       - if: steps.done.outputs.cache-hit == 'true'
         run: echo "commit already passed, nothing to do" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -89,19 +113,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ needs.source.outputs.verified_revision }}
       - run: git config --global --add safe.directory '*'
       - run: third_party/fetch-wamr.sh
       # The CI's cache of compiled objects (saved from main by ci.yml).
       - uses: actions/cache/restore@v6
         with:
           path: .ccache
-          key: ccache-${{ matrix.chip }}-${{ matrix.profile }}-${{ needs.source.outputs.sha }}
+          key: ccache-${{ matrix.chip }}-${{ matrix.profile }}-${{ needs.source.outputs.verified_revision }}
           restore-keys: ccache-${{ matrix.chip }}-${{ matrix.profile }}-
       # Secure: security version 1, as the release (anti-rollback).
       - name: build
         env:
-          SHA: ${{ needs.source.outputs.sha }}
+          SHA: ${{ needs.source.outputs.verified_revision }}
           SECURE_VERSION: ${{ matrix.profile == 'secure' && '1' || '' }}
         shell: bash # ${SHA::7}: the container's sh is dash
         run: port/espidf/build-ci.sh ${{ matrix.chip }} "ci-${SHA::7}" "$VARIANT"
@@ -129,17 +153,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ needs.source.outputs.verified_revision }}
       - run: git config --global --add safe.directory '*'
       - run: third_party/fetch-wamr.sh
       - uses: actions/cache/restore@v6
         with:
           path: .ccache
-          key: ccache-${{ matrix.chip }}-plain-${{ needs.source.outputs.sha }}
+          key: ccache-${{ matrix.chip }}-plain-${{ needs.source.outputs.verified_revision }}
           restore-keys: ccache-${{ matrix.chip }}-plain-
       - name: build
         env:
-          SHA: ${{ needs.source.outputs.sha }}
+          SHA: ${{ needs.source.outputs.verified_revision }}
         shell: bash
         run: |
           for v in faulttest faulttest-aborttest faulttest-iwdttest; do
@@ -162,7 +186,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ needs.source.outputs.verified_revision }}
       - name: tools
         run: |
           kind version && helm version --short && kubectl version --client
@@ -210,7 +234,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ needs.source.outputs.verified_revision }}
       - name: tools
         run: |
           kind version && helm version --short && kubectl version --client
@@ -258,9 +282,6 @@ jobs:
         chip: [esp32c5, esp32s3, esp32c6]
         secure: [0, 1]
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.source.outputs.sha }}
       - name: tools
         run: |
           sudo curl -fsSL -o /usr/local/bin/flightctl \
@@ -287,6 +308,12 @@ jobs:
           grep " $name.tar.gz\$" SHA256SUMS | sha256sum -c -
           tar xzf "$name.tar.gz" && sudo install -m 755 "$name/esp-emu" /usr/local/bin/esp-emu
           esp-emu --version
+      - name: esp_prov's dependencies (the plain run provisions WiFi in the field)
+        if: matrix.secure == 0
+        run: pip install protobuf cryptography
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.source.outputs.verified_revision }}
       - name: firmware from the CI run (not rebuilt)
         uses: actions/download-artifact@v8
         with:
@@ -315,9 +342,6 @@ jobs:
           github-token: ${{ github.token }}
           name: wasm-apps
           path: wasm-apps/build
-      - name: esp_prov's dependencies (the plain run provisions WiFi in the field)
-        if: matrix.secure == 0
-        run: pip install protobuf cryptography
       - name: e2e on the emulator
         env:
           ESP_PROV_LOCAL: 1
@@ -383,10 +407,12 @@ jobs:
   passed:
     name: mark the commit as passed
     needs: [source, broken, faulttest, host, zephyr, emulator]
+    if: github.ref == 'refs/heads/main'
+    cache-mode: write-only
     runs-on: ubuntu-latest
     steps:
-      - run: mkdir .e2e-passed && echo "${{ needs.source.outputs.sha }}" > .e2e-passed/sha
+      - run: mkdir .e2e-passed && touch .e2e-passed/passed
       - uses: actions/cache/save@v6
         with:
           path: .e2e-passed
-          key: e2e-passed-${{ needs.source.outputs.sha }}
+          key: e2e-passed-${{ needs.source.outputs.verified_revision }}
