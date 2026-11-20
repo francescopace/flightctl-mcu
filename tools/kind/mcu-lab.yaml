@@ -118,11 +118,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
     channels:
     - stable
     references:
-      container: v0.9.3
+      container: v0.9.4
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -137,11 +137,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
     channels:
     - stable
     references:
-      container: v0.9.3
+      container: v0.9.4
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -156,11 +156,11 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
     channels:
     - stable
     references:
-      container: v0.9.3
+      container: v0.9.4
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
