@@ -27,7 +27,13 @@ tools/registry/up.sh
 flightctl login https://api.<your-ip>.nip.io:8443 --insecure-skip-tls-verify -t "$(kubectl create token flightctl-admin -n flightctl --duration=24h)"
 ```
 
-Log in to `http://ui.<your-ip>.nip.io:8080` with the same token. Under **Software Catalog → MCU lab (test)** you should see the firmware and nine apps. The setup creates a missing catalog. To refresh an existing one, run `tools/kind/apply-catalog.sh`. Images live in the separate `fc-registry` Docker volume. If it was deleted, publish the tags you need in step 6.
+Log in to `http://ui.<your-ip>.nip.io:8080` with the same token. Under **Software Catalog → MCU lab (test)** you should see two firmware entries and eleven app entries. The setup creates a missing catalog. To refresh an existing one, run `tools/kind/apply-catalog.sh`. Images live in the separate `fc-registry` Docker volume. If it was deleted, publish the tags you need in step 6.
+
+When upgrading the v0.9.3 lab catalog, refresh it first. The neural model is now under `tinyml` on the `neural` channel, and the Zephyr lab firmware is under `fw-zephyr-lab`. Once the old entries have zero deployments, remove them from the catalog.
+
+```bash
+flightctl delete catalogitem tinymlp fw-zephyr --catalog mcu-lab
+```
 
 Apply the fleet’s label mapping to keep heap and traffic counters out of device labels. [Label sync](FLIGHTCTL-LIMITATIONS.md#12-a-change-in-the-status-is-a-label-event)
 

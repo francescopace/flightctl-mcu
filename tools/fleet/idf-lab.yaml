@@ -43,7 +43,7 @@ spec:
       applications:
         - name: alarm
           appType: container
-          image: ${REGISTRY}/flightctl-mcu/alarm:v0.9.3
+          image: ${REGISTRY}/flightctl-mcu/alarm:v0.9.4
           envVars:
             FC_ALLOW: "led0"
       config:

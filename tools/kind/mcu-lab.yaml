@@ -12,113 +12,21 @@ metadata:
   name: alarm
   catalog: mcu-lab
 spec:
-  displayName: Line temperature alarm (WASM)
+  displayName: Sensor temperature alarm
+  shortDescription: Monitors a temperature sensor and blinks the board LED when the alarm threshold is reached.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#what-an-app-may-use
   category: application
   type: container
   artifacts:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/alarm
   versions:
-  - version: 0.9.3
-    channels:
-    - stable
-    references:
-      container: v0.9.3
----
-apiVersion: flightctl.io/v1alpha1
-kind: CatalogItem
-metadata:
-  name: arduino
-  catalog: mcu-lab
-spec:
-  displayName: Arduino LED blink (WASM)
-  shortDescription: Blinks the board LED using the Rust build by default. Set FC_ALLOW=led0 when deploying.
-  category: application
-  type: container
-  artifacts:
-  - type: container
-    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/arduino
-  versions:
-  - version: 0.9.3
-    channels:
-    - stable
-    references:
-      container: v0.9.3-rust
-  - version: 0.9.3-cpp
-    channels:
-    - cpp
-    references:
-      container: v0.9.3-cpp
-  - version: 0.9.3-assemblyscript
-    channels:
-    - assemblyscript
-    references:
-      container: v0.9.3-assemblyscript
-  - version: 0.9.3-tinygo
-    channels:
-    - tinygo
-    references:
-      container: v0.9.3-tinygo
----
-apiVersion: flightctl.io/v1alpha1
-kind: CatalogItem
-metadata:
-  name: battery
-  catalog: mcu-lab
-spec:
-  displayName: Battery telemetry (WASM)
-  shortDescription: Reports pack voltage, low voltage, charge percentage and charging state. Grant the configured sensor names and metrics.
-  category: application
-  type: container
-  artifacts:
-  - type: container
-    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/battery
-  versions:
-  - version: 0.9.3
-    channels:
-    - stable
-    references:
-      container: v0.9.3
----
-apiVersion: flightctl.io/v1alpha1
-kind: CatalogItem
-metadata:
-  name: coremark
-  catalog: mcu-lab
-spec:
-  displayName: CoreMark benchmark (WASM)
-  shortDescription: Measures iterations per second with 64 KiB (stable) or 128 KiB (large-memory). Set FC_ENTRY=run when deploying.
-  category: application
-  type: container
-  artifacts:
-  - type: container
-    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/coremark
-  versions:
-  - version: 0.9.3
-    channels:
-    - stable
-    references:
-      container: v0.9.3-wasm3
-  - version: 0.9.3-128k
-    channels:
-    - large-memory
-    references:
-      container: v0.9.3-wasm-coremark
----
-apiVersion: flightctl.io/v1alpha1
-kind: CatalogItem
-metadata:
-  name: fw-zephyr
-  catalog: mcu-lab
-spec:
-  displayName: Zephyr firmware
-  category: system
-  type: os
-  artifacts:
-  - type: container
-    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
-  versions:
   - version: 0.9.4
+    readme: |
+      The default sensor is `die_temp`. Grant `led0` for the visual alarm. For an external probe, set `sensor` to its board-map name and grant that name too. Set `threshold_c` and `hysteresis_c` in the app configuration.
     channels:
     - stable
     references:
@@ -127,10 +35,121 @@ spec:
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
 metadata:
+  name: arduino
+  catalog: mcu-lab
+spec:
+  displayName: Arduino Blink
+  shortDescription: Blinks the board LED. Choose a language build to check Arduino compatibility.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/wasm3/wasm3-arduino
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#the-blink-of-wasm3-arduino
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/arduino
+  versions:
+  - version: 0.9.4
+    readme: |
+      This channel installs the Rust build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - stable
+    references:
+      container: v0.9.4-rust
+  - version: 0.9.4-cpp
+    readme: |
+      This channel installs the C++ build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - cpp
+    references:
+      container: v0.9.4-cpp
+  - version: 0.9.4-assemblyscript
+    readme: |
+      This channel installs the AssemblyScript build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - assemblyscript
+    references:
+      container: v0.9.4-assemblyscript
+  - version: 0.9.4-tinygo
+    readme: |
+      This channel installs the TinyGo build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - tinygo
+    references:
+      container: v0.9.4-tinygo
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: battery
+  catalog: mcu-lab
+spec:
+  displayName: Battery monitor
+  shortDescription: Shows pack voltage and flags low voltage. A Smart Battery gauge can also report charge level and charging state.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#battery-channels
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/battery
+  versions:
+  - version: 0.9.4
+    readme: |
+      Map and grant the battery channels available on the board. Set `low_mv` for the pack’s low-voltage threshold and grant `metrics` to export readings.
+    channels:
+    - stable
+    references:
+      container: v0.9.4
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: coremark
+  catalog: mcu-lab
+spec:
+  displayName: CoreMark CPU benchmark
+  shortDescription: Runs CoreMark once and reports a score in iterations per second.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/wasm3/wasm-coremark
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#standalone-modules
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/coremark
+  versions:
+  - version: 0.9.4
+    readme: |
+      Set `FC_ENTRY=run`. This module needs 64 KiB of contiguous linear memory, plus memory for the agent and app thread. The score appears in the app state when the run completes.
+    channels:
+    - stable
+    references:
+      container: v0.9.4-wasm3
+  - version: 0.9.4-128k
+    readme: |
+      Set `FC_ENTRY=run`. This module needs 128 KiB of contiguous linear memory, plus memory for the agent and app thread. The score appears in the app state when the run completes.
+    channels:
+    - large-memory
+    references:
+      container: v0.9.4-wasm-coremark
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
   name: fw-espidf-lab
   catalog: mcu-lab
 spec:
-  displayName: ESP-IDF lab firmware
+  displayName: ESP-IDF firmware for ESP32 boards
+  shortDescription: Runs the Flight Control agent on ESP32, C3, C5, C6 and S3 boards in the ESP-IDF lab fleet.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/QUICKSTART.md#6-give-it-firmware-config-and-an-app
   category: system
   type: os
   artifacts:
@@ -138,6 +157,8 @@ spec:
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
   - version: 0.9.4
+    readme: |
+      Select this entry for the `idf-lab` fleet. The ESP-IDF and Zephyr entries share a firmware index. Each device selects the image for its platform.
     channels:
     - stable
     references:
@@ -149,7 +170,12 @@ metadata:
   name: fw-zephyr-lab
   catalog: mcu-lab
 spec:
-  displayName: Zephyr lab firmware
+  displayName: Zephyr firmware for ESP32-S3 DevKitC
+  shortDescription: Runs the Flight Control agent on the ESP32-S3 DevKitC in the Zephyr lab fleet.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/ZEPHYR.md#on-a-board
   category: system
   type: os
   artifacts:
@@ -157,6 +183,8 @@ spec:
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
   - version: 0.9.4
+    readme: |
+      Select this entry for the `zephyr-lab` fleet. The DevKitC selects the `esp32s3_devkitc` platform image from the shared firmware index.
     channels:
     - stable
     references:
@@ -168,19 +196,25 @@ metadata:
   name: hwcheck
   catalog: mcu-lab
 spec:
-  displayName: Board hardware check (WASM)
-  shortDescription: Checks the board interfaces granted through FC_ALLOW.
+  displayName: Board peripheral diagnostics
+  shortDescription: Tests I²C, SPI, UART, ADC and PWM and reports what responds on the board.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#hardware-by-name
   category: application
   type: container
   artifacts:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/hwcheck
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
+    readme: |
+      Grant the interfaces you want to check in `FC_ALLOW`: `i2c0`, `spi0`, `uart0`, `adc0` or `pwm0`. Wire UART TX to RX to check loopback.
     channels:
     - stable
     references:
-      container: v0.9.3
+      container: v0.9.4
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -188,19 +222,25 @@ metadata:
   name: libccheck
   catalog: mcu-lab
 spec:
-  displayName: C library check (WASM)
-  shortDescription: Exercises the C library functions available to WASM apps.
+  displayName: WASM C library self-test
+  shortDescription: Runs C library checks on the device. A result of bad=0 means all checks passed.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#the-c-library
   category: application
   type: container
   artifacts:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/libccheck
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
+    readme: |
+      Deploy to check the C library exposed to WASM apps by the installed firmware. Read the result in the app state. No hardware grants are needed.
     channels:
     - stable
     references:
-      container: v0.9.3
+      container: v0.9.4
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -208,19 +248,25 @@ metadata:
   name: localalarm
   catalog: mcu-lab
 spec:
-  displayName: Local temperature alarm (WASM)
-  shortDescription: Checks readings from sampler against a threshold. Set FC_ALLOW=local.from:sampler.
+  displayName: Alarm for sampler readings
+  shortDescription: Checks temperatures sent by the sampler app on the same device and reports alarm or ok.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#pass-readings-between-local-apps
   category: application
   type: container
   artifacts:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/localalarm
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
+    readme: |
+      Deploy alongside `sampler`. Grant `local.to:localalarm` to the sender and `local.from:sampler` to this receiver. Set `threshold_c` on the receiver to choose the alarm threshold.
     channels:
     - stable
     references:
-      container: v0.9.3
+      container: v0.9.4
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -228,19 +274,25 @@ metadata:
   name: mqttdemo
   catalog: mcu-lab
 spec:
-  displayName: MQTT temperature demo (WASM)
-  shortDescription: Publishes temperature readings and receives commands. Requires MQTT access through FC_ALLOW.
+  displayName: MQTT telemetry and commands
+  shortDescription: Publishes temperature to a broker and replies to commands sent to a device or its fleet.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#mqtt
   category: application
   type: container
   artifacts:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/mqttdemo
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
+    readme: |
+      Configure a broker and grant `mqtt`. Read temperature on the device’s `temp` topic and command replies on `ack`. Grant `led0` to enable LED commands.
     channels:
     - stable
     references:
-      container: v0.9.3
+      container: v0.9.4
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -248,19 +300,25 @@ metadata:
   name: sampler
   catalog: mcu-lab
 spec:
-  displayName: Persistent temperature sampler (WASM)
-  shortDescription: Queues readings for acknowledged MQTT delivery. Grant local.to:localalarm to also forward readings to localalarm.
+  displayName: Offline temperature recorder
+  shortDescription: Keeps readings on the device until an MQTT consumer acknowledges them. Can also feed the local alarm.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#persistent-sample-queues
   category: application
   type: container
   artifacts:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/sampler
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
+    readme: |
+      Sampling works offline. For delivery, configure a broker and grant `mqtt`. The consumer acknowledges each stored sample by ID. Grant `local.to:localalarm` to forward live readings to the alarm on the same device.
     channels:
     - stable
     references:
-      container: v0.9.3
+      container: v0.9.4
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -268,39 +326,32 @@ metadata:
   name: tinyml
   catalog: mcu-lab
 spec:
-  displayName: TinyML temperature classifier (WASM)
-  shortDescription: Classifies temperature patterns with a random forest.
+  displayName: TinyML temperature classifier
+  shortDescription: Classifies temperature as steady, warming, cooling or unstable from a window of 12 readings.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#tinyml-with-emlearn
   category: application
   type: container
   artifacts:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/tinyml
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
+    readme: |
+      The random forest classifies the last 12 chip temperature readings. Choose the `neural` channel for a confidence score.
     channels:
     - stable
     references:
-      container: v0.9.3
----
-apiVersion: flightctl.io/v1alpha1
-kind: CatalogItem
-metadata:
-  name: tinymlp
-  catalog: mcu-lab
-spec:
-  displayName: TinyML neural temperature classifier (WASM)
-  shortDescription: Classifies temperature patterns with a neural network and reports confidence.
-  category: application
-  type: container
-  artifacts:
-  - type: container
-    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/tinymlp
-  versions:
-  - version: 0.9.3
+      container: v0.9.4
+  - version: 0.9.4-neural
+    readme: |
+      The neural network reports a class and its confidence for the last 12 chip temperature readings. Choose `stable` for the smaller random forest.
     channels:
-    - stable
+    - neural
     references:
-      container: v0.9.3
+      container: v0.9.4-neural
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -308,16 +359,22 @@ metadata:
   name: trend
   catalog: mcu-lab
 spec:
-  displayName: Temperature trend (WASM)
-  shortDescription: Reports the chip temperature trend and rate of change.
+  displayName: Temperature rate of change
+  shortDescription: Shows whether the chip is warming or cooling, how fast in °C/min, and when its temperature is steady.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/APPS.md#examples
   category: application
   type: container
   artifacts:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/trend
   versions:
-  - version: 0.9.3
+  - version: 0.9.4
+    readme: |
+      The app samples chip temperature every five seconds and smooths the readings. Grant `metrics` to export temperature and rate of change.
     channels:
     - stable
     references:
-      container: v0.9.3
+      container: v0.9.4

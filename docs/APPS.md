@@ -333,6 +333,8 @@ The SDK also maps common math operations such as `sqrtf` and `fabsf` directly to
 
 [tinyml](../wasm-apps/tinyml/tinyml.c) classifies 12 temperature samples as steady, warming, cooling or unstable. The random forest has five trees and 193 nodes. [tinymlp](../wasm-apps/tinymlp/tinymlp.c) uses the same features with a 236-parameter neural network and also reports confidence. It imports `expf`, `logf` and `tanhf`. Neither needs grants. [Inference benchmarks](RESULTS.md#app-benchmarks) · [Model memory use](RESULTS.md#ram)
 
+In the lab catalog, select the `stable` channel of `tinyml` for the forest or `neural` for the neural network. Each channel installs one module. To publish the neural variant, build `tinymlp` with `NO_PUSH=1`, then run `APP_REPO=tinyml wasm-apps/push.sh tinymlp <build-version> <neural-tag>` using the neural channel’s container tag.
+
 The models assume 5 s between samples. Setting `sample_ms` changes the sampling interval without retraining. To reproduce the forest, use the pinned [training requirements](../wasm-apps/tinyml/requirements.txt) and [training script](../wasm-apps/tinyml/train.py). For your own forest, `dtype="float"` preserves fractional thresholds. The [feature adapter](../wasm-apps/tinyml/features.h) accounts for the difference between strict and inclusive thresholds on integer inputs. emlearn uses majority votes, so close calls can differ from scikit-learn's averaged probabilities.
 
 ### The blink of wasm3-arduino
