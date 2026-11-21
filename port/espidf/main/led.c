@@ -62,13 +62,8 @@ int led_setup(int gpio, bool ws2812, bool active_low)
         .mem_block_symbols = 48,
         .trans_queue_depth = 2,
     };
-    /* WS2812: 0 = 0.3 us high + 0.9 us low, 1 = 0.9 us high + 0.3 us low, MSB first. */
-    rmt_bytes_encoder_config_t enc = {
-        .bit0 = {.level0 = 1, .duration0 = 3, .level1 = 0, .duration1 = 9},
-        .bit1 = {.level0 = 1, .duration0 = 9, .level1 = 0, .duration1 = 3},
-        .flags.msb_first = 1,
-    };
-    if (rmt_new_tx_channel(&ch, &s_chan) != ESP_OK || rmt_new_bytes_encoder(&enc, &s_enc) != ESP_OK ||
+    rmt_copy_encoder_config_t enc = {};
+    if (rmt_new_tx_channel(&ch, &s_chan) != ESP_OK || rmt_new_copy_encoder(&enc, &s_enc) != ESP_OK ||
         rmt_enable(s_chan) != ESP_OK) {
         ESP_LOGW(TAG, "RMT setup on GPIO %d failed", gpio);
         led_release();
@@ -97,12 +92,19 @@ void led_set(uint8_t r, uint8_t g, uint8_t b)
         gpio_set_level(s_gpio, ((r | g | b) != 0) != s_active_low);
         return;
     }
-    uint8_t px[3];
+    /* At 10 MHz each bit is 12 ticks, high for 3 (zero) or 9 (one). */
+    rmt_symbol_word_t frame[25];
     for (int i = 0; i < 3; i++) {
-        px[i] = s_order[i] == 'r' ? r : s_order[i] == 'g' ? g : b;
+        uint8_t value = s_order[i] == 'r' ? r : s_order[i] == 'g' ? g : b;
+        for (int bit = 0; bit < 8; bit++) {
+            unsigned high = (value & (0x80 >> bit)) ? 9 : 3;
+            frame[8 * i + bit] = (rmt_symbol_word_t){.level0 = 1, .duration0 = high, .duration1 = 12 - high};
+        }
     }
+    /* Keep the line low for 300 us so consecutive writes address the first LED. */
+    frame[24] = (rmt_symbol_word_t){.duration0 = 1500, .duration1 = 1500};
     rmt_transmit_config_t tx = {.loop_count = 0};
-    if (rmt_transmit(s_chan, s_enc, px, sizeof(px), &tx) == ESP_OK) {
+    if (rmt_transmit(s_chan, s_enc, frame, sizeof(frame), &tx) == ESP_OK) {
         rmt_tx_wait_all_done(s_chan, 100);
     }
 }

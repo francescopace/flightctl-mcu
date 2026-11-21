@@ -4,6 +4,8 @@
     "sensor": {"module": "sensor/sht31.wasm", "pins": {"SDA": 8, "SCL": 9}},
     "thermometer": {"module": "thermometer/tmp123.wasm", "pins": {"CS": 10, "SCK": 12, "SO": 13}},
     "co2": {"module": "co2/mhz19b.wasm", "pins": {"TX": 18, "RX": 17}},
+    "knob": {"module": "analog/potentiometer.wasm", "pins": {"W": 3}},
+    "strip": {"module": "ws2812/ws2812.wasm", "pins": {"DIN": 48}},
     "servo": {"module": "servo/sg90.wasm", "pins": {"SIG": 6}}
   }
 }

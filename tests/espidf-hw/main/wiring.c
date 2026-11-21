@@ -14,6 +14,8 @@ static void fail(const char *reason)
 
 #define CHECK(expr) do { if (!(expr)) fail(#expr); } while (0)
 
+void check_adc(const fc_hw_t *hw);
+
 static const fc_hw_t *hw;
 
 /* The fixture links the app hardware without the agent's internal die sensor. */
@@ -105,7 +107,7 @@ static void gpio_edge(void *sem)
     xSemaphoreGive(sem);
 }
 
-static void check_gpio_pwm(void)
+static void check_button_and_outputs(void)
 {
     SemaphoreHandle_t edges = xSemaphoreCreateCounting(4, 0);
     CHECK(edges);
@@ -113,11 +115,15 @@ static void check_gpio_pwm(void)
     CHECK(hw->gpio_irq(5, 3, gpio_edge, edges) == 0);
     int pwm = hw->pwm_open(6, 50);
     CHECK(pwm >= 0);
-    /* The host checks each pulse on the servo before sending the next edge. */
+    const fc_hw_led_t led = {.pin = 48, .ws2812 = true, .order = "grb"};
+    CHECK(hw->led_open(&led) == 0);
+    CHECK(hw->led_rgb(&led, 0x12, 0x34, 0x56) == 0);
+    /* The host reads the servo and LED before sending each button edge. */
     CHECK(hw->pwm_duty(pwm, 3277) == 0);
     puts("WIRING press");
     CHECK(xSemaphoreTake(edges, portMAX_DELAY) == pdTRUE && hw->gpio_read(5) == 0);
     CHECK(hw->pwm_duty(pwm, 6554) == 0);
+    hw->led_close(&led);
     puts("WIRING release");
     CHECK(xSemaphoreTake(edges, portMAX_DELAY) == pdTRUE && hw->gpio_read(5) == 1);
     CHECK(hw->gpio_irq(5, 0, NULL, NULL) == 0);
@@ -132,6 +138,7 @@ void app_main(void)
     check_i2c();
     check_spi();
     check_uart();
-    check_gpio_pwm();
+    check_button_and_outputs();
+    check_adc(hw);
     puts("WIRING PASS");
 }

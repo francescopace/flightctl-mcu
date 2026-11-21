@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ESP_EMU_VERSION: 1.1.0
+  ESP_EMU_VERSION: 1.2.0
 
 jobs:
   build:

@@ -38,7 +38,7 @@ cache-mode: read
 
 env:
   FLIGHTCTL_VERSION: v1.4.0
-  ESP_EMU_VERSION: 1.1.0
+  ESP_EMU_VERSION: 1.2.0
 
 jobs:
   source:
@@ -351,8 +351,7 @@ jobs:
           # whole run. The plain C5: the fastest of the emulated chips.
           CERT: ${{ matrix.chip == 'esp32c5' && matrix.secure == 0 && 1 || 0 }}
         run: PREBUILT=1 SECURE=${{ matrix.secure }} CHIP=${{ matrix.chip }} tests/e2e/e2e-emu.sh
-      # The plain C6 job already has a kind cluster, registry and emulator.
-      # Boot the C3 once on that runner for the calibrated ADC and SBS scenario.
+      # Reuse the plain S3 firmware in its job and run the C3 on the plain C6 runner.
       - name: ESP32-C3 firmware for the battery test
         if: matrix.chip == 'esp32c6' && matrix.secure == 0
         uses: actions/download-artifact@v8
@@ -361,8 +360,10 @@ jobs:
           github-token: ${{ github.token }}
           name: firmware-esp32c3
           path: port/espidf
-      - name: C3 battery telemetry on esp-emu (ADC and Smart Battery)
-        if: matrix.chip == 'esp32c6' && matrix.secure == 0
+      - name: Battery telemetry on esp-emu (ADC and Smart Battery)
+        if: (matrix.chip == 'esp32c6' || matrix.chip == 'esp32s3') && matrix.secure == 0
+        env:
+          BATTERY_CHIP: ${{ matrix.chip == 'esp32c6' && 'esp32c3' || 'esp32s3' }}
         run: |
           parts="esp-emu-$ESP_EMU_VERSION-examples"
           (
@@ -372,7 +373,7 @@ jobs:
             tar xzf "$parts.tar.gz" "$parts/analog/potentiometer.wasm"
           )
           source tools/local-ip.sh
-          python3 tests/espidf-hw/battery.py port/espidf/build-esp32c3/merged-binary.bin \
+          python3 tests/espidf-hw/battery.py --chip "$BATTERY_CHIP" "port/espidf/build-$BATTERY_CHIP/merged-binary.bin" \
             "/tmp/$parts/analog/potentiometer.wasm" --host-ip "$(local_ip)"
       # Then, against the same cluster, what the status says of a crash: the
       # plain S3 and C5 only (the handlers are per architecture, the secure

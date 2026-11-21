@@ -84,7 +84,9 @@ The drop is relative to the console reading before either app started. ESP-IDF i
 
 C++ blink ran alongside `alarm` on ESP32, C3, C6 and both S3s. Rust blink ran alongside `tinyml` on C3, C6 and S3 Mini. Classic ESP32 had room for a 2,488 B layer with blink resident. C5 had a 62 KiB contiguous block when Rust blink needed 64 KiB.
 
-`sampler` (1,581 B) and `localalarm` (1,049 B) exchanged die temperature without an MQTT grant on five boards. Classic ESP32 needs an external source and the receiver waited for input. Battery accuracy and charging with a physical pack remain unverified. [Local app permissions](APPS.md#pass-readings-between-local-apps) · [Hardware checks](TESTING.md#catalog-app-checks)
+`sampler` (1,581 B) and `localalarm` (1,049 B) exchanged die temperature without an MQTT grant on five boards. Classic ESP32 needs an external source and the receiver waited for input. [Local app permissions](APPS.md#pass-readings-between-local-apps) · [Hardware checks](TESTING.md#catalog-app-checks)
+
+On esp-emu 1.2.0 with a 2:1 divider, the signed `battery` app reported 3,280 and 3,924 mV on ESP32-C3 and 3,300 and 3,960 mV on ESP32-S3 for inputs of 1,650 and 1,980 mV. Both reported 3,700 mV, 62% charge and charging from the simulated Smart Battery gauge. Battery accuracy and charging with a physical pack remain unverified. [Battery telemetry tests](TESTING.md#end-to-end-tests)
 
 ### Full firmware download over TLS
 

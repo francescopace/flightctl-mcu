@@ -49,7 +49,7 @@ The core implements HTTP, MQTT, OTLP encoding, field provisioning and the firmwa
 |---|---|---|---|
 | [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.0 | `tools/kind/up.sh`, `FLIGHTCTL_VERSION` in the workflow | The fleet maps only stable device fields to labels. [Label sync](FLIGHTCTL-LIMITATIONS.md#12-a-change-in-the-status-is-a-label-event) |
 | Envoy Gateway | 1.2.8 | `tools/kind/up.sh` | Patch release in the 1.2 series used by Flight Control 1.4.0’s installation guide. |
-| [esp-emulator](https://github.com/espressif/esp-emulator) | 1.1.0 | `ESP_EMU_VERSION` in `ci.yml` and `e2e.yml` | The emulator and its virtual peripherals are checked against the release's SHA-256 sums. |
+| [esp-emulator](https://github.com/espressif/esp-emulator) | 1.2.0 | `ESP_EMU_VERSION` in `ci.yml` and `e2e.yml` | The emulator and its virtual peripherals are checked against the release's SHA-256 sums. |
 | OCI registry | `registry:3` | `tools/registry/up.sh` | The tested image reports Distribution 3.1.2. |
 | kubectl image for Flight Control's Helm jobs | `alpine/k8s` 1.37.2 | `tools/kind/cluster-cli/Containerfile` | On arm64 machines only, where `origin-cli` has no image. |
 | MQTT broker: [mosquitto](https://github.com/eclipse-mosquitto/mosquitto) | `eclipse-mosquitto:2.1.4-alpine` | `tests/mqtt-broker.sh`, `tools/mqtt/up.sh` | Plain and TLS, with a password ([APPS.md](APPS.md#mqtt)). |

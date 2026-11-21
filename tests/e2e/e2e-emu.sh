@@ -342,9 +342,9 @@ NO_SIGN=1 ORAS_ARGS="--annotation io.flightctl-mcu.e2e=unsigned-$TAG" \
 
 log "boot v1 in the emulator"
 ESP_EMU="$(command -v esp-emu || echo "$HOME/.local/bin/esp-emu")"
-EMU_NET=(--net user)
+EMU_NET=(--net user,net=10.0.2.0/24)
 if [[ "$SECURE" == 0 ]]; then
-  EMU_NET=(--net "user,hostfwd=tcp::$PROV_PORT-:80" --wifi-fw-ap-password "$POP")
+  EMU_NET=(--net "user,net=10.0.2.0/24,hostfwd=tcp::$PROV_PORT-:80" --wifi-fw-ap-password "$POP")
 fi
 "$ESP_EMU" --chip "$CHIP" --firmware "$WORK/flash.bin" "${EMU_NET[@]}" --timeout 2400s >"$WORK/emu.log" 2>&1 &
 EMU_PID=$!

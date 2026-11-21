@@ -1,4 +1,4 @@
-"""Exercise the signed battery app on an emulated ESP32-C3 against Flight Control on kind."""
+"""Exercise the signed battery app on an emulated ESP32-C3 or ESP32-S3 against Flight Control on kind."""
 import argparse
 import json
 import os
@@ -11,7 +11,7 @@ import tempfile
 import time
 from uuid import uuid4
 
-from run import send_input
+from run import ADC_MV, send_input
 
 ADC = {
     "adc": {"vbat_adc": {"pin": 3}},
@@ -49,7 +49,7 @@ def wait_device(emu, log):
         if match:
             return match[1]
         time.sleep(2)
-    raise RuntimeError("C3 did not report its device ID")
+    raise RuntimeError("emulator did not report its device ID")
 
 
 def approve(emu, device, fleet):
@@ -60,7 +60,7 @@ def approve(emu, device, fleet):
             subprocess.run(["flightctl", "approve", request, "-l", f"app={fleet}"], check=True)
             return
         time.sleep(2)
-    raise RuntimeError(f"C3 did not submit {request}")
+    raise RuntimeError(f"emulator did not submit {request}")
 
 
 def wait_metrics(emu, device, **expected):
@@ -103,7 +103,7 @@ def run(args, work):
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     # SBS Read Word replies at 0x0b: 3700 mV, +14 mA and 62% relative charge.
-    cmd = ["esp-emu", "--chip", "esp32c3", "--firmware", flash, "--net", "user",
+    cmd = ["esp-emu", "--chip", args.chip, "--firmware", flash, "--net", "user,net=10.0.2.0/24",
            "--cosim-board", wiring, "--control-tcp", f"127.0.0.1:{port}",
            "--i2c-dev", "0:0x0b,width=1,fill=0,reg=0x09=0x74,reg=0x0a=0x0e,reg=0x0d=0x3e",
            "--timeout", "2400s"]
@@ -116,11 +116,12 @@ def run(args, work):
             try:
                 device = wait_device(emu, log)
                 approve(emu, device, fleet)
-                wait_metrics(emu, device, voltage_mv=3280, low_battery=1)
+                low_mv, high_mv = (mv * 2 for mv in ADC_MV[args.chip])
+                wait_metrics(emu, device, voltage_mv=low_mv, low_battery=1)
                 send_input(port, "knob", "more")
-                wait_metrics(emu, device, voltage_mv=3924, low_battery=0)
+                wait_metrics(emu, device, voltage_mv=high_mv, low_battery=0)
                 send_input(port, "knob", "less")
-                wait_metrics(emu, device, voltage_mv=3280, low_battery=1)
+                wait_metrics(emu, device, voltage_mv=low_mv, low_battery=1)
                 apply_fleet(fleet, args.host_ip, registry, SBS)
                 wait_metrics(emu, device, voltage_mv=3700, low_battery=0, charge_pct=62, charging=1)
             finally:
@@ -143,8 +144,9 @@ def run(args, work):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("firmware", type=Path, help="CI's plain ESP32-C3 merged flash image")
+    parser.add_argument("firmware", type=Path, help="plain merged flash image for --chip")
     parser.add_argument("potentiometer", type=Path, help="potentiometer.wasm from the esp-emu release")
+    parser.add_argument("--chip", choices=tuple(ADC_MV), default="esp32c3")
     parser.add_argument("--host-ip", required=True, help="kind host with the lab registry and gateway")
     parser.add_argument("--credentials", type=Path, default=Path("build/e2e-emu/secrets"),
                         help="enrollment and signing keys from the preceding emulator e2e")

@@ -9,6 +9,10 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+# Calibrated GPIO3 readings at the potentiometer's 50% and 60% positions.
+ADC_MV = {"esp32c3": (1640, 1962), "esp32s3": (1650, 1980)}
+
+
 def control(port, command):
     with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
         sock.sendall((command + "\n").encode())
@@ -67,6 +71,19 @@ def emulate(args, chip, board, *, zephyr=False):
                     emu.terminate()
 
 
+def check_adc(lines, port, chip):
+    for stage, applied, expected in zip(("first", "second"), (1650, 1980), ADC_MV[chip]):
+        line = next(line for line in lines if line.startswith("ADC "))
+        if line != f"ADC {stage} {expected}":
+            raise RuntimeError(f"expected {stage} reading of {expected} mV, got {line}")
+        state = control(port, "part knob state")
+        if f"millivolts={applied}" not in state.split():
+            raise RuntimeError(f"expected {applied} mV on GPIO3, potentiometer reports {state}")
+        print(f"GPIO3: {state}", flush=True)
+        if stage == "first":
+            send_input(port, "knob", "more")
+
+
 def run_s3(args, negative=False):
     board = json.loads(Path(__file__).with_name("board.json").read_text())
     if negative:
@@ -82,7 +99,14 @@ def run_s3(args, negative=False):
             if line in ("WIRING press", "WIRING release"):
                 event = line.split()[1]
                 check_pulse(port, 1000 if event == "press" else 2000)
+                pixel = "0=#123456" if event == "press" else "0=#000000"
+                state = control(port, "part strip state")
+                if not {pixel, "pixels=1"}.issubset(state.split()):
+                    raise RuntimeError(f"expected a single pixel {pixel} on GPIO48, strip reports {state}")
+                print(f"GPIO48: {state}", flush=True)
                 send_input(port, "button", event)
+                if event == "release":
+                    check_adc(lines, port, "esp32s3")
                 events.append(event)
             if line == "WIRING PASS":
                 if negative or events != ["press", "release"]:
@@ -93,19 +117,7 @@ def run_s3(args, negative=False):
 def run_adc(args):
     board = {"parts": {"knob": {"module": "analog/potentiometer.wasm", "pins": {"W": 3}}}}
     with emulate(args, "esp32c3", board) as (lines, port):
-        # esp-emu 1.1.0 C3 curve-fitting calibration at 1650 and 1980 mV.
-        for stage, applied, expected in [("first", 1650, 1640), ("second", 1980, 1962)]:
-            for line in lines:
-                if line.startswith("ADC "):
-                    if line != f"ADC {stage} {expected}":
-                        raise RuntimeError(f"expected {stage} reading of {expected} mV, got {line}")
-                    state = control(port, "part knob state")
-                    if f"millivolts={applied}" not in state.split():
-                        raise RuntimeError(f"expected {applied} mV on GPIO3, potentiometer reports {state}")
-                    print(f"GPIO3: {state}", flush=True)
-                    break
-            if stage == "first":
-                send_input(port, "knob", "more")
+        check_adc(lines, port, "esp32c3")
 
 
 def run_zephyr(args):

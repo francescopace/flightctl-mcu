@@ -71,7 +71,7 @@ cp "$BUILD/merged-binary.bin" "$WORK/flash.bin"
 tools/provision.py --image "$WORK/flash.bin" --secrets "$WORK/secrets" --server "agent-api.$IP.nip.io:8443" \
   --labels "app=fatal-emu,site=emu" --wifi-ssid myssid --wifi-password mypassword >/dev/null
 ESP_EMU="$(command -v esp-emu || echo "$HOME/.local/bin/esp-emu")"
-"$ESP_EMU" --chip "$CHIP" --firmware "$WORK/flash.bin" --net user --timeout 900s >"$WORK/emu.log" 2>&1 &
+"$ESP_EMU" --chip "$CHIP" --firmware "$WORK/flash.bin" --net user,net=10.0.2.0/24 --timeout 900s >"$WORK/emu.log" 2>&1 &
 EMU_PID=$!
 for i in $(seq 1 90); do
   DEVICE=$(sed -n 's/.*device name: \([a-z0-9]*\).*/\1/p' "$WORK/emu.log" | head -1)
