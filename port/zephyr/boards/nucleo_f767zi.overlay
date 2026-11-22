@@ -1,0 +1,22 @@
+/ {
+	chosen { zephyr,settings-partition = &storage_partition; };
+	fc-hw {
+		compatible = "flightctl,app-hw";
+		core-temperature {
+			temperature-sensor = <&die_temp>;
+			die-temperature;
+		};
+	};
+};
+&die_temp { status = "okay"; };
+&spi1 { status = "disabled"; }; /* PA7 carries Ethernet CRS_DV. */
+&flash0 {
+	partitions {
+		fc_creds_partition: partition@20000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fc_creds";
+			reg = <0x00020000 0x00020000>;
+			read-only;
+		};
+	};
+};

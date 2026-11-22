@@ -1,0 +1,2 @@
+#include "esp32s3_mini_n4r2_flash.overlay"
+&psram0 { status = "disabled"; };

@@ -1,8 +1,26 @@
 # flightctl-mcu application options.
 
+config FC_PHYSICAL_APP_HW
+	bool
+	default y if BOARD_NUCLEO_F767ZI
+	default y if BOARD_ESP32_DEVKITC || BOARD_ESP32C3_DEVKITM || BOARD_ESP32C5_DEVKITC || BOARD_ESP32C6_DEVKITC
+	default y if BOARD_NRF7002DK_NRF5340_CPUAPP || BOARD_ESP32S3_DEVKITC_ESP32S3_PROCPU
+	default y if BOARD_RPI_PICO2_RP2350A_M33_0_W || BOARD_RPI_PICO2_RP2350A_M33_0_W_MCUBOOT
+	help
+	  Use the board's physical LED and devicetree sensors for WASM apps.
+	  Omit the console LED and uptime-based temperature fallback.
+
+config FC_STORAGE_SETTINGS
+	bool
+	default y if BOARD_NUCLEO_F767ZI
+
 config FC_SNTP_SERVER
 	string "SNTP server the device takes the time from"
 	default "pool.ntp.org"
+
+config FC_LIBC_HEAP_WATERMARK
+	bool "Track minimum free space in the common libc malloc arena"
+	depends on COMMON_LIBC_MALLOC && SYS_HEAP_RUNTIME_STATS && COMMON_LIBC_MALLOC_ARENA_SIZE != 0
 
 config FC_HEAP_SIZE
 	int "Size of the C heap (malloc), in bytes"
@@ -10,6 +28,18 @@ config FC_HEAP_SIZE
 	help
 	  Everything the agent allocates: TLS sessions, JSON documents, WASM
 	  modules and their memory. The device reports how much of it is free.
+
+config FC_ESP_INTERNAL_HEAPS
+	bool "Use additional internal SRAM for the agent heap"
+	depends on (SOC_ESP32_PROCPU && ESP32_REGION_1_NOINIT) || SOC_ESP32C5_HPCORE
+	depends on BOOTLOADER_MCUBOOT && !SMP && !SOC_ENABLE_APPCPU && !ESP_SPIRAM && !BT
+	depends on !COMMON_LIBC_MALLOC && !CRYPTO && !ESP32_ULP_COPROC_ENABLED
+	select MULTI_HEAP
+	help
+	  After kernel startup, use the RAM vacated by MCUboot and the ROM
+	  startup stack. On ESP32-C5, try the extra high-performance SRAM bank
+	  before the main heap and use RTC RAM as a last resort. On the classic
+	  ESP32, try the smaller banks first to leave room for WASM linear memory.
 
 config FC_APP_HEAP_CHECK
 	bool "Refuse an app whose memory leaves the agent too little of the C heap"

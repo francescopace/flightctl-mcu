@@ -7,3 +7,7 @@
  * kept from field provisioning, else asks an installer for one (prov_pop).
  * Returns once the device has an address. */
 void fc_wifi_up(const cJSON *creds);
+
+#if defined(CONFIG_SOC_SERIES_ESP32C5)
+int fc_wifi_c5_select_band(void);
+#endif

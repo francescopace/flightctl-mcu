@@ -1,0 +1,21 @@
+/* The CPU executes from internal flash. MCUboot stages updates on the MX25R64. */
+/delete-node/ &slot1_partition;
+/delete-node/ &storage_partition;
+&slot0_partition {
+    reg = <0x10000 0xec000>;
+};
+&mx25r64 {
+    partitions {
+        compatible = "fixed-partitions";
+        #address-cells = <1>;
+        #size-cells = <1>;
+        slot1_partition: partition@0 {
+            label = "image-1";
+            reg = <0x0 0xec000>;
+        };
+        fc_storage_partition: partition@100000 {
+            label = "fc_storage";
+            reg = <0x100000 0x100000>;
+        };
+    };
+};

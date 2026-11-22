@@ -147,6 +147,29 @@ static struct wifi_connect_req_params params(const char *ssid, const char *pass)
     };
 }
 
+#ifdef CONFIG_WIFI_NM_WPA_SUPPLICANT
+/* The supplicant can lose its association after the initial DHCP lease.
+ * Keep the selected network after the provisioning document is released. */
+static char sta_ssid[WIFI_SSID_MAX_LEN + 1], sta_psk[WIFI_PSK_MAX_LEN + 1];
+
+static void maintain_association(void *unused1, void *unused2, void *unused3)
+{
+    struct wifi_connect_req_params p = params(sta_ssid, sta_psk);
+    for (;;) {
+        k_sleep(K_SECONDS(30));
+        if (!net_if_is_up(s_sta)) {
+            struct wifi_iface_status st = {0};
+            if (net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, s_sta, &st, sizeof(st)) == 0 &&
+                (st.state == WIFI_STATE_DISCONNECTED || st.state == WIFI_STATE_INACTIVE)) {
+                fc_port_log(FC_LOG_INFO, "WiFi: station disconnected, rejoining");
+                net_mgmt(NET_REQUEST_WIFI_CONNECT, s_sta, &p, sizeof(p));
+            }
+        }
+    }
+}
+K_THREAD_DEFINE(sta_reconnect, 4096, maintain_association, NULL, NULL, NULL, 7, 0, SYS_FOREVER_MS);
+#endif
+
 /* Joins a network and waits for an address: 0, or -1 after `tries` tries
  * (0: until it works). */
 static int join(const char *ssid, const char *pass, int tries)
@@ -156,7 +179,14 @@ static int join(const char *ssid, const char *pass, int tries)
         fc_port_log(FC_LOG_INFO, "WiFi: joining \"%s\"", ssid);
         k_sem_reset(&s_ip_up);
         if (net_mgmt(NET_REQUEST_WIFI_CONNECT, s_sta, &p, sizeof(p)) == 0) {
-            if (k_sem_take(&s_ip_up, K_SECONDS(30)) == 0) {
+            /* On a dual-band Espressif station the driver keeps trying the
+             * factory network after an association timeout. Wait for its
+             * DHCP event without cancelling the next handshake. Field
+             * provisioning still uses the bounded timeout. */
+            k_timeout_t timeout = IS_ENABLED(CONFIG_SOC_SERIES_ESP32C5) &&
+                                  IS_ENABLED(CONFIG_ESP32_WIFI_STA_RECONNECT) && tries == 0
+                                      ? K_FOREVER : K_SECONDS(30);
+            if (k_sem_take(&s_ip_up, timeout) == 0) {
                 struct wifi_iface_status st = {0};
                 int known = net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, s_sta, &st, sizeof(st)) == 0;
                 if (known) {
@@ -165,6 +195,11 @@ static int join(const char *ssid, const char *pass, int tries)
                 } else {
                     fc_port_log(FC_LOG_INFO, "WiFi: connected");
                 }
+#ifdef CONFIG_WIFI_NM_WPA_SUPPLICANT
+                snprintf(sta_ssid, sizeof(sta_ssid), "%s", ssid);
+                snprintf(sta_psk, sizeof(sta_psk), "%s", pass != NULL ? pass : "");
+                k_thread_start(sta_reconnect);
+#endif
                 return 0;
             }
             net_mgmt(NET_REQUEST_WIFI_DISCONNECT, s_sta, NULL, 0);
@@ -332,6 +367,12 @@ static void field_provisioning(const char *pop)
 void fc_wifi_up(const cJSON *creds)
 {
     s_sta = net_if_get_wifi_sta();
+#ifdef CONFIG_SOC_SERIES_ESP32C5
+    int band_rc = fc_wifi_c5_select_band();
+    if (band_rc) {
+        fc_port_log(FC_LOG_WARN, "WiFi: setting the 2.4 GHz band failed (%d)", band_rc);
+    }
+#endif
     s_ap = IS_ENABLED(CONFIG_ESP32_WIFI_AP_STA_MODE) ? net_if_get_wifi_sap() : s_sta;
     if (s_ap == NULL) {
         s_ap = s_sta;

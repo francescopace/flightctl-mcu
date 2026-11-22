@@ -1,0 +1,7 @@
+#include "../boards/nrf7002dk_ota_slots.dtsi"
+
+/ {
+    chosen {
+        zephyr,code-partition = &boot_partition;
+    };
+};

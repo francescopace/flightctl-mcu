@@ -7,6 +7,9 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(flightctl_mcu)
 # For mbedTLS too: it includes fc-mbedtls-user.h (prj.conf).
 zephyr_include_directories(include)
+if(CONFIG_FC_ESP_INTERNAL_HEAPS AND CONFIG_SOC_ESP32_PROCPU)
+    zephyr_linker_sources(SECTIONS rtc_fast_heap.ld)
+endif()
 
 set(ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
 
@@ -26,6 +29,8 @@ elseif(CONFIG_CPU_CORTEX_M)
     set(WAMR_BUILD_TARGET "THUMBV7EM")
 elseif(CONFIG_XTENSA)
     set(WAMR_BUILD_TARGET "XTENSA")
+elseif(CONFIG_RISCV AND NOT CONFIG_64BIT AND NOT CONFIG_FPU)
+    set(WAMR_BUILD_TARGET "RISCV32_ILP32")
 else()
     message(FATAL_ERROR "flightctl-mcu: no WAMR target for this board yet")
 endif()
@@ -69,10 +74,16 @@ target_sources(app PRIVATE
     ${ROOT}/core/src/fc_delta.c
     ${ROOT}/third_party/cjson/cJSON.c
     ${WAMR_RUNTIME_LIB_SOURCE})
+if(CONFIG_RISCV_ISA_RV32I AND CONFIG_ATOMIC_OPERATIONS_C)
+    target_sources(app PRIVATE fc_atomic_rv32.c)
+endif()
 # Boards with WiFi: the network, given at the factory, or in the field where
 # the board can open an access point (with a DHCP server for installers).
 if(CONFIG_WIFI)
     target_sources(app PRIVATE src/wifi.c)
+    if(CONFIG_SOC_SERIES_ESP32C5)
+        target_sources(app PRIVATE src/wifi_esp32c5.c)
+    endif()
 endif()
 if(CONFIG_WIFI AND CONFIG_NET_DHCPV4_SERVER)
     target_sources(app PRIVATE ${ROOT}/core/src/fc_prov.c)
@@ -82,8 +93,10 @@ if(NOT CONFIG_COMMON_LIBC_MALLOC)
     target_sources(app PRIVATE ${ROOT}/port/zephyr/fc_heap_zephyr.c)
     # The S3 with PSRAM and software crypto can receive TLS records in
     # external RAM. A hardware accelerator may require DMA-capable memory.
-    if(CONFIG_BOARD_ESP32S3_DEVKITC_ESP32S3_PROCPU AND CONFIG_ESP_SPIRAM AND CONFIG_SPIRAM_MODE_OCT
-       AND CONFIG_ESP_SPIRAM_SIZE EQUAL 8388608 AND CONFIG_SHARED_MULTI_HEAP AND NOT CONFIG_CRYPTO)
+    if(NOT CONFIG_CRYPTO AND
+       ((CONFIG_BOARD_ESP32S3_DEVKITC_ESP32S3_PROCPU AND CONFIG_ESP_SPIRAM AND CONFIG_SPIRAM_MODE_OCT
+         AND CONFIG_ESP_SPIRAM_SIZE EQUAL 8388608 AND CONFIG_SHARED_MULTI_HEAP)
+        OR (CONFIG_SOC_SERIES_ESP32 AND CONFIG_ESP32_REGION_1_NOINIT)))
         set_source_files_properties(${ROOT}/core/src/fc_http.c ${ROOT}/port/zephyr/fc_heap_zephyr.c
             PROPERTIES COMPILE_DEFINITIONS FC_TLS_POOL_PORT_STORAGE)
     endif()
@@ -98,6 +111,8 @@ target_include_directories(app PRIVATE ${ZEPHYR_BINARY_DIR}/include/generated/ze
 if(CONFIG_XTENSA)
     target_include_directories(app PRIVATE ${ZEPHYR_BASE}/arch/xtensa/include)
 endif()
+# App state changes go to the journal. Other app output also goes to the console.
+set_property(SOURCE ${ROOT}/core/src/fc_apps.c APPEND PROPERTY COMPILE_DEFINITIONS FC_APP_STATE_LOG_BUFFER_ONLY)
 # FC_LOG_KEEP: the device's log in RAM that a restart keeps (fc_log.h).
 target_compile_definitions(app PRIVATE
     CJSON_NESTING_LIMIT=32
@@ -114,3 +129,13 @@ endif()
 set_source_files_properties(${WAMR_RUNTIME_LIB_SOURCE} PROPERTIES
     COMPILE_OPTIONS "-O2"
     COMPILE_DEFINITIONS WASM_ENABLE_COMPACT_DISPATCH=1)
+
+# hostap and WAMR each provide an allocator under these names.
+if(CONFIG_WIFI_NM_WPA_SUPPLICANT)
+    set_property(SOURCE ${WAMR_RUNTIME_LIB_SOURCE} APPEND PROPERTY COMPILE_DEFINITIONS
+        os_malloc=wamr_os_malloc os_realloc=wamr_os_realloc os_free=wamr_os_free)
+endif()
+
+if(CONFIG_BOARD_NRF7002DK_NRF5340_CPUAPP)
+    target_sources(app PRIVATE nrf5340/temperature.c)
+endif()

@@ -1,10 +1,18 @@
 /* The board map's names on native_sim's emulated drivers. */
 / {
+    temp_ipc: temperature-ipc { compatible = "flightctl,test-ipc"; };
+    die_probe: die-temperature {
+        compatible = "flightctl,nrf5340-die-temp";
+        ipc = <&temp_ipc>;
+    };
 	test_probe: temperature-probe {
 		compatible = "flightctl,test-temperature";
 	};
+	polled_probe: polled-probe { compatible = "flightctl,test-temperature"; };
 	fc-hw {
 		compatible = "flightctl,app-hw";
+		core-temperature { temperature-sensor = <&die_probe>; die-temperature; };
+		polled-temperature { temperature-sensor = <&polled_probe>; die-temperature; };
 		probe { temperature-sensor = <&test_probe>; };
 		probe-alias { temperature-sensor = <&test_probe>; };
 		relay1 {

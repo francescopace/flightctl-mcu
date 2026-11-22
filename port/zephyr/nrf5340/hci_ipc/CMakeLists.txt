@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.28)
+set(hci_sample $ENV{ZEPHYR_BASE}/samples/bluetooth/hci_ipc)
+set(CONF_FILE ${hci_sample}/prj.conf ${CMAKE_CURRENT_SOURCE_DIR}/temperature.conf)
+list(APPEND DTS_ROOT ${hci_sample})
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(hci_ipc)
+target_sources(app PRIVATE ${hci_sample}/src/main.c temperature.c)

@@ -70,6 +70,13 @@ int mbedtls_net_send(void *ctx, const unsigned char *buf, size_t len)
     if (fd < 0) {
         return MBEDTLS_ERR_NET_INVALID_CONTEXT;
     }
+#if defined(CONFIG_SOC_SERIES_ESP32) || defined(CONFIG_SOC_SERIES_ESP32C5)
+    /* A TLS client-certificate flight can exceed the board's
+     * entire TX pool. mbedTLS advances the record after a partial send. */
+    if (len > 1024) {
+        len = 1024;
+    }
+#endif
     ssize_t n = zsock_send(fd, buf, len, 0);
     if (n >= 0) {
         return (int)n;

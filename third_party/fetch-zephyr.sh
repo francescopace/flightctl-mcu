@@ -12,21 +12,31 @@ ZEPHYR_COMMIT="${ZEPHYR_COMMIT:-41d10b59730406bbab4ca9f1fbbe9e96aafb4966}"
 ZEPHYR_IMAGE="${ZEPHYR_IMAGE:-ghcr.io/zephyrproject-rtos/ci-base:v0.30.0}"
 # mbedtls: TLS. littlefs: storage. mcuboot, zcbor: firmware slots. cmsis:
 # Arm Cortex-M. hal_espressif: the ESP32-S3.
-MODULES="${ZEPHYR_MODULES:-mbedtls tf-psa-crypto littlefs mcuboot zcbor cmsis cmsis_6 hal_espressif picolibc}"
+DEFAULT_MODULES="mbedtls tf-psa-crypto littlefs mcuboot zcbor cmsis cmsis_6 hal_espressif picolibc"
+if [[ "${BOARD:-}" == rpi_pico2/* ]]; then
+  DEFAULT_MODULES+=" hal_rpi_pico hal_infineon"
+elif [[ "${BOARD:-}" == nucleo_f767zi ]]; then
+  DEFAULT_MODULES+=" hal_stm32"
+elif [[ "${BOARD:-}" == nrf7002dk/nrf5340/cpuapp ]]; then
+  DEFAULT_MODULES+=" hal_nordic nrf_wifi hostap open-amp libmetal"
+fi
+MODULES="${ZEPHYR_MODULES:-$DEFAULT_MODULES}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WS="$ROOT/third_party/zephyr-ws"
-patch_coredump() {
-  local patch="$ROOT/third_party/patches/zephyr-coredump-erased-partition.patch"
-  if ! git -C "$WS/zephyr" apply --reverse --check "$patch" 2>/dev/null; then
-    git -C "$WS/zephyr" apply "$patch"
-  fi
+patch_zephyr() {
+  local patch
+  for patch in "$ROOT"/third_party/patches/zephyr-{coredump-erased-partition,cyw43-gpioout,libc-watermark}.patch; do
+    if ! git -C "$WS/zephyr" apply --reverse --check "$patch" 2>/dev/null; then
+      git -C "$WS/zephyr" apply "$patch"
+    fi
+  done
 }
 # The tree is there at this version: nothing to do, or only the modules that
 # were added to the list since it was fetched.
 HAVE=""
 if [[ -d "$WS/zephyr/.git" && "$(git -C "$WS/zephyr" rev-parse HEAD)" == "$ZEPHYR_COMMIT" && -f "$WS/.fetched" ]]; then
   if [[ "$(cat "$WS/.fetched")" == "$MODULES" ]]; then
-    patch_coredump
+    patch_zephyr
     echo "Zephyr $ZEPHYR_TAG already in $WS"
     exit 0
   fi
@@ -54,6 +64,6 @@ filter="-.*"
 for m in $MODULES; do filter="$filter,+$m"; done
 west config manifest.project-filter -- "$filter"
 west update --narrow -o=--depth=1
-patch_coredump
+patch_zephyr
 echo "$MODULES" > "$WS/.fetched"
 echo "Zephyr $ZEPHYR_TAG in $WS"

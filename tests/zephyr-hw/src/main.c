@@ -43,7 +43,7 @@ ZTEST(fc_hw, test_names)
     zassert_not_null(s);
     zassert_not_null(strstr(s, "\"relay1\":{\"dt\":\"relay1\",\"safe\":0}"), "%s", s);
     zassert_not_null(strstr(s, "\"button0\":{\"dt\":\"button0\",\"active_low\":true}"), "%s", s);
-    zassert_not_null(strstr(s, "\"led0\":{\"dt\":\"simulated\"}"), "%s", s);
+    zassert_not_null(strstr(s, "\"led0\":{\"dt\":\"led0\"}"), "%s", s);
     zassert_not_null(strstr(s, "\"level\":{\"dt\":\"level\"}"), "%s", s);
     zassert_not_null(strstr(s, "\"flash\":{\"dt\":\"flash\"}"), "%s", s);
     zassert_is_null(strstr(s, "console"), "the console's UART is not offered: %s", s);
@@ -52,7 +52,20 @@ ZTEST(fc_hw, test_names)
     zassert_equal(id(FC_HW_KIND_ADC, "relay1"), -1, "a GPIO is not an ADC channel");
     zassert_equal(id(FC_HW_KIND_UART, "console"), -1);
     zassert_equal(id(FC_HW_KIND_GPIO, "nope"), -1);
-    zassert_equal(id(FC_HW_KIND_LED, "simulated"), 0);
+    zassert_equal(id(FC_HW_KIND_LED, "simulated"), -1);
+}
+
+ZTEST(fc_hw, test_gpio_led)
+{
+    const fc_hw_led_t led = {.pin = id(FC_HW_KIND_LED, "led0")};
+    const struct gpio_dt_spec pin = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+    zassert_true(led.pin >= 0);
+    zassert_ok(hw.led_open(&led));
+    zassert_equal(gpio_emul_output_get(pin.port, pin.pin), 0);
+    zassert_ok(hw.led_rgb(&led, 0, 0, 40));
+    zassert_equal(gpio_emul_output_get(pin.port, pin.pin), 1);
+    hw.led_close(&led);
+    zassert_equal(gpio_emul_output_get(pin.port, pin.pin), 0);
 }
 
 static int s_edges;
@@ -89,6 +102,49 @@ static int probe_arm(const struct device *dev, const struct sensor_trigger *trig
 
 static DEVICE_API(sensor, probe_api) = {.attr_set = probe_set, .trigger_set = probe_arm};
 SENSOR_DEVICE_DT_DEFINE(DT_NODELABEL(test_probe), NULL, NULL, NULL, NULL, POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &probe_api);
+
+/* Each subscription replays one failed conversion followed by five samples. */
+static K_SEM_DEFINE(conversions, 0, K_SEM_MAX_LIMIT);
+static size_t conversion;
+static const int trace_mc[] = {0, 750, 1250, 1500, 1000, 250};
+
+static int polled_fetch(const struct device *dev, enum sensor_channel chan)
+{
+    conversion++;
+    k_sem_give(&conversions);
+    return conversion == 1 || conversion > ARRAY_SIZE(trace_mc) ? -EIO : 0;
+}
+
+static int polled_get(const struct device *dev, enum sensor_channel chan, struct sensor_value *value)
+{
+    if (chan != SENSOR_CHAN_DIE_TEMP) {
+        return -ENOTSUP;
+    }
+    return sensor_value_from_milli(value, trace_mc[conversion - 1]);
+}
+
+static DEVICE_API(sensor, polled_api) = {.sample_fetch = polled_fetch, .channel_get = polled_get};
+SENSOR_DEVICE_DT_DEFINE(DT_NODELABEL(polled_probe), NULL, NULL, NULL, NULL, POST_KERNEL,
+                        CONFIG_SENSOR_INIT_PRIORITY, &polled_api);
+
+ZTEST(fc_hw, test_polled_die_temperature)
+{
+    int probe = id(FC_HW_KIND_SENSOR, "polled-temperature");
+    const int modes[] = {FC_HW_SENSOR_READY, FC_HW_SENSOR_THRESHOLD};
+    for (int i = 0; i < ARRAY_SIZE(modes); i++) {
+        int delivered = 0;
+        conversion = 0;
+        k_sem_reset(&conversions);
+        int token = hw.sensor_subscribe(probe, modes[i], 250, 1250, on_edge, &delivered);
+        zassert_equal(token, probe);
+        zassert_equal(hw.sensor_subscribe(probe, modes[i], 250, 1250, on_edge, &delivered), FC_HW_EBUSY);
+        for (int j = 0; j < ARRAY_SIZE(trace_mc); j++) {
+            k_sem_take(&conversions, K_FOREVER);
+        }
+        hw.sensor_unsubscribe(token);
+        zassert_equal(delivered, modes[i] == FC_HW_SENSOR_READY ? 5 : 3);
+    }
+}
 
 ZTEST(fc_hw, test_sensor_triggers)
 {

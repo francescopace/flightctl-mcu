@@ -17,7 +17,11 @@
 #include <zephyr/dfu/mcuboot.h>
 #endif
 #include <zephyr/fs/fs.h>
+#ifndef CONFIG_FC_STORAGE_SETTINGS
 #include <zephyr/fs/littlefs.h>
+#else
+#include <zephyr/sys/util.h>
+#endif
 #include <zephyr/kernel.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
@@ -45,6 +49,10 @@
 #define KV_DIR   MNT "/kv"
 #define FILE_DIR MNT "/files"
 
+#ifdef CONFIG_FC_STORAGE_SETTINGS
+#include <zephyr/settings/settings.h>
+#include "fc_crypto.h"
+#else
 FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(s_lfs);
 static struct fs_mount_t s_mnt = {
     .type = FS_LITTLEFS,
@@ -52,6 +60,8 @@ static struct fs_mount_t s_mnt = {
     .storage_dev = (void *)PARTITION_ID(fc_storage_partition),
     .mnt_point = MNT,
 };
+
+#endif
 
 static void report_last_fatal(void);
 static char s_fatal_text[272]; /* for customInfo: empty unless the last restart was a fatal error */
@@ -171,6 +181,9 @@ int fc_port_zephyr_init(void)
     s_printk_out = __printk_get_hook();
     __printk_hook_install(printk_keep);
     report_last_fatal();
+#ifdef CONFIG_FC_STORAGE_SETTINGS
+    return settings_subsys_init();
+#else
     int rc = fs_mount(&s_mnt); /* formats a blank partition */
     if (rc != 0) {
         fc_port_log(FC_LOG_ERROR, "cannot mount the storage (%d)", rc);
@@ -185,10 +198,80 @@ int fc_port_zephyr_init(void)
         fs_mkdir(FILE_DIR);
     }
     return 0;
+#endif
 }
 
 /* ---- files ------------------------------------------------------------------ */
 
+#ifdef CONFIG_FC_STORAGE_SETTINGS
+/* Two 32 KiB physical sectors. LittleFS needs more erase blocks. Settings
+ * uses NVS append/GC and commits each value atomically. A trailing byte
+ * distinguishes an empty value from a settings deletion. */
+static K_MUTEX_DEFINE(storage_lock);
+
+static int settings_name(const char *path, char key[65])
+{
+    uint8_t digest[32];
+    if (fc_sha256(path, strlen(path), digest) != 0) {
+        return -1;
+    }
+    return bin2hex(digest, sizeof(digest), key, 65) == 64 ? 0 : -1;
+}
+
+static int read_file(const char *path, char **out, size_t *len)
+{
+    char key[65];
+    if (settings_name(path, key) != 0) {
+        return -1;
+    }
+    k_mutex_lock(&storage_lock, K_FOREVER);
+    ssize_t size = settings_get_val_len(key);
+    char *buf = size > 0 ? malloc(size) : NULL;
+    int rc = size == 0 ? FC_KV_MISSING : -1;
+    if (buf && settings_load_one(key, buf, size) == size && buf[size - 1] == 0) {
+        *out = buf;
+        *len = size - 1;
+        rc = 0;
+    } else {
+        free(buf);
+    }
+    k_mutex_unlock(&storage_lock);
+    return rc;
+}
+
+static int write_file(const char *path, const void *data, size_t len)
+{
+    char key[65];
+    if (settings_name(path, key) != 0 || len >= UINT16_MAX) {
+        return -1;
+    }
+    char *buf = malloc(len + 1);
+    if (!buf) {
+        return -1;
+    }
+    if (len) {
+        memcpy(buf, data, len);
+    }
+    buf[len] = 0;
+    k_mutex_lock(&storage_lock, K_FOREVER);
+    int rc = settings_save_one(key, buf, len + 1);
+    k_mutex_unlock(&storage_lock);
+    free(buf);
+    return rc == 0 ? 0 : -1;
+}
+
+static int remove_file(const char *path)
+{
+    char key[65];
+    if (settings_name(path, key) != 0) {
+        return -1;
+    }
+    k_mutex_lock(&storage_lock, K_FOREVER);
+    int rc = settings_delete(key);
+    k_mutex_unlock(&storage_lock);
+    return rc == 0 || rc == -ENOENT ? 0 : -1;
+}
+#else
 static int read_file(const char *path, char **out, size_t *len)
 {
     struct fs_dirent st;
@@ -239,6 +322,19 @@ static int write_file(const char *path, const void *data, size_t len)
     return 0;
 }
 
+static int remove_file(const char *p)
+{
+    struct fs_dirent st;
+    int rc = fs_stat(p, &st);
+    if (rc != 0) {
+        return rc == -ENOENT ? 0 : -1;
+    }
+    rc = fs_unlink(p);
+    return rc == 0 || rc == -ENOENT ? 0 : -1;
+}
+
+#endif
+
 /* A key, or a path with its slashes flattened, as a file name in `dir`. */
 static int file_path(const char *dir, const char *name, char *out, size_t len)
 {
@@ -263,17 +359,6 @@ int fc_port_kv_set(const char *key, const void *data, size_t len)
 {
     char p[96];
     return file_path(KV_DIR, key, p, sizeof(p)) == 0 ? write_file(p, data, len) : -1;
-}
-
-static int remove_file(const char *p)
-{
-    struct fs_dirent st;
-    int rc = fs_stat(p, &st);
-    if (rc != 0) {
-        return rc == -ENOENT ? 0 : -1;
-    }
-    rc = fs_unlink(p);
-    return rc == 0 || rc == -ENOENT ? 0 : -1;
 }
 
 int fc_port_kv_del(const char *key)
@@ -316,10 +401,16 @@ void fc_kernel_heap_stats(size_t *total, size_t *free_now)
 }
 
 #ifdef CONFIG_COMMON_LIBC_MALLOC
-/* With Zephyr's own malloc, nothing says how much of the heap is free. */
+#ifdef CONFIG_FC_LIBC_HEAP_WATERMARK
+void fc_common_libc_heap_stats(size_t *total, size_t *free_now, size_t *low);
+#endif
 void fc_heap_stats(size_t *total, size_t *free_now, size_t *free_min)
 {
+#ifdef CONFIG_FC_LIBC_HEAP_WATERMARK
+    fc_common_libc_heap_stats(total, free_now, free_min);
+#else
     *total = *free_now = *free_min = 0;
+#endif
 }
 
 long fc_port_heap_largest(void)
@@ -350,11 +441,13 @@ void fc_port_sysinfo(fc_sysinfo_t *si)
     fc_heap_stats(&total, &free_now, &free_min);
     si->mem_total = total;
     si->mem_free = free_now;
+#ifndef CONFIG_FC_STORAGE_SETTINGS
     struct fs_statvfs vfs;
     if (fs_statvfs(MNT, &vfs) == 0) {
         si->disk_total = (uint64_t)vfs.f_blocks * vfs.f_frsize;
         si->disk_free = (uint64_t)vfs.f_bfree * vfs.f_frsize;
     }
+#endif
 #ifdef CONFIG_SCHED_THREAD_USAGE_ALL
     /* Cycles: all of them, and those outside the idle threads. */
     k_thread_runtime_stats_t rt;
@@ -369,6 +462,7 @@ void fc_port_custom_info(void *obj)
 {
     cJSON_AddStringToObject((cJSON *)obj, "deviceClass", "zephyr");
     cJSON_AddStringToObject((cJSON *)obj, "board", CONFIG_BOARD_TARGET);
+    cJSON_AddStringToObject((cJSON *)obj, "firmwareVersion", CONFIG_FC_FW_VERSION);
     /* The fatal error the last restart came from, as ESP-IDF's resetReason
      * says "panic": the console may have been gone before it got out. */
     if (s_fatal_text[0] != '\0') {

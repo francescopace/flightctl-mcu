@@ -1,0 +1,28 @@
+/* Split the board's storage partition between factory data and LittleFS. */
+/delete-node/ &storage_partition;
+
+&flash0 {
+	partitions {
+		fc_creds_partition: partition@3b0000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fc_creds";
+			reg = <0x003b0000 0x00004000>;
+		};
+		fc_storage_partition: partition@3b4000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fc_storage";
+			reg = <0x003b4000 0x0002c000>;
+		};
+	};
+};
+
+&wifi { status = "okay"; };
+&trng0 { status = "okay"; };
+
+&usb_serial { status = "okay"; };
+/ {
+	chosen {
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+	};
+};

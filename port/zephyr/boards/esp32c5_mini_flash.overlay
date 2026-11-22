@@ -1,0 +1,31 @@
+/* HP-core-only firmware on a 4 MiB C5. The ROM owns the first 8 KiB. */
+&flash0 {
+	reg = <0 DT_SIZE_M(4)>;
+	ranges = <0 0 DT_SIZE_M(4)>;
+	partitions {
+		/delete-node/ partition@3e0000;
+		/delete-node/ partition@7a0000;
+		/delete-node/ partition@7a8000;
+		/delete-node/ partition@7b0000;
+		/delete-node/ partition@7b4000;
+		/delete-node/ partition@7ff000;
+		slot1_partition: partition@1e0000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-1";
+			reg = <0x1e0000 0x1c0000>;
+		};
+		coredump_partition: partition@3ff000 {
+			compatible = "zephyr,mapped-partition";
+			label = "coredump";
+			reg = <0x3ff000 0x1000>;
+		};
+	};
+};
+&slot0_partition { reg = <0x20000 0x1c0000>; };
+&usb_serial { status = "okay"; };
+/ {
+	chosen {
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+	};
+};

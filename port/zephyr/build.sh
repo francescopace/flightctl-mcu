@@ -40,12 +40,15 @@ NATIVE=""
 command -v west >/dev/null && [[ -z "${ZEPHYR_DOCKER:-}" ]] && NATIVE=1
 # Where the build sees this repository: here, or /project in the build image.
 SEEN="$ROOT"; [[ -n "$NATIVE" ]] || SEEN=/project
-if [[ "$BOARD" == */mcuboot || "$BOARD" == esp32* || -n "${MCUBOOT:-}" ]]; then
+if [[ "$BOARD" == */mcuboot || "$BOARD" == esp32* || "$BOARD" == nrf7002dk/nrf5340/cpuapp || "$BOARD" == nucleo_f767zi || -n "${MCUBOOT:-}" ]]; then
   # A board started by MCUboot (Espressif's always are, for updates): built
   # with it (sysbuild), and signed with this checkout's key, which is made the
   # first time.
   KEY=.secrets/mcuboot-signing.pem
   MAKE_KEY='[[ -f "$1" ]] || { mkdir -p "$(dirname "$1")"; python3 "$2/bootloader/mcuboot/scripts/imgtool.py" keygen -k "$1" -t ecdsa-p256; }'
+  if [[ "$BOARD" == nucleo_f767zi ]]; then
+    CMAKE_ARGS+=("-DSB_CONFIG_MCUBOOT_MODE_SWAP_SCRATCH=y")
+  fi
   WEST_ARGS+=(--sysbuild)
   CMAKE_ARGS+=("-DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE=\"$SEEN/$KEY\"")
   # The image's security counter: MCUboot installs no update with a lower one

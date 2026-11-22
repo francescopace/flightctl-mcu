@@ -1,0 +1,5 @@
+# Exercise the physical board map against native_sim's peripheral drivers.
+config FC_PHYSICAL_APP_HW
+    default y
+
+rsource "../../port/zephyr/Kconfig"

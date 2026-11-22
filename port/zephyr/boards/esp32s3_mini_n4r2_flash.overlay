@@ -1,0 +1,13 @@
+/* Shared by MCUboot and the application on the 4 MiB S3 Mini. */
+&flash0 {
+	reg = <0x0 DT_SIZE_M(4)>;
+	ranges = <0x0 0x0 DT_SIZE_M(4)>;
+};
+
+&usb_serial { status = "okay"; };
+/ {
+	chosen {
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+	};
+};

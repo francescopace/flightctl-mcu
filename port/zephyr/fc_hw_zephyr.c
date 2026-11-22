@@ -116,8 +116,48 @@ static const node_t s_nodes[1];
 #define NODES 0
 #endif
 
-/* The simulated LED, which every board has as led0. */
-#define SIM_LED "simulated"
+#if defined(CONFIG_FC_PHYSICAL_APP_HW) && (DT_NODE_HAS_STATUS_OKAY(DT_ALIAS(led_strip)) || \
+                                          DT_NODE_HAS_PROP(DT_ALIAS(led0), gpios))
+#define FC_HAS_BOARD_LED
+#define BOARD_LED "led0"
+#if DT_NODE_HAS_STATUS_OKAY(DT_ALIAS(led_strip))
+#include <zephyr/drivers/led_strip.h>
+static const struct device *const board_strip = DEVICE_DT_GET(DT_ALIAS(led_strip));
+
+static int fz_led_rgb(const fc_hw_led_t *led, uint8_t r, uint8_t g, uint8_t b)
+{
+    struct led_rgb pixel = {.r = r, .g = g, .b = b};
+    return led_strip_update_rgb(board_strip, &pixel, 1) == 0 ? 0 : FC_HW_EIO;
+}
+
+static int fz_led_open(const fc_hw_led_t *led)
+{
+    return device_is_ready(board_strip) ? fz_led_rgb(led, 0, 0, 0) : FC_HW_ENOTSUP;
+}
+#else
+static const struct gpio_dt_spec board_led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+
+static int fz_led_open(const fc_hw_led_t *led)
+{
+    if (!gpio_is_ready_dt(&board_led)) {
+        return FC_HW_ENOTSUP;
+    }
+    return gpio_pin_configure_dt(&board_led, GPIO_OUTPUT_INACTIVE) == 0 ? 0 : FC_HW_EIO;
+}
+
+static int fz_led_rgb(const fc_hw_led_t *led, uint8_t r, uint8_t g, uint8_t b)
+{
+    return gpio_pin_set_dt(&board_led, r || g || b) == 0 ? 0 : FC_HW_EIO;
+}
+#endif
+
+static void fz_led_close(const fc_hw_led_t *led)
+{
+    fz_led_rgb(led, 0, 0, 0);
+}
+#elif !defined(CONFIG_FC_PHYSICAL_APP_HW)
+#define BOARD_LED "simulated"
+#endif
 
 static __maybe_unused const node_t *fz_node(int id, int kind)
 {
@@ -159,9 +199,11 @@ static int fz_built(int kind)
 
 static int fz_dt_find(int kind, const char *name)
 {
+#ifdef BOARD_LED
     if (kind == FC_HW_KIND_LED) {
-        return strcmp(name, SIM_LED) == 0 ? 0 : -1;
+        return strcmp(name, BOARD_LED) == 0 ? 0 : -1;
     }
+#endif
     for (int i = 0; i < (int)NODES; i++) {
         if (s_nodes[i].kind == kind && strcmp(s_nodes[i].name, name) == 0 && fz_built(kind) &&
             !(kind == FC_HW_KIND_UART && fz_is_console(s_nodes[i].bus))) {
@@ -177,12 +219,14 @@ static const char *fz_section(int kind)
     return kind > 0 && kind < (int)ARRAY_SIZE(s) ? s[kind] : NULL;
 }
 
-/* The firmware's board map: led0, simulated, and each devicetree name. */
+/* The firmware's board map: led0 and each devicetree name. */
 static char *fz_board_defaults(void)
 {
     cJSON *doc = cJSON_CreateObject();
+#ifdef BOARD_LED
     cJSON *led = cJSON_AddObjectToObject(cJSON_AddObjectToObject(doc, "led"), "led0");
-    cJSON_AddStringToObject(led, "dt", SIM_LED);
+    cJSON_AddStringToObject(led, "dt", BOARD_LED);
+#endif
     for (int i = 0; i < (int)NODES; i++) {
         const node_t *n = &s_nodes[i];
         if (fz_section(n->kind) == NULL || fz_dt_find(n->kind, n->name) != i) {
@@ -212,25 +256,41 @@ static char *fz_board_defaults(void)
 /* Zephyr's fetch and channel_get share a sample buffer in the driver. */
 K_MUTEX_DEFINE(fz_sensor_lock);
 
+static int fz_sample_locked(const node_t *n, int32_t *value)
+{
+    enum sensor_channel chan = n->die_temperature ? SENSOR_CHAN_DIE_TEMP : SENSOR_CHAN_AMBIENT_TEMP;
+    struct sensor_value sample;
+    int rc = sensor_sample_fetch(n->bus);
+    if (rc == 0) {
+        rc = sensor_channel_get(n->bus, chan, &sample);
+    }
+    if (rc != 0) {
+        return rc == -ENOTSUP ? FC_HW_ENOTSUP : FC_HW_EIO;
+    }
+    *value = (int32_t)sensor_value_to_milli(&sample);
+    return 0;
+}
+
 static int fz_sensor_read(int id, int32_t *value)
 {
     const node_t *n = fz_node(id, FC_HW_KIND_SENSOR);
     if (!n || !device_is_ready(n->bus)) {
         return FC_HW_ENOTSUP;
     }
-    enum sensor_channel chan = n->die_temperature ? SENSOR_CHAN_DIE_TEMP : SENSOR_CHAN_AMBIENT_TEMP;
-    struct sensor_value sample;
     k_mutex_lock(&fz_sensor_lock, K_FOREVER);
-    int rc = sensor_sample_fetch(n->bus);
-    if (rc == 0) {
-        rc = sensor_channel_get(n->bus, chan, &sample);
-    }
+    int rc = fz_sample_locked(n, value);
     k_mutex_unlock(&fz_sensor_lock);
-    if (rc != 0) {
-        return rc == -ENOTSUP ? FC_HW_ENOTSUP : FC_HW_EIO;
+    return rc;
+}
+
+static int fz_die_id = -1;
+
+static int fz_die_temp(const char *name, int32_t *value)
+{
+    if (strcmp(name, "die_temp") != 0) {
+        return FC_HW_ENOENT;
     }
-    *value = (int32_t)sensor_value_to_milli(&sample);
-    return 0;
+    return fz_sensor_read(fz_die_id, value);
 }
 
 /* Drivers may keep the trigger pointer beyond a call. These descriptors
@@ -267,10 +327,38 @@ static void fz_watch_set(int id, const struct sensor_trigger *trigger, void (*no
     k_mutex_unlock(&fz_dispatch_lock);
 }
 
+#ifdef CONFIG_FC_PHYSICAL_APP_HW
+/* The S3 and RP2350 die probes support synchronous conversions only. */
+static int polled_id = -1, polled_zone;
+static int32_t polled_low, polled_high;
+static void fz_poll_die(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(die_work, fz_poll_die);
+
+static void fz_poll_die(struct k_work *work)
+{
+    k_mutex_lock(&fz_sensor_lock, K_FOREVER);
+    if (polled_id >= 0) {
+        int32_t mc;
+        if (fz_sample_locked(&s_nodes[polled_id], &mc) == 0) {
+            int zone = mc <= polled_low ? -1 : mc >= polled_high ? 1 : 0;
+            if (fz_watches[polled_id].trigger->type == SENSOR_TRIG_DATA_READY || zone != polled_zone) {
+                fz_watches[polled_id].notify(fz_watches[polled_id].ctx);
+            }
+            polled_zone = zone;
+        }
+        k_work_schedule(&die_work, K_SECONDS(1));
+    }
+    k_mutex_unlock(&fz_sensor_lock);
+}
+#endif
+
 static int fz_sensor_subscribe(int id, int mode, int32_t low, int32_t high, void (*notify)(void *), void *ctx)
 {
+    if (id == -1) {
+        id = fz_die_id;
+    }
     const node_t *n = fz_node(id, FC_HW_KIND_SENSOR);
-    if (!n || !device_is_ready(n->bus) || !DEVICE_API_GET(sensor, n->bus)->trigger_set) {
+    if (!n || !device_is_ready(n->bus)) {
         return FC_HW_ENOTSUP;
     }
     if (mode != FC_HW_SENSOR_READY && (mode != FC_HW_SENSOR_THRESHOLD || low >= high)) {
@@ -285,6 +373,22 @@ static int fz_sensor_subscribe(int id, int mode, int32_t low, int32_t high, void
         }
     }
     const struct sensor_trigger *trig = &fz_triggers[n->die_temperature][mode == FC_HW_SENSOR_THRESHOLD];
+    if (!DEVICE_API_GET(sensor, n->bus)->trigger_set) {
+        int rc = FC_HW_ENOTSUP;
+#ifdef CONFIG_FC_PHYSICAL_APP_HW
+        if (n->die_temperature && polled_id < 0) {
+            polled_id = id;
+            polled_low = low;
+            polled_high = high;
+            polled_zone = 0;
+            fz_watch_set(id, trig, notify, ctx);
+            k_work_reschedule(&die_work, K_NO_WAIT);
+            rc = id;
+        }
+#endif
+        k_mutex_unlock(&fz_sensor_lock);
+        return rc;
+    }
     int rc = 0;
     if (mode == FC_HW_SENSOR_THRESHOLD) {
         struct sensor_value v;
@@ -314,7 +418,16 @@ static void fz_sensor_unsubscribe(int id)
     k_mutex_lock(&fz_sensor_lock, K_FOREVER);
     const struct sensor_trigger *trigger = fz_watches[id].trigger;
     fz_watch_set(id, NULL, NULL, NULL); /* drains a running callback before releasing ctx */
-    sensor_trigger_set(s_nodes[id].bus, trigger, NULL);
+#ifdef CONFIG_FC_PHYSICAL_APP_HW
+    if (id == polled_id) {
+        /* The same lock drains both the conversion and its notification. */
+        polled_id = -1;
+        k_work_cancel_delayable(&die_work);
+    } else
+#endif
+    {
+        sensor_trigger_set(s_nodes[id].bus, trigger, NULL);
+    }
     k_mutex_unlock(&fz_sensor_lock);
 }
 
@@ -940,9 +1053,21 @@ static void fz_uart_close(int i)
 
 void fc_hw_zephyr_fill(fc_hw_t *hw)
 {
+#ifdef FC_HAS_BOARD_LED
+    hw->led_open = fz_led_open;
+    hw->led_rgb = fz_led_rgb;
+    hw->led_close = fz_led_close;
+#endif
     hw->dt_find = fz_dt_find;
     hw->board_defaults = fz_board_defaults;
 #ifdef CONFIG_SENSOR
+    for (int i = 0; i < (int)NODES; i++) {
+        if (s_nodes[i].kind == FC_HW_KIND_SENSOR && s_nodes[i].die_temperature) {
+            fz_die_id = i;
+            hw->sensor_read = fz_die_temp;
+            break;
+        }
+    }
     hw->sensor_read_dt = fz_sensor_read;
     hw->sensor_subscribe = fz_sensor_subscribe;
     hw->sensor_unsubscribe = fz_sensor_unsubscribe;

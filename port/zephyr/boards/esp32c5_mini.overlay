@@ -1,0 +1,15 @@
+#include "esp32c5_mini_flash.overlay"
+&flash0 {
+	partitions {
+		fc_creds_partition: partition@3b0000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fc_creds";
+			reg = <0x003b0000 0x00004000>;
+		};
+		fc_storage_partition: partition@3b4000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fc_storage";
+			reg = <0x003b4000 0x0002c000>;
+		};
+	};
+};

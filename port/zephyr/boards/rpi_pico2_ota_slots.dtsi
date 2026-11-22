@@ -1,0 +1,23 @@
+/* The last MiB holds fc_creds and LittleFS in both Pico 2 W layouts. */
+/delete-node/ &slot0_partition;
+/delete-node/ &slot1_partition;
+/delete-node/ &storage_partition;
+
+&boot_partition {
+	reg = <0x0 0x20000>;
+};
+
+&flash0 {
+	partitions {
+		slot0_partition: partition@20000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-0";
+			reg = <0x20000 0x170000>;
+		};
+		slot1_partition: partition@190000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-1";
+			reg = <0x190000 0x170000>;
+		};
+	};
+};

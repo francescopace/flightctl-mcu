@@ -17,6 +17,12 @@
 #include "fc_port.h"
 #include "fc_port_zephyr.h"
 #include "fc_wifi_zephyr.h"
+#ifdef CONFIG_BOARD_NRF7002DK_NRF5340_CPUAPP
+#include <nrfx_clock_hfclk.h>
+#endif
+#ifdef CONFIG_ENTROPY_BT_HCI
+#include <zephyr/bluetooth/bluetooth.h>
+#endif
 
 /* The fc_creds partition, written by tools/provision.py --format zephyr:
  * "FCC1", the length of what follows (32 bits, little-endian), then a JSON
@@ -80,6 +86,7 @@ static void wait_for_time(void)
 #endif
 
 
+#ifndef CONFIG_FC_PHYSICAL_APP_HW
 /* Simulated hardware for WASM apps, as on the host: a chip temperature that
  * swings 30..46 C over two minutes, and an LED (led0) printed when it
  * changes. */
@@ -113,15 +120,18 @@ static void sim_led_close(const fc_hw_led_t *led)
 {
     sim_led_rgb(led, 0, 0, 0);
 }
+#endif
 
 /* The rest (GPIO, buses, ADC, PWM) from the devicetree: fc_hw_zephyr.c. */
 static fc_hw_t s_hw = {
     .board = CONFIG_BOARD_TARGET,
     .firmware = CONFIG_FC_FW_VERSION,
+#ifndef CONFIG_FC_PHYSICAL_APP_HW
     .led_open = sim_led_open,
     .led_rgb = sim_led_rgb,
     .led_close = sim_led_close,
     .sensor_read = sim_sensor,
+#endif
     .restart_was_crash = fc_zephyr_restart_was_crash,
 };
 
@@ -135,12 +145,8 @@ static void stop(const char *why)
     }
 }
 
-/* A watchdog outside the agent's threads, on the system work queue: no
- * status update accepted, or no rendered spec taken, for FC_AGENT_WATCHDOG_S
- * restarts the device. The agent restarts it itself after 10 minutes without
- * a status, but only from its status thread, and statuses can go out while
- * the spec cannot come in: an ESP32-S3 whose heap was too low to parse its
- * spec stayed so for hours, until someone pressed RESET. */
+/* Independent of the agent threads: an unchanged local sample completes the
+ * status check, while the spec loop still needs a real management reply. */
 static void watchdog_check(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(s_watchdog, watchdog_check);
 
@@ -157,7 +163,15 @@ static void watchdog_check(struct k_work *work)
 
 int main(void)
 {
+#ifdef CONFIG_BOARD_NRF7002DK_NRF5340_CPUAPP
+    nrfx_clock_hfclk_divider_set(NRF_CLOCK_HFCLK_DIV_1);
+#endif
     fc_port_log(FC_LOG_INFO, "flightctl-mcu %s on Zephyr, board %s", CONFIG_FC_FW_VERSION, CONFIG_BOARD_TARGET);
+#ifdef CONFIG_ENTROPY_BT_HCI
+    if (bt_enable(NULL) != 0) {
+        stop("cannot start the HCI controller for hardware entropy");
+    }
+#endif
     fc_hw_zephyr_fill(&s_hw);
     if (fc_port_zephyr_init() != 0) {
         stop("cannot mount the storage (the fc_storage partition)");

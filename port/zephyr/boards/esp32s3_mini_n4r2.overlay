@@ -1,0 +1,28 @@
+/* Application override for the DevKitC PROCPU profile. */
+#include "esp32s3_mini_n4r2_flash.overlay"
+
+/delete-node/ &fc_creds_partition;
+/delete-node/ &fc_storage_partition;
+/delete-node/ &coredump_partition;
+
+&flash0 {
+	partitions {
+		fc_creds_partition: partition@3b0000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fc_creds";
+			reg = <0x003b0000 0x00004000>;
+		};
+		fc_storage_partition: partition@3b4000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fc_storage";
+			reg = <0x003b4000 0x0002c000>;
+		};
+		coredump_partition: partition@3e0000 {
+			compatible = "zephyr,mapped-partition";
+			label = "coredump";
+			reg = <0x003e0000 0x00020000>;
+		};
+	};
+};
+
+&psram0 { size = <DT_SIZE_M(2)>; };

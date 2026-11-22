@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # For real boards (native_sim needs none of this): the Zephyr SDK's toolchains
 # for them, into third_party/zephyr-sdk (git-ignored), and the binary firmware
-# of their WiFi chips, into the Zephyr tree: Espressif's for the ESP32-S3,
-# under its licence.
+# of their WiFi chips into the Zephyr tree. The ESP32-S3 uses Espressif's
+# firmware and the Pico 2 W uses Infineon's.
 # Run after third_party/fetch-zephyr.sh. Uses west: this machine's, or the one
 # in the Zephyr build image.
 set -euo pipefail
@@ -16,7 +16,7 @@ SDK="$ROOT/third_party/zephyr-sdk"
 [[ -d "$WS/zephyr" ]] || { echo "no Zephyr tree: run third_party/fetch-zephyr.sh" >&2; exit 1; }
 if ! command -v west >/dev/null; then
   exec docker run --rm -v "$ROOT:/project" -w /project -e ZEPHYR_SDK_VERSION="$ZEPHYR_SDK_VERSION" \
-    -e ZEPHYR_SDK_TOOLCHAINS="$TOOLCHAINS" \
+    -e ZEPHYR_SDK_TOOLCHAINS="$TOOLCHAINS" -e BOARD="${BOARD:-}" \
     "$ZEPHYR_IMAGE" third_party/fetch-zephyr-sdk.sh
 fi
 git config --global --add safe.directory '*' 2>/dev/null || true
@@ -31,4 +31,9 @@ for t in $TOOLCHAINS; do
 done
 # Espressif's WiFi libraries, for a build with its toolchain.
 [[ -d "$WS/modules/hal/espressif" && "$TOOLCHAINS" == *xtensa* ]] && west blobs fetch hal_espressif
+if [[ "${BOARD:-}" == rpi_pico2/*/w || "${BOARD:-}" == rpi_pico2/*/w/mcuboot ]]; then
+  west blobs fetch hal_infineon
+elif [[ "${BOARD:-}" == nrf7002dk/nrf5340/cpuapp ]]; then
+  west blobs fetch nrf_wifi
+fi
 echo "Zephyr SDK $ZEPHYR_SDK_VERSION ($TOOLCHAINS) in $SDK"

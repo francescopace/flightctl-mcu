@@ -1,0 +1,5 @@
+/ { chosen { zephyr,uart-pipe = &usart3; }; };
+&usart3 { current-speed = <460800>; };
+&mac { status = "disabled"; };
+&mdio { status = "disabled"; };
+&eth_phy { status = "disabled"; };

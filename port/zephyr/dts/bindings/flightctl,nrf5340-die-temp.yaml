@@ -1,0 +1,8 @@
+description: nRF5340 die temperature measured by the network core
+compatible: "flightctl,nrf5340-die-temp"
+include: sensor-device.yaml
+properties:
+  ipc:
+    type: phandle
+    required: true
+    description: IPC service instance shared with the network core

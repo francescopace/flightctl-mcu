@@ -1,0 +1,2 @@
+description: Test endpoint for delivering nRF5340 temperature samples.
+compatible: "flightctl,test-ipc"

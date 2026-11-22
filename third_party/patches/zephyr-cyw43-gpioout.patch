@@ -1,0 +1,113 @@
+diff --git a/drivers/gpio/gpio_cyw43.c b/drivers/gpio/gpio_cyw43.c
+index 163e0a3d1..15bb92db4 100644
+--- a/drivers/gpio/gpio_cyw43.c
++++ b/drivers/gpio/gpio_cyw43.c
+@@ -17,6 +17,7 @@
+ #include <zephyr/drivers/gpio.h>
+ #include <zephyr/drivers/gpio/gpio_utils.h>
+ #include <zephyr/kernel.h>
++#include <zephyr/sys/byteorder.h>
+ #include <zephyr/logging/log.h>
+ #include <whd.h>
+ 
+@@ -28,7 +29,8 @@ LOG_MODULE_REGISTER(gpio_cyw43, CONFIG_GPIO_LOG_LEVEL);
+ extern whd_interface_t airoc_wifi_get_whd_interface(void);
+ 
+ /* WHD internal API for setting iovar values */
+-extern uint32_t whd_wifi_set_iovar_value(whd_interface_t ifp, const char *iovar, uint32_t value);
++extern whd_result_t whd_wifi_set_iovar_buffer(whd_interface_t ifp, const char *iovar,
++					      void *buffer, uint16_t buffer_length);
+ 
+ struct gpio_cyw43_config {
+ 	struct gpio_driver_config common;
+@@ -40,19 +42,28 @@ struct gpio_cyw43_data {
+ 	uint32_t pin_state;
+ };
+ 
+-static int gpio_cyw43_write_state(const struct device *dev)
++static int gpio_cyw43_write(const struct device *dev, gpio_port_pins_t mask,
++			    gpio_port_value_t value, bool toggle)
+ {
+ 	struct gpio_cyw43_data *data = dev->data;
+ 	whd_interface_t ifp = airoc_wifi_get_whd_interface();
+-	uint32_t ret;
++	uint32_t command[2];
++	whd_result_t ret;
+ 
+ 	if (ifp == NULL) {
+-		/* WiFi not initialized yet, state will be applied later */
+-		return 0;
++		return -ENODEV;
+ 	}
+ 
+ 	k_mutex_lock(&data->lock, K_FOREVER);
+-	ret = whd_wifi_set_iovar_value(ifp, "gpioout", data->pin_state);
++	if (toggle) {
++		value = ~data->pin_state;
++	}
++	command[0] = sys_cpu_to_le32(mask);
++	command[1] = sys_cpu_to_le32(value & mask);
++	ret = whd_wifi_set_iovar_buffer(ifp, "gpioout", command, sizeof(command));
++	if (ret == WHD_SUCCESS) {
++		data->pin_state = (data->pin_state & ~mask) | (value & mask);
++	}
+ 	k_mutex_unlock(&data->lock);
+ 
+ 	return (ret == 0) ? 0 : -EIO;
+@@ -60,8 +71,6 @@ static int gpio_cyw43_write_state(const struct device *dev)
+ 
+ static int gpio_cyw43_configure(const struct device *dev, gpio_pin_t pin, gpio_flags_t flags)
+ {
+-	struct gpio_cyw43_data *data = dev->data;
+-
+ 	if (pin >= CYW43_GPIO_PINS) {
+ 		return -EINVAL;
+ 	}
+@@ -79,29 +88,28 @@ static int gpio_cyw43_configure(const struct device *dev, gpio_pin_t pin, gpio_f
+ 	}
+ 
+ 	if ((flags & GPIO_OUTPUT_INIT_HIGH) != 0U) {
+-		data->pin_state |= BIT(pin);
++		return gpio_cyw43_write(dev, BIT(pin), BIT(pin), false);
+ 	} else if ((flags & GPIO_OUTPUT_INIT_LOW) != 0U) {
+-		data->pin_state &= ~BIT(pin);
++		return gpio_cyw43_write(dev, BIT(pin), 0, false);
+ 	}
+ 
+-	return gpio_cyw43_write_state(dev);
++	return 0;
+ }
+ 
+ static int gpio_cyw43_port_get_raw(const struct device *dev, uint32_t *value)
+ {
+ 	struct gpio_cyw43_data *data = dev->data;
+ 
++	k_mutex_lock(&data->lock, K_FOREVER);
+ 	*value = data->pin_state;
++	k_mutex_unlock(&data->lock);
+ 	return 0;
+ }
+ 
+ static int gpio_cyw43_port_set_masked_raw(const struct device *dev, gpio_port_pins_t mask,
+ 					  gpio_port_value_t value)
+ {
+-	struct gpio_cyw43_data *data = dev->data;
+-
+-	data->pin_state = (data->pin_state & ~mask) | (value & mask);
+-	return gpio_cyw43_write_state(dev);
++	return gpio_cyw43_write(dev, mask, value, false);
+ }
+ 
+ static int gpio_cyw43_port_set_bits_raw(const struct device *dev, gpio_port_pins_t pins)
+@@ -116,10 +124,7 @@ static int gpio_cyw43_port_clear_bits_raw(const struct device *dev, gpio_port_pi
+ 
+ static int gpio_cyw43_port_toggle_bits(const struct device *dev, gpio_port_pins_t pins)
+ {
+-	struct gpio_cyw43_data *data = dev->data;
+-
+-	data->pin_state ^= pins;
+-	return gpio_cyw43_write_state(dev);
++	return gpio_cyw43_write(dev, pins, 0, true);
+ }
+ 
+ static DEVICE_API(gpio, gpio_cyw43_api) = {

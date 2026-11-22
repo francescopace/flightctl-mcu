@@ -1,0 +1,4 @@
+/* DevKitC-1 v1.1 moved the onboard pixel from GPIO48 to GPIO38. */
+&app_rgb {
+	group1 { pinmux = <SPIM3_MOSI_GPIO38>; };
+};
