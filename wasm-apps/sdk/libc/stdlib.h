@@ -2,8 +2,8 @@
  * does.
  *
  * malloc, calloc, realloc and free are the app's own, not the device's: a
- * small first-fit allocator, here, over an arena in the app's memory. An app
- * that uses them gives the arena's size once, at file scope, in bytes:
+ * first-fit over an address-ordered free list in the app's memory. An app
+ * gives the arena's size once, at file scope, in bytes:
  *
  *     FC_HEAP(4096);
  *
@@ -36,14 +36,14 @@ void free(void *p);
 /* The arena, 8-aligned, of the size given rounded up to 8, and the four
  * functions over it, in one file of the app. noinline: malloc's code once. */
 #define FC_HEAP(bytes)                                                                                               \
-    static unsigned fc_heap_arena_[((bytes) + 7) / 8 * 2] __attribute__((aligned(8)));                              \
+    static unsigned fc_heap_arena_[((bytes) + 7) / 8 * 2] __attribute__((aligned(8)));                               \
     __attribute__((noinline)) void *malloc(size_t n)                                                                 \
     {                                                                                                                \
-        return fc_heap_malloc_((unsigned char *)fc_heap_arena_, sizeof(fc_heap_arena_), n);                          \
+        return fc_heap_malloc_(fc_heap_arena_, sizeof(fc_heap_arena_), n);                                           \
     }                                                                                                                \
     void free(void *p)                                                                                               \
     {                                                                                                                \
-        fc_heap_free_(p);                                                                                            \
+        fc_heap_free_(fc_heap_arena_, p);                                                                            \
     }                                                                                                                \
     __attribute__((noinline)) void *calloc(size_t count, size_t size)                                                \
     {                                                                                                                \
@@ -51,77 +51,92 @@ void free(void *p);
     }                                                                                                                \
     __attribute__((noinline)) void *realloc(void *p, size_t n)                                                       \
     {                                                                                                                \
-        return fc_heap_realloc_(sizeof(fc_heap_arena_), p, n);                                                       \
+        return fc_heap_realloc_(fc_heap_arena_, sizeof(fc_heap_arena_), p, n);                                       \
     }                                                                                                                \
     _Static_assert((bytes) >= 16, "FC_HEAP: at least 16 bytes")
 
-/* Each block starts with a 4-byte word, its size with the header (a multiple
- * of 8), bit 0 set while it is in use; its bytes follow, 8-aligned. The
- * first header is at 4 in the arena, and a used block of size 0 marks the
- * end. Free blocks next to each other are joined when malloc passes them. */
-#define FC_HEAP_USED_ 1u
-#define FC_HEAP_HDR_(p) ((unsigned *)(p) - 1)
-
-static inline unsigned *fc_heap_next_(unsigned *h)
+/* Indices and sizes count 32-bit words. arena[0] holds the free-list head.
+ * Each block has a one-word size header. Only free blocks store a next link,
+ * in their first payload word. The first payload is 8-byte aligned. */
+static inline unsigned fc_heap_words_(size_t n)
 {
-    return (unsigned *)((unsigned char *)h + (*h & ~FC_HEAP_USED_));
+    return ((unsigned)n + 4 + 7) / 8 * 2;
 }
 
-/* h is free: it takes the free blocks after it. */
-static inline void fc_heap_join_(unsigned *h)
+/* Take the front of a listed block. Split only if at least
+ * 16 bytes remain. Return the number of words actually consumed. */
+static inline unsigned fc_heap_take_(unsigned *arena, unsigned *link, unsigned need)
 {
-    for (unsigned *n = fc_heap_next_(h); !(*n & FC_HEAP_USED_); n = fc_heap_next_(h)) {
-        *h += *n;
+    unsigned block = *link;
+    unsigned span = arena[block];
+    unsigned next = arena[block + 1];
+    if (span - need >= 4) {
+        unsigned tail = block + need;
+        arena[tail] = span - need;
+        arena[tail + 1] = next;
+        next = tail;
+        span = need;
     }
+    *link = next;
+    arena[block] = span;
+    return span;
 }
 
-/* h is free and at least need: it keeps need, the rest stays free. */
-static inline void fc_heap_split_(unsigned *h, unsigned need)
+static inline void *fc_heap_malloc_(unsigned *arena, unsigned bytes, size_t n)
 {
-    if (*h - need >= 16) {
-        *(unsigned *)((unsigned char *)h + need) = *h - need;
-        *h = need;
-    }
-}
-
-static inline unsigned fc_heap_need_(size_t n)
-{
-    return ((unsigned)n + 4 + 7) & ~7u;
-}
-
-static inline void *fc_heap_malloc_(unsigned char *base, unsigned bytes, size_t n)
-{
-    unsigned *first = (unsigned *)(base + 4);
-    if (*first == 0) { /* the first call: one free block, then the end */
-        *first = bytes - 8;
-        *(unsigned *)(base + bytes - 4) = FC_HEAP_USED_;
-    }
-    if (n > bytes) {
+    if (n > bytes - 12) {
         return NULL;
     }
-    unsigned need = fc_heap_need_(n);
-    for (unsigned *h = first; *h != FC_HEAP_USED_; h = fc_heap_next_(h)) {
-        if (*h & FC_HEAP_USED_) {
-            continue;
-        }
-        fc_heap_join_(h);
-        if (*h >= need) {
-            fc_heap_split_(h, need);
-            *h |= FC_HEAP_USED_;
-            return h + 1;
+    if (!arena[1]) {
+        arena[0] = 1;
+        arena[1] = bytes / sizeof(arena[0]) - 2;
+    }
+    unsigned need = fc_heap_words_(n);
+    for (unsigned *link = arena; *link; link = &arena[*link + 1]) {
+        unsigned block = *link;
+        if (arena[block] >= need) {
+            fc_heap_take_(arena, link, need);
+            return &arena[block + 1];
         }
     }
     return NULL;
 }
 
-static inline void fc_heap_free_(void *p)
+/* List order follows physical addresses, so the insertion point also
+ * identifies the only free neighbors that can be coalesced. */
+static inline unsigned *fc_heap_insertion_(unsigned *arena, unsigned block)
 {
-    if (p != NULL) {
-        *FC_HEAP_HDR_(p) &= ~FC_HEAP_USED_;
+    unsigned *link = arena;
+    while (*link && *link < block) {
+        link = &arena[*link + 1];
     }
+    return link;
 }
 
-/* calloc and realloc call malloc and free, so that its code is there once. */
+static inline void fc_heap_free_(unsigned *arena, void *p)
+{
+    if (!p) {
+        return;
+    }
+    unsigned block = (unsigned *)p - arena - 1;
+    unsigned *link = fc_heap_insertion_(arena, block);
+    unsigned next = *link;
+    if (next && block + arena[block] == next) {
+        arena[block] += arena[next];
+        next = arena[next + 1];
+    }
+    if (link != arena) {
+        unsigned previous = (unsigned)(link - arena) - 1;
+        if (previous + arena[previous] == block) {
+            arena[previous] += arena[block];
+            *link = next;
+            return;
+        }
+    }
+    arena[block + 1] = next;
+    *link = block;
+}
+
 static inline void *fc_heap_calloc_(size_t count, size_t size)
 {
     if (size != 0 && count > (size_t)-1 / size) {
@@ -131,34 +146,31 @@ static inline void *fc_heap_calloc_(size_t count, size_t size)
     return p != NULL ? __builtin_memset(p, 0, count * size) : NULL;
 }
 
-/* Grows in place into the free blocks after it when it can. */
-static inline void *fc_heap_realloc_(unsigned bytes, void *p, size_t n)
+static inline void *fc_heap_realloc_(unsigned *arena, unsigned bytes, void *p, size_t n)
 {
-    if (p == NULL) {
+    if (!p) {
         return malloc(n);
     }
-    unsigned *h = FC_HEAP_HDR_(p);
-    size_t have = (*h & ~FC_HEAP_USED_) - 4;
-    if (n <= have) {
+    if (n > bytes - 12) {
+        return NULL;
+    }
+    unsigned block = (unsigned *)p - arena - 1;
+    unsigned span = arena[block];
+    unsigned need = fc_heap_words_(n);
+    if (need <= span) {
         return p;
     }
-    if (n <= bytes) {
-        unsigned need = fc_heap_need_(n);
-        *h &= ~FC_HEAP_USED_;
-        fc_heap_join_(h);
-        int fits = *h >= need;
-        if (fits) {
-            fc_heap_split_(h, need);
-        }
-        *h |= FC_HEAP_USED_;
-        if (fits) {
-            return p;
-        }
+
+    unsigned right = block + span;
+    unsigned *link = fc_heap_insertion_(arena, right);
+    if (*link == right && arena[right] >= need - span) {
+        arena[block] += fc_heap_take_(arena, link, need - span);
+        return p;
     }
-    void *q = malloc(n);
-    if (q != NULL) {
-        __builtin_memcpy(q, p, have);
+    void *new_p = malloc(n);
+    if (new_p) {
+        __builtin_memcpy(new_p, p, (span - 1) * sizeof(arena[0]));
         free(p);
     }
-    return q;
+    return new_p;
 }

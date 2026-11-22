@@ -1,0 +1,62 @@
+--- a/stdlib.h
++++ b/stdlib.h
+@@ -39,7 +39,7 @@
+     static unsigned fc_heap_arena_[((bytes) + 7) / 8 * 2] __attribute__((aligned(8)));                              \
+     __attribute__((noinline)) void *malloc(size_t n)                                                                 \
+     {                                                                                                                \
+-        return fc_heap_malloc_((unsigned char *)fc_heap_arena_, sizeof(fc_heap_arena_), n);                          \
++        return profile_malloc_((unsigned char *)fc_heap_arena_, sizeof(fc_heap_arena_), n);                          \
+     }                                                                                                                \
+     void free(void *p)                                                                                               \
+     {                                                                                                                \
+@@ -99,8 +99,15 @@
+     if (n > bytes) {
+         return NULL;
+     }
++#ifdef PROFILE_COUNTS
++    unsigned visits = 0;
++    stats[active_phase].calls++;
++#endif
+     unsigned need = fc_heap_need_(n);
+     for (unsigned *h = first; *h != FC_HEAP_USED_; h = fc_heap_next_(h)) {
++#ifdef PROFILE_COUNTS
++        visits++;
++#endif
+         if (*h & FC_HEAP_USED_) {
+             continue;
+         }
+@@ -108,10 +115,34 @@
+         if (*h >= need) {
+             fc_heap_split_(h, need);
+             *h |= FC_HEAP_USED_;
++#ifdef PROFILE_COUNTS
++            stats[active_phase].visits += visits;
++#endif
+             return h + 1;
+         }
+     }
++#ifdef PROFILE_COUNTS
++    stats[active_phase].visits += visits;
++#endif
+     return NULL;
++}
++
++static inline void *profile_malloc_(unsigned char *base, unsigned bytes, size_t n)
++{
++#if defined(PROFILE_TIMED) || defined(PROFILE_EMPTY)
++    unsigned start = clock_ms();
++#ifdef PROFILE_EMPTY
++    unsigned end = clock_ms();
++#endif
++    void *p = fc_heap_malloc_(base, bytes, n);
++#ifdef PROFILE_TIMED
++    unsigned end = clock_ms();
++#endif
++    stats[active_phase].malloc_ms += end - start;
++    return p;
++#else
++    return fc_heap_malloc_(base, bytes, n);
++#endif
+ }
+ 
+ static inline void fc_heap_free_(void *p)

@@ -1,0 +1,132 @@
+--- a/deltablue.c
++++ b/deltablue.c
+@@ -34,8 +34,9 @@
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
+-#include <time.h>
+ #include <string.h>
++
++FC_HEAP(40960);
+ 
+ typedef enum {false, true} Boolean;
+ typedef	void (*Proc)();
+@@ -257,7 +258,7 @@
+ void Error(char *errorString)
+ {
+   printf("error: %s.\n", errorString);
+-  exit(-1);
++  abort();
+ }
+ 
+ void Grow(List list)
+@@ -269,12 +270,11 @@
+ 
+ void MakeRoom(List list)
+ {
++  if (((list->last - list->first) + 1) >= list->slotCount) Grow(list);
++  if (list->first == 0) return;
+   Element *srcPtr = &list->slots[list->first];
+   Element *destPtr = &list->slots[0];
+   Element *lastPtr = &list->slots[list->last];
+-
+-  if (((list->last - list->first) + 1) >= list->slotCount) Grow(list);
+-  if (list->first == 0) return;
+   while (srcPtr <= lastPtr) {
+     *destPtr++ = *srcPtr++;
+   }
+@@ -1013,8 +1013,8 @@
+     if (i == (n-1)) last = v;
+     prev = v;
+   }
+-  StayC(last, S_default);
+-  editC = EditC(first, S_strongDefault);
++  StayC(last, S_strongDefault);
++  editC = EditC(first, S_preferred);
+   plan = ExtractPlanFromConstraint(editC);
+   for (i = 0; i < 100; i++) {
+     first->value = i;
+@@ -1041,7 +1041,7 @@
+   long 	i, msecs;
+   List	plan;
+ 
+-  editC = EditC(v, S_strongDefault);
++  editC = EditC(v, S_preferred);
+   plan = ExtractPlanFromConstraint(editC);
+   v->value = newValue;
+   for (i = 0; i < 10; i++) {
+@@ -1064,7 +1064,7 @@
+   offset = Variable_Create("offset", 1000);
+   dests = List_Create(n);
+ 
+-  for (i = 1; i <= n; i++) {
++  for (i = 0; i < n; i++) {
+     /* make src and dest variables */
+     sprintf(name, "src%ld", i);
+     src = Variable_Create(name, i);
+@@ -1088,39 +1088,38 @@
+ 
+   Change(scale, 5);
+   for (i = 1; i < List_Size(dests); ++i)
+-    if (((Variable)List_At(dests, i - 1))->value != i * 5 + 1000)
++    if (((Variable)List_At(dests, i - 1))->value != (i - 1) * 5 + 1000)
+       Error("Projection Test 3 failed!");
+ 
+   Change(offset, 2000);
+   for (i = 1; i < List_Size(dests); ++i)
+-    if (((Variable)List_At(dests, i - 1))->value != i * 5 + 2000)
++    if (((Variable)List_At(dests, i - 1))->value != (i - 1) * 5 + 2000)
+       Error("Projection Test 4 failed!");
+ 
+   List_Destroy(dests);
+ }
+ 
+-void OutlierRemovalAverageSummary() {
+-}
+-
+-double OutlierRemovalAverageSummaryLowerThreshold() {
+-  return 0.0;
+-}
+-
+-double OutlierRemovalAverageSummaryUpperThreshold() {
+-  return 0.5;
+-}
+-
+-void setup() {
+-}
+-
+-int run()
+-{
+-  int n = 1000;
+-  ChainTest(n);
+-  ProjectionTest(n);
+-  return 0;
+-}
+-
+-int main(int argc, char* argv[]) {
+-  return run();
+-}
++
++__attribute__((import_module("env"), import_name("clock_ms"))) int clock_ms(void);
++__attribute__((export_name("run"))) int run(void) {
++    int elapsed[3];
++    for (int group = 0; group < 3; group++) {
++        int start = clock_ms();
++        for (int iteration = 0; iteration < 10; iteration++) {
++            for (int pair = 0; pair < 10; pair++) {
++                /* 51 variables make 50 equality constraints. */
++                ChainTest(51);
++                ProjectionTest(50);
++            }
++        }
++        elapsed[group] = clock_ms() - start;
++        printf("BENCH deltablue group %d total_ms %d\n", group, elapsed[group]);
++    }
++    int a = elapsed[0], b = elapsed[1], c = elapsed[2];
++    if (a > b) {
++        if (a < c) return a;
++        return b > c ? b : c;
++    }
++    if (b < c) return b;
++    return a > c ? a : c;
++}

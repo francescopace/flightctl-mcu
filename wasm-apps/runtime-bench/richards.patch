@@ -1,0 +1,98 @@
+--- a/richards.c
++++ b/richards.c
+@@ -34,7 +34,7 @@
+  */
+ #include <stdio.h>
+ #include <stdlib.h>
+-FILE *nowhere;
++FC_HEAP(8192);
+ 
+ #ifdef bench100
+ #define                Count           10000*100
+@@ -141,6 +141,7 @@
+     for (i=0; i<=BUFSIZE; i++)
+         p->p_a2[i] = 0;
+ 
++    p->p_a1 = 0;
+     p->p_link = link;
+     p->p_id = id;
+     p->p_kind = kind;
+@@ -362,7 +363,7 @@
+ int richards()
+ {
+ 	// global var init
+-	nowhere = fopen("/dev/null", "w");
++	
+ 	tasktab[0] = (struct task *)10;
+ 	for (int i = 1; i < 11; i++) {
+ 		tasktab[i] = 0;
+@@ -404,45 +405,34 @@
+ 
+     qpktcount = holdcount = 0;
+ 
+-    fprintf(nowhere, "Starting\n");
+ 
+     tracing = FALSE;
+     layout = 0;
+-
+     schedule();
+-
+-    fprintf(nowhere, "\nfinished\n");
+-
+-    fprintf(nowhere, "qpkt count = %d  holdcount = %d\n",
+-           qpktcount, holdcount);
+-
+-    fprintf(nowhere, "These results are ");
+-    if (qpktcount == Qpktcountval && holdcount == Holdcountval)
+-        fprintf(nowhere, "correct");
+-    else fprintf(stdout, "incorrect");
+-    fprintf(nowhere, "\nend of run\n");
++    if (qpktcount != Qpktcountval || holdcount != Holdcountval) {
++        abort();
++    }
+     return 0;
+ }
+ 
+-void OutlierRemovalAverageSummary() {
+-}
+-
+-double OutlierRemovalAverageSummaryLowerThreshold() {
+-  return 0.0;
+-}
+-
+-double OutlierRemovalAverageSummaryUpperThreshold() {
+-  return 0.5;
+-}
+-
+-void setup() {
+-}
+-
+-int run()
+-{
+-  return richards();;
+-}
+-
+-int main(int argc, char* argv[]) {
+-  return run();
+-}
++__attribute__((import_module("env"), import_name("clock_ms"))) int clock_ms(void);
++__attribute__((export_name("run"))) int run(void) {
++    int elapsed[3];
++    for (int group = 0; group < 3; group++) {
++        int start = clock_ms();
++        for (int iteration = 0; iteration < 10; iteration++) {
++            /* Richards abandons its packets and tasks after each schedule. */
++            fc_heap_arena_[1] = 0;
++            richards();
++        }
++        elapsed[group] = clock_ms() - start;
++        printf("BENCH richards group %d total_ms %d\n", group, elapsed[group]);
++    }
++    int a = elapsed[0], b = elapsed[1], c = elapsed[2];
++    if (a > b) {
++        if (a < c) return a;
++        return b > c ? b : c;
++    }
++    if (b < c) return b;
++    return a > c ? a : c;
++}

@@ -1,0 +1,83 @@
+--- a/deltablue.c
++++ b/deltablue.c
+@@ -33,6 +33,7 @@
+    */
+ 
+ #include <stdio.h>
++#include "profile.h"
+ #include <stdlib.h>
+ #include <string.h>
+ 
+@@ -1000,7 +1001,9 @@
+   Constraint	editC;
+   List		plan;
+ 
++  enter_phase(OTHER);
+   InitDeltaBlue();
++  enter_phase(GRAPH);
+   prev = first = last = NULL;
+ 
+   for (i = 0; i < n; i++) {
+@@ -1015,13 +1018,16 @@
+   }
+   StayC(last, S_strongDefault);
+   editC = EditC(first, S_preferred);
++  enter_phase(EXTRACT);
+   plan = ExtractPlanFromConstraint(editC);
++  enter_phase(EXECUTE);
+   for (i = 0; i < 100; i++) {
+     first->value = i;
+     ExecutePlan(plan);
+     if (last->value != i)
+       Error("ChainTest failed!");
+   }
++  enter_phase(OTHER);
+   List_Destroy(plan);
+   DestroyConstraint(editC);
+ }
+@@ -1041,12 +1047,16 @@
+   long 	i, msecs;
+   List	plan;
+ 
++  enter_phase(GRAPH);
+   editC = EditC(v, S_preferred);
++  enter_phase(EXTRACT);
+   plan = ExtractPlanFromConstraint(editC);
++  enter_phase(EXECUTE);
+   v->value = newValue;
+   for (i = 0; i < 10; i++) {
+     ExecutePlan(plan);
+   }
++  enter_phase(OTHER);
+   List_Destroy(plan);
+   DestroyConstraint(editC);
+ }
+@@ -1058,7 +1068,9 @@
+   char	name[20];
+   List dests;
+ 
++  enter_phase(OTHER);
+   InitDeltaBlue();
++  enter_phase(GRAPH);
+ 
+   scale = Variable_Create("scale", 10);
+   offset = Variable_Create("offset", 1000);
+@@ -1105,6 +1117,7 @@
+     int elapsed[3];
+     for (int group = 0; group < 3; group++) {
+         int start = clock_ms();
++        start_group(start);
+         for (int iteration = 0; iteration < 10; iteration++) {
+             for (int pair = 0; pair < 10; pair++) {
+                 /* 51 variables make 50 equality constraints. */
+@@ -1112,7 +1125,9 @@
+                 ProjectionTest(50);
+             }
+         }
+-        elapsed[group] = clock_ms() - start;
++        int end = clock_ms();
++        elapsed[group] = end - start;
++        finish_group(group, end);
+         printf("BENCH deltablue group %d total_ms %d\n", group, elapsed[group]);
+     }
+     int a = elapsed[0], b = elapsed[1], c = elapsed[2];

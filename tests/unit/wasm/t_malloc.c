@@ -132,6 +132,27 @@ int32_t init(void)
     free(b);
     free(z);
 
+    /* A free block before a live one stays on the list when realloc grows
+     * into the next free block and leaves a reusable tail. */
+    unsigned char *left = got(malloc(12));
+    unsigned char *middle = got(malloc(12));
+    unsigned char *right = got(malloc(60));
+    unsigned char *guard = got(malloc(12));
+    unsigned left_at = at(left), middle_at = at(middle);
+    memset(middle, 0x45, 12);
+    memset(guard, 0x72, 12);
+    free(left);
+    free(right);
+    middle = got(realloc(middle, 36));
+    CHECK(at(middle) == middle_at && all(middle, 0x45, 12));
+    left = got(malloc(12));
+    right = got(malloc(36));
+    CHECK(at(left) == left_at && at(right) == middle_at + 40 && all(guard, 0x72, 12));
+    free(left);
+    free(right);
+    free(middle);
+    free(guard);
+
     churn();
     /* All freed: the arena is one block again, but for malloc(0)'s. */
     unsigned char *rest = got(malloc(1012 - 8));
