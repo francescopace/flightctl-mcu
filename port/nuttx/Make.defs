@@ -1,0 +1,3 @@
+ifeq ($(CONFIG_FLIGHTCTL),y)
+CONFIGURED_APPS += $(APPDIR)/flightctl
+endif

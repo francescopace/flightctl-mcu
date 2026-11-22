@@ -1,0 +1,11 @@
+--- a/nuttx/esp32/include/sdkconfig.h
++++ b/nuttx/esp32/include/sdkconfig.h
+@@ -601,7 +601,7 @@
+ #define CONFIG_IDF_TARGET "esp32"
+ #define CONFIG_IDF_TARGET_ESP32 1
+ 
+-#define CONFIG_ESP_TIMER_IN_IRAM 1
++#define CONFIG_ESP_TIMER_IN_IRAM 0
+ #define CONFIG_ESP_TIME_FUNCS_USE_RTC_TIMER 1
+ #define CONFIG_ESP_TIME_FUNCS_USE_ESP_TIMER 1
+ #define CONFIG_ESP_TIMER_TASK_STACK_SIZE 4096

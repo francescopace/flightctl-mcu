@@ -1,0 +1,73 @@
+--- a/arch/risc-v/src/common/espressif/Kconfig
++++ b/arch/risc-v/src/common/espressif/Kconfig
+@@ -201,6 +201,13 @@
+ 	---help---
+ 		Set the CPU frequency to 160 MHz.
+ 
++config ESPRESSIF_CPU_FREQ_240
++	bool "240 MHz"
++	depends on ARCH_CHIP_ESP32C5
++	select ESP_DEFAULT_CPU_FREQ_MHZ_240
++	---help---
++		Run the CPU from the C5 240 MHz PLL.
++
+ config ESPRESSIF_CPU_FREQ_360
+ 	bool "360 MHz"
+ 	depends on ARCH_CHIP_ESP32P4 && ESP32P4_SELECTS_REV_LESS_V3
+@@ -214,6 +221,11 @@
+ 		Set the CPU frequency to 400 MHz.
+ 
+ endchoice # ESPRESSIF_CPU_FREQ
++
++# The Espressif HAL also uses this setting for PLL selection on early C5 silicon.
++
++config ESP_DEFAULT_CPU_FREQ_MHZ_240
++	bool
+ 
+ config ESPRESSIF_CPU_FREQ_MHZ
+ 	int
+@@ -223,6 +235,7 @@
+ 	default 80 if ESPRESSIF_CPU_FREQ_80
+ 	default 96 if ESPRESSIF_CPU_FREQ_96
+ 	default 160 if ESPRESSIF_CPU_FREQ_160
++	default 240 if ESPRESSIF_CPU_FREQ_240
+ 	default 360 if ESPRESSIF_CPU_FREQ_360
+ 	default 400 if ESPRESSIF_CPU_FREQ_400
+ 
+--- a/arch/risc-v/src/common/riscv_cpuinfo.c
++++ b/arch/risc-v/src/common/riscv_cpuinfo.c
+@@ -28,6 +28,10 @@
+ #include <nuttx/config.h>
+ #include <nuttx/fs/procfs.h>
+ 
++#ifdef CONFIG_ARCH_CHIP_ESP32C5
++#  include "soc/rtc.h"
++#endif
++
+ #if defined(CONFIG_FS_PROCFS) && !defined(CONFIG_FS_PROCFS_EXCLUDE_CPUINFO)
+ 
+ /****************************************************************************
+@@ -41,6 +45,13 @@
+ ssize_t up_show_cpuinfo(char *buf, size_t buf_size, off_t file_off)
+ {
+   int i;
++#ifdef CONFIG_ARCH_CHIP_ESP32C5
++  rtc_cpu_freq_config_t clock;
++  rtc_clk_cpu_freq_get_config(&clock);
++  unsigned int freq_khz = clock.freq_mhz * 1000;
++#else
++  unsigned int freq_khz = CONFIG_ARCH_CPUINFO_FREQ_KHZ;
++#endif
+ 
+   for (i = 0; i < CONFIG_SMP_NCPUS; i++)
+     {
+@@ -50,8 +61,7 @@
+                      (CONFIG_BOARD_LOOPSPERMSEC / 1000),
+                      (CONFIG_BOARD_LOOPSPERMSEC / 10) % 100);
+       procfs_sprintf(buf, buf_size, &file_off, "cpu MHz\t\t: %u.%03u\n",
+-                     CONFIG_ARCH_CPUINFO_FREQ_KHZ / 1000,
+-                     CONFIG_ARCH_CPUINFO_FREQ_KHZ % 1000);
++                     freq_khz / 1000, freq_khz % 1000);
+ 
+       /* ISA */
+ 

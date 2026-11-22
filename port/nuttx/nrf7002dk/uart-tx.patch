@@ -1,0 +1,141 @@
+--- a/arch/arm/src/nrf53/nrf53_serial.c
++++ b/arch/arm/src/nrf53/nrf53_serial.c
+@@ -103,6 +103,8 @@
+ {
+   uintptr_t uartbase;     /* Base address of UART registers */
+   uint8_t   irq;          /* IRQ associated with this UART */
++  bool      tx_busy;      /* One byte is in the hardware transmitter */
++  bool      tx_enabled;   /* Upper half has more bytes to send */
+   bool      rx_available; /* rx byte available */
+ 
+   /* UART configuration */
+@@ -404,9 +406,26 @@
+       uart_recvchars(dev);
+     }
+ 
+-  /* Clear errors */
+-
+-  putreg32(0, priv->uartbase + NRF53_UART_ERRORSRC_OFFSET);
++  if (getreg32(priv->uartbase + NRF53_UART_EVENTS_TXDRDY_OFFSET))
++    {
++      putreg32(0, priv->uartbase + NRF53_UART_EVENTS_TXDRDY_OFFSET);
++      priv->tx_busy = false;
++      if (priv->tx_enabled)
++        {
++          uart_xmitchars(dev);
++        }
++
++      if (!priv->tx_busy)
++        {
++          putreg32(1, priv->uartbase + NRF53_UART_TASKS_STOPTX_OFFSET);
++          putreg32(UART_INT_TXDRDY, priv->uartbase + NRF53_UART_INTENCLR_OFFSET);
++        }
++    }
++
++  /* ERRORSRC is write-one-to-clear. */
++
++  regval = getreg32(priv->uartbase + NRF53_UART_ERRORSRC_OFFSET);
++  putreg32(regval, priv->uartbase + NRF53_UART_ERRORSRC_OFFSET);
+ 
+   return OK;
+ }
+@@ -642,50 +661,33 @@
+ {
+   struct nrf53_dev_s *priv = (struct nrf53_dev_s *)dev->priv;
+ 
++  priv->tx_busy = true;
+   putreg32(0, priv->uartbase + NRF53_UART_EVENTS_TXDRDY_OFFSET);
++  putreg32(UART_INT_TXDRDY, priv->uartbase + NRF53_UART_INTENSET_OFFSET);
+   putreg32(1, priv->uartbase + NRF53_UART_TASKS_STARTTX_OFFSET);
+-
+   putreg32(ch, priv->uartbase + NRF53_UART_TXD_OFFSET);
+-  while (getreg32(priv->uartbase + NRF53_UART_EVENTS_TXDRDY_OFFSET) == 0)
++}
++
++/****************************************************************************
++ * Name: nrf53_txint
++ *
++ * Description:
++ *   Call to enable or disable TX interrupts
++ *
++ ****************************************************************************/
++
++static void nrf53_txint(struct uart_dev_s *dev, bool enable)
++{
++  struct nrf53_dev_s *priv = (struct nrf53_dev_s *)dev->priv;
++  irqstate_t flags = enter_critical_section();
++
++  priv->tx_enabled = enable;
++  if (enable && !priv->tx_busy)
+     {
++      uart_xmitchars(dev);
+     }
+ 
+-  putreg32(1, priv->uartbase + NRF53_UART_TASKS_STOPTX_OFFSET);
+-}
+-
+-/****************************************************************************
+- * Name: nrf53_txint
+- *
+- * Description:
+- *   Call to enable or disable TX interrupts
+- *
+- ****************************************************************************/
+-
+-static void nrf53_txint(struct uart_dev_s *dev, bool enable)
+-{
+-  /* struct nrf53_dev_s *priv = (struct nrf53_dev_s *)dev->priv; */
+-
+-  if (enable)
+-    {
+-#ifndef CONFIG_SUPPRESS_SERIAL_INTS
+-      irqstate_t flags;
+-
+-      /* Enable the TX interrupt */
+-
+-      flags = enter_critical_section();
+-
+-      /* Fake a TX interrupt here by just calling uart_xmitchars() with
+-       * interrupts disabled (note this may recurse).
+-       */
+-
+-      uart_xmitchars(dev);
+-      leave_critical_section(flags);
+-#endif
+-    }
+-  else
+-    {
+-      /* Disable the TX interrupt */
+-    }
++  leave_critical_section(flags);
+ }
+ 
+ /****************************************************************************
+@@ -698,11 +700,8 @@
+ 
+ static bool nrf53_txready(struct uart_dev_s *dev)
+ {
+-  /* struct nrf53_dev_s *priv = (struct nrf53_dev_s *)dev->priv; */
+-
+-  /* Return true if the transmit FIFO is "not full." */
+-
+-  return true;
++  struct nrf53_dev_s *priv = (struct nrf53_dev_s *)dev->priv;
++  return !priv->tx_busy;
+ }
+ 
+ /****************************************************************************
+@@ -715,11 +714,8 @@
+ 
+ static bool nrf53_txempty(struct uart_dev_s *dev)
+ {
+-  /* struct nrf53_dev_s *priv = (struct nrf53_dev_s *)dev->priv; */
+-
+-  /* Return true if the transmit FIFO is "empty." */
+-
+-  return true;
++  struct nrf53_dev_s *priv = (struct nrf53_dev_s *)dev->priv;
++  return !priv->tx_busy;
+ }
+ 
+ /****************************************************************************

@@ -1,0 +1,20 @@
+--- a/drivers/net/slip.c
++++ b/drivers/net/slip.c
+@@ -356,7 +356,7 @@
+ 
+   for (p = memchr(&self->txbuf[1], SLIP_ESC, self->txlen - 1);
+        p != NULL;
+-       p = memchr(p, SLIP_ESC, self->txlen - 1))
++       p = memchr(p, SLIP_ESC, self->txbuf + self->txlen - p))
+     {
+       ssize_t postfix_len = self->txlen - (p - self->txbuf) - 1;
+ 
+@@ -379,7 +379,7 @@
+ 
+   for (p = memchr(&self->txbuf[1], SLIP_END, self->txlen - 1);
+        p != NULL;
+-       p = memchr(p, SLIP_END, self->txlen - 1))
++       p = memchr(p, SLIP_END, self->txbuf + self->txlen - p))
+     {
+       ssize_t postfix_len = self->txlen - (p - self->txbuf) - 1;
+ 

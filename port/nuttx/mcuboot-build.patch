@@ -1,0 +1,32 @@
+--- a/arch/xtensa/src/esp32s3/Bootloader.mk
++++ b/arch/xtensa/src/esp32s3/Bootloader.mk
+@@ -57,7 +57,7 @@
+ cfg_en  = echo "$(1)=$(if $(CONFIG_ESP32S3_APP_FORMAT_MCUBOOT),1,y)";
+ cfg_val = echo "$(1)=$(2)";
+ 
+-$(BOOTLOADER_CONFIG): $(TOPDIR)/.config $(BOOTLOADER_DIR)
++$(BOOTLOADER_CONFIG): $(TOPDIR)/.config $(CHIPDIR)/Bootloader.mk | $(BOOTLOADER_DIR)
+ 	$(Q) echo "Creating Bootloader configuration"
+ 	$(Q) { \
+ 		$(call cfg_en,NON_OS_BUILD) \
+@@ -88,9 +88,9 @@
+ 		$(call cfg_val,CONFIG_ESP_SCRATCH_OFFSET,$(CONFIG_ESP32S3_OTA_SCRATCH_OFFSET)) \
+ 		$(call cfg_val,CONFIG_ESP_SCRATCH_SIZE,$(CONFIG_ESP32S3_OTA_SCRATCH_SIZE)) \
+ 		$(call cfg_en,CONFIG_ESP_CONSOLE_UART) \
+-		$(if $(CONFIG_UART0_SERIAL_CONSOLE),$(call cfg_val,CONFIG_ESP_CONSOLE_UART_NUM,0)) \
++		$(if $(CONFIG_UART1_SERIAL_CONSOLE),,$(call cfg_val,CONFIG_ESP_CONSOLE_UART_NUM,0)) \
+ 		$(if $(CONFIG_UART1_SERIAL_CONSOLE),$(call cfg_val,CONFIG_ESP_CONSOLE_UART_NUM,1)) \
+-		$(if $(CONFIG_UART0_SERIAL_CONSOLE),$(call cfg_val,CONFIG_ESP_CONSOLE_ROM_SERIAL_PORT_NUM,0)) \
++		$(if $(CONFIG_UART1_SERIAL_CONSOLE),,$(call cfg_val,CONFIG_ESP_CONSOLE_ROM_SERIAL_PORT_NUM,0)) \
+ 		$(if $(CONFIG_UART1_SERIAL_CONSOLE),$(call cfg_val,CONFIG_ESP_CONSOLE_ROM_SERIAL_PORT_NUM,1)) \
+ 		$(call cfg_en,CONFIG_BOOTLOADER_FLASH_XMC_SUPPORT) \
+ 		$(call cfg_en,CONFIG_IDF_TARGET_ARCH_XTENSA) \
+@@ -130,7 +130,7 @@
+ 	$(call CLONE, $(ESP_HAL_3RDPARTY_URL),$(HALDIR))
+ endef
+ 
+-$(MCUBOOT_SRCDIR): $(BOOTLOADER_DIR)
++$(MCUBOOT_SRCDIR): | $(BOOTLOADER_DIR)
+ 	$(Q) echo "Cloning MCUboot"
+ 	$(Q) git clone --quiet $(MCUBOOT_URL) $(MCUBOOT_SRCDIR)
+ 	$(Q) git -C "$(MCUBOOT_SRCDIR)" checkout --quiet $(MCUBOOT_VERSION)

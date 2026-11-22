@@ -1,0 +1,27 @@
+--- a/arch/arm/src/stm32f7/stm32_flash.c
++++ b/arch/arm/src/stm32f7/stm32_flash.c
+@@ -57,6 +57,7 @@
+ #include <assert.h>
+ #include <errno.h>
+ 
++#include <nuttx/cache.h>
+ #include "hardware/stm32_flash.h"
+ #include "stm32_waste.h"
+ #include "arm_internal.h"
+@@ -347,6 +348,8 @@
+ 
+   /* Verify */
+ 
++  size_t base = up_progmem_getaddress(block);
++  up_invalidate_dcache(base, base + up_progmem_pagesize(block));
+   if (up_progmem_ispageerased(block) == 0)
+     {
+       return up_progmem_pagesize(block); /* success */
+@@ -426,6 +429,7 @@
+           return -EROFS;
+         }
+ 
++      up_invalidate_dcache(addr, addr + 1);
+       if (getreg8(addr) != *byte)
+         {
+           modifyreg32(STM32_FLASH_CR, FLASH_CR_PG, 0);

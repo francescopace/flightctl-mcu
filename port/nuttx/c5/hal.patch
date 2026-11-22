@@ -1,0 +1,106 @@
+diff --git a/components/bootloader_support/src/bootloader_random_esp32c5.c b/components/bootloader_support/src/bootloader_random_esp32c5.c
+index ca937422d73..9fcbf0fd28b 100644
+--- a/components/bootloader_support/src/bootloader_random_esp32c5.c
++++ b/components/bootloader_support/src/bootloader_random_esp32c5.c
+@@ -20,7 +20,7 @@
+ 
+ void bootloader_random_enable(void)
+ {
+-#ifndef BOOTLOADER_BUILD
++#if !defined(BOOTLOADER_BUILD) && !defined(CONFIG_ESPRESSIF_SIMPLE_BOOT)
+     sar_periph_ctrl_adc_reset();
+ #else
+     // Save temperature sensor related register values before ADC reset
+@@ -38,7 +38,7 @@ void bootloader_random_enable(void)
+     adc_ll_digi_controller_clk_div(ADC_RNG_CLKM_DIV_NUM, ADC_RNG_CLKM_DIV_B, ADC_RNG_CLKM_DIV_A);
+ 
+     // some ADC sensor registers are in power group PERIF_I2C and need to be enabled via PMU
+-#ifndef BOOTLOADER_BUILD
++#if !defined(BOOTLOADER_BUILD) && !defined(CONFIG_ESPRESSIF_SIMPLE_BOOT)
+     regi2c_saradc_enable();
+ #else
+     regi2c_ctrl_ll_i2c_sar_periph_enable();
+@@ -79,7 +79,7 @@ void bootloader_random_disable(void)
+     adc_ll_set_calibration_param(ADC_UNIT_1, 0x0);
+     adc_ll_set_calibration_param(ADC_UNIT_2, 0x0);
+     adc_ll_regi2c_adc_deinit();
+-#ifndef BOOTLOADER_BUILD
++#if !defined(BOOTLOADER_BUILD) && !defined(CONFIG_ESPRESSIF_SIMPLE_BOOT)
+     regi2c_saradc_disable();
+ #endif
+ 
+diff --git a/components/esp_hw_support/port/esp32c5/sar_periph_ctrl.c b/components/esp_hw_support/port/esp32c5/sar_periph_ctrl.c
+index 660bee38d68..cffd742a501 100644
+--- a/components/esp_hw_support/port/esp32c5/sar_periph_ctrl.c
++++ b/components/esp_hw_support/port/esp32c5/sar_periph_ctrl.c
+@@ -17,7 +17,7 @@
+ #include <sys/lock.h>
+ #include "sdkconfig.h"
+ #include "esp_log.h"
+-#include "freertos/FreeRTOS.h"
++#include "platform/os.h"
+ #include "esp_private/sar_periph_ctrl.h"
+ #include "esp_private/regi2c_ctrl.h"
+ #include "esp_private/esp_modem_clock.h"
+@@ -28,7 +28,7 @@
+ #include "hal/temperature_sensor_ll.h"
+ 
+ ESP_LOG_ATTR_TAG(TAG, "sar_periph_ctrl");
+-extern portMUX_TYPE rtc_spinlock;
++DECLARE_EXTERNAL_CRIT_SECTION_LOCK(rtc_spinlock);
+ static _lock_t adc_reset_lock;
+ 
+ void sar_periph_ctrl_init(void)
+diff --git a/components/riscv/include/esp_private/interrupt_clic.h b/components/riscv/include/esp_private/interrupt_clic.h
+index 89fee96c5da..598191d61f0 100644
+--- a/components/riscv/include/esp_private/interrupt_clic.h
++++ b/components/riscv/include/esp_private/interrupt_clic.h
+@@ -13,6 +13,9 @@
+ #include "esp_attr.h"
+ #include "riscv/csr.h"
+ #include "riscv/csr_clic.h"
++#ifndef MEXSTATUS_WFFEN
++#define MEXSTATUS_WFFEN (1U << 4)
++#endif
+ 
+ #if SOC_INT_CLIC_SUPPORTED
+ 
+--- a/nuttx/esp32c5/include/sdkconfig.h
++++ b/nuttx/esp32c5/include/sdkconfig.h
+@@ -481,7 +481,7 @@
+ #define CONFIG_PM_CHECK_SLEEP_RETENTION_FRAME 0
+ #define CONFIG_UART_WK_MODE_ACTIVE_THRESH 1
+ 
+-#define CONFIG_ESP_SYSTEM_BBPLL_RECALIB 1
++/* C5 clock initialization calibrates its PLL. */
+ #define CONFIG_ESP_SYSTEM_SINGLE_CORE_MODE 1
+ 
+ #define CONFIG_ESP_ERR_TO_NAME_LOOKUP 1
+@@ -861,11 +861,11 @@
+ #define CONFIG_IDF_TARGET_ARCH "riscv"
+ #define CONFIG_IDF_TARGET "esp32c5"
+ #define CONFIG_IDF_TARGET_ESP32C5 1
+-#define CONFIG_IDF_FIRMWARE_CHIP_ID 0x000D
++#define CONFIG_IDF_FIRMWARE_CHIP_ID 0x0017
+ #define CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ CONFIG_ESPRESSIF_CPU_FREQ_MHZ
+ #define CONFIG_RTC_CLK_SRC_INT_RC 1
+ #define CONFIG_RTC_CLK_CAL_CYCLES 1024
+-#define CONFIG_XTAL_FREQ 40
++#define CONFIG_XTAL_FREQ 48
+ 
+ #define CONFIG_HAL_ASSERTION_EQUALS_SYSTEM 1
+ #define CONFIG_HAL_DEFAULT_ASSERTION_LEVEL 2
+@@ -989,7 +989,7 @@
+ #  define CONFIG_ESP_CONSOLE_UART               1
+ #  define CONFIG_ESP_CONSOLE_UART_BAUDRATE      115200
+ #  define CONFIG_PARTITION_TABLE_OFFSET         0x0000
+-#  define CONFIG_BOOTLOADER_OFFSET_IN_FLASH     0x0000
++#  define CONFIG_BOOTLOADER_OFFSET_IN_FLASH     0x2000
+ #  define IDF_VER                               0
+ #  define CONFIG_FREERTOS_UNICORE               1
+ #  define CONFIG_BOOTLOADER_CPU_CLK_FREQ_MHZ    80
+@@ -1221,3 +1221,4 @@
+ #define CONFIG_WPA_11R_SUPPORT                              CONFIG_ESP_WIFI_11R_SUPPORT
+ #define CONFIG_WPA_WPS_SOFTAP_REGISTRAR                     CONFIG_ESP_WIFI_WPS_SOFTAP_REGISTRAR
+ #define CONFIG_GPTIMER_ISR_IRAM_SAFE                        CONFIG_GPTIMER_ISR_CACHE_SAFE
++#define CONFIG_RTC_FAST_CLK_SRC_RC_FAST 1

@@ -1,0 +1,50 @@
+--- a/boards/arm/rp23xx/common/src/rp23xx_common_bringup.c
++++ b/boards/arm/rp23xx/common/src/rp23xx_common_bringup.c
+@@ -433,6 +433,25 @@
+ 
+   {
+     struct mtd_dev_s *mtd = rp23xx_flash_mtd_initialize();
++
++#if defined(CONFIG_ARCH_BOARD_RASPBERRYPI_PICO_2_W) && defined(CONFIG_FLIGHTCTL)
++    /* Keep /dev/rpflash restricted to the existing LittleFS partition.
++     * The OTA backend uses the same underlying MTD and flash lock.
++     */
++
++    if (mtd != NULL)
++      {
++        struct mtd_geometry_s geo;
++        if (MTD_IOCTL(mtd, MTDIOC_GEOMETRY, (unsigned long)&geo) < 0 ||
++            geo.blocksize != 256 || geo.erasesize != 4096)
++          {
++            return -EINVAL;
++          }
++
++        mtd = mtd_partition(mtd, (0x304000 - CONFIG_RP23XX_FLASH_MTD_OFFSET) /
++                                 geo.blocksize, 0xfc000 / geo.blocksize);
++      }
++#endif
+ 
+     if (mtd == NULL)
+       {
+
+--- a/arch/arm/src/rp23xx/rp23xx_flash_mtd.c
++++ b/arch/arm/src/rp23xx/rp23xx_flash_mtd.c
+@@ -1062,2 +1062,11 @@
+   return &g_flash_dev.mtd;
+ }
++
++/* Share the flash device and its mutex after board bring-up.  Calling
++ * rp23xx_flash_mtd_initialize() twice is an error.
++ */
++
++struct mtd_dev_s *rp23xx_flash_mtd_get(void)
++{
++  return g_initialized ? &g_flash_dev.mtd : NULL;
++}
+--- a/arch/arm/src/rp23xx/rp23xx_flash_mtd.h
++++ b/arch/arm/src/rp23xx/rp23xx_flash_mtd.h
+@@ -54,3 +54,4 @@
+ struct mtd_dev_s *rp23xx_flash_mtd_initialize(void);
++struct mtd_dev_s *rp23xx_flash_mtd_get(void);
+ 
+ #endif /* __ARCH_ARM_SRC_RP23XX_RP23XX_FLASH_MTD_H */

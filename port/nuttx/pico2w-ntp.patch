@@ -1,0 +1,40 @@
+--- a/netutils/ntpclient/ntpclient.c
++++ b/netutils/ntpclient/ntpclient.c
+@@ -1484,24 +1484,20 @@
+       clock_gettime(CLOCK_MONOTONIC, &start_monotonic);
+ 
+       nsamples = 0;
+-      if (netlib_check_ipconnectivity(NULL, 1, 1) > 0)
+-        {
+-          /* Collect samples. */
+-
+-          for (i = 0; i < CONFIG_NETUTILS_NTPCLIENT_NUM_SAMPLES &&
+-                      g_ntpc_daemon.state != NTP_STOP_REQUESTED; i++)
++      /* An NTP reply establishes reachability after DHCP. */
++      for (i = 0; i < CONFIG_NETUTILS_NTPCLIENT_NUM_SAMPLES &&
++                  g_ntpc_daemon.state != NTP_STOP_REQUESTED; i++)
++        {
++          /* Get next sample. */
++
++          ret = ntpc_get_ntp_sample(srvs, samples, nsamples);
++          if (ret < 0)
+             {
+-              /* Get next sample. */
+-
+-              ret = ntpc_get_ntp_sample(srvs, samples, nsamples);
+-              if (ret < 0)
+-                {
+-                  errval = errno;
+-                }
+-              else
+-                {
+-                  ++nsamples;
+-                }
++              errval = errno;
++            }
++          else
++            {
++              ++nsamples;
+             }
+         }
+ 

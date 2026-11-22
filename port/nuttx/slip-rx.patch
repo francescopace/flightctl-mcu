@@ -1,0 +1,65 @@
+--- a/drivers/net/slip.c
++++ b/drivers/net/slip.c
+@@ -575,7 +575,16 @@
+   p = self->rxbuf;
+   remaining = pend - p;
+   copied = 0;
+-  iob = iob_alloc(false);
++  /* The network worker owns the device lock. Never wait here for buffers
++   * that a socket reader or a TCP acknowledgement would release.
++   */
++
++  iob = iob_tryalloc(false);
++  if (iob == NULL)
++    {
++      goto error;
++    }
++
+   iob_reserve(iob, CONFIG_NET_LL_GUARDSIZE);
+ 
+   while (remaining)
+@@ -588,10 +597,12 @@
+ 
+           if (prefix_len > 0)
+             {
+-              ret = iob_copyin(iob, p, prefix_len, copied, false);
+-
+-              DEBUGASSERT(ret >= 0);
+-              DEBUGASSERT((unsigned int)ret == prefix_len);
++              ret = iob_trycopyin(iob, p, prefix_len, copied, false);
++
++              if (ret != (int)prefix_len)
++                {
++                  goto error;
++                }
+ 
+               copied += prefix_len;
+               remaining -= prefix_len;
+@@ -617,17 +628,22 @@
+                 goto error;
+             }
+ 
+-          ret = iob_copyin(iob, p, 1, copied, false);
+-          DEBUGASSERT(ret == 1);
++          ret = iob_trycopyin(iob, p, 1, copied, false);
++          if (ret != 1)
++            {
++              goto error;
++            }
+           p++;
+           copied++;
+           remaining--;
+         }
+       else
+         {
+-          ret = iob_copyin(iob, p, remaining, copied, false);
+-          DEBUGASSERT(ret >= 0);
+-          DEBUGASSERT((unsigned int)ret == remaining);
++          ret = iob_trycopyin(iob, p, remaining, copied, false);
++          if (ret != (int)remaining)
++            {
++              goto error;
++            }
+           p += remaining;
+           copied += remaining;
+           remaining = 0;

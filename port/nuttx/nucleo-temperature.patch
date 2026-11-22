@@ -1,0 +1,62 @@
+--- a/boards/arm/stm32f7/nucleo-f767zi/src/stm32_adc.c
++++ b/boards/arm/stm32f7/nucleo-f767zi/src/stm32_adc.c
+@@ -68,7 +68,11 @@
+ /* The number of ADC channels in the conversion list */
+ 
+ /* #define ADC1_NCHANNELS 14 */
+-#define ADC1_NCHANNELS 4
++#ifdef CONFIG_FLIGHTCTL
++#  define ADC1_NCHANNELS 1
++#else
++#  define ADC1_NCHANNELS 4
++#endif
+ 
+ /****************************************************************************
+  * Private Data
+@@ -82,7 +86,11 @@
+ #ifdef CONFIG_STM32_ADC1
+ static const uint8_t  g_chanlist[ADC1_NCHANNELS] =
+ {
++#ifdef CONFIG_FLIGHTCTL
++  18 /* On-die temperature, internal channel with VBAT disabled */
++#else
+   3, 4, 10, 13
++#endif
+ };
+ 
+ /* Configurations of pins used byte each ADC channels
+@@ -96,7 +104,11 @@
+ 
+ static const uint32_t g_pinlist[ADC1_NCHANNELS] =
+ {
++#ifdef CONFIG_FLIGHTCTL
++    0 /* No external pin for the die sensor */
++#else
+     GPIO_ADC1_IN3, GPIO_ADC1_IN4, GPIO_ADC1_IN10, GPIO_ADC1_IN13
++#endif
+ };
+ #endif
+ 
+--- a/arch/arm/src/stm32f7/stm32_adc.c
++++ b/arch/arm/src/stm32f7/stm32_adc.c
+@@ -91,6 +91,11 @@
+ /* Sample time default configuration */
+ 
+ #define ADC_SMPR_DEFAULT    ADC_SMPR_112
++#if defined(CONFIG_FLIGHTCTL) && defined(CONFIG_ARCH_BOARD_NUCLEO_F767ZI)
++#  define ADC_SMPR_TEMP ADC_SMPR_480
++#else
++#  define ADC_SMPR_TEMP ADC_SMPR_DEFAULT
++#endif
+ #define ADC_SMPR1_DEFAULT   ((ADC_SMPR_DEFAULT << ADC_SMPR1_SMP10_SHIFT) | \
+                                (ADC_SMPR_DEFAULT << ADC_SMPR1_SMP11_SHIFT) | \
+                                (ADC_SMPR_DEFAULT << ADC_SMPR1_SMP12_SHIFT) | \
+@@ -99,7 +104,7 @@
+                                (ADC_SMPR_DEFAULT << ADC_SMPR1_SMP15_SHIFT) | \
+                                (ADC_SMPR_DEFAULT << ADC_SMPR1_SMP16_SHIFT) | \
+                                (ADC_SMPR_DEFAULT << ADC_SMPR1_SMP17_SHIFT) | \
+-                               (ADC_SMPR_DEFAULT << ADC_SMPR1_SMP18_SHIFT))
++                               (ADC_SMPR_TEMP << ADC_SMPR1_SMP18_SHIFT))
+ #define ADC_SMPR2_DEFAULT   ((ADC_SMPR_DEFAULT << ADC_SMPR2_SMP0_SHIFT) | \
+                                (ADC_SMPR_DEFAULT << ADC_SMPR2_SMP1_SHIFT) | \
+                                (ADC_SMPR_DEFAULT << ADC_SMPR2_SMP2_SHIFT) | \

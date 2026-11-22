@@ -1,0 +1,35 @@
+--- a/netutils/ntpclient/ntpclient.c
++++ b/netutils/ntpclient/ntpclient.c
+@@ -1433,19 +1433,16 @@
+       nsamples = 0;
+-      if (netlib_check_ipconnectivity(NULL, 1, 1) > 0)
+-        {
+-          /* Collect samples. */
+-
+-          for (i = 0; i < CONFIG_NETUTILS_NTPCLIENT_NUM_SAMPLES; i++)
++      /* DHCP is ready. An NTP reply establishes reachability. */
++
++      for (i = 0; i < CONFIG_NETUTILS_NTPCLIENT_NUM_SAMPLES; i++)
++        {
++          /* Get next sample. */
++
++          ret = ntpc_get_ntp_sample(srvs, samples, nsamples);
++          if (ret < 0)
+             {
+-              /* Get next sample. */
+-
+-              ret = ntpc_get_ntp_sample(srvs, samples, nsamples);
+-              if (ret < 0)
+-                {
+-                  errval = errno;
+-                }
+-              else
+-                {
+-                  ++nsamples;
+-                }
++              errval = errno;
++            }
++          else
++            {
++              ++nsamples;
+             }

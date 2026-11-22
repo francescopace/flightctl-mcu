@@ -1,0 +1,248 @@
+--- a/arch/xtensa/src/esp32s3/esp32s3_i2c.c
++++ b/arch/xtensa/src/esp32s3/esp32s3_i2c.c
+@@ -281,7 +281,7 @@
+ static inline void i2c_process(struct esp32s3_i2c_priv_s *priv,
+                                uint32_t status);
+ #ifndef CONFIG_I2C_POLLED
+-static int i2c_sem_waitdone(struct esp32s3_i2c_priv_s *priv);
++static int i2c_sem_waitdone(struct esp32s3_i2c_priv_s *priv, clock_t remaining);
+ #endif
+ #ifdef CONFIG_I2C_POLLED
+ static int i2c_polling_waitdone(struct esp32s3_i2c_priv_s *priv);
+@@ -916,12 +916,12 @@
+  ****************************************************************************/
+ 
+ #ifndef CONFIG_I2C_POLLED
+-static int i2c_sem_waitdone(struct esp32s3_i2c_priv_s *priv)
++static int i2c_sem_waitdone(struct esp32s3_i2c_priv_s *priv, clock_t remaining)
+ {
+   /* Wait on ISR semaphore */
+ 
+   return nxsem_tickwait_uninterruptible(&priv->sem_isr,
+-                                        ESP32S3_I2CTIMEOTICKS);
++                                        remaining);
+ }
+ #endif
+ 
+@@ -1137,15 +1137,25 @@
+  *
+  ****************************************************************************/
+ 
++int fc_i2c_timed(struct i2c_master_s *dev, struct i2c_msg_s *msgs,
++                 int count, clock_t budget);
++
+ static int i2c_transfer(struct i2c_master_s *dev, struct i2c_msg_s *msgs,
+                         int count)
+ {
++  return fc_i2c_timed(dev, msgs, count, ESP32S3_I2CTIMEOTICKS * count);
++}
++
++int fc_i2c_timed(struct i2c_master_s *dev, struct i2c_msg_s *msgs,
++                 int count, clock_t budget)
++{
++  clock_t deadline = clock_systime_ticks() + budget;
+   int ret = OK;
+   struct esp32s3_i2c_priv_s *priv = (struct esp32s3_i2c_priv_s *)dev;
+ 
+   DEBUGASSERT(count > 0);
+ 
+-  ret = nxmutex_lock(&priv->lock);
++  ret = nxmutex_ticklock(&priv->lock, budget);
+   if (ret < 0)
+     {
+       return ret;
+@@ -1222,7 +1232,8 @@
+         }
+ 
+ #ifndef CONFIG_I2C_POLLED
+-      if (i2c_sem_waitdone(priv) < 0)
++      clock_t now = clock_systime_ticks();
++      if (deadline - now <= 0 || i2c_sem_waitdone(priv, deadline - now) < 0)
+         {
+           /* Timed out - transfer was not completed within the timeout */
+ 
+--- a/arch/xtensa/src/common/espressif/esp_adc.c
++++ b/arch/xtensa/src/common/espressif/esp_adc.c
+@@ -390,7 +390,7 @@
+   switch (cmd)
+     {
+       case ANIOC_TRIGGER:
+-        esp_adc_oneshot_read(dev);
++        ret = esp_adc_oneshot_read(dev);
+         break;
+ 
+       case ANIOC_GET_NCHANNELS:
+@@ -465,7 +465,8 @@
+       ret = adc_oneshot_hal_convert(hal, &raw_value);
+       if (!ret)
+         {
+-          aerr("invalid one-shot ADC read\n");
++          spin_unlock_irqrestore(&g_adc_common.esp_adc_spinlock, flags);
++          return -EIO;
+         }
+ 
+       /* Apply calibration if possible */
+@@ -477,8 +478,8 @@
+                                         &voltage);
+           if (ret != OK)
+             {
+-              voltage = 0;
+-              aerr("apply calibration failed\n");
++              spin_unlock_irqrestore(&g_adc_common.esp_adc_spinlock, flags);
++              return -EIO;
+             }
+         }
+       else
+--- a/boards/xtensa/esp32s3/esp32s3-devkit/src/esp32s3_bringup.c
++++ b/boards/xtensa/esp32s3/esp32s3-devkit/src/esp32s3_bringup.c
+@@ -334,7 +334,7 @@
+     }
+ #endif
+ 
+-#ifdef CONFIG_ESP_RMT
++#if defined(CONFIG_ESP_RMT) && !defined(CONFIG_FLIGHTCTL)
+   ret = board_rmt_txinitialize(RMT_OUTPUT_PIN);
+   if (ret < 0)
+     {
+--- a/sched/sched/sched_cpuload.c
++++ b/sched/sched/sched_cpuload.c
+@@ -86,6 +86,19 @@
+ 
+ volatile clock_t g_cpuload_total;
+ 
++/* The utilization window below decays. Telemetry needs monotonic counts. */
++static uint64_t g_sample_total;
++static uint64_t g_sample_busy;
++
++void fc_nuttx_cpu_ticks(uint64_t *total, uint64_t *busy)
++{
++  irqstate_t flags = enter_critical_section();
++  *total = g_sample_total;
++  *busy = g_sample_busy;
++  leave_critical_section(flags);
++}
++
++
+ /****************************************************************************
+  * Private Data
+  ****************************************************************************/
+@@ -140,6 +153,12 @@
+ 
+ void nxsched_process_taskload_ticks(FAR struct tcb_s *tcb, clock_t ticks)
+ {
++  g_sample_total += ticks;
++  if (!is_idle_task(tcb))
++    {
++      g_sample_busy += ticks;
++    }
++
+   tcb->ticks += ticks;
+   g_cpuload_total += ticks;
+ 
+--- a/mm/mm_heap/mm_mallinfo.c
++++ b/mm/mm_heap/mm_mallinfo.c
+@@ -125,6 +125,37 @@
+  *
+  ****************************************************************************/
+ 
++/* Serialize the reset and restoration with the allocator's peak updates.
++ * Keep the lifetime peak when the single interval observer gives it back. */
++long fc_nuttx_watch_heap(int start)
++{
++  static size_t saved;
++  static bool watching;
++  FAR struct mm_heap_s *heap = USR_HEAP;
++  long result = -1;
++  if (mm_lock(heap) < 0)
++    {
++      return -1;
++    }
++
++  if (start && !watching)
++    {
++      saved = heap->mm_maxused;
++      heap->mm_maxused = heap->mm_curused;
++      watching = true;
++      result = 0;
++    }
++  else if (!start && watching)
++    {
++      result = heap->mm_heapsize - heap->mm_maxused;
++      heap->mm_maxused = saved > heap->mm_maxused ? saved : heap->mm_maxused;
++      watching = false;
++    }
++
++  mm_unlock(heap);
++  return result;
++}
++
+ struct mallinfo mm_mallinfo(FAR struct mm_heap_s *heap)
+ {
+   struct mallinfo info;
+--- a/include/nuttx/elf.h
++++ b/include/nuttx/elf.h
+@@ -41,7 +41,7 @@
+  * Public Types
+  ****************************************************************************/
+ 
+-#ifdef CONFIG_COREDUMP
++#if defined(CONFIG_COREDUMP) || defined(CONFIG_BOARD_CRASHDUMP_CUSTOM)
+ typedef struct elf_prpsinfo_s
+ {
+   char           pr_state;    /* Numeric process state */
+--- a/arch/xtensa/src/common/espressif/esp_ledc.c
++++ b/arch/xtensa/src/common/espressif/esp_ledc.c
+@@ -253,7 +253,7 @@
+ struct esp_ledc_chan_s
+ {
+   const uint8_t num;                    /* PWM channel ID */
+-  const uint8_t pin;                    /* PWM channel GPIO pin number */
++  uint8_t pin;                    /* PWM channel GPIO pin number */
+ 
+   uint32_t duty;                        /* PWM channel current duty */
+ };
+@@ -1739,6 +1739,11 @@
+  *
+  ****************************************************************************/
+ 
++void fc_nuttx_pwm_route(int pin)
++{
++  g_pwm0dev.chans[0].pin = pin;
++}
++
+ struct pwm_lowerhalf_s *esp_ledc_init(int timer)
+ {
+   struct esp_ledc_s *lower = NULL;
+--- a/arch/xtensa/src/esp32s3/esp32s3_lowputc.c
++++ b/arch/xtensa/src/esp32s3/esp32s3_lowputc.c
+@@ -875,6 +875,15 @@
+  *
+  ****************************************************************************/
+ 
++void fc_nuttx_uart_route(int port, int tx, int rx, int de)
++{
++  struct esp32s3_uart_s *priv = port ? &g_uart2_config : &g_uart1_config;
++  priv->txpin = tx;
++  priv->rxpin = rx;
++  priv->rs485_dir_gpio = de < 0 ? 0 : de;
++  esp32s3_lowputc_config_pins(priv);
++}
++
+ void esp32s3_lowputc_config_pins(const struct esp32s3_uart_s *priv)
+ {
+   /* Configure the pins */
+@@ -1021,12 +1030,12 @@
+ 
+ #ifdef CONFIG_ESP32S3_UART1
+   esp32s3_lowputc_enable_sysclk(&g_uart1_config);
+-  esp32s3_lowputc_config_pins(&g_uart1_config);
++  /* App UART pins are assigned on open. */
+ #endif
+ 
+ #ifdef CONFIG_ESP32S3_UART2
+   esp32s3_lowputc_enable_sysclk(&g_uart2_config);
+-  esp32s3_lowputc_config_pins(&g_uart2_config);
++  /* App UART pins are assigned on open. */
+ #endif
+ 
+ #endif /* !CONFIG_SUPPRESS_UART_CONFIG */

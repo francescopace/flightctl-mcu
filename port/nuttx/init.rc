@@ -1,0 +1,11 @@
+service console sh
+    console
+    restart_period 1000
+
+service agent flightctl
+    console
+    restart_period 5000
+
+on init
+    start console
+    start agent

@@ -1,0 +1,99 @@
+--- a/boards/arm/nrf53/nrf5340-dk/include/board.h
++++ b/boards/arm/nrf53/nrf5340-dk/include/board.h
+@@ -40,7 +40,11 @@
+ 
+ /* Clocking *****************************************************************/
+ 
+-#define BOARD_SYSTICK_CLOCK         (64000000)
++#if defined(CONFIG_FLIGHTCTL_NRF7002DK) && defined(CONFIG_NRF53_APPCORE)
++#  define BOARD_SYSTICK_CLOCK       (128000000)
++#else
++#  define BOARD_SYSTICK_CLOCK       (64000000)
++#endif
+ #define BOARD_OSC_XOSC32KI_INTCAP   (OSC_XOSC32KI_INTCAP_C7PF)
+ #define BOARD_OSC_XOSC32MCAPS_CAP   (7)
+ 
+@@ -108,10 +112,19 @@
+  */
+ 
+ #ifdef CONFIG_ARCH_CHIP_NRF5340_CPUAPP
++#  ifdef CONFIG_FLIGHTCTL_NRF7002DK
++#    define BOARD_UART0_RX_PIN (GPIO_MCUSEL_APP | GPIO_INPUT | GPIO_PORT0 | GPIO_PIN(22))
++#    define BOARD_UART0_TX_PIN (GPIO_MCUSEL_APP | GPIO_OUTPUT | GPIO_VALUE_ONE | GPIO_PORT0 | GPIO_PIN(20))
++#    define BOARD_SPI4_SCK_PIN (GPIO_MCUSEL_APP | GPIO_OUTPUT | GPIO_PORT0 | GPIO_PIN(8))
++#    define BOARD_SPI4_MOSI_PIN (GPIO_MCUSEL_APP | GPIO_OUTPUT | GPIO_PORT0 | GPIO_PIN(9))
++#    define BOARD_SPI4_MISO_PIN (GPIO_MCUSEL_APP | GPIO_INPUT | GPIO_PORT0 | GPIO_PIN(10))
++#    define BOARD_FLASH_CS_PIN (GPIO_MCUSEL_APP | GPIO_OUTPUT | GPIO_VALUE_ONE | GPIO_PORT0 | GPIO_PIN(11))
++#  else
+ #  define BOARD_UART0_RX_PIN  (GPIO_MCUSEL_APP | GPIO_INPUT  | \
+                                GPIO_PORT1 | GPIO_PIN(0))
+ #  define BOARD_UART0_TX_PIN  (GPIO_MCUSEL_APP | GPIO_OUTPUT | \
+                                GPIO_VALUE_ONE | GPIO_PORT1 | GPIO_PIN(1))
++#  endif
+ 
+ /* Declarations for the Net core */
+ 
+--- a/arch/arm/src/nrf53/nrf53_clockconfig.c
++++ b/arch/arm/src/nrf53/nrf53_clockconfig.c
+@@ -68,6 +68,9 @@
+   /* Configure oscillators */
+ 
+   nrf53_oscconfig();
++#if defined(CONFIG_FLIGHTCTL_NRF7002DK) && defined(CONFIG_NRF53_APPCORE)
++  putreg32(0, NRF53_CLOCK_HFCLKCTRL); /* 128 MHz, divide by one */
++#endif
+ #endif
+ 
+ #ifdef CONFIG_NRF53_HFCLK_XTAL
+--- a/boards/arm/nrf53/nrf5340-dk/src/nrf53_cpunet_boot.c
++++ b/boards/arm/nrf53/nrf5340-dk/src/nrf53_cpunet_boot.c
+@@ -38,9 +38,11 @@
+ 
+ void nrf53_board_gpio_cpunet_allow(void)
+ {
++#ifndef CONFIG_FLIGHTCTL_NRF7002DK
+   /* UART0 pins */
+ 
+   nrf53_gpio_cpunet_allow(BOARD_NET_UART0_RX_PIN);
+   nrf53_gpio_cpunet_allow(BOARD_NET_UART0_TX_PIN);
++#endif
+ }
+ #endif
+--- a/boards/arm/nrf53/common/scripts/flash_app.ld
++++ b/boards/arm/nrf53/common/scripts/flash_app.ld
+@@ -27,7 +27,10 @@
+ 
+ /* Image format configuration */
+ 
+-#ifdef CONFIG_NRF53_APP_FORMAT_MCUBOOT
++#ifdef CONFIG_FLIGHTCTL_NRF7002DK
++#  define FLASH_OFFSET          0x10200
++#  define FLASH_IMG_SIZE        0xeba00
++#elif defined(CONFIG_NRF53_APP_FORMAT_MCUBOOT)
+ #  define MCUBOOT_HEADER_SIZE   CONFIG_NRF53_MCUBOOT_HEADER_SIZE
+ #  ifdef CONFIG_BOARDCTL_BOOT_IMAGE
+ #    define FLASH_OFFSET        0
+--- a/drivers/mtd/mx25lx.c
++++ b/drivers/mtd/mx25lx.c
+@@ -374,7 +374,8 @@
+   /* Check for a valid manufacturer and memory type */
+ 
+   if (manufacturer == MX25L_JEDEC_MANUFACTURER &&
+-      memory == MX25L_JEDEC_MEMORY_TYPE)
++      (memory == MX25L_JEDEC_MEMORY_TYPE ||
++       (memory == 0x28 && capacity == MX25L_JEDEC_MX25L6433F_CAPACITY)))
+     {
+       /* Okay.. is it a FLASH capacity that we understand? */
+ 
+--- a/boards/arm/nrf53/nrf5340-dk/src/Make.defs
++++ b/boards/arm/nrf53/nrf5340-dk/src/Make.defs
+@@ -23,6 +23,9 @@
+ include $(TOPDIR)/Make.defs
+ 
+ CSRCS = nrf53_boot.c nrf53_bringup.c
++ifeq ($(CONFIG_FLIGHTCTL_NRF7002DK),y)
++CSRCS += fc_nrf_board.c
++endif
+ 
+ ifeq ($(CONFIG_NRF53_APPCORE),y)
+ CSRCS += nrf53_cpunet_boot.c

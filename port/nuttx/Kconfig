@@ -1,0 +1,20 @@
+config FLIGHTCTL
+	bool "Flight Control MCU agent"
+	default n
+
+config FLIGHTCTL_SERIAL_NETWORK
+	bool "Use IPv4 SLIP over a debug probe UART"
+	depends on FLIGHTCTL && NET_SLIP && NETDB_DNSCLIENT
+	help
+	  Reserve the UART for the link to stlink-network.py --link ipv4.
+	  The peer supplies DNS and routes traffic to Flight Control.
+
+config FLIGHTCTL_SLIP_DEVICE
+	string "Dedicated SLIP serial device"
+	depends on FLIGHTCTL_SERIAL_NETWORK
+	default "/dev/ttyS0"
+
+config FLIGHTCTL_NRF7002DK
+	bool "nRF7002 DK with network-core entropy and temperature"
+	depends on ARCH_BOARD_NRF5340_DK
+	select ARCH_HAVE_RNG
