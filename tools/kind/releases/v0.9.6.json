@@ -22,32 +22,24 @@
     }
   },
   "sources": {
-    "esp-idf": {
-      "commit": "d9128f9fdd57644e925919cb8ef549428675fcab"
-    },
+    "reproducible": false,
+    "note": "Built on 2026-11-22 from commits that the later history reorganisation removed. The Zephyr images came from uncommitted working trees.",
     "zephyr": {
-      "baseCommit": "b3391337cfa5c37d578cdc36bf1d48cd2b9cbded",
       "workingTreeChanges": true,
       "platformOverrides": {
         "nucleo_f767zi-stlink": {
-          "baseCommit": "8ebff16a08533e0ae1b59a49fc422b4f7f80062a",
           "workingTreeChanges": true,
           "firmwareVersion": "0.9.6+cache.1"
         },
         "nrf7002dk_nrf5340_cpuapp": {
-          "baseCommit": "8ebff16a08533e0ae1b59a49fc422b4f7f80062a",
           "workingTreeChanges": true,
           "firmwareVersion": "0.9.6+nrf.128"
         },
         "nucleo_f767zi": {
-          "baseCommit": "9f857102f60c2f61ab26b6f2743ed52e465d138b",
           "workingTreeChanges": true,
           "firmwareVersion": "0.9.6+st.eth"
         }
       }
-    },
-    "nuttx": {
-      "commit": "5b2e057b591229e2a4caea477322c967dc5f78be"
     }
   }
 }

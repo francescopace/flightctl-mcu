@@ -51,7 +51,8 @@
     "flightctl-mcu/trend:v0.9.7": "sha256:e4a8263f1f2c28d1b369002fd60df1abafd5ae5fe8942478b79156f48f3f5805"
   },
   "sources": {
-    "commit": "ac47e9414ef15d04537a9428113fef0eac49f2de",
-    "workingTreeChanges": false
+    "commit": "970f94f96a8b4fb562e2218ed47e04ae81c1a6ce",
+    "workingTreeChanges": false,
+    "note": "Built before the commit history was reorganised. This commit has the same core, port, third_party and wasm-apps trees as the build."
   }
 }
