@@ -23,7 +23,6 @@ One ESP32-D0WD rev. 1.0 at 240 MHz ran Flight Control MCU v0.9.4 (C compiled to 
 |---|---:|---:|---:|
 | WAMR | 18.950 | 969.2 | 900.3 |
 | Toit `-O2` | 5.653 | 1,298.97 | 859.91 |
-| Toit `-O1` | — | 1,360.33 | 1,019.11 |
 | MicroPython | — | 9,990.9 | 13,351.6 |
 
 The catalog wasm3 module executed 3.35× as many iterations/s as the local Toit translation of the CoreMark kernels. Each Toit batch ran 320 iterations and returned the reference CRC. This is an experimental translation. Official CoreMark scores require the original kernels. [Toit source](../wasm-apps/runtime-bench/kernels.toit) · [Method and validation](TESTING.md#comparing-the-2000-byte-workload-with-toit)

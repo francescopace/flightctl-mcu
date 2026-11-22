@@ -5,27 +5,25 @@
 [![Apache NuttX 13.1](https://img.shields.io/badge/Apache%20NuttX-13.1-345D80)](docs/DEPENDENCIES.md#nuttx-port)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-# flightctl-mcu
+# Flightctl-mcu
 
-flightctl-mcu brings microcontrollers (ESP32, STM32, Nordic nRF, Raspberry Pi RP2350) into the same [Flight Control](https://github.com/flightctl/flightctl) fleets as Linux devices. One C agent runs on **ESP-IDF, Zephyr and Apache NuttX**.
+Flightctl-mcu is an agent for microcontrollers that lets [Flight Control](https://github.com/flightctl/flightctl) recognize, manage and monitor fleets of devices as if they were Linux clients.
+It is designed for ESP32, STM32, Nordic nRF and Raspberry Pi SoCs and runs on **ESP-IDF, Zephyr and Apache NuttX**. The agent also runs on Linux itself.
 
-Apps are [WebAssembly](https://webassembly.org/) modules. You compile an app once, publish it as a signed OCI artifact, and the same `.wasm` file runs unchanged on Xtensa, RISC-V and Arm Cortex-M boards, whichever of the three RTOSes the board's firmware uses. Change the image in the fleet spec and the device swaps the app without reflashing or rebooting.
+It supports flashing new firmware (including delta updates), deploying apps without restarting the device, viewing logs, opening a remote terminal, checking device status and monitoring several custom metrics.
 
-The firmware embeds [WAMR](https://github.com/bytecodealliance/wasm-micro-runtime) (WebAssembly Micro Runtime) with optimizations on top of upstream for this use: short callbacks on chips with a few hundred KB of RAM. On ESP-IDF one of them cut the time of an app callback by 21–43% across five boards. [Runtime changes and measurements](docs/WAMR.md#runtime-configuration)
+Apps are [WebAssembly](https://webassembly.org/) modules. You compile an app once, publish it as a signed OCI artifact, and the same `.wasm` file runs unchanged on every compatible board (Xtensa, RISC-V or Arm Cortex-M), regardless of which of the three RTOSes the board's firmware uses. Change the image in the fleet spec and the device swaps the app without reflashing or rebooting. It adapts the familiar Docker container workflow on Linux to small microcontrollers.
 
-One physical ESP32-S3 has enrolled and run the same signed apps on all three ports. [Same board, three ports](docs/BENCHMARKS.md#esp32-s3-n8r8-comparison-on-one-board)
-
-**[Hardware compatibility matrix](docs/DEVICES.md#hardware-compatibility)** · **[Compare app benchmarks](docs/BENCHMARKS.md)** · **[Build and enroll](docs/QUICKSTART.md)**
-
-**Status:** pre-1.0. [Roadmap](docs/ROADMAP.md#v100-in-progress)
+**Status:** pre-1.0.
 
 ## Why
 
-Flight Control (upstream of [Red Hat Edge Manager](https://docs.redhat.com/en/documentation/red_hat_edge_manager/)) manages fleets of Linux edge devices. Its agent is written in Go and expects bootc, systemd and Podman.
+Flight Control, the upstream project for [Red Hat Edge Manager](https://docs.redhat.com/en/documentation/red_hat_edge_manager/), manages Linux edge devices that use tools such as bootc for OS updates, systemd for services and Podman for containers. Microcontrollers typically run firmware without these tools.
 
-A sensor node or a small controller on a production line is a microcontroller with a few hundred KB of RAM and an RTOS. It ends up managed by a vendor cloud, a custom MQTT backend, or nothing at all: the gateway that collects its data shows up in Flight Control, and the devices behind it don't.
+An industrial IoT deployment can include thousands of sensor nodes that measure pressure, monitor temperature or detect motion. Operators often manage these nodes separately from their Linux gateways through vendor cloud services or proprietary tools. 
+With this project, they can monitor the nodes and roll out updates from the same Flight Control interface they use for their Linux devices.
 
-flightctl-mcu closes that gap. Its agent speaks Flight Control’s HTTP/JSON agent API over mutual TLS. It enrolls, long-polls for its spec and reports status, so operators can use the same fleets, label selectors, rollouts, RBAC and UI as for Linux devices. For RAM and flash requirements, see [What a device needs](docs/DEVICES.md#what-a-device-needs).
+The agent uses Flight Control’s HTTP/JSON agent API over mutual TLS to enroll, long-poll for its spec and report status. Operators can use the same fleets, label selectors and role-based access controls across both kinds of device.
 
 ![Flight Control's device list: five ESP32 boards with ESP-IDF in one fleet and an ESP32-S3 with Zephyr in another](docs/img/devices.png)
 *Flight Control 1.4's device list: the ESP32, C3, C5, C6 and S3 with ESP-IDF, and an ESP32-S3 with Zephyr, online and up to date.*
@@ -68,7 +66,7 @@ applications:
       FC_ALLOW: "led0"
 ```
 
-**One module for every port.** The module contains no chip or RTOS code. It opens peripherals by name, and the board map or devicetree gives each name its wiring. The same module runs on ESP-IDF, Zephyr and NuttX boards that provide the peripherals it needs. [Writing an app](docs/APPS.md) · [Port differences](docs/APPS.md#ports) · [NuttX app hardware](docs/NUTTX.md#app-hardware-on-esp32-s3) · [wasm3-arduino blink](docs/APPS.md#the-blink-of-wasm3-arduino)
+**One app for every port.** The module contains no chip or RTOS code. It opens peripherals by name, and the board map or devicetree gives each name its wiring. The same module runs on ESP-IDF, Zephyr and NuttX boards that provide the peripherals it needs. [Writing an app](docs/APPS.md) · [Port differences](docs/APPS.md#ports) · [NuttX app hardware](docs/NUTTX.md#app-hardware-on-esp32-s3) · [wasm3-arduino blink](docs/APPS.md#the-blink-of-wasm3-arduino)
 
 **Update an app without rebooting the device.** Change the app image in the fleet spec. The agent downloads the new WASM module and restarts the app while the firmware keeps running.
 
@@ -158,8 +156,7 @@ sequenceDiagram
 The device verifies the image digest before rebooting. In the example fleet, a failed canary stops the next batch.
 
 ## Documentation
-
-| | | |
+||||
 |---|---|---|
 | **Start** | [QUICKSTART.md](docs/QUICKSTART.md) | From nothing to an enrolled device with firmware, config and an app |
 | | [DEVICES.md](docs/DEVICES.md) | Hardware requirements, supported targets and how to add a port |
