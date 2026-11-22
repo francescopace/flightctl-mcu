@@ -1,7 +1,7 @@
 /*
  * Agent state machine: enrollment, then two POSIX threads:
  *  - spec thread:   long-polls GET /devices/{name}/rendered and applies it
- *  - status thread: PUT /devices/{name}/status every interval or on change
+ *  - status thread: samples local status and PATCHes changed fields
  */
 #include "fc_agent.h"
 
@@ -68,14 +68,13 @@
  * within this time, or it is rolled back to the previous image
  * (fc_agent_config_t.ota_verify_timeout_s overrides it). */
 #define OTA_VERIFY_TIMEOUT_S 150
-/* Liveness: no accepted status update for this long means the agent is
- * stuck (network stack, TLS, a hung connection): restart the device. */
+/* A pending status that cannot be delivered, or an idle device with no
+ * rendered replies, for this long triggers recovery. */
 #define STATUS_STALL_REBOOT_S 600
 /* The agent's own changes (spec applied, firmware confirmed) are reported
  * within a few seconds. Changes reported by apps and the firmware (app state,
  * alarms) are grouped: at most one status every NOTIFY_MIN_GAP_S, so a value
- * flapping around a threshold cannot flood the network (each status is about
- * 5 KB on the wire, the server's answer included). */
+ * flapping around a threshold cannot flood the network. */
 #define STATUS_MIN_GAP_S 3
 #define NOTIFY_MIN_GAP_S 15
 /* How long a download waits for a status already on its way (or asked for,
@@ -133,6 +132,17 @@
  * the one before (a status accepted). */
 enum { DECOM_NONE, DECOM_STARTED, DECOM_COMPLETED };
 
+/* Whole agent-owned sections are upserted so removed app entries, custom
+ * keys and optional fields disappear too. Keep only their fingerprints
+ * between samples on small boards. */
+static const char *const status_fields[] = {
+    "conditions", "systemInfo", "applications", "applicationsSummary", "resources", "integrity",
+    "config", "os", "updated", "summary", "lifecycle",
+};
+typedef struct {
+    unsigned char digest[sizeof(status_fields) / sizeof(status_fields[0])][32];
+} status_fingerprints_t;
+
 typedef struct {
     const fc_agent_config_t *cfg;
     fc_identity_t id;
@@ -157,6 +167,7 @@ typedef struct {
     int putting;    /* under lock: a status update is being built or sent */
     int applying;   /* under lock: a new spec is being applied */
     int status_urgent;      /* the agent's own change: report soon */
+    int status_resync;      /* server requested a fresh report after restore */
     int status_dirty;       /* an app or the firmware changed something */
     char rendered_version[32]; /* last version applied without errors */
     int waiting_primary; /* poll for a new spec until this one can finish */
@@ -178,6 +189,8 @@ typedef struct {
      * lastTransitionTime changes only with it (status thread). */
     char cond_last[220];
     char cond_since[32];
+    status_fingerprints_t accepted_status; /* status thread, valid after a successful PATCH */
+    int have_status;
     char *metrics;          /* counters for customInfo, as a JSON object (status thread) */
     time_t metrics_at;
     int metrics_reads;
@@ -353,8 +366,7 @@ static void add_stacks(agent_t *a, cJSON *m)
 
 static cJSON *read_counters(agent_t *a, const fc_sysinfo_t *si);
 
-/* The counters, read again when they are due and kept as text (a few hundred
- * bytes, not a cJSON tree): they go into customInfo as they were until then. */
+/* Keep the sampled counters as compact JSON between reads. */
 static void add_metrics(agent_t *a, cJSON *custom, const fc_sysinfo_t *si)
 {
     int interval = a->cfg->metrics_interval_s > 0 ? a->cfg->metrics_interval_s : METRICS_INTERVAL_S;
@@ -471,8 +483,7 @@ static cJSON *build_status(agent_t *a)
     cJSON_AddStringToObject(sys, "bootID", a->boot_id);
     cJSON_AddStringToObject(sys, "agentVersion", a->cfg->agent_version);
     cJSON *custom = cJSON_AddObjectToObject(sys, "customInfo");
-    /* Every status carries all of this (Flight Control replaces the whole
-     * status), so only what is worth monitoring: the chip and the agent are
+    /* Keep only what is worth monitoring: the chip and the agent are
      * already in systemInfo, the labels and agentVersion. Each change in the
      * status is an event in Flight Control 1.4: what changes all the time
      * is in add_metrics. */
@@ -631,38 +642,181 @@ static int decommissioned_at_boot(void)
     return 1;
 }
 
-static int put_status(agent_t *a)
+/* RFC 6902 add also replaces an existing object member. The patch holds a
+ * reference to each value until serialization; the caller owns the value. */
+static int patch_op(cJSON *patch, const char *op, const char *path, cJSON *value)
 {
-    cJSON *dev = cJSON_CreateObject();
-    cJSON_AddStringToObject(dev, "apiVersion", "v1beta1");
-    cJSON_AddStringToObject(dev, "kind", "Device");
-    cJSON *meta = cJSON_AddObjectToObject(dev, "metadata");
-    cJSON_AddStringToObject(meta, "name", a->id.name);
-    cJSON_AddItemToObject(dev, "status", build_status(a));
-    char *body = cJSON_PrintUnformatted(dev);
-    cJSON_Delete(dev);
-    if (body == NULL) {
-        /* out of memory: a missing node is skipped by cJSON, the print fails */
-        fc_port_log(FC_LOG_WARN, "status update: out of memory");
+    cJSON *item = cJSON_CreateObject();
+    if (!item || !cJSON_AddItemToArray(patch, item)) {
+        cJSON_Delete(item);
         return -1;
     }
+    return cJSON_AddStringToObject(item, "op", op) && cJSON_AddStringToObject(item, "path", path) &&
+           cJSON_AddItemReferenceToObject(item, "value", value) ? 0 : -1;
+}
 
+/* Conditions are shared with controllers. Read their current positions only
+ * on a transition and guard the indexed edits against concurrent changes. */
+static int patch_conditions(agent_t *a, cJSON *patch, cJSON *desired, cJSON **version)
+{
+    char path[128];
+    snprintf(path, sizeof(path), API "/devices/%s/rendered", a->id.name);
+    fc_rendered_body_t body = {0};
+    fc_http_response_t r;
+    int rc = mgmt_request(a, a->sess, 60, "GET", path, NULL, NULL, 0, &r, NULL, 0, &body);
+    if (rc == 0 && (r.status == 409 || r.status == 404)) {
+        /* Enrollment hooks can gate /rendered while they wait for status.
+         * A test-only status patch returns the current device in that case. */
+        static const char read[] = "[{\"op\":\"test\",\"path\":\"/kind\",\"value\":\"Device\"}]";
+        fc_http_free(&r);
+        fc_rendered_free(&body);
+        snprintf(path, sizeof(path), API "/devices/%s/status", a->id.name);
+        rc = mgmt_request(a, a->sess, 60, "PATCH", path, "application/json-patch+json", read,
+                          sizeof(read) - 1, &r, NULL, 0, &body);
+    }
+    cJSON *conditions = NULL;
+    if (rc == 0 && r.status == 200) {
+        rc = fc_rendered_conditions(&body, version, &conditions);
+    } else {
+        rc = -1;
+    }
+    fc_http_free(&r);
+    fc_rendered_free(&body);
+    if (rc != 0 || patch_op(patch, "test", "/metadata/resourceVersion", *version) != 0) {
+        cJSON_Delete(conditions);
+        return -1;
+    }
+    if (!cJSON_IsArray(conditions)) {
+        rc = patch_op(patch, "add", "/status/conditions", desired);
+    } else {
+        cJSON *wanted;
+        cJSON_ArrayForEach(wanted, desired) {
+            if (rc != 0) {
+                break;
+            }
+            const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(wanted, "type"));
+            if (!type) {
+                rc = -1;
+                break;
+            }
+            int index = 0;
+            cJSON *cur;
+            cJSON_ArrayForEach(cur, conditions) {
+                const char *other = cJSON_GetStringValue(cJSON_GetObjectItem(cur, "type"));
+                if (other && strcmp(type, other) == 0) {
+                    break;
+                }
+                index++;
+            }
+            if (cur) {
+                snprintf(path, sizeof(path), "/status/conditions/%d", index);
+                rc = patch_op(patch, "replace", path, wanted);
+            } else {
+                rc = patch_op(patch, "add", "/status/conditions/-", wanted);
+            }
+        }
+    }
+    cJSON_Delete(conditions);
+    return rc;
+}
+
+/* Flight Control 1.4.0 refuses PATCH once spec.decommissioning is set.
+ * Its status PUT accepts the device's Started and Completed transitions. */
+static char *decommission_status_body(const char *name, cJSON *status)
+{
+    cJSON *dev = cJSON_CreateObject();
+    cJSON *meta = cJSON_AddObjectToObject(dev, "metadata");
+    char *body = NULL;
+    if (meta && cJSON_AddStringToObject(meta, "name", name) &&
+        cJSON_AddStringToObject(dev, "apiVersion", "v1beta1") && cJSON_AddStringToObject(dev, "kind", "Device") &&
+        cJSON_AddItemReferenceToObject(dev, "status", status)) {
+        body = cJSON_PrintUnformatted(dev);
+    }
+    cJSON_Delete(dev);
+    return body;
+}
+
+enum { STATUS_FAILED = -1, STATUS_ACCEPTED, STATUS_UNCHANGED };
+
+static int report_status(agent_t *a)
+{
+    status_fingerprints_t next;
+    cJSON *st = build_status(a);
+    int decommissioning = a->decom_reported != DECOM_NONE;
+    cJSON *patch = cJSON_CreateArray();
+    cJSON *version = NULL;
+    int result = STATUS_FAILED;
+    if (!st || !patch) {
+        goto done;
+    }
+    for (size_t i = 0; i < sizeof(status_fields) / sizeof(status_fields[0]); i++) {
+        const char *key = status_fields[i];
+        cJSON *field = cJSON_GetObjectItemCaseSensitive(st, key);
+        char *json = field ? cJSON_PrintUnformatted(field) : NULL;
+        int hashed = json && fc_sha256(json, strlen(json), next.digest[i]) == 0;
+        free(json);
+        if (!hashed) {
+            goto done;
+        }
+        if (decommissioning || (a->have_status &&
+            memcmp(next.digest[i], a->accepted_status.digest[i], sizeof(next.digest[i])) == 0)) {
+            continue;
+        }
+        if (strcmp(key, "conditions") == 0) {
+            if (patch_conditions(a, patch, field, &version) != 0) {
+                goto done;
+            }
+        } else {
+            char path[64];
+            snprintf(path, sizeof(path), "/status/%s", key);
+            if (patch_op(patch, "add", path, field) != 0) {
+                goto done;
+            }
+        }
+    }
+    if (a->have_status && memcmp(&next, &a->accepted_status, sizeof(next)) == 0) {
+        result = STATUS_UNCHANGED;
+        goto done;
+    }
+    char *body = decommissioning ? decommission_status_body(a->id.name, st) : cJSON_PrintUnformatted(patch);
+    if (!body) {
+        goto done;
+    }
+    cJSON_Delete(patch);
+    patch = NULL;
+    cJSON_Delete(st);
+    st = NULL;
     char path[128];
     snprintf(path, sizeof(path), API "/devices/%s/status", a->id.name);
     fc_http_response_t r;
-    /* Flight Control returns the whole Device. Only an error body is used. */
-    int rc = mgmt_request(a, a->sess, 60, "PUT", path, "application/json", body, strlen(body), &r, NULL, 1, NULL);
+    int rc = mgmt_request(a, a->sess, 60, decommissioning ? "PUT" : "PATCH", path,
+                          decommissioning ? "application/json" : "application/json-patch+json",
+                          body, strlen(body), &r, NULL, 1, NULL);
     free(body);
-    if (rc != 0) {
-        return -1;
-    }
-    if (r.status != 200) {
-        fc_port_log(FC_LOG_WARN, "status update: HTTP %d %s", r.status, r.body);
-        fc_http_free(&r);
-        return -1;
+    if (rc == 0 && r.status == 200) {
+        a->accepted_status = next;
+        a->have_status = 1;
+        result = STATUS_ACCEPTED;
+        fc_port_log(FC_LOG_DEBUG, "status updated");
+    } else {
+        if (rc != 0 || r.status >= 500) {
+            /* A dropped response or proxy failure can hide a committed write. */
+            a->have_status = 0;
+        }
+        if (rc == 0) {
+            fc_port_log(FC_LOG_WARN, "status update: HTTP %d %s", r.status, r.body ? r.body : "");
+        }
     }
     fc_http_free(&r);
-    fc_port_log(FC_LOG_DEBUG, "status updated");
+done:
+    cJSON_Delete(version);
+    cJSON_Delete(patch);
+    cJSON_Delete(st);
+    return result;
+}
+
+static void status_accepted(agent_t *a)
+{
     if (a->verifying) {
         /* The new firmware reached Flight Control: keep it. */
         fc_port_ota_confirm();
@@ -679,7 +833,6 @@ static int put_status(agent_t *a)
         request_status(a); /* now report the new rendered version */
     }
     decommission_step(a);
-    return 0;
 }
 
 static void wake_status(agent_t *a, int urgent)
@@ -1396,6 +1549,7 @@ static void metrics_tick(agent_t *a)
  * 0 before the status thread runs (fc_agent_status_age). A long: 32-bit
  * Xtensa has no 8-byte atomics (Zephyr's link fails on __atomic_store_8). */
 static long s_status_ok_mono;
+static long s_status_progress_mono; /* accepted a patch or finished an unchanged sample */
 
 static long mono_s(void)
 {
@@ -1420,6 +1574,18 @@ static void spec_taken(void)
     __atomic_store_n(&s_spec_ok_mono, mono_s(), __ATOMIC_RELAXED);
 }
 
+/* A real poll confirms management connectivity for a newly started app.
+ * Saved apps still wait for the initial status to have been accepted. */
+static void spec_received(agent_t *a)
+{
+    spec_taken();
+    pthread_mutex_lock(&a->lock);
+    if (a->status_once) {
+        fc_apps_management_ok();
+    }
+    pthread_mutex_unlock(&a->lock);
+}
+
 long fc_agent_spec_age(void)
 {
     long t = __atomic_load_n(&s_spec_ok_mono, __ATOMIC_RELAXED);
@@ -1428,10 +1594,11 @@ long fc_agent_spec_age(void)
 
 const char *fc_agent_watchdog(long *age)
 {
-    long s = fc_agent_status_age(), r = fc_agent_spec_age();
+    long progress = __atomic_load_n(&s_status_progress_mono, __ATOMIC_RELAXED);
+    long s = progress ? mono_s() - progress : -1, r = fc_agent_spec_age();
     if (s > FC_AGENT_WATCHDOG_S) {
         *age = s;
-        return "status update accepted";
+        return "status checked or delivered";
     }
     if (r > FC_AGENT_WATCHDOG_S) {
         *age = r;
@@ -1444,9 +1611,11 @@ static void *status_thread(void *arg)
 {
     agent_t *a = arg;
     int interval = a->cfg->status_interval_s > 0 ? a->cfg->status_interval_s : 60;
-    time_t last_ok = time(NULL), last_put = 0;
+    long last_ok = mono_s();
+    time_t last_check = 0;
     int retry_status_s = 0;
     __atomic_store_n(&s_status_ok_mono, mono_s(), __ATOMIC_RELAXED);
+    __atomic_store_n(&s_status_progress_mono, mono_s(), __ATOMIC_RELAXED);
     /* The first status lists the saved apps: they start once this thread
      * runs (fc_agent_run). */
     pthread_mutex_lock(&a->lock);
@@ -1458,7 +1627,7 @@ static void *status_thread(void *arg)
         /* Wait until a status is due: the interval, an urgent change, an
          * app change (grouped), or a certificate renewal. */
         pthread_mutex_lock(&a->lock);
-        while (last_put != 0) {
+        while (last_check != 0) {
             int saved_delay = fc_apps_saved_delay_s();
             if (saved_delay == 0 && !a->applying && !a->downloading && a->turn_depth == 0) {
                 a->starting_saved = 1;
@@ -1470,17 +1639,17 @@ static void *status_thread(void *arg)
                 a->status_urgent = 1;
                 continue;
             }
-            time_t due = last_put + (a->verifying ? RETRY_DELAY_S : retry_status_s ? retry_status_s : interval);
-            if (a->status_urgent && last_put + STATUS_MIN_GAP_S < due) {
-                due = last_put + STATUS_MIN_GAP_S;
-            } else if (a->status_dirty && last_put + NOTIFY_MIN_GAP_S < due) {
-                due = last_put + NOTIFY_MIN_GAP_S;
+            time_t due = last_check + (a->verifying ? RETRY_DELAY_S : retry_status_s ? retry_status_s : interval);
+            if (a->status_urgent && last_check + STATUS_MIN_GAP_S < due) {
+                due = last_check + STATUS_MIN_GAP_S;
+            } else if (a->status_dirty && last_check + NOTIFY_MIN_GAP_S < due) {
+                due = last_check + NOTIFY_MIN_GAP_S;
             }
             time_t renew = a->cert_next_try > a->cert_renew_at ? a->cert_next_try : a->cert_renew_at;
             if (renew > 0 && renew < due) {
                 due = renew;
             }
-            /* Resource samples come on their own interval, between statuses;
+            /* Resource samples come on their own interval, between status checks;
              * an alert that starts or clears is reported with the next. */
             if (a->metrics_poke) {
                 a->metrics_poke = 0;
@@ -1519,20 +1688,20 @@ static void *status_thread(void *arg)
         /* A download has the connection's turn: the status goes out once
          * it is over (turn_end). The time spent waiting does not count as
          * a stall. */
-        time_t held = time(NULL);
+        long held = mono_s();
         while (a->downloading) {
             pthread_cond_wait(&a->status_wake, &a->lock);
         }
-        last_ok += time(NULL) - held;
+        last_ok += mono_s() - held;
+        if (a->status_resync) {
+            a->have_status = 0;
+            a->status_resync = 0;
+        }
         a->status_urgent = 0;
         a->status_dirty = 0;
         a->putting = 1;
         pthread_mutex_unlock(&a->lock);
 
-        if (time(NULL) - last_ok > STATUS_STALL_REBOOT_S) {
-            fc_port_log(FC_LOG_ERROR, "no status update accepted for %d s: restarting", STATUS_STALL_REBOOT_S);
-            fc_agent_restart_silent();
-        }
         if (a->verifying && time(NULL) > a->verify_deadline) {
             fc_port_log(FC_LOG_ERROR, "firmware %s could not reach Flight Control: rolling back", a->os_image);
             fc_port_ota_rollback();
@@ -1545,20 +1714,35 @@ static void *status_thread(void *arg)
         if (!decommissioning) {
             renew_cert_if_due(a);
         }
-        int ok = put_status(a) == 0;
+        int result = report_status(a);
+        if (result == STATUS_ACCEPTED) {
+            status_accepted(a);
+        } else if (result == STATUS_UNCHANGED && a->decom_reported == DECOM_COMPLETED) {
+            /* The server has Completed already; retry a failed local wipe marker. */
+            decommission_step(a);
+        }
         pthread_mutex_lock(&a->lock);
         a->putting = 0;
         pthread_cond_broadcast(&a->status_sent);
         pthread_mutex_unlock(&a->lock);
-        last_put = time(NULL);
-        if (ok) {
+        last_check = time(NULL);
+        if (result != STATUS_FAILED) {
             retry_status_s = 0;
-            last_ok = last_put;
+            __atomic_store_n(&s_status_progress_mono, mono_s(), __ATOMIC_RELAXED);
+        }
+        if (result == STATUS_ACCEPTED) {
+            last_ok = mono_s();
             __atomic_store_n(&s_status_ok_mono, mono_s(), __ATOMIC_RELAXED);
-            fc_apps_status_ok();
+            fc_apps_management_ok();
             pthread_mutex_lock(&a->lock);
             a->status_once = 1;
             pthread_mutex_unlock(&a->lock);
+        } else if (result == STATUS_UNCHANGED) {
+            long age = fc_agent_spec_age();
+            long contact = mono_s() - age;
+            if (age >= 0 && contact > last_ok) {
+                last_ok = contact;
+            }
         } else {
             if (!retry_status_s) {
                 retry_status_s = RETRY_DELAY_S < interval ? RETRY_DELAY_S : interval;
@@ -1569,9 +1753,13 @@ static void *status_thread(void *arg)
             }
             fc_port_log(FC_LOG_WARN, "status update failed (free %ld B, largest %ld B), retry in %d s",
                         fc_port_heap_free_now(), fc_port_heap_largest(), a->verifying ? RETRY_DELAY_S : retry_status_s);
-            if (!decommissioning) {
-                reenroll_if_expired(a);
-            }
+        }
+        if (result != STATUS_ACCEPTED && !decommissioning) {
+            reenroll_if_expired(a);
+        }
+        if (mono_s() - last_ok > STATUS_STALL_REBOOT_S) {
+            fc_port_log(FC_LOG_ERROR, "management stalled for %d s: restarting", STATUS_STALL_REBOOT_S);
+            fc_agent_restart_silent();
         }
     }
     return NULL;
@@ -1831,7 +2019,7 @@ static void load_resources(void)
 /* Returns 1 when the spec is to be tried again (after a while). */
 static int apply_rendered(agent_t *a, const cJSON *spec, const char *version)
 {
-    spec_taken();
+    spec_received(a);
     char err[160] = "";
 
     const cJSON *decom = cJSON_GetObjectItem(spec, "decommissioning");
@@ -2069,7 +2257,7 @@ static void *spec_thread(void *arg)
         }
         if (r.status == 200 && rendered.same && listed) {
             fc_rendered_clear(&rendered);
-            spec_taken();
+            spec_received(a);
             fc_http_free(&r);
             time_t now = time(NULL);
             if (!a->console_quiet) {
@@ -2092,11 +2280,18 @@ static void *spec_thread(void *arg)
         quiet_since = 0;
         if (refresh && r.status == 200 && rendered.same) {
             fc_rendered_clear(&rendered);
-            spec_taken();
+            spec_received(a);
             fc_http_free(&r);
             continue;
         }
         if (r.status == 200) {
+            if (rendered.same && !listed) {
+                /* A 200 for the known version can be a restored server
+                 * asking the agent to publish its local state again. */
+                pthread_mutex_lock(&a->lock);
+                a->status_resync = 1;
+                pthread_mutex_unlock(&a->lock);
+            }
             wait_confirmed(a);
             apply_begin(a);
             int again = apply_rendered(a, rendered.spec, cJSON_GetStringValue(rendered.version));
@@ -2117,7 +2312,7 @@ static void *spec_thread(void *arg)
                 sleep(3 * RETRY_DELAY_S);
             }
         } else if (r.status == 204) {
-            spec_taken();
+            spec_received(a);
             fc_port_log(FC_LOG_DEBUG, "spec unchanged (%s)", known);
         } else {
             fc_port_log(FC_LOG_WARN, "get rendered: HTTP %d %s", r.status, r.body);
@@ -2348,7 +2543,7 @@ int fc_agent_run(const fc_agent_config_t *cfg)
     size_t stack = 8 * 1024; /* ESP-IDF on RISC-V (C3, C5, C6): 4.6 KB at most used, v3.14-rc7 */
 #elif defined(ESP_PLATFORM) && !defined(__ZEPHYR__)
     size_t stack = 10 * 1024; /* ESP-IDF on Xtensa (ESP32, S3): 5 KB at most used, v3.14-rc7 */
-#elif defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
+#elif defined(ESP_PLATFORM) || defined(__NuttX__) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
     size_t stack = 12 * 1024;
 #else
     size_t stack = 256 * 1024; /* 64-bit hosts need more */

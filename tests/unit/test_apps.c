@@ -2268,13 +2268,13 @@ static void test_saved_apps_held(void)
     power_cycle();
     CHECK(strncmp(state_of("app"), "Preparing", 9) == 0);
     CHECK(fc_apps_saved_delay_s() != 0);
-    fc_apps_status_ok();
+    fc_apps_management_ok();
     CHECK_INT(fc_apps_saved_delay_s(), 0);
     CHECK_INT(fc_apps_start_saved(), 1);
     CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
     CHECK(fc_apps_saved_delay_s() != 0); /* once */
     /* No status at all (offline): after BOOT_APPS_WAIT_MS. */
-    s_status_oks = 0;
+    s_management_oks = 0;
     fc_apps_hold_saved(1);
     power_cycle();
     CHECK(fc_apps_saved_delay_s() != 0);
@@ -2290,7 +2290,7 @@ static void test_saved_apps_held(void)
 static void test_guard_silent_restart(void)
 {
     char err[200];
-    s_status_oks = 1; /* the last accepted status came before it started */
+    s_management_oks = 1; /* the last accepted status came before it started */
     CHECK_INT(apply_one("app", "reg/app:v1", NULL, err, sizeof(err)), 0);
     CHECK_STR(wait_state("Running v1 reg/app:v1"), "Running v1 reg/app:v1");
     stub_heap_free = 100 * 1024;
@@ -2308,7 +2308,7 @@ static void test_guard_silent_restart(void)
     stub_heap_free = -1;
     restart(0);
     CHECK_STR(state_of("app"), "Error " GUARD_ERROR);
-    s_status_oks = 0;
+    s_management_oks = 0;
     remove_all();
     CHECK(stub_kv(KV_GUARD) == NULL);
 }

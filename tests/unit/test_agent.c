@@ -8,13 +8,14 @@
 #include <pthread.h>
 #include <time.h>
 #include "fc_http.h"
+#include "cJSON.h"
 #include "test.h"
 
 /* Advance to the deadlines requested by the real status loop. In the
- * offline boot test every management PUT fails for 400 simulated seconds. */
+ * offline boot test every management request fails for 400 simulated seconds. */
 static const time_t offline_boot = 1800000000;
 static time_t offline_now, saved_started_at;
-static int offline_puts, saved_starts;
+static int offline_requests, saved_starts;
 
 static time_t agent_time(time_t *out)
 {
@@ -42,18 +43,59 @@ static int agent_timedwait(pthread_cond_t *cond, pthread_mutex_t *lock, const st
     return ETIMEDOUT;
 }
 
+static int patch_response, condition_reads, patch_calls, gated;
+static cJSON *last_patch;
+
 static int agent_request(const fc_http_target_t *t, const char *method, const char *path,
                          const char *content_type, const char *body, size_t body_len, fc_http_response_t *r)
 {
-    if (!offline_now) {
+    if (offline_now) {
+        offline_requests++;
+        *r = (fc_http_response_t){.status = -1};
+        return -1;
+    }
+    if (!patch_response) {
         return fc_http_request(t, method, path, content_type, body, body_len, r);
     }
-    CHECK_STR(method, "PUT");
+    if (t->receive_200) {
+        const char json[] = "{\"metadata\":{\"resourceVersion\":\"7\"},\"status\":{\"conditions\":["
+                            "{\"type\":\"EnrollmentHooks\"},{\"type\":\"Updating\"}]}}";
+        if (strcmp(method, "GET") == 0) {
+            CHECK_CONTAINS(path, "/rendered");
+            condition_reads++;
+            if (gated) {
+                *r = (fc_http_response_t){.status = 409};
+                return 0;
+            }
+        } else {
+            CHECK_STR(method, "PATCH");
+            CHECK_CONTAINS(path, "/status");
+            CHECK_CONTAINS(body, "\"test\"");
+            CHECK(gated);
+        }
+        *r = (fc_http_response_t){.status = 200};
+        return t->receive_200(json, sizeof(json) - 1, t->receive_ctx);
+    }
+    if (strcmp(method, "PUT") == 0) {
+        CHECK_STR(content_type, "application/json");
+        cJSON *dev = cJSON_ParseWithLength(body, body_len);
+        cJSON *status = cJSON_GetObjectItem(dev, "status");
+        cJSON *conditions = cJSON_GetObjectItem(status, "conditions");
+        cJSON *step = cJSON_GetArrayItem(conditions, 1);
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(step, "type")), "DeviceDecommissioning");
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(dev, "kind")), "Device");
+        cJSON_Delete(dev);
+    } else {
+        CHECK_STR(method, "PATCH");
+        CHECK_STR(content_type, "application/json-patch+json");
+    }
     CHECK_CONTAINS(path, "/status");
     CHECK(t->discard_200_body);
-    offline_puts++;
-    *r = (fc_http_response_t){.status = -1};
-    return -1;
+    cJSON_Delete(last_patch);
+    last_patch = cJSON_ParseWithLength(body, body_len);
+    patch_calls++;
+    *r = (fc_http_response_t){.status = patch_response, .body = strdup("")};
+    return patch_response < 0 ? -1 : 0;
 }
 
 #define time agent_time
@@ -234,7 +276,8 @@ int fc_apps_start_saved(void)
     }
     return 0;
 }
-void fc_apps_status_ok(void) {}
+static int management_contacts;
+void fc_apps_management_ok(void) { management_contacts++; }
 void fc_apps_note_silent_restart(void) {}
 
 void fc_apps_set_hw(const fc_hw_t *hw) {}
@@ -297,6 +340,83 @@ static void new_agent(void)
     s_apps_running_on[0] = '\0';
 }
 
+static const cJSON *operation(const char *op, const char *path)
+{
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, last_patch) {
+        if (strcmp(cJSON_GetStringValue(cJSON_GetObjectItem(entry, "op")), op) == 0 &&
+            strcmp(cJSON_GetStringValue(cJSON_GetObjectItem(entry, "path")), path) == 0) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+static void patch_only_changes_since_acknowledgement(void)
+{
+    new_agent();
+    s_a.mgmt_cert_pem = strdup("test");
+    patch_response = 200;
+    condition_reads = patch_calls = 0;
+    CHECK_INT(report_status(&s_a), STATUS_ACCEPTED);
+    CHECK(operation("test", "/metadata/resourceVersion"));
+    CHECK(operation("replace", "/status/conditions/1"));
+    CHECK(!operation("replace", "/status/conditions/0"));
+    cJSON *full = build_status(&s_a);
+    const cJSON *field;
+    cJSON_ArrayForEach(field, full) {
+        if (strcmp(field->string, "conditions") != 0) {
+            char path[64];
+            snprintf(path, sizeof(path), "/status/%s", field->string);
+            CHECK(operation("add", path));
+        }
+    }
+    cJSON_Delete(full);
+    CHECK_INT(report_status(&s_a), STATUS_UNCHANGED);
+    CHECK_INT(patch_calls, 1);
+    CHECK_INT(condition_reads, 1);
+
+    strcpy(s_a.rendered_version, "2");
+    patch_response = 409;
+    CHECK_INT(report_status(&s_a), STATUS_FAILED);
+    CHECK_INT(cJSON_GetArraySize(last_patch), 1);
+    const cJSON *config = cJSON_GetObjectItem(operation("add", "/status/config"), "value");
+    CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItem(config, "renderedVersion")), "2");
+    patch_response = 200;
+    CHECK_INT(report_status(&s_a), STATUS_ACCEPTED);
+    CHECK_INT(cJSON_GetArraySize(last_patch), 1);
+    CHECK_INT(condition_reads, 1);
+
+    strcpy(s_a.rendered_version, "3");
+    patch_response = -1; /* the server may have committed the write */
+    CHECK_INT(report_status(&s_a), STATUS_FAILED);
+    strcpy(s_a.rendered_version, "2"); /* changes back before retry */
+    patch_response = 200;
+    CHECK_INT(report_status(&s_a), STATUS_ACCEPTED);
+    CHECK(operation("add", "/status/config"));
+    CHECK_INT(condition_reads, 2);
+    strcpy(s_a.rendered_version, "4");
+    patch_response = 502;
+    CHECK_INT(report_status(&s_a), STATUS_FAILED);
+    strcpy(s_a.rendered_version, "2");
+    gated = 1;
+    patch_response = 200;
+    CHECK_INT(report_status(&s_a), STATUS_ACCEPTED);
+    CHECK(operation("replace", "/status/conditions/1"));
+    CHECK_INT(condition_reads, 3);
+    gated = 0;
+    s_a.decom = DECOM_STARTED;
+    CHECK_INT(report_status(&s_a), STATUS_ACCEPTED);
+    CHECK(cJSON_IsObject(last_patch));
+    CHECK_INT(report_status(&s_a), STATUS_UNCHANGED);
+    s_a.decom = DECOM_COMPLETED;
+    CHECK_INT(report_status(&s_a), STATUS_ACCEPTED);
+    CHECK(cJSON_IsObject(last_patch));
+    cJSON_Delete(last_patch);
+    last_patch = NULL;
+    patch_response = 0;
+}
+
 static void offline_apps_wake_between_failed_status_retries(void)
 {
     new_agent();
@@ -309,7 +429,7 @@ static void offline_apps_wake_between_failed_status_retries(void)
     s_a.metrics_next = offline_boot + 600;
     offline_now = offline_boot;
     saved_started_at = 0;
-    offline_puts = saved_starts = 0;
+    offline_requests = saved_starts = 0;
     pthread_t thread;
     int rc = pthread_create(&thread, NULL, status_thread, &s_a);
     CHECK_INT(rc, 0);
@@ -318,7 +438,7 @@ static void offline_apps_wake_between_failed_status_retries(void)
         CHECK_INT(offline_now - offline_boot, 400);
         CHECK_INT(saved_starts, 1);
         CHECK_INT(saved_started_at - offline_boot, 180);
-        CHECK(offline_puts >= 5 && !s_a.status_once);
+        CHECK(offline_requests >= 5 && !s_a.status_once);
     }
     offline_now = 0;
     s_a.cfg = &s_cfg;
@@ -1043,26 +1163,28 @@ static void metrics_and_pulls_take_turns(void)
     CHECK_INT(fc_agent_busy(), 1); /* not started: busy anyway */
 }
 
-/* The port's watchdog: a status not accepted, or a spec not taken, for
- * FC_AGENT_WATCHDOG_S; nothing before the threads run. */
+/* Recent unchanged status checks and rendered polls keep an idle agent
+ * healthy however old its last status write is. */
 static void the_watchdog_wants_statuses_and_specs(void)
 {
-    long saved_status = s_status_ok_mono, saved_spec = s_spec_ok_mono, age = 0;
-    s_status_ok_mono = 0;
+    long saved_status = s_status_progress_mono, saved_spec = s_spec_ok_mono, saved_ack = s_status_ok_mono, age = 0;
+    s_status_ok_mono = mono_s() - FC_AGENT_WATCHDOG_S - 60;
+    s_status_progress_mono = 0;
     s_spec_ok_mono = 0;
     CHECK(fc_agent_watchdog(&age) == NULL);
-    s_status_ok_mono = mono_s() - 10;
+    s_status_progress_mono = mono_s() - 10;
     s_spec_ok_mono = mono_s() - FC_AGENT_WATCHDOG_S;
     CHECK(fc_agent_watchdog(&age) == NULL);
     s_spec_ok_mono = mono_s() - FC_AGENT_WATCHDOG_S - 5;
     const char *what = fc_agent_watchdog(&age);
     CHECK(what != NULL && strcmp(what, "rendered spec taken") == 0);
     CHECK(age >= FC_AGENT_WATCHDOG_S + 5 && age <= FC_AGENT_WATCHDOG_S + 6);
-    s_status_ok_mono = mono_s() - FC_AGENT_WATCHDOG_S - 60;
+    s_status_progress_mono = mono_s() - FC_AGENT_WATCHDOG_S - 60;
     what = fc_agent_watchdog(&age);
-    CHECK(what != NULL && strcmp(what, "status update accepted") == 0);
-    s_status_ok_mono = saved_status;
+    CHECK(what != NULL && strcmp(what, "status checked or delivered") == 0);
+    s_status_progress_mono = saved_status;
     s_spec_ok_mono = saved_spec;
+    s_status_ok_mono = saved_ack;
 }
 
 /* A rendered device the agent can parse is a spec taken; one it cannot
@@ -1074,8 +1196,13 @@ static void a_parsed_spec_is_taken(void)
     s_spec_ok_mono = 0;
     CHECK_INT(apply_json(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"1"), 0);
     CHECK_INT(fc_agent_spec_age(), -1);
+    management_contacts = 0;
     CHECK_INT(apply_json(&s_a, "{\"metadata\": {\"annotations\": {\"" RENDERED_ANNOTATION "\": \"1\"}}, \"spec\": {}}"), 0);
     CHECK(fc_agent_spec_age() >= 0 && fc_agent_spec_age() <= 1);
+    CHECK_INT(management_contacts, 0);
+    s_a.status_once = 1;
+    spec_received(&s_a);
+    CHECK_INT(management_contacts, 1);
     s_spec_ok_mono = saved;
 }
 
@@ -1656,6 +1783,7 @@ int main(void)
     fc_http_global_init();
     RUN(x509_dates_convert_to_epoch);
     RUN(offline_apps_wake_between_failed_status_retries);
+    RUN(patch_only_changes_since_acknowledgement);
     RUN(inline_config_is_written_and_the_version_kept);
     RUN(a_rejected_config_keeps_the_old_version);
     RUN(files_dropped_from_the_spec_are_removed);

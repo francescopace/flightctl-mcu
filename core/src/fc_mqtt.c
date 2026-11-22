@@ -60,7 +60,7 @@
 #define DROP_LOG_MS      60000 /* one line about dropped messages a minute at most */
 
 #ifndef FC_MQTT_STACK_SIZE
-#if defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
+#if defined(ESP_PLATFORM) || defined(__NuttX__) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
 /* The TLS handshake (ECDHE, X.509): the agent's status thread, which makes
  * the same ones, used 4.2 to 4.7 KB of its 12 KB on the C3, C5 and C6
  * (v3.14-rc5). What this one leaves is in stackMinFreeBytes ("mqtt"). */

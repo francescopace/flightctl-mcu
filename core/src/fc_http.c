@@ -376,6 +376,13 @@ void *fc_heap_hold(size_t leave)
         return NULL;
     }
     long n = big - (long)leave - 64;
+#ifdef FC_HEAP_HOLD_MAX
+    /* A PSRAM user heap can be several MiB. Preserve room for app linear
+     * memory without starving concurrent TLS and storage allocations. */
+    if (n > FC_HEAP_HOLD_MAX) {
+        n = FC_HEAP_HOLD_MAX;
+    }
+#endif
     pthread_mutex_lock(&s_meter_lock);
     int slot = -1;
     for (int i = 0; i < HEAP_HOLDS && slot < 0; i++) {

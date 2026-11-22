@@ -14,6 +14,9 @@ typedef struct {
 int fc_rendered_feed(const void *data, size_t len, void *ctx);
 void fc_rendered_free(fc_rendered_body_t *body);
 
+/* Caller releases both results, including on failure. */
+int fc_rendered_conditions(const fc_rendered_body_t *body, cJSON **version, cJSON **conditions);
+
 #define RENDERED_ANNOTATION "device-controller/renderedVersion"
 
 typedef struct {

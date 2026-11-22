@@ -82,13 +82,13 @@ long fc_apps_heap_floor(void);
 /* The apps saved by a previous run: with fc_apps_hold_saved(1) before
  * fc_apps_init starts wait ("Preparing") until
  * fc_apps_start_saved, which the agent calls once fc_apps_saved_delay_s returns zero:
- * a status accepted (fc_apps_status_ok), or none for 3 minutes. Their memory
+ * a status accepted (fc_apps_management_ok), or none for 3 minutes. Their memory
  * is then taken with the heap at regime, under the floor's check. */
 void fc_apps_hold_saved(int on);
 int fc_apps_saved_delay_s(void); /* -1 if no saved start is held */
 int fc_apps_start_saved(void);
-/* Each accepted status: an app is past its start once one comes after it. */
-void fc_apps_status_ok(void);
+/* First accepted status, then accepted statuses and successful spec polls. */
+void fc_apps_management_ok(void);
 /* Before the agent restarts the device for want of an accepted status: with
  * the heap below the floor, the restart counts against the apps still in
  * their start, as a crash does (not run again after two in a row). */

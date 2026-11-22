@@ -322,6 +322,33 @@ static cJSON *parse(span_t value, span_t omit)
     return json;
 }
 
+static int complete_object(cursor_t start)
+{
+    space(&start);
+    if (peek(start) != '{' || !skip(&start)) {
+        return 0;
+    }
+    space(&start);
+    return !start.page;
+}
+
+/* The status writer only needs these two members of the rendered device. */
+int fc_rendered_conditions(const fc_rendered_body_t *body, cJSON **version, cJSON **conditions)
+{
+    cursor_t root = {.page = body->first};
+    *version = *conditions = NULL;
+    if (!complete_object(root)) {
+        return -1;
+    }
+    span_t meta = member(root, "metadata");
+    *version = parse(member(meta.begin, "resourceVersion"), (span_t){0});
+    span_t status = member(root, "status");
+    span_t list = member(status.begin, "conditions");
+    *conditions = parse(list, (span_t){0});
+    return cJSON_IsString(*version) && status.begin.page &&
+           (!list.begin.page || cJSON_IsArray(*conditions) || cJSON_IsNull(*conditions)) ? 0 : -1;
+}
+
 void fc_rendered_clear(fc_rendered_t *r)
 {
     cJSON_Delete(r->version);
@@ -334,13 +361,7 @@ int fc_rendered_read(fc_rendered_body_t *body, const char *known, int refresh, f
 {
     *r = (fc_rendered_t){0};
     cursor_t start = {.page = body->first};
-    space(&start);
-    cursor_t end = start;
-    if (peek(start) != '{' || !skip(&end)) {
-        goto fail;
-    }
-    space(&end);
-    if (end.page) {
+    if (!complete_object(start)) {
         goto fail;
     }
     span_t meta = member(start, "metadata");

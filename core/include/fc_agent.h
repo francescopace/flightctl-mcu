@@ -34,7 +34,7 @@ typedef struct {
     const char *const *labels; /* { "k1", "v1", "k2", "v2", NULL } */
 
     const char *agent_version;
-    int status_interval_s; /* default 60 */
+    int status_interval_s; /* seconds between local status samples, default 60 */
     /* The counters in customInfo (heap, traffic, uptime: fc_port_metrics)
      * are read again only after this many seconds; the statuses in between
      * repeat them. Since 1.4 Flight Control logs an event for every change
@@ -82,10 +82,8 @@ void fc_agent_notify_status(void);
 int fc_agent_busy(void);
 
 /* Seconds since the agent's last accepted status update (or since its status
- * thread started), on a monotonic clock; -1 before it starts. For a watchdog
- * outside the agent's threads: the agent restarts the device itself after
- * STATUS_STALL_REBOOT_S, but only from its status thread, which a hung
- * download or connection can hold. */
+ * thread started), on a monotonic clock; -1 before it starts. This age can
+ * grow while unchanged status is suppressed and spec polls succeed. */
 long fc_agent_status_age(void);
 
 /* Restarts the device for want of an accepted status: if the heap is below
@@ -93,15 +91,14 @@ long fc_agent_status_age(void);
  * again after two in a row). For a port's watchdog. */
 void fc_agent_restart_silent(void);
 
-/* Seconds since the agent's spec thread last took a rendered device: told
- * it was unchanged, or got one it could parse; -1 before it starts. A device
- * whose statuses go out but whose spec does not come in (no heap to parse
- * it, a hung download) is not restarted by the agent itself. */
+/* Seconds since the spec thread last received an unchanged or parseable
+ * rendered device, or since the thread started. Returns -1 before startup
+ * and once decommissioning stops the poller. */
 long fc_agent_spec_age(void);
 
 /* For the port's watchdog, outside the agent's threads, every minute or so:
- * what has not happened for longer than FC_AGENT_WATCHDOG_S ("status update
- * accepted", "rendered spec taken"), with `age` set to how long, or NULL. The
+ * what has not happened for longer than FC_AGENT_WATCHDOG_S ("status checked
+ * or delivered", "rendered spec taken"), with `age` set to how long, or NULL. The
  * device is then to be restarted. */
 #define FC_AGENT_WATCHDOG_S 1800
 const char *fc_agent_watchdog(long *age);

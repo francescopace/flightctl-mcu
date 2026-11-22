@@ -39,6 +39,7 @@
 
 #include "fc_agent.h"
 #include "fc_apps_int.h"
+#include "fc_log.h"
 #include "fc_metrics.h"
 #include "fc_heap_hold.h"
 #include "fc_oci.h"
@@ -54,7 +55,7 @@
 #define APP_MADE_WAIT_MS 5000 /* app_start waits this long at most for the instance */
 #if defined(__ZEPHYR__) && defined(CONFIG_ARCH_POSIX)
 #define THREAD_STACK    (64 * 1024) /* a 64-bit host's frames, and Zephyr gives a thread what it asks */
-#elif defined(ESP_PLATFORM) || defined(__ZEPHYR__)
+#elif defined(ESP_PLATFORM) || defined(__ZEPHYR__) || defined(__NuttX__)
 #define THREAD_STACK    8192
 #else
 #define THREAD_STACK    (256 * 1024) /* a host: its threads cannot have less than 16 KB or so */
@@ -248,7 +249,13 @@ void fc_apps_set_state_native(wasm_exec_env_t env, const char *s, int32_t len)
     memcpy(a->state, next, sizeof(next));
     pthread_mutex_unlock(&s_lock);
     if (changed) {
+#ifdef FC_APP_STATE_LOG_BUFFER_ONLY
+        char line[FC_LOG_TEXT_MAX + 1];
+        snprintf(line, sizeof(line), "app %s: %s", a->name, next);
+        fc_log_put(FC_LOG_INFO, line);
+#else
         fc_port_log(FC_LOG_INFO, "app %s: %s", a->name, next);
+#endif
         fc_agent_notify_status(); /* rate-limited by the status thread */
     }
 }
@@ -552,18 +559,18 @@ static void guard_forget(const char *name, int all)
     pthread_mutex_unlock(&s_guard_lock);
 }
 
-/* How many of the agent's statuses were accepted (fc_apps_status_ok), 0
+/* Accepted status reports and subsequent successful rendered polls, 0
  * before the first: without an agent, an app is past its start on time
  * alone. A long, not 64 bits: Zephyr's ESP32-S3 has no 8-byte atomics. */
-static long s_status_oks;
+static long s_management_oks;
 
-void fc_apps_status_ok(void)
+void fc_apps_management_ok(void)
 {
-    __atomic_add_fetch(&s_status_oks, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&s_management_oks, 1, __ATOMIC_RELAXED);
 }
 
 /* On the app's thread: once it has been up GUARD_SETTLE_MS, and the agent
- * has had a status accepted since it started, it is past the start. An app
+ * has reached Flight Control since it started, it is past the start. An app
  * that leaves the agent no heap to reach Flight Control stays in its start
  * until the agent restarts the device (fc_apps_note_silent_restart). */
 static void guard_tick(app_t *a, int64_t now)
@@ -571,7 +578,7 @@ static void guard_tick(app_t *a, int64_t now)
     if (a->settled || now < a->settle_at_ms) {
         return;
     }
-    long oks = __atomic_load_n(&s_status_oks, __ATOMIC_RELAXED);
+    long oks = __atomic_load_n(&s_management_oks, __ATOMIC_RELAXED);
     if (oks > 0 && oks == a->begun_oks) {
         a->settle_at_ms = now + 5000; /* not yet: look again */
         return;
@@ -1917,7 +1924,7 @@ static void app_start(app_t *a, const char *why)
     __atomic_store_n(&a->runner_done, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&a->stack_unused, -1L, __ATOMIC_RELAXED);
     a->stack_at_ms = 0;
-    a->begun_oks = __atomic_load_n(&s_status_oks, __ATOMIC_RELAXED);
+    a->begun_oks = __atomic_load_n(&s_management_oks, __ATOMIC_RELAXED);
     a->settle_at_ms = fc_apps_now_ms() + s_settle_ms;
     a->settled = 0;
     set_status(a, "Preparing", NULL);
@@ -2019,7 +2026,7 @@ int fc_apps_saved_delay_s(void)
         return -1;
     }
     int64_t left = s_init_ms + BOOT_APPS_WAIT_MS - fc_apps_now_ms();
-    return __atomic_load_n(&s_status_oks, __ATOMIC_RELAXED) > 0 || left <= 0 ? 0 : (int)((left + 999) / 1000);
+    return __atomic_load_n(&s_management_oks, __ATOMIC_RELAXED) > 0 || left <= 0 ? 0 : (int)((left + 999) / 1000);
 }
 
 int fc_apps_start_saved(void)

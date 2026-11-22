@@ -146,7 +146,7 @@ typedef struct app {
     char status[12]; /* Preparing, Running, Completed, Error, Stopped */
     int restarts;
     int64_t settle_at_ms; /* when it is past its start (fc_apps.c, guard) */
-    long begun_oks;       /* statuses accepted when app_start started it, for the guard */
+    long begun_oks;       /* successful management exchanges when app_start started it, for the guard */
     char state[64];
     char error[96];
 

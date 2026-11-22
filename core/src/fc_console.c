@@ -40,7 +40,7 @@
 /* Flight Control lists a session until the device's stream for it closes:
  * one whose stream died with a restart stays listed, beside the new ones,
  * and one whose user left before the device came stays listed for good
- * (docs/FLIGHTCTL-LIMITATIONS.md, 15). The device remembers a hash of each session it
+ * (docs/FLIGHTCTL-LIMITATIONS.md, 14). The device remembers a hash of each session it
  * opened, kept across restarts, so that it never opens an old one again:
  * more than the server has been seen to list, in less RAM than 16 IDs took.
  * One it forgot would be opened again at each poll, with its stream and
@@ -51,7 +51,7 @@
  * through TLS (send_payload, the stream, mbedTLS); the buffers of a
  * command's output are on the heap (obuf_t). The stack it never used is
  * logged when a session ends. */
-#if defined(ESP_PLATFORM) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
+#if defined(ESP_PLATFORM) || defined(__NuttX__) || (defined(__ZEPHYR__) && !defined(CONFIG_ARCH_POSIX))
 #define THREAD_STACK (8 * 1024)
 #else
 #define THREAD_STACK (64 * 1024) /* a host's libc (time zones, under sanitizers) takes more */
