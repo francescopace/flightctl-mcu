@@ -1,8 +1,18 @@
 # Tests and CI
 
-[CI](../.github/workflows/ci.yml) builds the host agent, ESP-IDF firmware, Zephyr targets and example WASM apps on code pushes to `main`. Firmware artifacts contain no credentials. The CI secure builds require [signing](SECURITY.md#signing-a-ci-build). Artifacts are retained for 90 days.
+[CI](../.github/workflows/ci.yml) builds the host agent, ESP-IDF firmware, Zephyr and NuttX targets, and example WASM apps on pull requests and code pushes to `main`. The NuttX jobs build the ESP32-S3 N16R8 with MCUboot and the NUCLEO-F767ZI with the ST-LINK network profile. Firmware artifacts contain no credentials. The CI secure builds require [signing](SECURITY.md#signing-a-ci-build). Artifacts are retained for 90 days.
 
 The [end-to-end workflow](../.github/workflows/e2e.yml) uses those artifacts and builds its own broken rollback and crash-test images. It runs nightly on the latest successful CI commit unless that commit already passed. To run it manually, select a CI run in Actions or rerun that run's `e2e` job.
+
+## NuttX release checks on hardware
+
+Before each release, run these checks on both the [ESP32-S3 N16R8](NUTTX.md#verified-ota-on-the-n16r8) and the [NUCLEO-F767ZI over ST-LINK](NUTTX.md#signed-firmware-updates-on-arm). Start with an enrolled board running a signed app. Record its Flight Control device name, running image digest, boot ID and an observable app output.
+
+| Check | Pass condition on each board |
+|---|---|
+| Update | Deploy the release candidate through Flight Control. After reboot, the device reports the candidate digest, confirms the image and reaches `UpToDate`. |
+| Rollback | Deploy a trial image that boots but cannot reach Flight Control to confirm itself. MCUboot restores the confirmed candidate automatically. The agent reports the rollback and the candidate digest. |
+| Identity and app | After each transition, the original device returns to `Online` with a new boot ID and no new enrollment. The same app resumes and produces fresh output. |
 
 ## Unit tests and fuzzing
 

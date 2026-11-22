@@ -138,6 +138,45 @@ jobs:
           if [[ "$TARGET" == esp32c3 ]]; then fixture=adc; fi
           ./run-ci.sh "$fixture" build/merged-binary.bin
 
+  nuttx:
+    name: NuttX (${{ matrix.board }}, MCUboot)
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.3
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [esp32s3-n16r8, nucleo-f767zi]
+    env:
+      BOARD: ${{ matrix.board }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install NuttX build tools
+        shell: bash
+        run: |
+          packages=(kconfig-frontends genromfs xxd)
+          if [[ "$BOARD" == nucleo-f767zi ]]; then
+            packages+=(gcc-arm-none-eabi)
+          fi
+          apt-get update
+          apt-get install -y --no-install-recommends "${packages[@]}"
+      - name: Build firmware and check the MCUboot images
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" >/dev/null
+          python -m pip install imgtool==2.2.0
+          export NUTTX_WORK="$PWD/build/nuttx-ci"
+          if [[ "$BOARD" == esp32s3-n16r8 ]]; then
+            OTA=1 port/nuttx/build.sh
+            test -s "$NUTTX_WORK/nuttx/mcuboot-esp32s3.bin"
+            test -s "$NUTTX_WORK/nuttx/nuttx-ota.bin"
+          else
+            port/nuttx/build.sh
+            export MCUBOOT_SIGNING_KEY="$RUNNER_TEMP/nucleo-ci.pem"
+            imgtool keygen -k "$MCUBOOT_SIGNING_KEY" -t ecdsa-p256
+            port/nuttx/sign-arm.sh "$BOARD" "$NUTTX_WORK/nuttx/nuttx.bin"
+            imgtool verify -k "$MCUBOOT_SIGNING_KEY" "$NUTTX_WORK/nuttx/nuttx.ota.bin"
+          fi
+
   zephyr:
     name: Zephyr (native_sim)
     runs-on: ubuntu-latest
@@ -234,7 +273,7 @@ jobs:
   # The end-to-end tests on this run's builds: skipped on the first attempt,
   # run by re-running this job once everything else has passed.
   e2e:
-    needs: [build, tests, firmware, zephyr, zephyr-qemu, zephyr-esp32s3]
+    needs: [build, tests, firmware, nuttx, zephyr, zephyr-qemu, zephyr-esp32s3]
     if: github.run_attempt > 1
     permissions:
       contents: read
