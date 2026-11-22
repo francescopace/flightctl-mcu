@@ -4,6 +4,7 @@
     tools/provision.py --port /dev/cu.usbmodem1101      write it to a board
     tools/provision.py --image flash.bin                put it into a merged flash image (emulator)
     tools/provision.py --out creds.bin                  just the partition
+    tools/provision.py --format nuttx --out factory.bin  for a NuttX Espressif board
     tools/provision.py --format zephyr --image flash.bin    for the Zephyr build (port/zephyr/)
     tools/provision.py --format zephyr --board esp32s3_devkitc_procpu --port /dev/cu.usbmodem1101
                                                          a Zephyr build on an Espressif board
@@ -26,9 +27,11 @@ Contents (NVS namespace "fc"):
 and a JSON object with the same fields. Its place in the flash comes from the
 board's overlay, port/zephyr/boards/<--board>.overlay (default native_sim_native_64, whose flash
 image is the file given to zephyr.exe --flash=).
+--format nuttx uses FCC1 in a 16 KiB partition at 0x2fc000 on the supported Espressif boards.
+It requires the application signing public key and factory Wi-Fi credentials.
 
 The firmware is the same for every installation: change the credentials, not the build.
-The partition is generated with ESP-IDF's NVS partition generator: the pip package
+The ESP-IDF partition is generated with its NVS partition generator: the pip package
 esp-idf-nvs-partition-gen when it is installed, else the generator in the espressif/idf
 image ($IDF_IMAGE, default espressif/idf:v6.1.1). It holds the enrollment key: treat the output
 like the key itself.
@@ -128,8 +131,8 @@ def zephyr_partition(board):
     return int(m.group(1), 0), int(m.group(2), 0)
 
 
-def build_zephyr_partition(args, size):
-    """ "FCC1", the JSON's length (32 bits, little-endian), the JSON (port/zephyr/src/main.c)."""
+def build_fcc1_partition(args, size):
+    """Build the FCC1 factory partition shared by Zephyr and NuttX."""
     secrets = os.path.abspath(args.secrets)
     creds = {}
     for key, name in (("ca", "ca.crt"), ("enroll_crt", "enroll.crt"), ("enroll_key", "enroll.key")):
@@ -140,6 +143,8 @@ def build_zephyr_partition(args, size):
     if os.path.exists(os.path.join(secrets, "signing.pub")):
         with open(os.path.join(secrets, "signing.pub")) as f:
             creds["signing_pub"] = f.read()
+    elif args.format == "nuttx":
+        sys.exit("NuttX requires signing.pub to verify applications")
     else:
         print("warning: no signing.pub, the device will not check image signatures", file=sys.stderr)
     host, port = args.server.rsplit(":", 1) if ":" in args.server else (args.server, "8443")
@@ -152,9 +157,16 @@ def build_zephyr_partition(args, size):
     ssid, password, where = args.wifi_ssid, args.wifi_password, "given"
     if args.pop:
         creds["prov_pop"] = args.pop
-    if not ssid and not args.pop and not args.board.startswith("native_sim"):
+    wired_network = args.format == "nuttx" and args.board in ("nucleo-f767zi", "nucleo-f767zi-eth", "nrf7002dk")
+    if wired_network:
+        if args.board in ("nucleo-f767zi", "nucleo-f767zi-eth"):
+            creds["storage_format"] = "nuttx-nvs"
+        ssid = None
+    if not wired_network and not ssid and not args.pop and (args.format == "nuttx" or not args.board.startswith(("native_sim", "nucleo_f767zi"))):
         wifi = os.path.join(ROOT, "port", "espidf", "sdkconfig.wifi")
         ssid, password, where = sdkconfig_local("FC_WIFI_SSID", wifi), sdkconfig_local("FC_WIFI_PASSWORD", wifi), wifi
+    if args.format == "nuttx" and not wired_network and not ssid:
+        sys.exit("NuttX requires a Wi-Fi SSID")
     if ssid:
         creds["wifi_ssid"] = ssid
         creds["wifi_pass"] = password or ""
@@ -165,7 +177,7 @@ def build_zephyr_partition(args, size):
     data = b"FCC1" + len(body).to_bytes(4, "little") + body
     if len(data) > size:
         sys.exit(f"credentials are {len(data)} bytes, the partition holds {size}")
-    print(f"fc_creds (zephyr): {host}:{port}, labels {args.labels}, "
+    print(f"fc_creds ({args.format}): {host}:{port}, labels {args.labels}, "
           f"signing key {'yes' if 'signing_pub' in creds else 'no'}")
     return data + b"\xff" * (size - len(data))
 
@@ -195,8 +207,8 @@ def write_provisioned_file(path, data, offset=None):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--format", choices=("esp-idf", "zephyr"), default="esp-idf")
-    p.add_argument("--board", default="native_sim_native_64", help="Zephyr board, as in port/zephyr/boards/")
+    p.add_argument("--format", choices=("esp-idf", "zephyr", "nuttx"), default="esp-idf")
+    p.add_argument("--board", help="Zephyr board (default native_sim_native_64) or NuttX board profile (see port/nuttx/build.sh)")
     p.add_argument("--secrets", default=os.path.join(ROOT, ".secrets"))
     p.add_argument("--server")
     p.add_argument("--labels")
@@ -217,11 +229,24 @@ def main():
     if args.pop is not None and not 8 <= len(args.pop) <= 63:
         p.error("--pop: 8 to 63 characters (it is also the provisioning access point's password)")
 
-    if args.format == "zephyr":
+    if args.format == "nuttx":
+        boards = ("esp32-devkitc", "esp32-devkitc-rev1", "esp32c3-devkit", "esp32c5-devkitc", "esp32c6-devkitc",
+                  "esp32s3-n4r2", "esp32s3-n8r8", "esp32s3-n16r8", "pico2w", "nucleo-f767zi", "nucleo-f767zi-eth", "nrf7002dk")
+        if args.board and args.board not in boards:
+            p.error("unsupported NuttX board profile")
+        if args.pop:
+            p.error("NuttX requires factory Wi-Fi credentials")
+        if args.board in ("pico2w", "nucleo-f767zi", "nucleo-f767zi-eth", "nrf7002dk") and args.port:
+            p.error("use --out or --image for Arm boards")
+        offset = {"pico2w": 0x300000, "nucleo-f767zi": 0x20000, "nucleo-f767zi-eth": 0x20000, "nrf7002dk": 0xfc000}.get(args.board, 0x2FC000)
+        size = 0x4000
+        data = build_fcc1_partition(args, size)
+    elif args.format == "zephyr":
+        args.board = args.board or "native_sim_native_64"
         if args.port and not args.board.startswith("esp32"):
             p.error("--format zephyr --port: Espressif boards only (esptool); for the others --image or --out")
         offset, size = zephyr_partition(args.board)
-        data = build_zephyr_partition(args, size)
+        data = build_fcc1_partition(args, size)
     else:
         offset, size = partition()
         data = build_partition(args, size)

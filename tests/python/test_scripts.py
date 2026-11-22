@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
@@ -70,9 +71,66 @@ class SignTest(unittest.TestCase):
         self.assertEqual(sign.signature_tag("sha256:abc"), "sha256-abc.sig")
 
 
+class C5SimpleBootTest(unittest.TestCase):
+    def test_rom_digest_preserves_xip_offset(self):
+        image_tool = load("c5_image", "port/nuttx/c5/image.py")
+        image = bytearray(48)
+        image[0:2] = bytes((0xe9, 1))
+        image[12] = 23
+        struct.pack_into("<II", image, 24, 0x40800000, 4)
+        image[47] = 0xef
+        image += struct.pack("<II", 0, 64) + bytes(64)
+        xip = struct.pack("<II", 0x42000000, 4) + b"code"
+        image += xip
+        result = image_tool.add_digest(image)
+        self.assertEqual(result[23], 1)
+        self.assertEqual(result[48:80], hashlib.sha256(result[:48]).digest())
+        self.assertEqual(struct.unpack_from("<II", result, 80), (0, 32))
+        self.assertEqual(result[120:], xip)
+        self.assertEqual(image_tool.add_digest(bytearray(result)), result)
+
+
 class ProvisionTest(unittest.TestCase):
     def test_partition_from_the_table(self):
         self.assertEqual(provision.partition(), (0x1a000, 0x6000))
+
+    def test_c5_factory_partition_matches_flash_capacity(self):
+        self.assertEqual(provision.zephyr_partition("esp32c5_mini"), (0x3b0000, 0x4000))
+        self.assertEqual(provision.zephyr_partition("esp32c5_devkitc_hpcore"), (0x7b0000, 0x4000))
+
+    def test_nuttx_factory_layout(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d, "image")
+            for name in ("ca.crt", "enroll.crt", "enroll.key", "signing.pub"):
+                Path(d, name).write_text(name)
+            for board in (None, "esp32-devkitc", "esp32-devkitc-rev1", "esp32c3-devkit", "esp32c5-devkitc", "esp32c6-devkitc",
+                          "esp32s3-n4r2", "esp32s3-n8r8", "esp32s3-n16r8", "pico2w", "nucleo-f767zi", "nucleo-f767zi-eth", "nrf7002dk"):
+                board_args = ["--board", board] if board else []
+                wifi_args = [] if board in ("nucleo-f767zi", "nucleo-f767zi-eth", "nrf7002dk") else ["--wifi-ssid", "test"]
+                with self.subTest(board=board_args):
+                    out.write_bytes(b"firmware")
+                    subprocess.run([sys.executable, provision.__file__, "--format", "nuttx",
+                                    *board_args, "--server", "agent.example:9443", "--labels", "site=test",
+                                    *wifi_args, "--secrets", d, "--image", str(out)],
+                                   capture_output=True, check=True)
+                    image = out.read_bytes()
+                    offset = {"pico2w": 0x300000, "nucleo-f767zi": 0x20000,
+                              "nucleo-f767zi-eth": 0x20000, "nrf7002dk": 0xfc000}.get(board, 0x2fc000)
+                    self.assertEqual(len(image), offset + 0x4000)
+                    blob = image[offset:]
+                    self.assertEqual(blob[:4], b"FCC1")
+                    n = int.from_bytes(blob[4:8], "little")
+                    creds = json.loads(blob[8:8+n])
+                    self.assertEqual(creds["signing_pub"], "signing.pub")
+                    self.assertEqual(creds["server_port"], 9443)
+                    if not wifi_args:
+                        self.assertNotIn("wifi_ssid", creds)
+                        self.assertNotIn("wifi_pass", creds)
+                        if board in ("nucleo-f767zi", "nucleo-f767zi-eth"):
+                            self.assertEqual(creds["storage_format"], "nuttx-nvs")
+                    else:
+                        self.assertEqual(creds["wifi_ssid"], "test")
+                    self.assertEqual(blob[8+n:], b"\xff" * (len(blob) - 8 - n))
 
     def test_partition_and_image_are_private_when_replacing_a_shared_file(self):
         with tempfile.TemporaryDirectory() as d:
@@ -333,6 +391,51 @@ class SbomTest(unittest.TestCase):
         for invalid in (header[:145], bytes(len(header)), self.app_header("")):
             with self.subTest(header=invalid), self.assertRaisesRegex(SystemExit, "app.bin"):
                 sbom.image_idf_version(invalid, "app.bin")
+
+    def test_nuttx_release_accepts_only_the_compact_image_for_its_board(self):
+        with patch.dict(sys.modules, sbom=sbom):
+            push = load("fw_push", "tools/fw-push.py")
+        platform = "nuttx-esp32s3-n16r8"
+        board = platform.encode()
+        header = bytearray(32)
+        struct.pack_into("<IIHHI", header, 0, 0x96f3b83d, 0, len(header), 8 + len(board), 4)
+        tag = struct.pack("<HHHH", 0x6908, 8 + len(board), 0xa0, len(board)) + board
+        image = header + b"body" + tag + struct.pack("<HHHH", 0x6907, 40, 0x10, 32) + bytes(32)
+        push.validate_nuttx_image(platform, image, "firmware.bin")
+        for target, data in ((platform, image[:-1]), (platform, image + bytes(4096)),
+                             ("nuttx-esp32s3-n8r8", image)):
+            with self.subTest(target=target, size=len(data)), self.assertRaises(SystemExit):
+                push.validate_nuttx_image(target, data, "firmware.bin")
+
+    def test_nuttx_sbom_lists_dependencies_of_the_selected_hardware(self):
+        expected = {
+            "nuttx-nucleo-f767zi": set(),
+            "nuttx-nrf7002dk": {"littlefs", "open-amp", "libmetal"},
+            "nuttx-pico2w": {"littlefs", "CYW43439 Wi-Fi firmware"},
+            "nuttx-esp32s3-n16r8": {"littlefs", "esp-hal-3rdparty", "mcuboot"},
+        }
+        board_packages = set.union(*expected.values())
+        for board, names in expected.items():
+            with self.subTest(board=board):
+                _, packages = sbom.release_inventory([], [], [board])
+                self.assertEqual({p["name"] for p in packages} & board_packages, names)
+
+    def test_arm_release_requires_board_and_counter_in_the_signed_region(self):
+        with patch.dict(sys.modules, sbom=sbom):
+            push = load("fw_push", "tools/fw-push.py")
+        for board, header_size in (("nuttx-pico2w", 512), ("nuttx-nrf7002dk", 512),
+                                   ("nuttx-nucleo-f767zi", 1024), ("nuttx-nucleo-f767zi-eth", 1024)):
+            name = board.encode()
+            protected = struct.pack("<HHHHIHH", 0x6908, 16 + len(name), 0x50, 4, 0, 0xa0, len(name)) + name
+            header = bytearray(header_size)
+            struct.pack_into("<IIHHI", header, 0, 0x96f3b83d, 0, header_size, len(protected), 4)
+            image = header + b"body" + protected + struct.pack("<HH", 0x6907, 8) + b"test"
+            with self.subTest(board=board):
+                push.validate_nuttx_image(board, image, "ota.bin")
+                for invalid in (image + bytes(256), image.replace(name, b"?" * len(name)),
+                                image[:header_size + 8] + bytes(4) + image[header_size + 12:]):
+                    with self.assertRaises(SystemExit):
+                        push.validate_nuttx_image(board, invalid, "ota.bin")
 
     def test_fw_push_checks_all_platforms_before_contacting_registry(self):
         with patch.dict(sys.modules, sbom=sbom):

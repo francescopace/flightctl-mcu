@@ -3,7 +3,7 @@
 index are built from, at the versions this repository pins.
 
     tools/sbom.py --digest sha256:<index> --ref <registry>/flightctl-mcu/fw:v3 \\
-        [--esp-idf esp32c3,esp32s3 ...] [--zephyr esp32s3_devkitc ...] [-o FILE]
+        [--esp-idf esp32c3,esp32s3 ...] [--zephyr esp32s3_devkitc ...] [--nuttx nuttx-esp32s3-n16r8] [-o FILE]
     tools/sbom.py ... --upload https://trustify.example.com   (or $TRUSTIFY_URL)
 
 tools/fw-push.py makes one for each release it pushes (docs/SBOM.md). Its root
@@ -39,7 +39,17 @@ MBEDTLS_IN_ESP_IDF = {"5.5.6": "3.6.7", "6.0.3": "4.1.1", "6.1.1": "4.1.1"}
 # Zephyr modules each board's image is built with, besides those of every build.
 ZEPHYR_COMMON = ("mbedtls", "tf-psa-crypto", "mcuboot", "littlefs", "picolibc", "zcbor")
 ZEPHYR_BOARD_MODULES = {
+    "esp32_devkitc": ("hal_espressif",),
+    "esp32c3_devkitm": ("hal_espressif",),
+    "esp32c5-mini": ("hal_espressif",),
+    "esp32c5_devkitc": ("hal_espressif",),
+    "esp32c6_devkitc": ("hal_espressif",),
+    "esp32s3-mini-n4r2": ("hal_espressif",),
     "esp32s3_devkitc": ("hal_espressif",),
+    "nucleo_f767zi": ("hal_stm32", "cmsis", "cmsis_6"),
+    "nucleo_f767zi-stlink": ("hal_stm32", "cmsis", "cmsis_6"),
+    "nrf7002dk_nrf5340_cpuapp": ("hal_nordic", "nrf_wifi", "hostap", "open-amp", "libmetal", "cmsis", "cmsis_6"),
+    "rpi_pico2_rp2350a_m33_0_w": ("hal_rpi_pico", "hal_infineon", "cmsis", "cmsis_6"),
 }
 
 
@@ -203,25 +213,62 @@ def zephyr_components(platforms):
                      cpe_id=cpe("zephyrproject", "zephyr", v, part="o"), license_id="Apache-2.0")]
     revs = west_revisions()
     out += [zephyr_module(m, revs) for m in modules]
+    if "nrf_wifi" in modules:
+        manifest = "third_party/zephyr-ws/modules/lib/nrf_wifi/zephyr/module.yml"
+        version = grep(manifest, r"path: wifi_fw_bins/default/nrf70\.bin\n(?:      [^\n]+\n)*?      version: '([^']+)'")
+        radio = component("nRF70 Wi-Fi firmware", version, f"pkg:generic/nordic/nrf70-wifi@{version}", "firmware")
+        radio["licenses"] = [{"license": {"name": "LicenseRef-Nordic-5-Clause"}}]
+        out.append(radio)
     return out
 
 
-def release_inventory(esp_idf, zephyr):
+def release_inventory(esp_idf, zephyr, nuttx=()):
     components = core_components() + esp_idf_components(esp_idf)
     if zephyr:
         components += zephyr_components(zephyr)
     platforms = [f"esp-idf/{chip}" for chip, _ in esp_idf] + [f"zephyr/{board}" for board in zephyr]
+    if nuttx:
+        v = grep("port/nuttx/build.sh", r"git clone --branch nuttx-([0-9.]+)")
+        tls = grep("port/nuttx/build.sh", r'export FC_MBEDTLS="\$work/mbedtls-([0-9.]+)"')
+        # Revisions selected by the pinned NuttX and nuttx-apps release.
+        espressif = any(board.startswith("nuttx-esp32") for board in nuttx)
+        if espressif:
+            bootutil = "e36d3c8d6ca5e0ed1f510f2a7d110f405a7c396b"
+            hal = "b90b1837cb5ad24747deb4c895246037cc206ce5"
+            components.extend([
+                component("mcuboot", bootutil, f"pkg:github/mcu-tools/mcuboot@{bootutil}", license_id="Apache-2.0",
+                          description="Boot utility linked into the NuttX application"),
+                component("esp-hal-3rdparty", hal, f"pkg:github/espressif/esp-hal-3rdparty@{hal}", license_id="Apache-2.0"),
+            ])
+        if espressif or "nuttx-pico2w" in nuttx or "nuttx-nrf7002dk" in nuttx:
+            components.append(component("littlefs", "2.5.1", "pkg:github/littlefs-project/littlefs@v2.5.1", license_id="BSD-3-Clause"))
+        if "nuttx-nrf7002dk" in nuttx:
+            for name in ("open-amp", "libmetal"):
+                components.append(component(name, "2025.10.0", f"pkg:github/OpenAMP/{name}@v2025.10.0",
+                                            license_id="BSD-3-Clause"))
+        if "nuttx-pico2w" in nuttx:
+            components.append(component("CYW43439 Wi-Fi firmware", "7.95.49", "pkg:generic/infineon/cyw43439@7.95.49",
+                                        "firmware"))
+        components.extend([
+            component("tf-psa-crypto", "1.1.1", "pkg:github/mbed-tls/tf-psa-crypto@v1.1.1",
+                      license_id="Apache-2.0", ref="nuttx-tf-psa-crypto-1.1.1"),
+            component("nuttx", v, f"pkg:github/apache/nuttx@nuttx-{v}", "operating-system", license_id="Apache-2.0"),
+            component("nuttx-apps", v, f"pkg:github/apache/nuttx-apps@nuttx-{v}", license_id="Apache-2.0"),
+            component("mbedtls", tls, f"pkg:github/mbed-tls/mbedtls@v{tls}", license_id="Apache-2.0",
+                      ref=f"nuttx-mbedtls-{tls}", cpe_id=cpe("trustedfirmware", "mbed_tls", tls)),
+        ])
+        platforms.extend(f"nuttx/{board}" for board in nuttx)
     return platforms, components
 
 
-def make_sbom(ref, digest, esp_idf=(), zephyr=()):
+def make_sbom(ref, digest, esp_idf=(), zephyr=(), nuttx=()):
     images = []
     for spec in esp_idf:
         chip, _, path = spec.partition("=")
         path = path or os.path.join(ROOT, "port", "espidf", f"build-{chip}", "flightctl_mcu_fw.bin")
         with open(path, "rb") as image:
             images.append((chip, image_idf_version(image.read(176), path)))
-    return sbom_document(ref, digest, *release_inventory(images, zephyr))
+    return sbom_document(ref, digest, *release_inventory(images, zephyr, nuttx))
 
 
 def sbom_document(ref, digest, platforms, comps):
@@ -273,12 +320,13 @@ def main():
     p.add_argument("--digest", required=True, help="the index's digest, sha256:...")
     p.add_argument("--esp-idf", default="", help="comma-separated chip or chip=app.bin (default: build-<chip>)")
     p.add_argument("--zephyr", default="", help="Zephyr platforms (CONFIG_FC_FW_PLATFORM), comma separated")
+    p.add_argument("--nuttx", default="", help="NuttX firmware platform names, comma separated")
     p.add_argument("-o", "--out", help="write it here (default: stdout)")
     p.add_argument("--upload", default=os.environ.get("TRUSTIFY_URL"), help="Trustify's URL ($TRUSTIFY_URL)")
     a = p.parse_args()
     split = lambda s: [x for x in s.split(",") if x]
     try:
-        sbom = make_sbom(a.ref, a.digest, split(a.esp_idf), split(a.zephyr))
+        sbom = make_sbom(a.ref, a.digest, split(a.esp_idf), split(a.zephyr), split(a.nuttx))
     except OSError as e:
         p.exit(1, f"{e}\n")
     text = json.dumps(sbom, indent=2) + "\n"

@@ -18,7 +18,7 @@ and build-esp32s3-r8[-<variant>] (octal PSRAM) as platform esp32s3-r8.
 PLATFORM=FILE instead of a chip pushes FILE for that platform: a Zephyr build
 signed for MCUboot (zephyr.signed.bin), for the board whose
 CONFIG_FC_FW_PLATFORM is PLATFORM. Its manifest says os "zephyr" and its layer
-application/vnd.zephyr.mcuboot-image.
+application/vnd.zephyr.mcuboot-image. For NuttX pass nuttx-esp32s3-<module>=nuttx-ota.bin or nuttx-<arm-board>=nuttx.ota.bin.
 
 --delta-from TAG (a tag or digest in the same repository, repeatable): also
 push, for each chip, a delta from that release's image to this one. A device
@@ -47,6 +47,7 @@ import json
 import os
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -231,6 +232,32 @@ def platform_of(build_dir):
     return target.group(1) + ("-r8" if re.search(r"^CONFIG_SPIRAM_MODE_OCT=y", cfg, re.M) else "")
 
 
+def validate_nuttx_image(chip, data, path):
+    # Keep a padded bootstrap image, or one for a different PSRAM/flash
+    # configuration, out of the release before contacting the registry.
+    board = chip.encode("ascii")
+    if len(data) < 32 or data[:4] != bytes.fromhex("3db8f396"):
+        sys.exit(f"{path}: missing MCUboot header")
+    header, protected, body = struct.unpack_from("<HHI", data, 8)
+    start = header + body
+    arm_headers = {"nuttx-nrf7002dk": 512, "nuttx-nucleo-f767zi": 1024,
+                   "nuttx-nucleo-f767zi-eth": 1024, "nuttx-pico2w": 512}
+    # The Arm signing profile also includes a protected security counter.
+    counter = b""
+    if chip in arm_headers:
+        counter = data[start + 4:start + 12]
+        if len(counter) != 8 or struct.unpack_from("<HH", counter) != (0x50, 4):
+            sys.exit(f"{path}: missing protected security counter")
+    tag = struct.pack("<HH", 0x6908, 8 + len(counter) + len(board)) + counter
+    tag += struct.pack("<HH", 0xa0, len(board)) + board
+    end = start + protected
+    if (header != arm_headers.get(chip, 32) or not body or data[start:end] != tag or end + 4 > len(data)):
+        sys.exit(f"{path}: missing protected MCUboot platform {chip}")
+    magic, size = struct.unpack_from("<HH", data, end)
+    if magic != 0x6907 or size < 4 or end + size != len(data):
+        sys.exit(f"{path}: use the unpadded nuttx-ota.bin")
+
+
 def main():
     args = sys.argv[1:]
     variant, delta_from = "", []
@@ -256,7 +283,7 @@ def main():
 
     # Validate the complete inventory before the first registry request. Keep
     # the bytes checked here so a concurrent rebuild cannot change the upload.
-    images, esp_idf, zephyr = [], [], []
+    images, esp_idf, zephyr, nuttx = [], [], [], []
     for spec in chips:
         chip, explicit_image, path = spec.partition("=")
         if not explicit_image:
@@ -265,22 +292,27 @@ def main():
             data = Path(path).read_bytes()
         except OSError as e:
             sys.exit(str(e))
-        if explicit_image:
+        if explicit_image and chip.startswith("nuttx-"):
+            validate_nuttx_image(chip, data, path)
+            nuttx.append(chip)
+            images.append((chip, "nuttx", path, data))
+        elif explicit_image:
             zephyr.append(chip)
             images.append((chip, "zephyr", path, data))
         else:
             esp_idf.append((chip, sbom.image_idf_version(data, path)))
             images.append((chip, "esp-idf", path, data))
-    inventory = sbom.release_inventory(esp_idf, zephyr)
+    inventory = sbom.release_inventory(esp_idf, zephyr, nuttx)
 
     base = registry_client.base_url(host)
     empty = push_blob(base, repo, EMPTY)
     py = detools_python(root) if delta_from else None
     entries, elfs = [], []
     for chip, platform_os, path, data in images:
-        layer_type = LAYER_TYPE if platform_os == "esp-idf" else ZEPHYR_LAYER_TYPE
+        layer_type = {"esp-idf": LAYER_TYPE, "zephyr": ZEPHYR_LAYER_TYPE,
+                      "nuttx": "application/vnd.nuttx.mcuboot-image"}[platform_os]
         digest = push_blob(base, repo, data)
-        elf = "zephyr.elf" if platform_os == "zephyr" else "flightctl_mcu_fw.elf"
+        elf = {"nuttx": "nuttx", "zephyr": "zephyr.elf", "esp-idf": "flightctl_mcu_fw.elf"}[platform_os]
         elfs.append((chip, os.path.join(os.path.dirname(path), elf), digest))
         # The whole image first: firmware that knows nothing of deltas takes
         # the first layer.
