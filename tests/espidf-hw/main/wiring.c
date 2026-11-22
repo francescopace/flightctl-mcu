@@ -15,14 +15,9 @@ static void fail(const char *reason)
 #define CHECK(expr) do { if (!(expr)) fail(#expr); } while (0)
 
 void check_adc(const fc_hw_t *hw);
+void check_temperature(const fc_hw_t *hw);
 
 static const fc_hw_t *hw;
-
-/* The fixture links the app hardware without the agent's internal die sensor. */
-int fc_port_temperature(float *celsius)
-{
-    return FC_HW_ENOTSUP;
-}
 
 static uint8_t sht31_crc(const uint8_t *word)
 {
@@ -135,6 +130,7 @@ static void check_button_and_outputs(void)
 void app_main(void)
 {
     hw = hw_espidf();
+    check_temperature(hw);
     check_i2c();
     check_spi();
     check_uart();

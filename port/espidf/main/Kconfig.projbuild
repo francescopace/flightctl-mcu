@@ -52,12 +52,12 @@ config FC_LABELS
     default "site=lab,app=alarm"
 
 config FC_STATUS_INTERVAL
-    int "Status update interval (s)"
+    int "Status sampling interval (s)"
     default 120
     help
-        Changes are reported right away; this is the heartbeat. Flight
-        Control marks a device Unknown after 5 minutes without a status, so
-        keep it well below 300.
+        The agent checks local status at this interval and sends changed
+        fields. Notifications can trigger an earlier check. Rendered-spec
+        polls tell Flight Control that an idle device is online.
 
 config FC_METRICS_INTERVAL
     int "Counters in customInfo read every (s)"

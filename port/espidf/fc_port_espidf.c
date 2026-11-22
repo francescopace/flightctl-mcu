@@ -10,11 +10,7 @@
 
 #include "cJSON.h"
 #include "soc/soc_caps.h"
-#if SOC_TEMP_SENSOR_SUPPORTED
-#include "driver/temperature_sensor.h"
-#else
-#include <math.h>
-#endif
+#include "fc_temperature.h"
 #include "esp_app_desc.h"
 #include "esp_app_format.h"
 #include "esp_partition.h"
@@ -31,8 +27,6 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/timers.h"
-#include "fc_hw.h"
 #include "freertos/semphr.h"
 #include "esp_wifi.h"
 #include "fc_crypto.h"
@@ -49,14 +43,6 @@ static const char *TAG = "fc";
 static const char *hwkey_info(void);
 static void secure_boot_keys_info(cJSON *o);
 static void revoke_older_keys(void);
-#if SOC_TEMP_SENSOR_SUPPORTED
-static temperature_sensor_handle_t s_tsens;
-/* The status thread, the alarm task and WASM apps all read the sensor. On
- * the S2 a read starts a conversion and busy-waits for it, without a lock in
- * the driver: two overlapping reads can leave one spinning forever. */
-static pthread_mutex_t s_tsens_lock = PTHREAD_MUTEX_INITIALIZER;
-#endif
-
 /* nvs_flash_init() encrypts only the default partition: with NVS encryption
  * the store gets the same keys (nvs_keys partition, made by nvs_flash_init()
  * on first boot), so the device key never sits in flash in clear. */
@@ -200,130 +186,9 @@ int fc_port_espidf_init(void)
     ESP_LOGI(TAG, "security version: this image %u, the chip accepts %u and up",
              (unsigned)esp_app_get_description()->secure_version, (unsigned)esp_efuse_read_secure_version());
 #endif
-#if SOC_TEMP_SENSOR_SUPPORTED
-    temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
-    if (temperature_sensor_install(&cfg, &s_tsens) == ESP_OK) {
-        temperature_sensor_enable(s_tsens);
-    }
-#endif
+    fc_idf_temperature_init();
     return err == ESP_OK ? 0 : -1;
 }
-
-int fc_port_temperature(float *celsius)
-{
-#if SOC_TEMP_SENSOR_SUPPORTED
-    if (!s_tsens) {
-        return -1;
-    }
-    pthread_mutex_lock(&s_tsens_lock);
-    esp_err_t err = temperature_sensor_get_celsius(s_tsens, celsius);
-    pthread_mutex_unlock(&s_tsens_lock);
-    return err == ESP_OK ? 0 : -1;
-#else
-    /* No usable internal sensor (classic ESP32): a simulated 34-46 C swing
-     * over 10 minutes, so the alarm logic still has something to act on. */
-    double t = (double)(esp_timer_get_time() / 1000000) / 600.0;
-    *celsius = (float)(40.0 + 6.0 * sin(2 * M_PI * t));
-    return 0;
-#endif
-}
-
-#if SOC_TEMPERATURE_SENSOR_INTR_SUPPORT
-/* Only the timer task enters the app callback. Queued work carries the
- * subscription generation, never a pointer into a WASM runner. Odd
- * generations are armed. The sensor lock drains a callback on close. */
-static uint32_t s_tsens_generation, s_tsens_pending;
-static void (*s_tsens_notify)(void *);
-static void *s_tsens_ctx;
-
-static void temperature_dispatch(void *unused, uint32_t generation)
-{
-    pthread_mutex_lock(&s_tsens_lock);
-    uint32_t expected = generation;
-    __atomic_compare_exchange_n(&s_tsens_pending, &expected, 0, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
-    if (generation == __atomic_load_n(&s_tsens_generation, __ATOMIC_RELAXED) && s_tsens_notify) {
-        s_tsens_notify(s_tsens_ctx);
-    }
-    pthread_mutex_unlock(&s_tsens_lock);
-}
-
-static bool IRAM_ATTR temperature_interrupt(temperature_sensor_handle_t sensor,
-                                            const temperature_sensor_threshold_event_data_t *event, void *arg)
-{
-    uint32_t generation = __atomic_load_n(&s_tsens_generation, __ATOMIC_RELAXED);
-    uint32_t expected = 0;
-    BaseType_t woken = pdFALSE;
-    if ((generation & 1) && __atomic_compare_exchange_n(&s_tsens_pending, &expected, generation, false,
-                                                       __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-        if (xTimerPendFunctionCallFromISR(temperature_dispatch, NULL, generation, &woken) != pdPASS) {
-            __atomic_compare_exchange_n(&s_tsens_pending, &generation, 0, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
-        }
-    }
-    return woken == pdTRUE;
-}
-
-/* Called with the sensor disabled and locked. Restore ordinary reads even
- * after an interrupt setup failure. */
-static void temperature_disarm(void)
-{
-    temperature_sensor_event_callbacks_t off = {0};
-    temperature_sensor_register_callbacks(s_tsens, &off, NULL);
-    if (temperature_sensor_enable(s_tsens) != ESP_OK) {
-        ESP_LOGE(TAG, "cannot restore temperature sampling");
-    }
-}
-
-int fc_idf_sensor_subscribe(int id, int mode, int32_t low, int32_t high, void (*notify)(void *), void *ctx)
-{
-    if (id != -1 || mode != FC_HW_SENSOR_THRESHOLD || !s_tsens) {
-        return FC_HW_ENOTSUP;
-    }
-    /* The IDF comparator accepts integer degrees in the configured range. */
-    if (low < -10000 || high > 80000 || low >= high || low % 1000 || high % 1000) {
-        return FC_HW_EINVAL;
-    }
-    pthread_mutex_lock(&s_tsens_lock);
-    int rc = FC_HW_EBUSY;
-    if (!s_tsens_notify) {
-        rc = FC_HW_EIO;
-        if (temperature_sensor_disable(s_tsens) == ESP_OK) {
-            temperature_sensor_abs_threshold_config_t window = {.low_threshold = low / 1000, .high_threshold = high / 1000};
-            temperature_sensor_event_callbacks_t cbs = {.on_threshold = temperature_interrupt};
-            if (temperature_sensor_set_absolute_threshold(s_tsens, &window) == ESP_OK &&
-                temperature_sensor_register_callbacks(s_tsens, &cbs, NULL) == ESP_OK) {
-                s_tsens_notify = notify;
-                s_tsens_ctx = ctx;
-                __atomic_fetch_add(&s_tsens_generation, 1, __ATOMIC_RELAXED);
-                if (temperature_sensor_enable(s_tsens) == ESP_OK) {
-                    rc = 0;
-                } else {
-                    __atomic_fetch_add(&s_tsens_generation, 1, __ATOMIC_RELAXED);
-                    s_tsens_notify = NULL;
-                    s_tsens_ctx = NULL;
-                }
-            }
-            if (rc != 0) {
-                temperature_disarm();
-            }
-        }
-    }
-    pthread_mutex_unlock(&s_tsens_lock);
-    return rc;
-}
-
-void fc_idf_sensor_unsubscribe(int subscription)
-{
-    pthread_mutex_lock(&s_tsens_lock);
-    __atomic_fetch_add(&s_tsens_generation, 1, __ATOMIC_RELAXED);
-    __atomic_store_n(&s_tsens_pending, 0, __ATOMIC_RELAXED);
-    s_tsens_notify = NULL;
-    s_tsens_ctx = NULL;
-    if (temperature_sensor_disable(s_tsens) == ESP_OK) {
-        temperature_disarm();
-    }
-    pthread_mutex_unlock(&s_tsens_lock);
-}
-#endif
 
 /* NVS keys are limited to 15 characters. */
 static void nvs_key(const char *key, char out[16])
@@ -472,9 +337,6 @@ void fc_port_custom_info(void *obj)
     if (fatal != NULL) {
         cJSON_AddStringToObject(o, "lastFatalError", fatal);
     }
-#if !SOC_TEMP_SENSOR_SUPPORTED
-    cJSON_AddStringToObject(o, "temperatureSource", "simulated");
-#endif
     (void)buf;
 }
 

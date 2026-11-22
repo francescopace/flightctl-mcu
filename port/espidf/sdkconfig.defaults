@@ -26,7 +26,7 @@ CONFIG_MBEDTLS_HAVE_TIME_DATE=y
 # as long as it lived, in the middle of the heap: on an ESP32-C5 and a
 # classic ESP32, CoreMark's 64 KB no longer fitted after an app restart
 # (52 KB in one piece out of about 100 KB free); with dynamic ones all
-# but about one try in seven passed (RESULTS.md).
+# but about one try in seven passed.
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 # The device writes its certificate request (ESP-IDF 6 leaves X.509 writing
 # out unless asked); it writes no certificates.
@@ -58,4 +58,3 @@ CONFIG_WAMR_INTERP_FAST=y
 # CONFIG_WAMR_ENABLE_LIBC_WASI is not set
 CONFIG_WAMR_ENABLE_LIBC_BUILTIN=y
 # CONFIG_WAMR_ENABLE_LIB_PTHREAD is not set
-

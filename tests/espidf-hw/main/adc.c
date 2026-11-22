@@ -23,10 +23,12 @@ void check_adc(const fc_hw_t *hw)
 }
 
 #if CONFIG_IDF_TARGET_ESP32C3
+void check_temperature(const fc_hw_t *hw);
+
 void app_main(void)
 {
-    fc_hw_t hw = {0};
-    hw_bus_fill(&hw);
-    check_adc(&hw);
+    const fc_hw_t *hw = hw_espidf();
+    check_temperature(hw);
+    check_adc(hw);
 }
 #endif

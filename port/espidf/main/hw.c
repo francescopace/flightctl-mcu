@@ -9,6 +9,7 @@
  * pin; a task calls the core, never the ISR.
  */
 #include "hw.h"
+#include "../fc_temperature.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,12 +29,6 @@
 #include "soc/io_mux_reg.h"
 #include "soc/soc_caps.h"
 #include "soc/uart_pins.h"
-
-int fc_port_temperature(float *celsius);
-#if SOC_TEMPERATURE_SENSOR_INTR_SUPPORT
-int fc_idf_sensor_subscribe(int id, int mode, int32_t low, int32_t high, void (*notify)(void *), void *ctx);
-void fc_idf_sensor_unsubscribe(int subscription);
-#endif
 
 static const char *TAG = "hw";
 
@@ -215,16 +210,12 @@ static int sensor_read(const char *name, int32_t *value)
     if (strcmp(name, "die_temp") != 0) {
         return FC_HW_ENOENT;
     }
-#if SOC_TEMP_SENSOR_SUPPORTED
     float c;
-    if (fc_port_temperature(&c) != 0) {
-        return FC_HW_EIO;
+    int rc = fc_port_temperature(&c);
+    if (rc == 0) {
+        *value = (int32_t)(c * 1000.0f);
     }
-    *value = (int32_t)(c * 1000.0f);
-    return 0;
-#else
-    return FC_HW_ENOTSUP; /* the ESP32 has no sensor: its customInfo temperature is simulated */
-#endif
+    return rc;
 }
 
 /* A panic (fault, abort) or a watchdog; not a brownout, a power-on or a
@@ -256,7 +247,7 @@ const fc_hw_t *hw_espidf(void)
         .led_rgb = led_rgb,
         .led_close = led_close,
         .sensor_read = sensor_read,
-#if SOC_TEMPERATURE_SENSOR_INTR_SUPPORT
+#if SOC_TEMP_SENSOR_SUPPORTED
         .sensor_subscribe = fc_idf_sensor_subscribe,
         .sensor_unsubscribe = fc_idf_sensor_unsubscribe,
 #endif

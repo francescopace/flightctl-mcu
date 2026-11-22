@@ -19,6 +19,7 @@ idf_component_register(
          ${ROOT}/core/src/fc_prov.c
          ${ROOT}/third_party/cjson/cJSON.c
          ${ROOT}/port/espidf/fc_port_espidf.c
+         ${ROOT}/port/espidf/fc_temperature.c
          ${ROOT}/port/espidf/fc_wasm_mem.c
          ${ROOT}/port/espidf/fc_fatal_espidf.c
     INCLUDE_DIRS ${ROOT}/core/include ${ROOT}/third_party/cjson
@@ -27,9 +28,9 @@ idf_component_register(
     PRIV_REQUIRES lwip soc nvs_flash bootloader_support esp_wifi esp_netif esp_driver_tsens esp_app_format esp_timer app_update efuse esp_system spi_flash espcoredump)
 # cJSON is the core's copy, as in the host build (ESP-IDF 6 no longer has
 # one), with the agent's nesting limit: cJSON parses recursively, and its
-# default of 1000 levels overflowed the agent's 24 KB thread stacks
-# (RESULTS.md, problem 14).
+# default of 1000 levels overflowed the agent's 24 KB thread stacks.
 target_compile_definitions(${COMPONENT_LIB} PUBLIC CJSON_NESTING_LIMIT=32)
+set_property(SOURCE ${ROOT}/core/src/fc_apps.c APPEND PROPERTY COMPILE_DEFINITIONS FC_APP_STATE_LOG_BUFFER_ONLY)
 # The device's log in RAM that a restart keeps (fc_log.h).
 target_compile_definitions(${COMPONENT_LIB} PRIVATE FC_LOG_KEEP=1)
 if(CONFIG_FC_CONSOLE_CRASH)
