@@ -81,7 +81,7 @@ Each value is the chip's rated maximum. A dash means no clock is given for that 
 
 - A CPU supported by WAMR, at least 384 KB SRAM and enough free heap for the intended apps. [ESP-IDF heap](ESP-IDF.md#runtime-memory) · [Zephyr RAM](ZEPHYR.md#memory-and-ota-on-hardware) · [NuttX memory](NUTTX.md#memory-and-flash)
 - Flash for firmware, credentials and data. OTA with rollback requires two firmware slots.
-- TCP/IP, a random generator and a source of real time for TLS. Physical boards use Wi-Fi, the Nucleo’s onboard Ethernet or its ST-LINK USB network bridge.
+- TCP/IP, a random generator and a source of real time for TLS. The verified network paths are Wi-Fi, the Nucleo's onboard Ethernet or ST-LINK USB bridge, and the Nordic DK's J-Link USB bridge on NuttX.
 
 | Port and layout | Flash needed (MiB) | Firmware slots | Slot size (KiB) |
 |---|---:|---:|---:|

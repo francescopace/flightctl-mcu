@@ -10,13 +10,14 @@ Image size and memory at link time. A dash means no value is given.
 
 | Board | Firmware or build | Signed image (B) | Application flash (B) | RAM at link (B) | RAM free at link (B) | C heap size (B) | Kernel heap size (B) |
 |---|---|---:|---:|---:|---:|---:|---:|
-| S3 DevKitC N8R8 | Peripheral map and WS2812 | 1,047,479 | — | 379,328 | **1,344** | 111,920 | 94,208 |
-| ST NUCLEO-F767ZI | v0.9.6 | 493,623 | 493,460 | 307,152 | — | — | — |
-| Nordic nRF7002-DK | 0.9.5+nrf.4 | 916,511 | 916,348 | 285,164 | — | — | — |
-| Pico 2 W, MCUboot | v0.9.5 | 834,830 | — | 454,728 | — | — | — |
+| S3 DevKitC N8R8 | v0.9.7 | 1,047,495 | 1,047,204 | 379,328 | **1,344** | 111,920 | 94,208 |
+| ST NUCLEO-F767ZI, RJ45 | v0.9.7 | 501,135 | 500,972 | 304,080 | — | — | — |
+| ST NUCLEO-F767ZI, ST-LINK USB | v0.9.7 | 494,215 | 494,052 | 307,152 | — | — | — |
+| Nordic nRF7002-DK | v0.9.7 | 934,124 | 933,960 | 287,948 | — | — | — |
+| Pico 2 W, MCUboot | v0.9.7 | 843,711 | 843,548 | 455,688 | — | — | — |
 | Pico 2 W, single image | v0.9.5 | — | 830,964 | 405,600 | — | — | — |
 
-The S3 links against 380,672 B of internal DRAM. The Nucleo figure is in its 384 KiB RAM region. The Nordic build also has a 38,348 B MCUboot and a 112,344 B network-core image.
+The S3 links against 380,672 B of internal DRAM. The Nucleo figure is in its 384 KiB RAM region. On the Nordic, the linker reports 38,348 B of flash for MCUboot and 113,056 B for the network core. [Release image digests](../tools/kind/releases/v0.9.7.json)
 
 Signed firmware updates.
 

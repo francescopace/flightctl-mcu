@@ -138,10 +138,22 @@ Apply the fleet for your port. The script supplies the TLS registry address, CA 
 | Port | Command | Devices selected |
 |---|---|---|
 | ESP-IDF | `tools/fleet/apply.sh tools/fleet/idf-lab.yaml` | `app=alarm`, with `stage=canary` first |
-| Zephyr ESP32-S3, Pico 2 W and nRF7002-DK with MCUboot | `tools/fleet/apply.sh tools/fleet/zephyr-lab.yaml` | `app=zephyr-lab` |
-| NuttX S3 with MCUboot | `tools/fleet/apply.sh tools/fleet/nuttx-lab.yaml` | `app=nuttx-lab` and `os=nuttx` |
+| Zephyr with a [published MCUboot profile](DEVICES.md#release-images-and-ota) | `tools/fleet/apply.sh tools/fleet/zephyr-lab.yaml` | `app=zephyr-lab` |
+| NuttX with MCUboot on S3, Nucleo, Nordic DK or Pico 2 W | `tools/fleet/apply.sh tools/fleet/nuttx-lab.yaml` | `app=nuttx-lab` and `os=nuttx` |
 
-In the UI, check that the device is up to date and the `alarm` app is running.
+In the UI, check the device's fleet, firmware and running apps. For the equivalent CLI check, set `DEVICE` to the enrolled device name.
+
+```sh
+flightctl get "device/${DEVICE:?set the enrolled device name}" -o yaml
+```
+
+Compare `status.os.image` with `spec.os.image` and `status.os.imageDigest` with the published firmware **index** digest. Check that `status.config.renderedVersion` matches the `device-controller/renderedVersion` annotation and that `status.applications` lists `alarm` as `Running` and ready `1/1`. To verify the exact app tag, find the agent's `app alarm running (...)` line in the [device log](CONSOLE.md#the-log).
+
+A disconnected device can still have a valid firmware report from before it lost contact. Check its latest `DeviceConnected` and `DeviceDisconnected` events separately from its installed version. [Connection timeout](FLIGHTCTL-LIMITATIONS.md#5-fixed-5-minute-disconnect-timeout-devicedisconnectedtimeout)
+
+```sh
+flightctl get events --field-selector "involvedObject.name=$DEVICE"
+```
 
 ![Example fleet with its firmware, config sources and device status](img/fleet.png)
 

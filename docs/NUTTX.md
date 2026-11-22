@@ -1,6 +1,6 @@
 # Apache NuttX
 
-The port uses Apache NuttX 13.1.0, mbedTLS 4.1.1 and the project's patched WAMR fast interpreter. On the S3, the CPU runs at 240 MHz. NuttX places the user heap in PSRAM and the kernel heap in internal SRAM. The agent reports the user heap.
+The Espressif, Nucleo and Nordic builds use Apache NuttX 13.1.0. The Pico 2 W uses a [separately pinned NuttX kernel and apps revision](DEPENDENCIES.md#nuttx-port). All use mbedTLS 4.1.1 and the project's patched WAMR fast interpreter. On the S3, the CPU runs at 240 MHz. NuttX places the user heap in PSRAM and the kernel heap in internal SRAM. The agent reports the user heap.
 
 | S3 profile | Board | Flash (MiB) | PSRAM (MiB) | PSRAM type |
 |---|---|---:|---:|---|
@@ -69,7 +69,7 @@ esptool --chip esp32s3 --port "${PORT}" write-flash \
 ### ESP32, ESP32-C3 and ESP32-C6
 
 - All three use the factory and LittleFS regions described above. The default build directory is `build/nuttx-<chip>`.
-- These profiles run portable WASM workloads. The C3 and C6 expose the on-chip temperature sensor. The S3 peripheral map and MCUboot update layout apply to the S3 only.
+- These profiles run portable WASM workloads with Simple Boot. The C3 and C6 expose the on-chip temperature sensor.
 - `esp32-devkitc-rev1` is for laboratory testing on a revision 1.0 board. This profile runs one CPU at 240 MHz with internal SRAM and uses the upstream `CONFIG_ESP32_IGNORE_CHIP_REVISION_CHECK` option for older silicon. This board enrolled over Wi-Fi and completed CoreMark, Richards and DeltaBlue on one boot. [Measured performance](BENCHMARKS.md#managed-devices)
 - On the C3 and the classic rev. 1.0 profile, the agent waits for a successful NTP sample at startup. The NTP task then exits. Both profiles keep the AES lookup tables in flash and limit the Wi-Fi and network buffer pools to leave space in internal SRAM for a 64 KiB WASM linear memory.
 
@@ -225,11 +225,18 @@ A three-minute startup deadline covers Wi-Fi and time synchronization during the
 
 ### Verified OTA on the N16R8
 
+On the N16R8, the agent reported firmware `0.9.7+0` on Apache NuttX 13.1.0. The board confirmed `fw:v0.9.7` after reboot. The agent log then recorded the change from `alarm:v0.9.5` to `alarm:v0.9.7` and the new app running. [Release image digests](../tools/kind/releases/v0.9.7.json)
+
+<details>
+<summary>Firmware 0.9.4+2 transfer and confirmation timings</summary>
+
 | Firmware | Signed image (B) | Download over Wi-Fi (s) | Download to confirmation (s) |
 |---|---:|---:|---:|
 | `0.9.4+2` on NuttX 13.1.0 | 1,320,215 | 33 | 79 |
 
 `alarm` was running. A second reset retained the image digest, enrollment and running app.
+
+</details>
 
 ## Agent and apps
 
@@ -269,5 +276,5 @@ The three S3 module profiles use the same NuttX peripheral drivers. Define the w
 
 - Hardware Secure Boot and flash encryption. Both were disabled on the tested N16R8 and when the Simple Boot image was tested.
 - DHCP lease renewal, and Wi-Fi recovery after an access point outage.
-- MCUboot firmware updates on ESP32, C3, C5 and C6. The MCUboot update layout applies to the S3 only.
+- The ESP32, C3, C5 and C6 profiles use Simple Boot. Verified MCUboot updates cover the [S3 N16R8](#verified-ota-on-the-n16r8) and the [Arm boards](#signed-firmware-updates-on-arm).
 - The app peripheral map on ESP32, C3 and C6. The S3 peripheral map applies to the S3 only. [App hardware on ESP32-S3](#app-hardware-on-esp32-s3)

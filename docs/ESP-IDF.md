@@ -35,15 +35,16 @@ Dynamic TLS receive buffers: the contiguous block reserved at startup for a full
 
 ## Firmware size and OTA
 
-ESP-IDF 6.1.1, WAMR 2.4.6. Each OTA slot holds 1,703,936 bytes in the 4 MiB layout. [Partition table](../port/espidf/partitions.csv) · [Verified updates and rollback](DELTA-UPDATES.md#what-was-verified)
+Current release uses ESP-IDF 6.1.1 and WAMR 2.4.6. Each OTA slot holds 1,703,936 B in the 4 MiB layout. The table gives the application image size and the space left in one slot. [Partition table](../port/espidf/partitions.csv) · [Release image digests](../tools/kind/releases/v0.9.7.json) · [Verified updates and rollback](DELTA-UPDATES.md#what-was-verified)
 
-| Board | Image (B) | OTA slot free (%) |
+| Board or profile | Image (B) | OTA slot free (%) |
 |---|---:|---:|
-| ESP32 | 1,193,136 | 30.0 |
-| C3 | 1,265,712 | 25.7 |
-| C5 | 1,362,928 | 20.0 |
-| C6 | 1,365,904 | 19.8 |
-| S3 Mini | 1,202,896 | 29.4 |
+| ESP32 | 1,190,288 | 30.1 |
+| C3 | 1,268,592 | 25.5 |
+| C5 | 1,365,616 | 19.9 |
+| C6 | 1,368,768 | 19.7 |
+| S3, including Mini N4R2 | 1,205,440 | 29.3 |
+| S3 with 8 MiB octal PSRAM | 1,206,624 | 29.2 |
 
 ## Runtime memory
 
