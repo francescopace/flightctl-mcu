@@ -10,7 +10,7 @@
 
 #include "fc_hw.h"
 
-#define FC_AGENT_VERSION "flightctl-mcu/0.9.4"
+#define FC_AGENT_VERSION "flightctl-mcu/0.9.7"
 
 #ifdef __cplusplus
 extern "C" {

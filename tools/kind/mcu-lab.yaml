@@ -24,13 +24,28 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/alarm
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       The default sensor is `die_temp`. Grant `led0` for the visual alarm. For an external probe, set `sensor` to its board-map name and grant that name too. Set `threshold_c` and `hysteresis_c` in the app configuration.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      The default sensor is `die_temp`. Grant `led0` for the visual alarm. For an external probe, set `sensor` to its board-map name and grant that name too. Set `threshold_c` and `hysteresis_c` in the app configuration.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      The default sensor is `die_temp`. Grant `led0` for the visual alarm. For an external probe, set `sensor` to its board-map name and grant that name too. Set `threshold_c` and `hysteresis_c` in the app configuration.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -50,34 +65,94 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/arduino
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       This channel installs the Rust build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
     channels:
     - stable
     references:
-      container: v0.9.4-rust
-  - version: 0.9.4-cpp
+      container: v0.9.7-rust
+  - version: 0.9.7-cpp
+    replaces: 0.9.5-cpp
     readme: |
       This channel installs the C++ build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
     channels:
     - cpp
     references:
-      container: v0.9.4-cpp
-  - version: 0.9.4-assemblyscript
+      container: v0.9.7-cpp
+  - version: 0.9.7-assemblyscript
+    replaces: 0.9.5-assemblyscript
     readme: |
       This channel installs the AssemblyScript build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
     channels:
     - assemblyscript
     references:
-      container: v0.9.4-assemblyscript
-  - version: 0.9.4-tinygo
+      container: v0.9.7-assemblyscript
+  - version: 0.9.7-tinygo
+    replaces: 0.9.5-tinygo
     readme: |
       This channel installs the TinyGo build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
     channels:
     - tinygo
     references:
-      container: v0.9.4-tinygo
+      container: v0.9.7-tinygo
+  - version: 0.9.5
+    readme: |
+      This channel installs the Rust build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - stable
+    references:
+      container: v0.9.5-rust
+  - version: 0.9.5-cpp
+    readme: |
+      This channel installs the C++ build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - cpp
+    references:
+      container: v0.9.5-cpp
+  - version: 0.9.5-assemblyscript
+    readme: |
+      This channel installs the AssemblyScript build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - assemblyscript
+    references:
+      container: v0.9.5-assemblyscript
+  - version: 0.9.5-tinygo
+    readme: |
+      This channel installs the TinyGo build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - tinygo
+    references:
+      container: v0.9.5-tinygo
+  - version: 0.9.5-rc.1
+    readme: |
+      This channel installs the Rust build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1-rust
+  - version: 0.9.5-rc.1-cpp
+    readme: |
+      This channel installs the C++ build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - rc-cpp
+    references:
+      container: v0.9.5-rc.1-cpp
+  - version: 0.9.5-rc.1-assemblyscript
+    readme: |
+      This channel installs the AssemblyScript build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - rc-assemblyscript
+    references:
+      container: v0.9.5-rc.1-assemblyscript
+  - version: 0.9.5-rc.1-tinygo
+    readme: |
+      This channel installs the TinyGo build of Blink. Set `FC_ALLOW=led0` to give it access to the board LED.
+    channels:
+    - rc-tinygo
+    references:
+      container: v0.9.5-rc.1-tinygo
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -97,13 +172,28 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/battery
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       Map and grant the battery channels available on the board. Set `low_mv` for the pack’s low-voltage threshold and grant `metrics` to export readings.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      Map and grant the battery channels available on the board. Set `low_mv` for the pack’s low-voltage threshold and grant `metrics` to export readings.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      Map and grant the battery channels available on the board. Set `low_mv` for the pack’s low-voltage threshold and grant `metrics` to export readings.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -123,20 +213,50 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/coremark
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       Set `FC_ENTRY=run`. This module needs 64 KiB of contiguous linear memory, plus memory for the agent and app thread. The score appears in the app state when the run completes.
     channels:
     - stable
     references:
-      container: v0.9.4-wasm3
-  - version: 0.9.4-128k
+      container: v0.9.7-wasm3
+  - version: 0.9.7-128k
+    replaces: 0.9.5-128k
     readme: |
       Set `FC_ENTRY=run`. This module needs 128 KiB of contiguous linear memory, plus memory for the agent and app thread. The score appears in the app state when the run completes.
     channels:
     - large-memory
     references:
-      container: v0.9.4-wasm-coremark
+      container: v0.9.7-wasm-coremark
+  - version: 0.9.5
+    readme: |
+      Set `FC_ENTRY=run`. This module needs 64 KiB of contiguous linear memory, plus memory for the agent and app thread. The score appears in the app state when the run completes.
+    channels:
+    - stable
+    references:
+      container: v0.9.5-wasm3
+  - version: 0.9.5-128k
+    readme: |
+      Set `FC_ENTRY=run`. This module needs 128 KiB of contiguous linear memory, plus memory for the agent and app thread. The score appears in the app state when the run completes.
+    channels:
+    - large-memory
+    references:
+      container: v0.9.5-wasm-coremark
+  - version: 0.9.5-rc.1
+    readme: |
+      Set `FC_ENTRY=run`. This module needs 64 KiB of contiguous linear memory, plus memory for the agent and app thread. The score appears in the app state when the run completes.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1-wasm3
+  - version: 0.9.5-rc.1-128k
+    readme: |
+      Set `FC_ENTRY=run`. This module needs 128 KiB of contiguous linear memory, plus memory for the agent and app thread. The score appears in the app state when the run completes.
+    channels:
+    - rc-large-memory
+    references:
+      container: v0.9.5-rc.1-wasm-coremark
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -156,13 +276,21 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
-      Select this entry for the `idf-lab` fleet. The ESP-IDF and Zephyr entries share a firmware index. Each device selects the image for its platform.
+      Select this release for the `idf-lab` fleet. The index has images for ESP32, C3, C5, C6, S3 and S3 with octal PSRAM (`esp32s3-r8`). The ESP-IDF, Zephyr and NuttX entries share a firmware index. Each device selects the image for its platform.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      Select this entry for the `idf-lab` fleet. The ESP-IDF, Zephyr and NuttX entries share a firmware index. Each device selects the image for its platform.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -170,25 +298,83 @@ metadata:
   name: fw-zephyr-lab
   catalog: mcu-lab
 spec:
-  displayName: Zephyr firmware for ESP32-S3 DevKitC
-  shortDescription: Runs the Flight Control agent on the ESP32-S3 DevKitC in the Zephyr lab fleet.
+  displayName: Zephyr firmware for Espressif boards, Pico 2 W, nRF7002-DK and NUCLEO-F767ZI
+  shortDescription: MCUboot firmware updates over Wi-Fi on ESP32-S3, Pico 2 W and nRF7002-DK, and over onboard Ethernet or the ST-LINK USB bridge on NUCLEO-F767ZI.
   provider: flightctl-mcu
   support: https://github.com/francescopace/flightctl-mcu/issues
   homepage: https://github.com/francescopace/flightctl-mcu
-  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/ZEPHYR.md#on-a-board
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/ZEPHYR.md
   category: system
   type: os
   artifacts:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.6
     readme: |
-      Select this entry for the `zephyr-lab` fleet. The DevKitC selects the `esp32s3_devkitc` platform image from the shared firmware index.
+      Select this release for the `zephyr-lab` fleet. The index has images for the ESP32-S3 DevKitC and S3 Mini, ESP32, C3, C5 Mini, C6, Pico 2 W, nRF7002-DK and both Nucleo links (`nucleo_f767zi` for onboard Ethernet, `nucleo_f767zi-stlink` for the USB network bridge). Devices report the firmware version in `customInfo.firmwareVersion`. The ESP32-S3 DevKitC image uses GPIO38 for the RGB LED.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.6
+    replaces: 0.9.5
+    readme: |
+      Select this release for the `zephyr-lab` fleet. The Nucleo uses `nucleo_f767zi` for onboard Ethernet or `nucleo_f767zi-stlink` for the USB network bridge. The ESP32-S3 DevKitC image uses GPIO38 for the RGB LED.
+    channels:
+    - stable
+    references:
+      container: v0.9.6
+  - version: 0.9.5
+    readme: |
+      Select this entry for the `zephyr-lab` fleet. The shared index contains `esp32s3_devkitc` for the DevKitC, `rpi_pico2_rp2350a_m33_0_w` for the Pico 2 W and `nrf7002dk_nrf5340_cpuapp` for the Nordic DK.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: fw-nuttx-lab
+  catalog: mcu-lab
+spec:
+  displayName: NuttX firmware for ESP32-S3, Pico 2 W, nRF7002-DK and NUCLEO-F767ZI
+  shortDescription: Runs the Flight Control agent on NuttX boards provisioned with MCUboot. ESP32-S3 modules, Pico 2 W, nRF7002-DK and NUCLEO-F767ZI.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/francescopace/flightctl-mcu
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/NUTTX.md#firmware-ota-with-mcuboot
+  category: system
+  type: os
+  artifacts:
+  - type: container
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/fw
+  versions:
+  - version: 0.9.7
+    replaces: 0.9.6
+    readme: |
+      Select this release for the `nuttx-lab` fleet. The index has images for the ESP32-S3 N4R2, N8R8 and N16R8, the Pico 2 W, the nRF7002-DK and both Nucleo links. ESP32, C3, C5 and C6 use Simple Boot and are installed over USB.
+    channels:
+    - stable
+    references:
+      container: v0.9.7
+  - version: 0.9.6
+    replaces: 0.9.5
+    readme: |
+      Adds GPIO interrupts, RGB LEDs, I²C, SPI, UART, ADC, PWM, temperature notifications and crash diagnostics on the N4R2, N8R8 and N16R8. Configure the app wiring in /etc/fc/board.json.
+    channels:
+    - stable
+    references:
+      container: v0.9.6
+  - version: 0.9.5
+    readme: |
+      Select this entry for the `nuttx-lab` fleet. The device selects the OTA image for its N4R2, N8R8 or N16R8 module.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -208,13 +394,28 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/hwcheck
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       Grant the interfaces you want to check in `FC_ALLOW`: `i2c0`, `spi0`, `uart0`, `adc0` or `pwm0`. Wire UART TX to RX to check loopback.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      Grant the interfaces you want to check in `FC_ALLOW`: `i2c0`, `spi0`, `uart0`, `adc0` or `pwm0`. Wire UART TX to RX to check loopback.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      Grant the interfaces you want to check in `FC_ALLOW`: `i2c0`, `spi0`, `uart0`, `adc0` or `pwm0`. Wire UART TX to RX to check loopback.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -234,13 +435,28 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/libccheck
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       Deploy to check the C library exposed to WASM apps by the installed firmware. Read the result in the app state. No hardware grants are needed.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      Deploy to check the C library exposed to WASM apps by the installed firmware. Read the result in the app state. No hardware grants are needed.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      Deploy to check the C library exposed to WASM apps by the installed firmware. Read the result in the app state. No hardware grants are needed.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -260,13 +476,28 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/localalarm
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       Deploy alongside `sampler`. Grant `local.to:localalarm` to the sender and `local.from:sampler` to this receiver. Set `threshold_c` on the receiver to choose the alarm threshold.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      Deploy alongside `sampler`. Grant `local.to:localalarm` to the sender and `local.from:sampler` to this receiver. Set `threshold_c` on the receiver to choose the alarm threshold.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      Deploy alongside `sampler`. Grant `local.to:localalarm` to the sender and `local.from:sampler` to this receiver. Set `threshold_c` on the receiver to choose the alarm threshold.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -286,13 +517,28 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/mqttdemo
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       Configure a broker and grant `mqtt`. Read temperature on the device’s `temp` topic and command replies on `ack`. Grant `led0` to enable LED commands.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      Configure a broker and grant `mqtt`. Read temperature on the device’s `temp` topic and command replies on `ack`. Grant `led0` to enable LED commands.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      Configure a broker and grant `mqtt`. Read temperature on the device’s `temp` topic and command replies on `ack`. Grant `led0` to enable LED commands.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -312,13 +558,28 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/sampler
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       Sampling works offline. For delivery, configure a broker and grant `mqtt`. The consumer acknowledges each stored sample by ID. Grant `local.to:localalarm` to forward live readings to the alarm on the same device.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      Sampling works offline. For delivery, configure a broker and grant `mqtt`. The consumer acknowledges each stored sample by ID. Grant `local.to:localalarm` to forward live readings to the alarm on the same device.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      Sampling works offline. For delivery, configure a broker and grant `mqtt`. The consumer acknowledges each stored sample by ID. Grant `local.to:localalarm` to forward live readings to the alarm on the same device.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -338,20 +599,50 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/tinyml
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       The random forest classifies the last 12 chip temperature readings. Choose the `neural` channel for a confidence score.
     channels:
     - stable
     references:
-      container: v0.9.4
-  - version: 0.9.4-neural
+      container: v0.9.7
+  - version: 0.9.7-neural
+    replaces: 0.9.5-neural
     readme: |
       The neural network reports a class and its confidence for the last 12 chip temperature readings. Choose `stable` for the smaller random forest.
     channels:
     - neural
     references:
-      container: v0.9.4-neural
+      container: v0.9.7-neural
+  - version: 0.9.5
+    readme: |
+      The random forest classifies the last 12 chip temperature readings. Choose the `neural` channel for a confidence score.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-neural
+    readme: |
+      The neural network reports a class and its confidence for the last 12 chip temperature readings. Choose `stable` for the smaller random forest.
+    channels:
+    - neural
+    references:
+      container: v0.9.5-neural
+  - version: 0.9.5-rc.1
+    readme: |
+      The random forest classifies the last 12 chip temperature readings. Choose the `rc-neural` channel for a confidence score.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
+  - version: 0.9.5-rc.1-neural
+    readme: |
+      The neural network reports a class and its confidence for the last 12 chip temperature readings. Choose `rc` for the smaller random forest.
+    channels:
+    - rc-neural
+    references:
+      container: v0.9.5-rc.1-neural
 ---
 apiVersion: flightctl.io/v1alpha1
 kind: CatalogItem
@@ -371,10 +662,107 @@ spec:
   - type: container
     uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/trend
   versions:
-  - version: 0.9.4
+  - version: 0.9.7
+    replaces: 0.9.5
     readme: |
       The app samples chip temperature every five seconds and smooths the readings. Grant `metrics` to export temperature and rate of change.
     channels:
     - stable
     references:
-      container: v0.9.4
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      The app samples chip temperature every five seconds and smooths the readings. Grant `metrics` to export temperature and rate of change.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      The app samples chip temperature every five seconds and smooths the readings. Grant `metrics` to export temperature and rate of change.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: deltablue
+  catalog: mcu-lab
+spec:
+  displayName: DeltaBlue runtime benchmark
+  shortDescription: Runs DeltaBlue and reports the median time for ten iterations in milliseconds.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/oracle/graal/tree/32823ea977c280a940d169b5899536c318baab16/wasm/benchmarks/interpreter
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/TESTING.md#richards-and-deltablue
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/deltablue
+  versions:
+  - version: 0.9.7
+    replaces: 0.9.5
+    readme: |
+      Set `FC_ENTRY=run`. The module runs three batches of ten iterations with a 40,960-byte arena. Divide the returned milliseconds by ten to compare time per iteration.
+    channels:
+    - stable
+    references:
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      Set `FC_ENTRY=run`. The module runs three batches of ten iterations with a 40,960-byte arena. Divide the returned milliseconds by ten to compare time per iteration.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      Set `FC_ENTRY=run`. The module runs three batches of ten iterations with a 40,960-byte arena. Divide the returned milliseconds by ten to compare time per iteration.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1
+---
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: richards
+  catalog: mcu-lab
+spec:
+  displayName: Richards runtime benchmark
+  shortDescription: Runs Richards and reports the median time for ten iterations in milliseconds.
+  provider: flightctl-mcu
+  support: https://github.com/francescopace/flightctl-mcu/issues
+  homepage: https://github.com/oracle/graal/tree/32823ea977c280a940d169b5899536c318baab16/wasm/benchmarks/interpreter
+  documentationUrl: https://github.com/francescopace/flightctl-mcu/blob/main/docs/TESTING.md#richards-and-deltablue
+  category: application
+  type: container
+  artifacts:
+  - type: container
+    uri: registry.${HOST_IP}.nip.io:5443/flightctl-mcu/richards
+  versions:
+  - version: 0.9.7
+    replaces: 0.9.5
+    readme: |
+      Set `FC_ENTRY=run`. The module runs three batches of ten iterations with an 8,192-byte arena. Divide the returned milliseconds by ten to compare time per iteration.
+    channels:
+    - stable
+    references:
+      container: v0.9.7
+  - version: 0.9.5
+    readme: |
+      Set `FC_ENTRY=run`. The module runs three batches of ten iterations with an 8,192-byte arena. Divide the returned milliseconds by ten to compare time per iteration.
+    channels:
+    - stable
+    references:
+      container: v0.9.5
+  - version: 0.9.5-rc.1
+    readme: |
+      Set `FC_ENTRY=run`. The module runs three batches of ten iterations with an 8,192-byte arena. Divide the returned milliseconds by ten to compare time per iteration.
+    channels:
+    - rc
+    references:
+      container: v0.9.5-rc.1

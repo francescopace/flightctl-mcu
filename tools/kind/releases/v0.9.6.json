@@ -1,0 +1,53 @@
+{
+  "version": "0.9.6",
+  "firmware": {
+    "repository": "flightctl-mcu/fw",
+    "tag": "v0.9.6",
+    "index": "sha256:14f4729085b76ac00cc29314fe5c7fb1c98cf7510f8673453f9ee00f5aa647e3",
+    "platformImages": {
+      "esp32": "sha256:852d076d935c4c9230332a1fbf0764de1387ba2bca18fb608aa42b148ba3695d",
+      "esp32c3": "sha256:fdf6fbad2ff1336d39d8d66b3996086aff4ee80b8b5681f1578ba3d6b7b53aef",
+      "esp32c5": "sha256:12c12406d99a07617888ad11cb1005a63b13b306812b2bbde239155486dcabb0",
+      "esp32c6": "sha256:995d36bfc4c8f08045f8d6e81f0173309fea8b005a88c2bedbd7f7e55028d3dd",
+      "esp32s3": "sha256:e7e250a643f6e7fdca8255ce122aeaa781078907e45256b3371b5ab66967e983",
+      "esp32s3-r8": "sha256:61bb9eddd26170c9f9d663b365a4f911ceb43992ff01ffabe3044e295a16dd12",
+      "esp32s3_devkitc": "sha256:3023749ccca8d04832005ac20bb42b423934a7843f6dac66ac7c7c833e2c9e8f",
+      "rpi_pico2_rp2350a_m33_0_w": "sha256:92a403597dc96d33870a59ab77e014d5877fa1f9acc63b76cda410e82d87647e",
+      "nrf7002dk_nrf5340_cpuapp": "sha256:e9b8ae72e703639589326eceb246f40b560903688292bdcc2a19ca39f6f3b51a",
+      "nucleo_f767zi-stlink": "sha256:7b8212d1634d0c6631c6c6cde2e6df46b3fd9a784c9c2784ab3676c5926c6d12",
+      "nuttx-esp32s3-n4r2": "sha256:8c325fb99beddf006e14a5e05db21307403d6dc5131782d63cffadfc1029fcfb",
+      "nuttx-esp32s3-n8r8": "sha256:6d5255c78c9373648ef70677887686c5bc6af893fc457b811565e8738eadf8cb",
+      "nuttx-esp32s3-n16r8": "sha256:38ef551cf773c6825e97920087bedf85281d1fe8cd7da2ada6c9c6aa55e33e68",
+      "nucleo_f767zi": "sha256:47d35d831ac4f78d83a16028d729f41b57f00f2ac5cd7a730fa808d7899e70b9"
+    }
+  },
+  "sources": {
+    "esp-idf": {
+      "commit": "d9128f9fdd57644e925919cb8ef549428675fcab"
+    },
+    "zephyr": {
+      "baseCommit": "b3391337cfa5c37d578cdc36bf1d48cd2b9cbded",
+      "workingTreeChanges": true,
+      "platformOverrides": {
+        "nucleo_f767zi-stlink": {
+          "baseCommit": "8ebff16a08533e0ae1b59a49fc422b4f7f80062a",
+          "workingTreeChanges": true,
+          "firmwareVersion": "0.9.6+cache.1"
+        },
+        "nrf7002dk_nrf5340_cpuapp": {
+          "baseCommit": "8ebff16a08533e0ae1b59a49fc422b4f7f80062a",
+          "workingTreeChanges": true,
+          "firmwareVersion": "0.9.6+nrf.128"
+        },
+        "nucleo_f767zi": {
+          "baseCommit": "9f857102f60c2f61ab26b6f2743ed52e465d138b",
+          "workingTreeChanges": true,
+          "firmwareVersion": "0.9.6+st.eth"
+        }
+      }
+    },
+    "nuttx": {
+      "commit": "5b2e057b591229e2a4caea477322c967dc5f78be"
+    }
+  }
+}

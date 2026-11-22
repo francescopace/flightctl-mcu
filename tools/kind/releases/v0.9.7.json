@@ -1,0 +1,57 @@
+{
+  "version": "0.9.7",
+  "firmware": {
+    "repository": "flightctl-mcu/fw",
+    "tag": "v0.9.7",
+    "index": "sha256:b977f04626804ca92697b9cbe3a00c52c7cfbe914d526712b69c56c989b33d80",
+    "platformImages": {
+      "esp32": "sha256:435407369186152abfe83581e882366569e61b2a66c300636d9aba9f09d8ebc7",
+      "esp32c3": "sha256:5692da23286bf376b3c14a833aafd6d15c71752754004ce0f70cdd9fa2e9550f",
+      "esp32c5": "sha256:81a46c509781c3a17c8c0fc48b4379200a89ff4d87190e1f78652a9ff30ff00e",
+      "esp32c6": "sha256:62060a1ae54c8f853cf699361912e5c561c2ca8aa3015079648676717a9ffb77",
+      "esp32s3": "sha256:d0956a66ed67d70a913c9208e06bc917ebda9606b509a6475c72b46e5ce90ba5",
+      "esp32s3-r8": "sha256:4d2b1961fc6141462c62c21792a8e864d3e21cebe239d6af2faeaa9c58316100",
+      "esp32s3_devkitc": "sha256:e215925de6fba276f2ea11907cf84ee3052ed1db85f281f9c290ac3636e6a40f",
+      "esp32s3-mini-n4r2": "sha256:3fceef51e8c77ddeb4114e0a4084e118abb1ad83b9739656d6f8a98838bbbbfe",
+      "esp32_devkitc": "sha256:d984844a78def3759677b6e50db303be921573b6009e9d230f5e7fb0c6035cae",
+      "esp32c3_devkitm": "sha256:ee1120a452ba9bdc0a0d8a67f7df0da6f2457142ecccbb1db8afc7118a349dac",
+      "esp32c5-mini": "sha256:e5673e2f7c6966f4a5ff6a1d47f3704290cdf627e69e3ab683ee0793d6a8461c",
+      "esp32c6_devkitc": "sha256:025d8afa963225791210eafac0822714e43e6ae1ff951f4dd8e86333008dcc23",
+      "nucleo_f767zi": "sha256:db8e8e94e83124cd518a90aab65b120661fc6162c7671b578f838f2f83df9d94",
+      "nucleo_f767zi-stlink": "sha256:3e6df0a3718a435e730f78389d098230acf45f85cd62d969f926f99545ce750e",
+      "nrf7002dk_nrf5340_cpuapp": "sha256:5793f9a033409770e23a1cbea90da53c51b554ad5a42cfa80b905ea23d895548",
+      "rpi_pico2_rp2350a_m33_0_w": "sha256:72f57019df79bfa4526c0978b7a7da7509916cfe7edf892d9a9f28dc92b78429",
+      "nuttx-esp32s3-n4r2": "sha256:d7148e0e30698bb8afbab186de7ca7a19c3fec7c7635314ef87c799df95a5a62",
+      "nuttx-esp32s3-n8r8": "sha256:26890a8057f51286748f1956d1c4278f6ac5a77e36f7300019a11ba4ba6e6ebd",
+      "nuttx-esp32s3-n16r8": "sha256:5343c2016da691c2fc0b0b1835079af72a3fc73fa61a0775a53ea02db5cf2bdf",
+      "nuttx-pico2w": "sha256:0d6b70703a76c22a4ec6ef2fae227f0e3b31649abae901351cfdaa8b14fb6d33",
+      "nuttx-nucleo-f767zi": "sha256:17970d917284c3f5d5ee88e0d8f6292147dcffc2627a39d770b75bd838aa349d",
+      "nuttx-nucleo-f767zi-eth": "sha256:f431824fe5b2b9ba9cb97cfb93e8628689ebb6f86b60ab4dd2407214df5b6cff",
+      "nuttx-nrf7002dk": "sha256:082fa28e25cd1695f7d9d8d0935fb9351776b4cacafc13fa252bfa9383487023"
+    }
+  },
+  "applications": {
+    "flightctl-mcu/alarm:v0.9.7": "sha256:c6c4672d68e94a761b2b9c2832eca05938e91b102f236f8ddece5e1df527b966",
+    "flightctl-mcu/arduino:v0.9.7-assemblyscript": "sha256:7b815151016e2cb92e67171909bda3efb824a39355ebc4d2690f8bcc4a87352a",
+    "flightctl-mcu/arduino:v0.9.7-cpp": "sha256:01dcbafe53f99600ca1f0d3111daeaefb8ec8dfbcaab10051b31e3bf2b83f359",
+    "flightctl-mcu/arduino:v0.9.7-rust": "sha256:dcd45927ba6620f5742c3a4653341730a9bc43d48480a3eb75ca54dc8a8c1ffb",
+    "flightctl-mcu/arduino:v0.9.7-tinygo": "sha256:e44ef26f5d9464cd6d673c3197a2fbc33d67b79d45975e08d694cf3766332fa7",
+    "flightctl-mcu/battery:v0.9.7": "sha256:3d03ba765622460b7a89c5999116537dd7791c594ae98c1140f93cfc419c09ee",
+    "flightctl-mcu/coremark:v0.9.7-wasm-coremark": "sha256:fdb083f1e0a8a656418636debca0f4a99939f3f47a20db2b2c78812174216bb8",
+    "flightctl-mcu/coremark:v0.9.7-wasm3": "sha256:bebbc11b4c59e0326dc5b97ea95fb384a6e212f7424e5ef2ec2a4f2d0a492eef",
+    "flightctl-mcu/deltablue:v0.9.7": "sha256:cf15e4dcc3e5046695bbdef8d581df26731e838489cc6e085983fbe205d31a99",
+    "flightctl-mcu/hwcheck:v0.9.7": "sha256:876e8a099c19718a3d488cfb720460140911911908e55c3383e962339c895bdc",
+    "flightctl-mcu/libccheck:v0.9.7": "sha256:77d149d393397e97cd5ca959246349bf47b77c265bdfe1ee058f35438ad59d9d",
+    "flightctl-mcu/localalarm:v0.9.7": "sha256:f8aa5a81e07a6d4d70cca8a38eff9918a83fefa10a40ecf2d2933f1388473381",
+    "flightctl-mcu/mqttdemo:v0.9.7": "sha256:650e128d5d748a51ba93baff070d2803bfdf486e3551d1e3ec5ddaa3871d0f06",
+    "flightctl-mcu/richards:v0.9.7": "sha256:71eeb8aae18ff84e37aacd4089b910dce3baf0b7864a3ac067e1946890c8cae1",
+    "flightctl-mcu/sampler:v0.9.7": "sha256:c8edfb3737527639857c5852c99efbd204758fbe56b31f76118b714ba60c2178",
+    "flightctl-mcu/tinyml:v0.9.7": "sha256:2207c20fc47d883f55a260b4c5171d03a3438c57ee970de708f414e78f14b2d0",
+    "flightctl-mcu/tinyml:v0.9.7-neural": "sha256:7f245854bc6af8d8e3bf107d111165c0ab8c8bce4e206acebeea5822797f4b7b",
+    "flightctl-mcu/trend:v0.9.7": "sha256:e4a8263f1f2c28d1b369002fd60df1abafd5ae5fe8942478b79156f48f3f5805"
+  },
+  "sources": {
+    "commit": "ac47e9414ef15d04537a9428113fef0eac49f2de",
+    "workingTreeChanges": false
+  }
+}
