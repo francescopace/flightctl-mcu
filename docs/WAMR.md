@@ -4,16 +4,24 @@ The three MCU ports run signed WASM modules with the WAMR 2.4.6 fast interpreter
 
 ## Runtime configuration
 
-| Change | Scope and effect |
-|---|---|
-| Compact dispatch | Encodes handlers with 16-bit offsets and dispatches frequent instruction pairs directly on selected 32-bit targets. Reduces the decoded instruction stream by two bytes per handler reference versus 32-bit offsets. |
-| Direct stack lookup | ESP-IDF reads the task stack base directly. Elapsed callback time fell 21.1–43.4% across five boards with identical linked IRAM and static data sizes. CoreMark showed no repeatable gain. [Callback times by board](BENCHMARKS.md#timer-callbacks) |
-| Linear memory | ESP-IDF prefers internal RAM, then PSRAM. The C5/C6 loader reserves contiguous space before decoding functions. Eligible SDK modules export `__heap_base` and `__data_end` so WAMR can shrink the allocation. |
-| Native functions and libc | Sorted native tables stay in flash. Linking 15 builtin wrappers lets the linker drop unused libc code. |
-| Instruction budgets | Instantiation runs with the app's limits and native-call context. Metering checks at branches and calls let the agent stop running apps. ESP-IDF checkpoints also let unlimited calls yield CPU time. |
-| Portability fixes | Preserve alignment across ESP-IDF reallocations, handle unaligned 64-bit selects in the loader and align Cortex-M native calls that pass arguments on the stack. |
+Flight Control MCU v0.9.7 applies 12 patches to WAMR 2.4.6. Each patch acts on the port or interpreter configuration shown below.
 
-[Patch inventory and build selection](../third_party/fetch-wamr.sh)
+| WAMR patch | Scope and effect |
+|---|---|
+| [espidf-stack-info](../third_party/patches/wamr-espidf-stack-info.patch) | Reads the FreeRTOS task stack base without scanning for the high-water mark. Callback time fell 21.1–43.4% across five ESP-IDF boards with identical linked IRAM and static data sizes. CoreMark showed no repeatable gain. [Callback times by board](BENCHMARKS.md#timer-callbacks) |
+| [espidf-psram-interp](../third_party/patches/wamr-espidf-psram-interp.patch) | Restricts the ESP32-S3 PSRAM mapping option to AOT builds. An interpreter-only image built with PSRAM support can start apps on a board without PSRAM. |
+| [wasm32-compact-dispatch](../third_party/patches/wamr-wasm32-compact-dispatch.patch) | On selected 32-bit targets, the fast interpreter specializes common instructions and dispatches frequent pairs directly. Using 16-bit handler offsets saves two bytes per handler reference in decoded code. [Dispatch comparisons](#interpreter-dispatch) |
+| [const-natives](../third_party/patches/wamr-const-natives.patch) | Leaves sorted native symbol tables in flash and lets the agent register the libc functions available to apps. |
+| [libc-subset](../third_party/patches/wamr-libc-subset.patch) | Keeps the 15 builtin libc wrappers used by the agent so the linker can discard unused wrappers. |
+| [espidf-realloc](../third_party/patches/wamr-espidf-realloc.patch) | Preserves the contents of an ESP-IDF allocation when moving it changes the padding required for alignment. |
+| [thumb-stack-align](../third_party/patches/wamr-thumb-stack-align.patch) | Keeps the stack aligned to 8 bytes on Cortex-M without an FPU when a call to a native function passes arguments on the stack. |
+| [unaligned-select](../third_party/patches/wamr-unaligned-select.patch) | Uses alignment-safe writes when the loader or mini-loader rewrites a 64-bit select. This lets affected modules load on Cortex-M0+. |
+| [instantiation-hook](../third_party/patches/wamr-instantiation-hook.patch) | Gives the agent access to the interpreter execution environment during instantiation so the app's start function and constructors run with its instruction budget and native-call context. |
+| [metering-stop](../third_party/patches/wamr-metering-stop.patch) | Checks for a stop request at branches and calls so the agent can interrupt a running app with instruction metering enabled and the WAMR thread manager disabled. |
+| [unbounded-checkpoint](../third_party/patches/wamr-unbounded-checkpoint.patch) | Gives unlimited interpreter calls periodic checkpoints where the ESP-IDF scheduler can yield CPU time to other runners. |
+| [bytecode-placement](../third_party/patches/wamr-bytecode-placement.patch) | Lets the ESP32-C5/C6 firmware resize its contiguous heap reservation after reading the module's memory declaration and before allocating decoded functions in main SRAM. |
+
+The ESP-IDF port prefers internal RAM for linear memory, then PSRAM. Eligible SDK modules export `__heap_base` and `__data_end` so WAMR can shrink the allocation. [WAMR version and patch selection](../third_party/fetch-wamr.sh)
 
 ## Comparison with Toit
 
