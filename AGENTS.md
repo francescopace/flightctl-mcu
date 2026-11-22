@@ -23,7 +23,7 @@ python3 tests/pre-push.py "$remote_tip"
 BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3-check port/zephyr/build.sh
 ```
 
-That build has about 4 KB of DRAM left at link time, so a few KB of new statics or stack is enough to break it.
+That build has about 1.3 KB of DRAM left at link time, so a few KB of new statics or stack is enough to break it.
 
 ## Writing tests
 
@@ -59,8 +59,17 @@ Tests must not depend on wall-clock margins: CI's runner is slower than a workst
 
 ## Docs
 
-`docs/` is written for people who deploy the agent, not for our bench. Give what was verified and the figures (heap, timings, sizes), the limits, and what is not done yet. Keep the history of how a bug was found out of them. `docs/ROADMAP.md` lists only what is open: remove an item when it's done, and put its figures in `docs/RESULTS.md`.
+`docs/` is written for people who deploy the agent, not for our bench. Give what was verified and the figures (heap, timings, sizes), the limits, and what is not done yet. `docs/ROADMAP.md` lists only what is open: write each item with the test or measurement that closes it, remove it when it's done, and put its measurements in the relevant guide.
 
-In `docs/RESULTS.md`, put new measurements beside the figures they update. Name the board, firmware and workload when they affect the result. Keep older figures when they help explain a change. Leave bench commands, retries and fleet restoration steps in the lab notes.
+People open these docs to look up a figure. They should find one value, in one place, and know what it measures:
+
+- Give one current value per quantity. A new run of the same build and setup replaces the figure it updates. Keep the older run only when it explains a change, in a `<details>` block labelled with its firmware version. Both sides of a comparison stay in the table, such as upstream against patched WAMR or one port against another.
+- Each figure has one owning doc: the guide for that feature. `docs/BENCHMARKS.md` owns comparative app results, the port guides own firmware size and memory, `docs/DELTA-UPDATES.md` owns update sizes and times, `docs/WAMR.md` owns interpreter and SDK changes, and `docs/DEVICES.md` owns hardware verification. Another doc or the README can quote a headline figure when it links to the owner. `docs/TESTING.md` describes how tests and measurements run and holds no results.
+- Put one number in a table cell, with the unit in the column header. Board, firmware and workload get their own columns when they affect the result. Use a table once a sentence would carry three or more figures.
+- Sizes computed from a byte count use KiB and MiB, and exact counts use B. Don't relabel a KB figure as KiB: recompute it from the byte count, or keep it as written when the count is unknown, as with a vendor's SRAM rating. Give only the digits the measurement resolves: 8 ms over 256 operations on a 1 ms clock is 0.03 ms, not 0.031.
+- Define a label where a file first uses it, and keep one name per thing. Name a build by its version, not as "RC", "previous" or "historical".
+- Report results for released builds, alongside what is not verified or not done yet. Investigations, experiments that were not released and the history of how a bug was found stay out of the published docs. So do bench commands, retries, board serial numbers and fleet restoration steps: leave them in the lab notes. `docs/benchmarks/` is tracked and holds only the data files that a doc links to: remove a file when its last link goes, and keep bench notes out of it.
+
+When every item in a list has the same fields, use a table, not the same bold labels repeated on each item.
 
 Link to Markdown headings where possible. If you rename one, update the links that point to it.

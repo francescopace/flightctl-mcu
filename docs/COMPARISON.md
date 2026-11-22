@@ -22,7 +22,7 @@ For a team already using Flight Control, the same rollout tools can manage Linux
 
 ## Sources
 
-- **flightctl-mcu** — [Control plane and fleets](../README.md#what-maps-to-what) · [Board results](RESULTS.md) · [Measured deltas](RESULTS.md#firmware-deltas)
+- **flightctl-mcu** — [Control plane and fleets](../README.md#what-maps-to-what) · [Supported hardware](DEVICES.md#hardware-compatibility) · [Measured deltas](DELTA-UPDATES.md#what-was-verified)
 - **AkiraOS with AkiraHub** — [Hub and hosting](https://akiraos.dev/) · [OS release notes](https://docs.akiraos.dev/resources/release-notes) · [v1.6.7 delta decoder](https://github.com/ArturR0k3r/AkiraOS/blob/v1.6.7/src/lib/akira_delta.c)
 - **Atym with Ocre** — [Ocre runtime and Hub hosting](https://www.atym.io/post/webassembly-for-containerization-of-embedded-software-comparing-diy-open-source-and-enterprise-im) · [WASM containers on Zephyr and Linux](https://docs.prod.atym.io/overview/containers) · [Fleet configuration and campaigns](https://docs.prod.atym.io/reference/cli/commands/campaign)
 - **Golioth** — [Firmware SDK and platforms](https://docs.golioth.io/reference/firmware/golioth-firmware-sdk/) · [WASM deployment demo](https://blog.golioth.io/webassembly-on-zephyr/)

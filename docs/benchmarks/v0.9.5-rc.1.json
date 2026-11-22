@@ -1,0 +1,2279 @@
+{
+  "measured_on": "2026-11-21",
+  "first_fit_manifest_digests": {
+    "richards": "903fea65c1d23135f438482c45ecc06e50e9cf69eaceb023c7ca704a84c6f0e8",
+    "deltablue": "517d89f530b95ba15f44e4c5a8d4770c8df3ddd721a2abd82b250a6b11b1fb52"
+  },
+  "release": "v0.9.5-rc.1",
+  "firmware": "v0.9.4",
+  "units": "ms unless indicated",
+  "methods": {
+    "runtime_bench_ms": "Median elapsed time of three batches of ten iterations, divided by ten. Each pair ran one signed module at a time. first_fit scans all blocks and rc scans only free blocks.",
+    "controls": "Same signed timing probes as the historical run. Median of seven batches after two warmups, divided by 32 for the neural network or 256 for other controls.",
+    "coremark": "Three fresh installs per fitting module. An allocation failure on the first install ends the series.",
+    "mqtt": "48 command-to-acknowledgement round trips with QoS 1 over TLS per board.",
+    "console_free_heap_bytes": "Single console readings. Includes available PSRAM on ESP-IDF."
+  },
+  "control_manifest_digests": {
+    "forest256": "sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8",
+    "mlp": "sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861",
+    "trend256": "sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a",
+    "battery256": "sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+  },
+  "artifacts": {
+    "alarm": {
+      "repo": "alarm",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:0019a49be58c16193ed9940fe5e826af1bf84dfbd4e7294395ca7cda711dcb0b",
+      "wasm": "sha256:cf6695ee90561f65debdfd1f9a179412c9e60951cc6adf9760397dc87eace3a9",
+      "stable_wasm": "sha256:cf6695ee90561f65debdfd1f9a179412c9e60951cc6adf9760397dc87eace3a9",
+      "size": 2926
+    },
+    "battery": {
+      "repo": "battery",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:b7e293f74781140962473de6d4fadd1b6fccd7acc93eaebc6eaaeba942ff2e6d",
+      "wasm": "sha256:161b24fdf1d9394a279bcf9fa8bdfe569e45a318495e53afb16efdd82bb4dd47",
+      "stable_wasm": "sha256:161b24fdf1d9394a279bcf9fa8bdfe569e45a318495e53afb16efdd82bb4dd47",
+      "size": 1466
+    },
+    "hwcheck": {
+      "repo": "hwcheck",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:143a6dbc62b4b4d663d4a25face9ed5f5a7a3978bf99df83f45970c1b99b3f2f",
+      "wasm": "sha256:03ef41ca2b2711c7439da3b7d95ae8fbf19faaa7eb0e41a4b75df89df44dc987",
+      "stable_wasm": "sha256:03ef41ca2b2711c7439da3b7d95ae8fbf19faaa7eb0e41a4b75df89df44dc987",
+      "size": 1275
+    },
+    "libccheck": {
+      "repo": "libccheck",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:19492fcd78d3d63116c6460d975c716cd72d0b5908a57af4d3a43ba0c2019371",
+      "wasm": "sha256:138ad6b43110af9a287b2bf5e934385cf196214ea78796b5ee9dc20078d0f26d",
+      "stable_wasm": "sha256:138ad6b43110af9a287b2bf5e934385cf196214ea78796b5ee9dc20078d0f26d",
+      "size": 2069
+    },
+    "localalarm": {
+      "repo": "localalarm",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:d895c72e67af4f63a2cee051c8fecd716dbc18a35076b0680545fc4b91ae781f",
+      "wasm": "sha256:71813140c606203e09651437b78d44f3dc929061a1b6b4bbc67aebc2ba3d81d6",
+      "stable_wasm": "sha256:71813140c606203e09651437b78d44f3dc929061a1b6b4bbc67aebc2ba3d81d6",
+      "size": 1049
+    },
+    "mqttdemo": {
+      "repo": "mqttdemo",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:1827d0643daec34ebf03cc5fa76b634745196eacec4ee32e3f8618af93ebebd4",
+      "wasm": "sha256:7e53a85337c9c60efeb9a4e29aa1356ea53f866882d76025f88924cfeeeed470",
+      "stable_wasm": "sha256:7e53a85337c9c60efeb9a4e29aa1356ea53f866882d76025f88924cfeeeed470",
+      "size": 1926
+    },
+    "sampler": {
+      "repo": "sampler",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:d3ef999151db52396c8f676a937302da788c98186f7e5069c448c953d3bb65e3",
+      "wasm": "sha256:86575f6f61017a43d284d310c8fe9fcd70f3ae598fd1ab37023c46603673e74e",
+      "stable_wasm": "sha256:86575f6f61017a43d284d310c8fe9fcd70f3ae598fd1ab37023c46603673e74e",
+      "size": 1581
+    },
+    "tinyml": {
+      "repo": "tinyml",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:7ba4eb277386113f9efc2186236872dc3ad81330b5d7b7b2aade319913ae9633",
+      "wasm": "sha256:b63434ad8c02d72a3e4465570c9182292018be466beea1488ea16e8f8b8348ca",
+      "stable_wasm": "sha256:b63434ad8c02d72a3e4465570c9182292018be466beea1488ea16e8f8b8348ca",
+      "size": 4121
+    },
+    "trend": {
+      "repo": "trend",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:ce01572a3ab9958ee500654ddb2827ef26f43ffa01becd5e4019bfe02873c3c7",
+      "wasm": "sha256:7238818e30c5b4864770c5c27eb9e72cc0607893ef673ae3d45cc93e4daba5fb",
+      "stable_wasm": "sha256:7238818e30c5b4864770c5c27eb9e72cc0607893ef673ae3d45cc93e4daba5fb",
+      "size": 1617
+    },
+    "deltablue": {
+      "repo": "deltablue",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:2d48ad8a63e8cfeba22c717722b6a9e5bb263a6db2b298aca4ea7dbdb62feb12",
+      "wasm": "sha256:f9ba1aba424c79da09e25b5599c9855e590f3201065c970d0c081935cb3e00c2",
+      "stable_wasm": null,
+      "size": 12754
+    },
+    "richards": {
+      "repo": "richards",
+      "tag": "v0.9.5-rc.1",
+      "digest": "sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a",
+      "wasm": "sha256:1e593cf56e230fe60a6e39c1dc3c412e59bc5badd082ca93b205434ba76839fe",
+      "stable_wasm": null,
+      "size": 4787
+    },
+    "tinymlp-neural": {
+      "repo": "tinyml",
+      "tag": "v0.9.5-rc.1-neural",
+      "digest": "sha256:cf460a324a814e1f8b214af24c3eb47ca518b8869621ba1844ae4971155f460b",
+      "wasm": "sha256:730fc8169d45ddeb9d7cc40d3b87585dfc1a1ab709edb82150f90328b0950be1",
+      "stable_wasm": "sha256:730fc8169d45ddeb9d7cc40d3b87585dfc1a1ab709edb82150f90328b0950be1",
+      "size": 6774
+    },
+    "arduino-rust": {
+      "repo": "arduino",
+      "tag": "v0.9.5-rc.1-rust",
+      "digest": "sha256:5222aad9c14bd3cd2f38c8310dcfcae852543fcc6d165438b4c95f6a4f9399b4",
+      "wasm": "sha256:247b2d4449acfe3f1d82107b9abb93c73fcc6b6ac4283d012097b12d6df5101d",
+      "stable_wasm": "sha256:247b2d4449acfe3f1d82107b9abb93c73fcc6b6ac4283d012097b12d6df5101d",
+      "size": 283
+    },
+    "arduino-cpp": {
+      "repo": "arduino",
+      "tag": "v0.9.5-rc.1-cpp",
+      "digest": "sha256:15285956d2d08dfaf3b704293db3a951f5cc369cc85326ef65dd9c33b4ccf52c",
+      "wasm": "sha256:01773158b1a55c99930923151d7c3ac62ee712ff6cbe6283eb71c009e0fb48de",
+      "stable_wasm": "sha256:01773158b1a55c99930923151d7c3ac62ee712ff6cbe6283eb71c009e0fb48de",
+      "size": 369
+    },
+    "arduino-assemblyscript": {
+      "repo": "arduino",
+      "tag": "v0.9.5-rc.1-assemblyscript",
+      "digest": "sha256:9f764d18cf451658fe1d607fdbe50a6e9b8dbd081d80d855da598185a8e97ea0",
+      "wasm": "sha256:c655dae2a733080a9055c8c8a09342156ee14717da0eb3c9fcbbb3c11deecfef",
+      "stable_wasm": "sha256:c655dae2a733080a9055c8c8a09342156ee14717da0eb3c9fcbbb3c11deecfef",
+      "size": 2202
+    },
+    "arduino-tinygo": {
+      "repo": "arduino",
+      "tag": "v0.9.5-rc.1-tinygo",
+      "digest": "sha256:faa8842057e086dd082ce115cbcadfd599138a18ea94c2e3bc50011470af9ebe",
+      "wasm": "sha256:8c1d7d14a03ddbe09eb1511868a16498b3331a5ccef21e3519324901b92c41be",
+      "stable_wasm": "sha256:8c1d7d14a03ddbe09eb1511868a16498b3331a5ccef21e3519324901b92c41be",
+      "size": 5217
+    },
+    "coremark-wasm3": {
+      "repo": "coremark",
+      "tag": "v0.9.5-rc.1-wasm3",
+      "digest": "sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45",
+      "wasm": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4",
+      "stable_wasm": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4",
+      "size": 7769
+    },
+    "coremark-wasm-coremark": {
+      "repo": "coremark",
+      "tag": "v0.9.5-rc.1-wasm-coremark",
+      "digest": "sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9",
+      "wasm": "sha256:054c0e85e211761087f33372cb5415eab09989842813c2d6dee13c316ccc754b",
+      "stable_wasm": "sha256:054c0e85e211761087f33372cb5415eab09989842813c2d6dee13c316ccc754b",
+      "size": 12540
+    }
+  },
+  "boards": {
+    "esp32": {
+      "firmware": "flightctl-mcu/0.9.4",
+      "runtime_bench_ms": {
+        "richards": {
+          "first_fit": 960.9,
+          "rc": 959.7,
+          "same_boot": true
+        },
+        "deltablue": {
+          "first_fit": 3396.0,
+          "rc": 897.8,
+          "same_boot": true
+        }
+      },
+      "controls": {
+        "forest256": {
+          "prior_ms": 0.15234375,
+          "rc_ms": 0.07421875,
+          "state": {
+            "cbforest256": "bench 18 19 19 19 19 19 19 bad=0"
+          }
+        },
+        "mlp": {
+          "prior_ms": 0.84375,
+          "rc_ms": 0.84375,
+          "state": {
+            "cbmlp": "bench 27 27 27 27 27 27 27 bad=0"
+          }
+        },
+        "trend256": {
+          "prior_ms": null,
+          "rc_ms": null,
+          "state": {
+            "cbtrend256": "bench no sensor"
+          }
+        },
+        "battery256": {
+          "prior_ms": 0.41015625,
+          "rc_ms": 0.44140625,
+          "state": {
+            "cbbattery256": "bench 117 118 113 102 102 101 116 bad=0"
+          }
+        }
+      },
+      "coremark": {
+        "64": {
+          "iter_per_second": [
+            19.014,
+            18.992,
+            19.054
+          ],
+          "prior_median_iter_per_second": 19.129
+        },
+        "128": {
+          "iter_per_second": [],
+          "prior_median_iter_per_second": null
+        }
+      },
+      "mqtt": {
+        "prior_median_ms": 127.235,
+        "rc_median_ms": 142.562
+      },
+      "observations": {
+        "deltablue": {
+          "result": "observed",
+          "states": {
+            "deltablue": "run() returned 8978"
+          },
+          "ms_per_iteration": 897.8
+        },
+        "richards": {
+          "result": "observed",
+          "states": {
+            "richards": "run() returned 9597"
+          },
+          "ms_per_iteration": 959.7
+        },
+        "forest256": {
+          "result": "observed",
+          "states": {
+            "cbforest256": "bench 18 19 19 19 19 19 19 bad=0"
+          },
+          "ms_per_operation": 0.07421875
+        },
+        "mlp": {
+          "result": "observed",
+          "states": {
+            "cbmlp": "bench 27 27 27 27 27 27 27 bad=0"
+          },
+          "ms_per_operation": 0.84375
+        },
+        "trend256": {
+          "result": "observed",
+          "states": {
+            "cbtrend256": "bench no sensor"
+          }
+        },
+        "battery256": {
+          "result": "observed",
+          "states": {
+            "cbbattery256": "bench 117 118 113 102 102 101 116 bad=0"
+          },
+          "ms_per_operation": 0.44140625
+        },
+        "libccheck": {
+          "result": "observed",
+          "states": {
+            "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+          }
+        },
+        "alarm": {
+          "result": "observed",
+          "states": {
+            "alarm": "no temperature sensor on this chip"
+          }
+        },
+        "battery": {
+          "result": "observed",
+          "states": {
+            "battery": "battery unavailable"
+          }
+        },
+        "trend": {
+          "result": "observed",
+          "states": {
+            "trend": "no temperature sensor on this chip"
+          }
+        },
+        "tinyml": {
+          "result": "observed",
+          "states": {
+            "tinyml": "no temperature sensor on this chip"
+          }
+        },
+        "tinymlp": {
+          "result": "observed",
+          "states": {
+            "tinymlp": "no temperature sensor on this chip"
+          }
+        },
+        "pair": {
+          "result": "observed",
+          "states": {
+            "localalarm": "waiting for sample",
+            "sampler": "sensor unavailable"
+          }
+        },
+        "hwcheck": {
+          "result": "observed",
+          "states": {
+            "hwcheck": "i2c 0 spi 0:0 uart 7/0 adc 142 pwm 0"
+          }
+        },
+        "blink-rust": {
+          "result": "observed",
+          "states": {
+            "blinkrust": "Running"
+          },
+          "free_bytes": 36152
+        },
+        "blink-cpp": {
+          "result": "observed",
+          "states": {
+            "blinkcpp": "Running"
+          },
+          "free_bytes": 36988
+        },
+        "blink-assemblyscript": {
+          "result": "observed",
+          "states": {
+            "blinkassemblyscript": "Running"
+          },
+          "free_bytes": 29268
+        },
+        "blink-tinygo": {
+          "result": "observed",
+          "states": {
+            "blinktinygo": "Running"
+          },
+          "free_bytes": 25112
+        },
+        "mqttdemo": {
+          "result": "observed",
+          "states": {
+            "mqttdemo": "online"
+          },
+          "qos1_us": [
+            189722,
+            292156,
+            743813,
+            300390,
+            232384,
+            308541,
+            351754,
+            123065,
+            215252,
+            127575,
+            119520,
+            439953,
+            193019,
+            149544,
+            235163,
+            102108,
+            114667,
+            185695,
+            176810,
+            133019,
+            279764,
+            112543,
+            121207,
+            94074,
+            162328,
+            160667,
+            277086,
+            183647,
+            104075,
+            166583,
+            144162,
+            151403,
+            108041,
+            133482,
+            140962,
+            104858,
+            122604,
+            138035,
+            115529,
+            138939,
+            107190,
+            84405,
+            177634,
+            129251,
+            119052,
+            119095,
+            169517,
+            93167
+          ],
+          "median_ms": 142.562,
+          "max_ms": 743.813
+        },
+        "core64-1": {
+          "result": "observed",
+          "states": {
+            "cm641": "run() returned 19.014"
+          },
+          "iter_per_second": 19.014
+        },
+        "core64-2": {
+          "result": "observed",
+          "states": {
+            "cm642": "run() returned 18.992"
+          },
+          "iter_per_second": 18.992
+        },
+        "core64-3": {
+          "result": "observed",
+          "states": {
+            "cm643": "run() returned 19.054"
+          },
+          "iter_per_second": 19.054
+        },
+        "core128-1": {
+          "result": "device limit/error",
+          "states": {
+            "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 60 KB)"
+          },
+          "details": "Device was updated to the fleet's latest device spec."
+        }
+      },
+      "heap_status_samples_bytes": {
+        "libccheck": [
+          112392
+        ],
+        "alarm": [
+          112392
+        ],
+        "battery": [
+          112392
+        ],
+        "trend": [
+          112392
+        ],
+        "tinyml": [
+          112392
+        ],
+        "tinymlp": [
+          112392
+        ],
+        "localalarm+sampler": [
+          112392
+        ],
+        "hwcheck": [
+          112392,
+          112392
+        ],
+        "blinkrust": [
+          112392
+        ],
+        "blinkcpp": [
+          112392
+        ],
+        "blinkassemblyscript": [
+          112392
+        ],
+        "blinktinygo": [
+          112392
+        ],
+        "mqttdemo": [
+          112392,
+          112392
+        ]
+      },
+      "peripheral_checks": {
+        "empty_bytes": 112116,
+        "pair": {
+          "localalarm": "waiting for sample",
+          "sampler": "sensor unavailable"
+        },
+        "pair_bytes": 74000
+      },
+      "console_free_heap_bytes": {
+        "blink-rust": {
+          "prior": 39900,
+          "rc": 36152
+        },
+        "blink-cpp": {
+          "prior": 38100,
+          "rc": 36988
+        },
+        "blink-assemblyscript": {
+          "prior": 30584,
+          "rc": 29268
+        },
+        "blink-tinygo": {
+          "prior": 26060,
+          "rc": 25112
+        },
+        "pair": {
+          "prior": 81224,
+          "rc": 74000
+        }
+      }
+    },
+    "esp32c3": {
+      "firmware": "flightctl-mcu/0.9.4",
+      "runtime_bench_ms": {
+        "richards": {
+          "first_fit": 1139.8,
+          "rc": 1141.4,
+          "same_boot": true
+        },
+        "deltablue": {
+          "first_fit": 4336.2,
+          "rc": 1204.6,
+          "same_boot": true
+        }
+      },
+      "controls": {
+        "forest256": {
+          "prior_ms": 0.1875,
+          "rc_ms": 0.19921875,
+          "state": {
+            "cbforest256": "bench 64 47 36 47 62 53 51 bad=0"
+          }
+        },
+        "mlp": {
+          "prior_ms": 4.34375,
+          "rc_ms": 4.53125,
+          "state": {
+            "cbmlp": "bench 118 154 178 145 140 130 155 bad=0"
+          }
+        },
+        "trend256": {
+          "prior_ms": 0.17578125,
+          "rc_ms": 0.0625,
+          "state": {
+            "cbtrend256": "bench 16 33 43 16 113 15 16 bad=0"
+          }
+        },
+        "battery256": {
+          "prior_ms": 0.08984375,
+          "rc_ms": 0.0546875,
+          "state": {
+            "cbbattery256": "bench 14 14 15 14 14 13 13 bad=0"
+          }
+        }
+      },
+      "coremark": {
+        "64": {
+          "iter_per_second": [
+            15.256,
+            15.298,
+            15.288
+          ],
+          "prior_median_iter_per_second": 15.271
+        },
+        "128": {
+          "iter_per_second": [],
+          "prior_median_iter_per_second": null
+        }
+      },
+      "mqtt": {
+        "prior_median_ms": 121.9355,
+        "rc_median_ms": 131.102
+      },
+      "observations": {
+        "deltablue": {
+          "result": "observed",
+          "states": {
+            "deltablue": "run() returned 12046"
+          },
+          "ms_per_iteration": 1204.6
+        },
+        "richards": {
+          "result": "observed",
+          "states": {
+            "richards": "run() returned 11414"
+          },
+          "ms_per_iteration": 1141.4
+        },
+        "forest256": {
+          "result": "observed",
+          "states": {
+            "cbforest256": "bench 64 47 36 47 62 53 51 bad=0"
+          },
+          "ms_per_operation": 0.19921875
+        },
+        "mlp": {
+          "result": "observed",
+          "states": {
+            "cbmlp": "bench 118 154 178 145 140 130 155 bad=0"
+          },
+          "ms_per_operation": 4.53125
+        },
+        "trend256": {
+          "result": "observed",
+          "states": {
+            "cbtrend256": "bench 16 33 43 16 113 15 16 bad=0"
+          },
+          "ms_per_operation": 0.0625
+        },
+        "battery256": {
+          "result": "observed",
+          "states": {
+            "cbbattery256": "bench 14 14 15 14 14 13 13 bad=0"
+          },
+          "ms_per_operation": 0.0546875
+        },
+        "libccheck": {
+          "result": "observed",
+          "states": {
+            "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+          }
+        },
+        "alarm": {
+          "result": "observed",
+          "states": {
+            "alarm": "alarm (blinking blue)"
+          }
+        },
+        "battery": {
+          "result": "observed",
+          "states": {
+            "battery": "battery unavailable"
+          }
+        },
+        "trend": {
+          "result": "observed",
+          "states": {
+            "trend": "steady (52.7 C)"
+          }
+        },
+        "tinyml": {
+          "result": "observed",
+          "states": {
+            "tinyml": "steady (48.7 C)"
+          }
+        },
+        "tinymlp": {
+          "result": "observed",
+          "states": {
+            "tinymlp": "steady 100% (48.7 C)"
+          }
+        },
+        "pair": {
+          "result": "observed",
+          "states": {
+            "localalarm": "alarm",
+            "sampler": "queued and sent locally"
+          }
+        },
+        "hwcheck": {
+          "result": "observed",
+          "states": {
+            "hwcheck": "i2c -2 spi -2 uart -2 adc -2 pwm -2"
+          }
+        },
+        "blink-rust": {
+          "result": "observed",
+          "states": {
+            "blinkrust": "Running"
+          },
+          "free_bytes": 59568
+        },
+        "blink-cpp": {
+          "result": "observed",
+          "states": {
+            "blinkcpp": "Running"
+          },
+          "free_bytes": 59348
+        },
+        "blink-assemblyscript": {
+          "result": "observed",
+          "states": {
+            "blinkassemblyscript": "Running"
+          },
+          "free_bytes": 51944
+        },
+        "blink-tinygo": {
+          "result": "observed",
+          "states": {
+            "blinktinygo": "Running"
+          },
+          "free_bytes": 45744
+        },
+        "mqttdemo": {
+          "result": "observed",
+          "states": {
+            "mqttdemo": "online"
+          },
+          "qos1_us": [
+            138194,
+            114492,
+            119489,
+            137119,
+            112591,
+            96999,
+            142093,
+            133493,
+            144113,
+            108261,
+            135277,
+            122056,
+            113516,
+            164555,
+            87999,
+            132190,
+            126273,
+            100085,
+            143418,
+            145754,
+            128075,
+            126319,
+            115490,
+            140317,
+            89898,
+            130014,
+            128009,
+            150859,
+            109101,
+            118285,
+            275834,
+            184904,
+            215150,
+            115722,
+            159317,
+            87410,
+            111532,
+            186921,
+            209835,
+            159933,
+            81425,
+            180983,
+            150129,
+            127612,
+            134059,
+            150076,
+            611770,
+            101910
+          ],
+          "median_ms": 131.102,
+          "max_ms": 611.77
+        },
+        "core64-1": {
+          "result": "observed",
+          "states": {
+            "cm641": "run() returned 15.256"
+          },
+          "iter_per_second": 15.256
+        },
+        "core64-2": {
+          "result": "observed",
+          "states": {
+            "cm642": "run() returned 15.298"
+          },
+          "iter_per_second": 15.298
+        },
+        "core64-3": {
+          "result": "observed",
+          "states": {
+            "cm643": "run() returned 15.288"
+          },
+          "iter_per_second": 15.288
+        },
+        "core128-1": {
+          "result": "device limit/error",
+          "states": {
+            "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 88 KB)"
+          },
+          "details": "Device was updated to the fleet's latest device spec."
+        }
+      },
+      "heap_status_samples_bytes": {
+        "libccheck": [
+          131796
+        ],
+        "alarm": [
+          131796
+        ],
+        "battery": [
+          131796
+        ],
+        "trend": [
+          131796
+        ],
+        "tinyml": [
+          131796,
+          131796
+        ],
+        "tinymlp": [
+          131796,
+          131796
+        ],
+        "hwcheck": [
+          131796,
+          131796
+        ],
+        "blinkrust": [
+          131796
+        ],
+        "blinkcpp": [
+          131796
+        ],
+        "blinktinygo": [
+          131796
+        ],
+        "mqttdemo": [
+          131796,
+          131796
+        ]
+      },
+      "peripheral_checks": {
+        "empty_bytes": 132356,
+        "pair": {
+          "localalarm": "alarm",
+          "sampler": "queued and sent locally"
+        },
+        "pair_bytes": 94792
+      },
+      "console_free_heap_bytes": {
+        "blink-rust": {
+          "prior": 57948,
+          "rc": 59568
+        },
+        "blink-cpp": {
+          "prior": 57728,
+          "rc": 59348
+        },
+        "blink-assemblyscript": {
+          "prior": 50224,
+          "rc": 51944
+        },
+        "blink-tinygo": {
+          "prior": 38356,
+          "rc": 45744
+        },
+        "pair": {
+          "prior": 101048,
+          "rc": 94792
+        }
+      }
+    },
+    "esp32c5": {
+      "firmware": "flightctl-mcu/0.9.4",
+      "runtime_bench_ms": {
+        "richards": {
+          "first_fit": 727.4,
+          "rc": 726.9,
+          "same_boot": true
+        },
+        "deltablue": {
+          "first_fit": 2624.4,
+          "rc": 667.9,
+          "same_boot": true
+        }
+      },
+      "controls": {
+        "forest256": {
+          "prior_ms": 0.08984375,
+          "rc_ms": 0.06640625,
+          "state": {
+            "cbforest256": "bench 27 27 35 17 17 17 17 bad=0"
+          }
+        },
+        "mlp": {
+          "prior_ms": 1.375,
+          "rc_ms": 1.9375,
+          "state": {
+            "cbmlp": "bench 62 66 64 74 37 37 37 bad=0"
+          }
+        },
+        "trend256": {
+          "prior_ms": 0.06640625,
+          "rc_ms": 0.0859375,
+          "state": {
+            "cbtrend256": "bench 75 21 22 35 15 22 46 bad=0"
+          }
+        },
+        "battery256": {
+          "prior_ms": 0.05859375,
+          "rc_ms": 0.03515625,
+          "state": {
+            "cbbattery256": "bench 9 16 9 9 9 8 8 bad=0"
+          }
+        }
+      },
+      "coremark": {
+        "64": {
+          "iter_per_second": [
+            24.412,
+            24.351,
+            24.44
+          ],
+          "prior_median_iter_per_second": 24.374
+        },
+        "128": {
+          "iter_per_second": [],
+          "prior_median_iter_per_second": null
+        }
+      },
+      "mqtt": {
+        "prior_median_ms": 120.268,
+        "rc_median_ms": 125.1525
+      },
+      "observations": {
+        "deltablue": {
+          "result": "observed",
+          "states": {
+            "deltablue": "run() returned 6679"
+          },
+          "ms_per_iteration": 667.9
+        },
+        "richards": {
+          "result": "observed",
+          "states": {
+            "richards": "run() returned 7269"
+          },
+          "ms_per_iteration": 726.9
+        },
+        "forest256": {
+          "result": "observed",
+          "states": {
+            "cbforest256": "bench 27 27 35 17 17 17 17 bad=0"
+          },
+          "ms_per_operation": 0.06640625
+        },
+        "mlp": {
+          "result": "observed",
+          "states": {
+            "cbmlp": "bench 62 66 64 74 37 37 37 bad=0"
+          },
+          "ms_per_operation": 1.9375
+        },
+        "trend256": {
+          "result": "observed",
+          "states": {
+            "cbtrend256": "bench 75 21 22 35 15 22 46 bad=0"
+          },
+          "ms_per_operation": 0.0859375
+        },
+        "battery256": {
+          "result": "observed",
+          "states": {
+            "cbbattery256": "bench 9 16 9 9 9 8 8 bad=0"
+          },
+          "ms_per_operation": 0.03515625
+        },
+        "libccheck": {
+          "result": "observed",
+          "states": {
+            "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+          }
+        },
+        "alarm": {
+          "result": "observed",
+          "states": {
+            "alarm": "alarm (blinking blue)"
+          }
+        },
+        "battery": {
+          "result": "observed",
+          "states": {
+            "battery": "battery unavailable"
+          }
+        },
+        "trend": {
+          "result": "observed",
+          "states": {
+            "trend": "steady (30.1 C)"
+          }
+        },
+        "tinyml": {
+          "result": "observed",
+          "states": {
+            "tinyml": "steady (29.1 C)"
+          }
+        },
+        "tinymlp": {
+          "result": "observed",
+          "states": {
+            "tinymlp": "steady 99% (29.1 C)"
+          }
+        },
+        "pair": {
+          "result": "observed",
+          "states": {
+            "localalarm": "alarm",
+            "sampler": "queued and sent locally"
+          }
+        },
+        "hwcheck": {
+          "result": "observed",
+          "states": {
+            "hwcheck": "i2c -2 spi -2 uart -2 adc -2 pwm -2"
+          }
+        },
+        "blink-rust": {
+          "result": "observed",
+          "states": {
+            "blinkrust": "Running"
+          },
+          "free_bytes": 35256
+        },
+        "blink-cpp": {
+          "result": "observed",
+          "states": {
+            "blinkcpp": "Running"
+          },
+          "free_bytes": 34984
+        },
+        "blink-assemblyscript": {
+          "result": "observed",
+          "states": {
+            "blinkassemblyscript": "Running"
+          },
+          "free_bytes": 27584
+        },
+        "blink-tinygo": {
+          "result": "observed",
+          "states": {
+            "blinktinygo": "Running"
+          },
+          "free_bytes": 21500
+        },
+        "mqttdemo": {
+          "result": "observed",
+          "states": {
+            "mqttdemo": "online"
+          },
+          "qos1_us": [
+            162192,
+            126712,
+            274530,
+            111505,
+            187588,
+            100821,
+            84325,
+            135861,
+            157207,
+            145560,
+            137486,
+            104774,
+            124728,
+            160020,
+            105884,
+            119648,
+            94780,
+            130938,
+            212859,
+            75834,
+            95325,
+            122597,
+            136646,
+            116444,
+            125577,
+            106336,
+            94464,
+            152970,
+            121282,
+            130498,
+            141502,
+            117719,
+            141377,
+            102596,
+            128502,
+            125803,
+            136956,
+            131831,
+            143835,
+            110701,
+            122481,
+            123337,
+            110507,
+            169806,
+            96073,
+            173459,
+            118652,
+            105461
+          ],
+          "median_ms": 125.1525,
+          "max_ms": 274.53
+        },
+        "core64-1": {
+          "result": "observed",
+          "states": {
+            "cm641": "run() returned 24.412"
+          },
+          "iter_per_second": 24.412
+        },
+        "core64-2": {
+          "result": "observed",
+          "states": {
+            "cm642": "run() returned 24.351"
+          },
+          "iter_per_second": 24.351
+        },
+        "core64-3": {
+          "result": "observed",
+          "states": {
+            "cm643": "run() returned 24.440"
+          },
+          "iter_per_second": 24.44
+        },
+        "core128-1": {
+          "result": "device limit/error",
+          "states": {
+            "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 76 KB)"
+          },
+          "details": "Device was updated to the fleet's latest device spec."
+        }
+      },
+      "heap_status_samples_bytes": {
+        "libccheck": [
+          107240
+        ],
+        "alarm": [
+          107240
+        ],
+        "battery": [
+          107240
+        ],
+        "trend": [
+          107240
+        ],
+        "tinyml": [
+          107240
+        ],
+        "tinymlp": [
+          107240,
+          107240
+        ],
+        "localalarm+sampler": [
+          107240
+        ],
+        "hwcheck": [
+          107240,
+          107240
+        ],
+        "blinkrust": [
+          107240
+        ],
+        "blinkcpp": [
+          107240
+        ],
+        "blinkassemblyscript": [
+          107240
+        ],
+        "blinktinygo": [
+          107240
+        ],
+        "mqttdemo": [
+          107240,
+          107240
+        ]
+      },
+      "peripheral_checks": {
+        "empty_bytes": 109872,
+        "hwcheck_mapped": "i2c 0 spi 0:0 uart 7/0 adc 609 pwm 0",
+        "pair": {
+          "localalarm": "alarm",
+          "sampler": "queued and sent locally"
+        },
+        "pair_bytes": 69844
+      },
+      "console_free_heap_bytes": {
+        "blink-rust": {
+          "prior": 32424,
+          "rc": 35256
+        },
+        "blink-cpp": {
+          "prior": 32464,
+          "rc": 34984
+        },
+        "blink-assemblyscript": {
+          "prior": 26632,
+          "rc": 27584
+        },
+        "blink-tinygo": {
+          "prior": 18584,
+          "rc": 21500
+        },
+        "pair": {
+          "prior": 76188,
+          "rc": 69844
+        }
+      }
+    },
+    "esp32c6": {
+      "firmware": "flightctl-mcu/0.9.4",
+      "runtime_bench_ms": {
+        "richards": {
+          "first_fit": 1232.0,
+          "rc": 1227.3,
+          "same_boot": true
+        },
+        "deltablue": {
+          "first_fit": 4239.1,
+          "rc": 1040.7,
+          "same_boot": true
+        }
+      },
+      "controls": {
+        "forest256": {
+          "prior_ms": 0.16015625,
+          "rc_ms": 0.14453125,
+          "state": {
+            "cbforest256": "bench 48 47 46 37 28 26 26 bad=0"
+          }
+        },
+        "mlp": {
+          "prior_ms": 2.96875,
+          "rc_ms": 3.0625,
+          "state": {
+            "cbmlp": "bench 124 90 59 107 101 98 66 bad=0"
+          }
+        },
+        "trend256": {
+          "prior_ms": 0.1015625,
+          "rc_ms": 0.10546875,
+          "state": {
+            "cbtrend256": "bench 46 27 53 29 19 24 16 bad=0"
+          }
+        },
+        "battery256": {
+          "prior_ms": 0.05078125,
+          "rc_ms": 0.0546875,
+          "state": {
+            "cbbattery256": "bench 23 24 24 14 13 13 14 bad=0"
+          }
+        }
+      },
+      "coremark": {
+        "64": {
+          "iter_per_second": [
+            14.596,
+            14.604,
+            14.579
+          ],
+          "prior_median_iter_per_second": 14.591
+        },
+        "128": {
+          "iter_per_second": [
+            18.64,
+            18.572,
+            18.625
+          ],
+          "prior_median_iter_per_second": 18.654
+        }
+      },
+      "mqtt": {
+        "prior_median_ms": 119.9625,
+        "rc_median_ms": 127.8365
+      },
+      "observations": {
+        "deltablue": {
+          "result": "observed",
+          "states": {
+            "deltablue": "run() returned 10407"
+          },
+          "ms_per_iteration": 1040.7
+        },
+        "richards": {
+          "result": "observed",
+          "states": {
+            "richards": "run() returned 12273"
+          },
+          "ms_per_iteration": 1227.3
+        },
+        "forest256": {
+          "result": "observed",
+          "states": {
+            "cbforest256": "bench 48 47 46 37 28 26 26 bad=0"
+          },
+          "ms_per_operation": 0.14453125
+        },
+        "mlp": {
+          "result": "observed",
+          "states": {
+            "cbmlp": "bench 124 90 59 107 101 98 66 bad=0"
+          },
+          "ms_per_operation": 3.0625
+        },
+        "trend256": {
+          "result": "observed",
+          "states": {
+            "cbtrend256": "bench 46 27 53 29 19 24 16 bad=0"
+          },
+          "ms_per_operation": 0.10546875
+        },
+        "battery256": {
+          "result": "observed",
+          "states": {
+            "cbbattery256": "bench 23 24 24 14 13 13 14 bad=0"
+          },
+          "ms_per_operation": 0.0546875
+        },
+        "libccheck": {
+          "result": "observed",
+          "states": {
+            "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+          }
+        },
+        "alarm": {
+          "result": "observed",
+          "states": {
+            "alarm": "alarm (blinking blue)"
+          }
+        },
+        "battery": {
+          "result": "observed",
+          "states": {
+            "battery": "battery unavailable"
+          }
+        },
+        "trend": {
+          "result": "observed",
+          "states": {
+            "trend": "steady (31.7 C)"
+          }
+        },
+        "tinyml": {
+          "result": "observed",
+          "states": {
+            "tinyml": "steady (29.7 C)"
+          }
+        },
+        "tinymlp": {
+          "result": "observed",
+          "states": {
+            "tinymlp": "steady 98% (29.7 C)"
+          }
+        },
+        "pair": {
+          "result": "observed",
+          "states": {
+            "localalarm": "alarm",
+            "sampler": "queued and sent locally"
+          }
+        },
+        "hwcheck": {
+          "result": "observed",
+          "states": {
+            "hwcheck": "i2c -2 spi -2 uart -2 adc -2 pwm -2"
+          }
+        },
+        "blink-rust": {
+          "result": "observed",
+          "states": {
+            "blinkrust": "Running"
+          },
+          "free_bytes": 125632
+        },
+        "blink-cpp": {
+          "result": "observed",
+          "states": {
+            "blinkcpp": "Running"
+          },
+          "free_bytes": 125300
+        },
+        "blink-assemblyscript": {
+          "result": "observed",
+          "states": {
+            "blinkassemblyscript": "Running"
+          },
+          "free_bytes": 117824
+        },
+        "blink-tinygo": {
+          "result": "observed",
+          "states": {
+            "blinktinygo": "Running"
+          },
+          "free_bytes": 111728
+        },
+        "mqttdemo": {
+          "result": "observed",
+          "states": {
+            "mqttdemo": "online"
+          },
+          "qos1_us": [
+            156667,
+            150262,
+            115142,
+            138666,
+            121218,
+            143380,
+            118091,
+            103732,
+            149900,
+            120944,
+            143961,
+            108099,
+            133829,
+            127232,
+            167648,
+            96510,
+            114061,
+            136992,
+            94236,
+            142328,
+            122790,
+            140984,
+            122287,
+            72875,
+            126476,
+            121439,
+            133919,
+            127493,
+            131744,
+            144001,
+            103398,
+            149886,
+            114468,
+            165425,
+            107362,
+            99593,
+            125792,
+            87933,
+            284492,
+            128180,
+            167717,
+            94812,
+            195993,
+            174029,
+            207893,
+            246607,
+            168837,
+            72280
+          ],
+          "median_ms": 127.8365,
+          "max_ms": 284.492
+        },
+        "core64-1": {
+          "result": "observed",
+          "states": {
+            "cm641": "run() returned 14.596"
+          },
+          "iter_per_second": 14.596
+        },
+        "core64-2": {
+          "result": "observed",
+          "states": {
+            "cm642": "run() returned 14.604"
+          },
+          "iter_per_second": 14.604
+        },
+        "core64-3": {
+          "result": "observed",
+          "states": {
+            "cm643": "run() returned 14.579"
+          },
+          "iter_per_second": 14.579
+        },
+        "core128-1": {
+          "result": "observed",
+          "states": {
+            "cm1281": "run() returned 18.640"
+          },
+          "iter_per_second": 18.64
+        },
+        "core128-2": {
+          "result": "observed",
+          "states": {
+            "cm1282": "run() returned 18.572"
+          },
+          "iter_per_second": 18.572
+        },
+        "core128-3": {
+          "result": "observed",
+          "states": {
+            "cm1283": "run() returned 18.625"
+          },
+          "iter_per_second": 18.625
+        }
+      },
+      "heap_status_samples_bytes": {
+        "alarm": [
+          197560
+        ],
+        "battery": [
+          197560
+        ],
+        "trend": [
+          197560
+        ],
+        "tinyml": [
+          197560,
+          197560
+        ],
+        "tinymlp": [
+          197560,
+          197560
+        ],
+        "localalarm+sampler": [
+          197560
+        ],
+        "hwcheck": [
+          197560,
+          197560
+        ],
+        "blinkrust": [
+          197560
+        ],
+        "blinkcpp": [
+          197560
+        ],
+        "blinkassemblyscript": [
+          197560
+        ],
+        "blinktinygo": [
+          197560
+        ],
+        "mqttdemo": [
+          197560,
+          197560
+        ]
+      },
+      "peripheral_checks": {
+        "empty_bytes": 203916,
+        "hwcheck_mapped": "i2c 0 spi 0:0 uart 7/0 adc 810 pwm 0",
+        "pair": {
+          "localalarm": "alarm",
+          "sampler": "queued and sent locally"
+        },
+        "pair_bytes": 165176
+      },
+      "console_free_heap_bytes": {
+        "blink-rust": {
+          "prior": 129144,
+          "rc": 125632
+        },
+        "blink-cpp": {
+          "prior": 128976,
+          "rc": 125300
+        },
+        "blink-assemblyscript": {
+          "prior": 121432,
+          "rc": 117824
+        },
+        "blink-tinygo": {
+          "prior": 115360,
+          "rc": 111728
+        },
+        "pair": {
+          "prior": 170136,
+          "rc": 165176
+        }
+      }
+    },
+    "esp32s3": {
+      "firmware": "flightctl-mcu/0.9.4",
+      "runtime_bench_ms": {
+        "richards": {
+          "first_fit": 792.8,
+          "rc": 791.5,
+          "same_boot": true
+        },
+        "deltablue": {
+          "first_fit": 2867.0,
+          "rc": 854.7,
+          "same_boot": true
+        }
+      },
+      "controls": {
+        "forest256": {
+          "prior_ms": 0.05859375,
+          "rc_ms": 0.05859375,
+          "state": {
+            "cbforest256": "bench 18 15 15 15 15 15 15 bad=0"
+          }
+        },
+        "mlp": {
+          "prior_ms": 0.75,
+          "rc_ms": 0.71875,
+          "state": {
+            "cbmlp": "bench 26 23 23 23 23 23 23 bad=0"
+          }
+        },
+        "trend256": {
+          "prior_ms": 0.37109375,
+          "rc_ms": 0.33984375,
+          "state": {
+            "cbtrend256": "bench 87 330 197 64 63 69 102 bad=0"
+          }
+        },
+        "battery256": {
+          "prior_ms": 0.06640625,
+          "rc_ms": 0.1171875,
+          "state": {
+            "cbbattery256": "bench 32 31 20 18 29 33 30 bad=0"
+          }
+        }
+      },
+      "coremark": {
+        "64": {
+          "iter_per_second": [
+            22.873,
+            22.938,
+            22.92
+          ],
+          "prior_median_iter_per_second": 22.924
+        },
+        "128": {
+          "iter_per_second": [
+            28.889,
+            28.973,
+            29.0
+          ],
+          "prior_median_iter_per_second": 28.941
+        }
+      },
+      "mqtt": {
+        "prior_median_ms": 122.6875,
+        "rc_median_ms": 130.3975
+      },
+      "observations": {
+        "deltablue": {
+          "result": "observed",
+          "states": {
+            "deltablue": "run() returned 8547"
+          },
+          "ms_per_iteration": 854.7
+        },
+        "richards": {
+          "result": "observed",
+          "states": {
+            "richards": "run() returned 7915"
+          },
+          "ms_per_iteration": 791.5
+        },
+        "forest256": {
+          "result": "observed",
+          "states": {
+            "cbforest256": "bench 18 15 15 15 15 15 15 bad=0"
+          },
+          "ms_per_operation": 0.05859375
+        },
+        "mlp": {
+          "result": "observed",
+          "states": {
+            "cbmlp": "bench 26 23 23 23 23 23 23 bad=0"
+          },
+          "ms_per_operation": 0.71875
+        },
+        "trend256": {
+          "result": "observed",
+          "states": {
+            "cbtrend256": "bench 87 330 197 64 63 69 102 bad=0"
+          },
+          "ms_per_operation": 0.33984375
+        },
+        "battery256": {
+          "result": "observed",
+          "states": {
+            "cbbattery256": "bench 32 31 20 18 29 33 30 bad=0"
+          },
+          "ms_per_operation": 0.1171875
+        },
+        "libccheck": {
+          "result": "observed",
+          "states": {
+            "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+          }
+        },
+        "alarm": {
+          "result": "observed",
+          "states": {
+            "alarm": "alarm (blinking blue)"
+          }
+        },
+        "battery": {
+          "result": "observed",
+          "states": {
+            "battery": "battery unavailable"
+          }
+        },
+        "trend": {
+          "result": "observed",
+          "states": {
+            "trend": "steady (47.4 C)"
+          }
+        },
+        "tinyml": {
+          "result": "observed",
+          "states": {
+            "tinyml": "steady (44.4 C)"
+          }
+        },
+        "tinymlp": {
+          "result": "observed",
+          "states": {
+            "tinymlp": "steady 99% (44.4 C)"
+          }
+        },
+        "pair": {
+          "result": "observed",
+          "states": {
+            "localalarm": "alarm",
+            "sampler": "queued and sent locally"
+          }
+        },
+        "hwcheck": {
+          "result": "observed",
+          "states": {
+            "hwcheck": "i2c -2 spi -2 uart -2 adc -2 pwm -2"
+          }
+        },
+        "blink-rust": {
+          "result": "observed",
+          "states": {
+            "blinkrust": "Running"
+          },
+          "free_bytes": 2173844
+        },
+        "blink-cpp": {
+          "result": "observed",
+          "states": {
+            "blinkcpp": "Running"
+          },
+          "free_bytes": 2173540
+        },
+        "blink-assemblyscript": {
+          "result": "observed",
+          "states": {
+            "blinkassemblyscript": "Running"
+          },
+          "free_bytes": 2166092
+        },
+        "blink-tinygo": {
+          "result": "observed",
+          "states": {
+            "blinktinygo": "Running"
+          },
+          "free_bytes": 2159936
+        },
+        "mqttdemo": {
+          "result": "observed",
+          "states": {
+            "mqttdemo": "online"
+          },
+          "qos1_us": [
+            94184,
+            198478,
+            87899,
+            129063,
+            136646,
+            132198,
+            126359,
+            124846,
+            90031,
+            125074,
+            161236,
+            150321,
+            105071,
+            114113,
+            127371,
+            124850,
+            115142,
+            131486,
+            150073,
+            265128,
+            179656,
+            170284,
+            198140,
+            78138,
+            127966,
+            114055,
+            166234,
+            108036,
+            112386,
+            215828,
+            184688,
+            185922,
+            139243,
+            137935,
+            162616,
+            86060,
+            149564,
+            107518,
+            120121,
+            134863,
+            129606,
+            170350,
+            133732,
+            97131,
+            80778,
+            131189,
+            121786,
+            132148
+          ],
+          "median_ms": 130.3975,
+          "max_ms": 265.128
+        },
+        "core64-1": {
+          "result": "observed",
+          "states": {
+            "cm641": "run() returned 22.873"
+          },
+          "iter_per_second": 22.873
+        },
+        "core64-2": {
+          "result": "observed",
+          "states": {
+            "cm642": "run() returned 22.938"
+          },
+          "iter_per_second": 22.938
+        },
+        "core64-3": {
+          "result": "observed",
+          "states": {
+            "cm643": "run() returned 22.920"
+          },
+          "iter_per_second": 22.92
+        },
+        "core128-1": {
+          "result": "observed",
+          "states": {
+            "cm1281": "run() returned 28.889"
+          },
+          "iter_per_second": 28.889
+        },
+        "core128-2": {
+          "result": "observed",
+          "states": {
+            "cm1282": "run() returned 28.973"
+          },
+          "iter_per_second": 28.973
+        },
+        "core128-3": {
+          "result": "observed",
+          "states": {
+            "cm1283": "run() returned 29.000"
+          },
+          "iter_per_second": 29.0
+        }
+      },
+      "heap_status_samples_bytes": {
+        "libccheck": [
+          2245720
+        ],
+        "alarm": [
+          2245720
+        ],
+        "battery": [
+          2245720
+        ],
+        "trend": [
+          2245720
+        ],
+        "tinyml": [
+          2245720,
+          2245720
+        ],
+        "tinymlp": [
+          2245720,
+          2245720
+        ],
+        "localalarm+sampler": [
+          2245720
+        ],
+        "hwcheck": [
+          2245720,
+          2245720
+        ],
+        "blinkrust": [
+          2245720
+        ],
+        "blinkcpp": [
+          2245720
+        ],
+        "blinktinygo": [
+          2245720
+        ],
+        "mqttdemo": [
+          2245720,
+          2245720
+        ]
+      },
+      "peripheral_checks": {
+        "empty_bytes": 2246700,
+        "hwcheck_mapped": "i2c 0 spi 0:0 uart 7/0 adc 123 pwm 0",
+        "pair": {
+          "localalarm": "alarm",
+          "sampler": "queued and sent locally"
+        },
+        "pair_bytes": 2208200
+      },
+      "console_free_heap_bytes": {
+        "blink-rust": {
+          "prior": 2170244,
+          "rc": 2173844
+        },
+        "blink-cpp": {
+          "prior": 2170072,
+          "rc": 2173540
+        },
+        "blink-assemblyscript": {
+          "prior": 2164308,
+          "rc": 2166092
+        },
+        "blink-tinygo": {
+          "prior": 2156252,
+          "rc": 2159936
+        },
+        "pair": {
+          "prior": 2214664,
+          "rc": 2208200
+        }
+      }
+    },
+    "zephyr": {
+      "firmware": "flightctl-mcu/0.9.4",
+      "runtime_bench_ms": {
+        "richards": {
+          "first_fit": 851.8,
+          "rc": 851.2,
+          "same_boot": true
+        },
+        "deltablue": {
+          "first_fit": 3397.2,
+          "rc": 946.2,
+          "same_boot": true
+        }
+      },
+      "controls": {
+        "forest256": {
+          "prior_ms": 0.0703125,
+          "rc_ms": 0.0703125,
+          "state": {
+            "cbforest256": "bench 18 18 18 18 18 18 18 bad=0"
+          }
+        },
+        "mlp": {
+          "prior_ms": 1.5,
+          "rc_ms": 0.875,
+          "state": {
+            "cbmlp": "bench 28 28 28 28 48 48 48 bad=0"
+          }
+        },
+        "trend256": {
+          "prior_ms": 0.046875,
+          "rc_ms": 0.046875,
+          "state": {
+            "cbtrend256": "bench 11 14 13 11 12 13 11 bad=0"
+          }
+        },
+        "battery256": {
+          "prior_ms": 0.0390625,
+          "rc_ms": 0.0390625,
+          "state": {
+            "cbbattery256": "bench 10 11 10 10 10 10 10 bad=0"
+          }
+        }
+      },
+      "coremark": {
+        "64": {
+          "iter_per_second": [
+            20.407,
+            20.432,
+            20.418
+          ],
+          "prior_median_iter_per_second": 20.423
+        },
+        "128": {
+          "iter_per_second": [
+            25.6,
+            25.643,
+            25.638
+          ],
+          "prior_median_iter_per_second": 25.648
+        }
+      },
+      "mqtt": {
+        "prior_median_ms": 183.5325,
+        "rc_median_ms": 192.1115
+      },
+      "observations": {
+        "deltablue": {
+          "result": "observed",
+          "states": {
+            "deltablue": "run() returned 9462"
+          },
+          "ms_per_iteration": 946.2
+        },
+        "richards": {
+          "result": "observed",
+          "states": {
+            "richards": "run() returned 8512"
+          },
+          "ms_per_iteration": 851.2
+        },
+        "forest256": {
+          "result": "observed",
+          "states": {
+            "cbforest256": "bench 18 18 18 18 18 18 18 bad=0"
+          },
+          "ms_per_operation": 0.0703125
+        },
+        "mlp": {
+          "result": "observed",
+          "states": {
+            "cbmlp": "bench 28 28 28 28 48 48 48 bad=0"
+          },
+          "ms_per_operation": 0.875
+        },
+        "trend256": {
+          "result": "observed",
+          "states": {
+            "cbtrend256": "bench 11 14 13 11 12 13 11 bad=0"
+          },
+          "ms_per_operation": 0.046875
+        },
+        "battery256": {
+          "result": "observed",
+          "states": {
+            "cbbattery256": "bench 10 11 10 10 10 10 10 bad=0"
+          },
+          "ms_per_operation": 0.0390625
+        },
+        "libccheck": {
+          "result": "observed",
+          "states": {
+            "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+          }
+        },
+        "alarm": {
+          "result": "observed",
+          "states": {
+            "alarm": "alarm (blinking blue)"
+          }
+        },
+        "battery": {
+          "result": "observed",
+          "states": {
+            "battery": "battery unavailable"
+          }
+        },
+        "trend": {
+          "result": "observed",
+          "states": {
+            "trend": "steady (40.6 C)"
+          }
+        },
+        "tinyml": {
+          "result": "observed",
+          "states": {
+            "tinyml": "steady (34.0 C)"
+          }
+        },
+        "tinymlp": {
+          "result": "observed",
+          "states": {
+            "tinymlp": "steady 90% (33.2 C)"
+          }
+        },
+        "pair": {
+          "result": "observed",
+          "states": {
+            "localalarm": "alarm",
+            "sampler": "queued and sent locally"
+          }
+        },
+        "hwcheck": {
+          "result": "observed",
+          "states": {
+            "hwcheck": "i2c -2 spi -2 uart -2 adc -2 pwm -2"
+          }
+        },
+        "blink-rust": {
+          "result": "observed",
+          "states": {
+            "blinkrust": "Running"
+          },
+          "free_bytes": 85920
+        },
+        "blink-cpp": {
+          "result": "observed",
+          "states": {
+            "blinkcpp": "Running"
+          },
+          "free_bytes": 85652
+        },
+        "blink-assemblyscript": {
+          "result": "observed",
+          "states": {
+            "blinkassemblyscript": "Running"
+          },
+          "free_bytes": 78764
+        },
+        "blink-tinygo": {
+          "result": "observed",
+          "states": {
+            "blinktinygo": "Running"
+          },
+          "free_bytes": 72852
+        },
+        "mqttdemo": {
+          "result": "observed",
+          "states": {
+            "mqttdemo": "online"
+          },
+          "qos1_us": [
+            185796,
+            171808,
+            210370,
+            264409,
+            195475,
+            382131,
+            515380,
+            190750,
+            262797,
+            369844,
+            388497,
+            179473,
+            185815,
+            327002,
+            173217,
+            105082,
+            159797,
+            160676,
+            191576,
+            165056,
+            192647,
+            392842,
+            390795,
+            277864,
+            225506,
+            124944,
+            138253,
+            170668,
+            225741,
+            138079,
+            653491,
+            326235,
+            406204,
+            281931,
+            167541,
+            205314,
+            176086,
+            176341,
+            189598,
+            105239,
+            130649,
+            191179,
+            217198,
+            193970,
+            111009,
+            206999,
+            170124,
+            483760
+          ],
+          "median_ms": 192.1115,
+          "max_ms": 653.491
+        },
+        "core64-1": {
+          "result": "observed",
+          "states": {
+            "cm641": "run() returned 20.407"
+          },
+          "iter_per_second": 20.407
+        },
+        "core64-2": {
+          "result": "observed",
+          "states": {
+            "cm642": "run() returned 20.432"
+          },
+          "iter_per_second": 20.432
+        },
+        "core64-3": {
+          "result": "observed",
+          "states": {
+            "cm643": "run() returned 20.418"
+          },
+          "iter_per_second": 20.418
+        },
+        "core128-1": {
+          "result": "observed",
+          "states": {
+            "cm1281": "run() returned 25.600"
+          },
+          "iter_per_second": 25.6
+        },
+        "core128-2": {
+          "result": "observed",
+          "states": {
+            "cm1282": "run() returned 25.643"
+          },
+          "iter_per_second": 25.643
+        },
+        "core128-3": {
+          "result": "observed",
+          "states": {
+            "cm1283": "run() returned 25.638"
+          },
+          "iter_per_second": 25.638
+        }
+      },
+      "heap_status_samples_bytes": {
+        "libccheck": [
+          84728
+        ],
+        "alarm": [
+          84728
+        ],
+        "trend": [
+          84728
+        ],
+        "tinyml": [
+          84728,
+          84728
+        ],
+        "tinymlp": [
+          84728,
+          84728
+        ],
+        "localalarm+sampler": [
+          84728
+        ],
+        "hwcheck": [
+          84728,
+          84728
+        ],
+        "blinkrust": [
+          84728
+        ],
+        "blinkcpp": [
+          84728
+        ],
+        "blinkassemblyscript": [
+          84728
+        ],
+        "blinktinygo": [
+          84728
+        ],
+        "mqttdemo": [
+          84728,
+          84728
+        ]
+      },
+      "peripheral_checks": {
+        "empty_bytes": 86548,
+        "pair": {
+          "localalarm": "alarm",
+          "sampler": "queued and sent locally"
+        },
+        "pair_bytes": 66880
+      },
+      "console_free_heap_bytes": {
+        "blink-rust": {
+          "prior": 85932,
+          "rc": 85920
+        },
+        "blink-cpp": {
+          "prior": 85656,
+          "rc": 85652
+        },
+        "blink-assemblyscript": {
+          "prior": 78768,
+          "rc": 78764
+        },
+        "blink-tinygo": {
+          "prior": 72852,
+          "rc": 72852
+        },
+        "pair": {
+          "prior": 72152,
+          "rc": 66880
+        }
+      }
+    }
+  }
+}

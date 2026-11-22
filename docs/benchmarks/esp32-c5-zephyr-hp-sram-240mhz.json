@@ -1,0 +1,54 @@
+{
+  "board": "ESP32-C5 Mini (4 MiB)",
+  "os": "Zephyr 4.5.0",
+  "agent": "0.9.6",
+  "firmware_version": "0.9.6-bench",
+  "runtime": "WAMR 2.4.6",
+  "date": "2026-11-22",
+  "transport": "Flight Control over Wi-Fi",
+  "cpu_mhz": 240,
+  "clock_source": "CPU0 clock-frequency in the signed image build devicetree: 240000000 Hz",
+  "signed_image_sha256": "ca6a867e0d225f8dd88d7b2c1818a035eddf0b8a8c0aaa36c249e2e46777c361",
+  "signed_image_bytes": 1192355,
+  "device_id": "omo4ur6u13a1n6l04v7s782s76lj7fjdea081l1ol3v97eo13srg",
+  "boot_id": "ef37c707-6172-4a62-b414-e4b374d29d0f",
+  "heap_order": [
+    "extra HP SRAM",
+    "main HP SRAM",
+    "RTC RAM"
+  ],
+  "coremark": {
+    "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/coremark:v0.9.5-wasm3",
+    "iterations_per_second": [
+      20.114,
+      24.339,
+      24.428
+    ],
+    "median": 24.339
+  },
+  "richards": {
+    "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/richards:v0.9.5",
+    "iterations_per_batch": 10,
+    "batch_ms": [
+      7420,
+      7471,
+      7378
+    ],
+    "median_ms_per_iteration": 742.0
+  },
+  "deltablue": {
+    "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/deltablue:v0.9.5",
+    "iterations_per_batch": 10,
+    "batch_ms": [
+      6403,
+      6476,
+      6403
+    ],
+    "median_ms_per_iteration": 640.3
+  },
+  "separate_deltablue_console_probe": {
+    "reply": "live-c5-ef37c707",
+    "while_running": true,
+    "elapsed_seconds": 0.828
+  }
+}

@@ -1,0 +1,364 @@
+{
+  "board": "ESP32-C5 Mini (4 MiB)",
+  "cpu_mhz": 240,
+  "os": "Zephyr 4.5.0",
+  "agent": "0.9.6",
+  "runtime": "WAMR 2.4.6",
+  "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/richards:v0.9.5",
+  "transport": "Flight Control over Wi-Fi",
+  "device_id": "omo4ur6u13a1n6l04v7s782s76lj7fjdea081l1ol3v97eo13srg",
+  "iterations_per_batch": 10,
+  "date": "2026-11-22",
+  "diagnostic_heap_order": {
+    "rtc": [
+      "RTC RAM",
+      "extra HP SRAM",
+      "main HP SRAM"
+    ],
+    "hp": [
+      "extra HP SRAM",
+      "main HP SRAM",
+      "RTC RAM"
+    ]
+  },
+  "historical": {
+    "single_heap_batch_ms": [
+      7342,
+      7378,
+      7349
+    ],
+    "multi_heap_batch_ms": [
+      10377,
+      10430,
+      10367
+    ]
+  },
+  "trials": [
+    {
+      "label": "current",
+      "heap": "multi",
+      "priority": 14,
+      "boot": "24a4b6b5-875a-4c97-8992-d1687c2f3c82",
+      "firmware_sha256": "3b1874bbcb3df2355b8249ea1818aa8558a4ebfddba16365a14eb639ce749b9a",
+      "runs": [
+        {
+          "tag": "c5-r-current-1",
+          "batch_ms": [
+            10951,
+            11072,
+            11012
+          ],
+          "median_ms_per_iteration": 1101.2,
+          "console_probe": null,
+          "flightctl": "run() returned 11012"
+        },
+        {
+          "tag": "c5-r-current-2",
+          "batch_ms": [
+            11037,
+            10999,
+            10911
+          ],
+          "median_ms_per_iteration": 1099.9,
+          "console_probe": {
+            "matched": true,
+            "during": true,
+            "seconds": 0.59
+          },
+          "flightctl": "run() returned 10999"
+        }
+      ]
+    },
+    {
+      "label": "single-14",
+      "heap": "single",
+      "priority": 14,
+      "boot": "ba5362eb-79cc-47e2-93aa-1f06a9910b92",
+      "firmware_sha256": "64c4442ae850e09cd5d3f159c1775536e7e8726ca89f70cf86a2087cdb3119ae",
+      "runs": [
+        {
+          "tag": "c5-r-single-14-1",
+          "batch_ms": [
+            7402,
+            7442,
+            7379
+          ],
+          "median_ms_per_iteration": 740.2,
+          "console_probe": null,
+          "flightctl": "run() returned 7402"
+        },
+        {
+          "tag": "c5-r-single-14-2",
+          "batch_ms": [
+            7515,
+            7440,
+            7402
+          ],
+          "median_ms_per_iteration": 744.0,
+          "console_probe": {
+            "matched": true,
+            "during": true,
+            "seconds": 0.607
+          },
+          "flightctl": "run() returned 7440"
+        }
+      ]
+    },
+    {
+      "label": "multi-0",
+      "heap": "multi",
+      "priority": 0,
+      "boot": "24419358-da3e-43bb-a179-67cb32640762",
+      "firmware_sha256": "be0f95870ead7764b71de5921da24a89097d00771f385bb0f622f6a17487982f",
+      "runs": [
+        {
+          "tag": "c5-r-multi-0-1",
+          "batch_ms": [
+            10316,
+            10356,
+            10309
+          ],
+          "median_ms_per_iteration": 1031.6,
+          "console_probe": null,
+          "flightctl": "run() returned 10316"
+        },
+        {
+          "tag": "c5-r-multi-0-2",
+          "batch_ms": [
+            9922,
+            9931,
+            9912
+          ],
+          "median_ms_per_iteration": 992.2,
+          "console_probe": {
+            "matched": false,
+            "during": true,
+            "seconds": 25.01
+          },
+          "flightctl": "run() returned 9922"
+        }
+      ]
+    },
+    {
+      "label": "single-0",
+      "heap": "single",
+      "priority": 0,
+      "boot": "a57432c0-bae9-492b-aad2-d62c99e8f3bb",
+      "firmware_sha256": "75b3bd7958f507fb65aa88c659f25b4dfb2dc9a1ec05ae7de8b3d230c4055f63",
+      "runs": [
+        {
+          "tag": "c5-r-single-0-1",
+          "batch_ms": [
+            7351,
+            7384,
+            7349
+          ],
+          "median_ms_per_iteration": 735.1,
+          "console_probe": null,
+          "flightctl": "run() returned 7351"
+        },
+        {
+          "tag": "c5-r-single-0-2",
+          "batch_ms": [
+            7342,
+            7365,
+            7346
+          ],
+          "median_ms_per_iteration": 734.6,
+          "console_probe": {
+            "matched": false,
+            "during": false,
+            "seconds": 25.006
+          },
+          "flightctl": "run() returned 7346"
+        }
+      ]
+    },
+    {
+      "label": "multi-14",
+      "heap": "multi",
+      "priority": 14,
+      "boot": "b297ce55-e525-4456-abec-0c7aaee48c89",
+      "firmware_sha256": "7235473d45696b42d521a4429543f1081bd7ef586594576a82157d792a9e555a",
+      "runs": [
+        {
+          "tag": "c5-r-multi-14-1",
+          "batch_ms": [
+            10761,
+            10828,
+            10763
+          ],
+          "median_ms_per_iteration": 1076.3,
+          "console_probe": null,
+          "flightctl": "run() returned 10763"
+        },
+        {
+          "tag": "c5-r-multi-14-2",
+          "batch_ms": [
+            10837,
+            10769,
+            10646
+          ],
+          "median_ms_per_iteration": 1076.9,
+          "console_probe": {
+            "matched": true,
+            "during": true,
+            "seconds": 0.728
+          },
+          "flightctl": "run() returned 10769"
+        }
+      ]
+    },
+    {
+      "label": "rtc",
+      "heap": "multi",
+      "priority": 14,
+      "boot": "8225d67e-fbeb-47d5-a3a0-04f8cda0f744",
+      "firmware_sha256": "a2c12a360b8bc640109fa00421163ad88334f9a5c3a0af8dcc7f0c2db8ae6f4f",
+      "runs": [
+        {
+          "tag": "c5-r-rtc-1",
+          "batch_ms": [
+            10822,
+            10851,
+            10817
+          ],
+          "median_ms_per_iteration": 1082.2,
+          "console_probe": null,
+          "flightctl": "run() returned 10822",
+          "cpu_clock_register_readback_hz": 240000000,
+          "wamr_placement": {
+            "linear_base": "0x40834ef0",
+            "operand_stack_base": "0x4085c318",
+            "instance": "0x50003990",
+            "globals": "0x50003ad8",
+            "fast_code_functions_in_rtc": 5,
+            "functions": 8,
+            "fast_code_bytes_in_rtc": 3030,
+            "fast_code_bytes": 6068
+          }
+        },
+        {
+          "tag": "c5-r-rtc-2",
+          "batch_ms": [
+            10873,
+            10807,
+            10712
+          ],
+          "median_ms_per_iteration": 1080.7,
+          "console_probe": {
+            "matched": true,
+            "during": true,
+            "seconds": 0.679
+          },
+          "flightctl": "run() returned 10807",
+          "cpu_clock_register_readback_hz": 240000000,
+          "wamr_placement": {
+            "linear_base": "0x40834ef0",
+            "operand_stack_base": "0x4085bec8",
+            "instance": "0x50003990",
+            "globals": "0x50003ad8",
+            "fast_code_functions_in_rtc": 5,
+            "functions": 8,
+            "fast_code_bytes_in_rtc": 3416,
+            "fast_code_bytes": 6068
+          }
+        }
+      ]
+    },
+    {
+      "label": "hp",
+      "heap": "multi",
+      "priority": 14,
+      "boot": "5889ed82-a472-46ee-961f-c20f60b258d8",
+      "firmware_sha256": "95b60405989168756898e95239e40ba96b4de2615f9f4359b7f6de88abb53a41",
+      "runs": [
+        {
+          "tag": "c5-r-hp-1",
+          "batch_ms": [
+            7385,
+            7456,
+            7397
+          ],
+          "median_ms_per_iteration": 739.7,
+          "console_probe": null,
+          "flightctl": "run() returned 7397",
+          "cpu_clock_register_readback_hz": 240000000,
+          "wamr_placement": {
+            "linear_base": "0x40835fb0",
+            "operand_stack_base": "0x4084bb78",
+            "instance": "0x4085e130",
+            "globals": "0x4085e278",
+            "fast_code_functions_in_rtc": 0,
+            "functions": 8,
+            "fast_code_bytes_in_rtc": 0,
+            "fast_code_bytes": 6068
+          }
+        },
+        {
+          "tag": "c5-r-hp-2",
+          "batch_ms": [
+            7535,
+            7456,
+            7410
+          ],
+          "median_ms_per_iteration": 745.6,
+          "console_probe": {
+            "matched": true,
+            "during": true,
+            "seconds": 0.709
+          },
+          "flightctl": "run() returned 7456",
+          "cpu_clock_register_readback_hz": 240000000,
+          "wamr_placement": {
+            "linear_base": "0x40846a90",
+            "operand_stack_base": "0x408493a8",
+            "instance": "0x4085e120",
+            "globals": "0x4085e268",
+            "fast_code_functions_in_rtc": 0,
+            "functions": 8,
+            "fast_code_bytes_in_rtc": 0,
+            "fast_code_bytes": 6068
+          }
+        }
+      ]
+    },
+    {
+      "label": "restore",
+      "heap": "multi",
+      "priority": 14,
+      "boot": "13fb0cc9-a2ae-49ea-ac72-c644c9bca52b",
+      "firmware_sha256": "3b1874bbcb3df2355b8249ea1818aa8558a4ebfddba16365a14eb639ce749b9a",
+      "runs": [
+        {
+          "tag": "c5-r-restore-1",
+          "batch_ms": [
+            10799,
+            10878,
+            10795
+          ],
+          "median_ms_per_iteration": 1079.9,
+          "console_probe": null,
+          "flightctl": "run() returned 10799"
+        },
+        {
+          "tag": "c5-r-restore-2",
+          "batch_ms": [
+            10825,
+            10792,
+            10709
+          ],
+          "median_ms_per_iteration": 1079.2,
+          "console_probe": {
+            "matched": true,
+            "during": true,
+            "seconds": 0.702
+          },
+          "flightctl": "run() returned 10792"
+        }
+      ]
+    }
+  ],
+  "diagnostic_unsigned_image_different_byte_count": 1,
+  "diagnostic_heap_order_byte_offset": 1145344
+}

@@ -1,0 +1,544 @@
+{
+  "board": "ESP32-D0WD rev. 1.0, 240 MHz",
+  "firmware": "v0.9.4",
+  "same_boot": true,
+  "arena_bytes": 40960,
+  "stack_bytes": 2048,
+  "wasm_page_bytes": 65536,
+  "wasm_heap_base": 43216,
+  "usable_single_allocation_bytes": 40948,
+  "mixed_operations_per_installation": 24576,
+  "individual_calls_sampled_per_case_per_installation": 256,
+  "timer_unit": "ms",
+  "methods": "Seven control-subtracted batch means per installation. The control replays the same metadata reset and indirect call with an empty callee. Individual maxima include scheduling and timer quantization.",
+  "artifacts": {
+    "first-fit": {
+      "wasm": "sha256:17420c5f193b036b7702adaaa3d14b6791b2797d0df65d4eb559e5d1179d3f79",
+      "manifest": "sha256:e9d6949437eadca402cd979f63a965318a03ea653745ef2a9b1e9ab023c9cebf",
+      "bytes": 4834
+    },
+    "free-list": {
+      "wasm": "sha256:51a471257933b37be3c4768465208cfbf86f6b34597bc324dadb2d4e2b3fb2c8",
+      "manifest": "sha256:e14c23236869088d1924ff50ab6c4a7ff4324c3bd0a65173086c3e7c0c5ff648",
+      "bytes": 6093
+    }
+  },
+  "runs": [
+    {
+      "installation": 1,
+      "allocator": "first-fit",
+      "mixed_op_allocation_failures": 6568,
+      "mixed_cycles_recovered": 12,
+      "final_single_allocation_bytes": 40948,
+      "trials": [
+        {
+          "free_predecessors": 0,
+          "merge_both": false,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            127,
+            125,
+            126,
+            125,
+            125,
+            126,
+            125
+          ],
+          "empty_ms": [
+            99,
+            126,
+            99,
+            126,
+            96,
+            127,
+            95
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 128,
+          "merge_both": false,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            128,
+            127,
+            124,
+            124,
+            128,
+            128,
+            126
+          ],
+          "empty_ms": [
+            98,
+            130,
+            98,
+            95,
+            128,
+            95,
+            127
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 1024,
+          "merge_both": false,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            125,
+            124,
+            126,
+            124,
+            127,
+            127,
+            156
+          ],
+          "empty_ms": [
+            95,
+            96,
+            127,
+            95,
+            128,
+            97,
+            98
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 2559,
+          "merge_both": false,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            127,
+            126,
+            125,
+            124,
+            157,
+            127,
+            158
+          ],
+          "empty_ms": [
+            128,
+            95,
+            126,
+            96,
+            95,
+            96,
+            98
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 2558,
+          "merge_both": true,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            156,
+            126,
+            158,
+            124,
+            154,
+            124,
+            154
+          ],
+          "empty_ms": [
+            97,
+            97,
+            96,
+            96,
+            95,
+            96,
+            95
+          ],
+          "max_single_ms": 1
+        }
+      ]
+    },
+    {
+      "installation": 2,
+      "allocator": "free-list",
+      "mixed_op_allocation_failures": 6496,
+      "mixed_cycles_recovered": 12,
+      "final_single_allocation_bytes": 40948,
+      "trials": [
+        {
+          "free_predecessors": 0,
+          "merge_both": false,
+          "calls_per_batch": 16384,
+          "real_ms": [
+            85,
+            87,
+            85,
+            114,
+            87,
+            88,
+            116
+          ],
+          "empty_ms": [
+            50,
+            49,
+            47,
+            51,
+            47,
+            47,
+            51
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 128,
+          "merge_both": false,
+          "calls_per_batch": 1024,
+          "real_ms": [
+            136,
+            164,
+            133,
+            135,
+            163,
+            133,
+            132
+          ],
+          "empty_ms": [
+            3,
+            3,
+            3,
+            3,
+            3,
+            3,
+            3
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 1024,
+          "merge_both": false,
+          "calls_per_batch": 128,
+          "real_ms": [
+            130,
+            158,
+            129,
+            126,
+            126,
+            156,
+            131
+          ],
+          "empty_ms": [
+            1,
+            0,
+            1,
+            1,
+            0,
+            1,
+            0
+          ],
+          "max_single_ms": 2
+        },
+        {
+          "free_predecessors": 2559,
+          "merge_both": false,
+          "calls_per_batch": 64,
+          "real_ms": [
+            162,
+            190,
+            157,
+            157,
+            189,
+            159,
+            159
+          ],
+          "empty_ms": [
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "max_single_ms": 33
+        },
+        {
+          "free_predecessors": 2558,
+          "merge_both": true,
+          "calls_per_batch": 64,
+          "real_ms": [
+            193,
+            159,
+            163,
+            191,
+            160,
+            163,
+            190
+          ],
+          "empty_ms": [
+            0,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0
+          ],
+          "max_single_ms": 32
+        }
+      ]
+    },
+    {
+      "installation": 3,
+      "allocator": "free-list",
+      "mixed_op_allocation_failures": 6496,
+      "mixed_cycles_recovered": 12,
+      "final_single_allocation_bytes": 40948,
+      "trials": [
+        {
+          "free_predecessors": 0,
+          "merge_both": false,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            169,
+            169,
+            175,
+            180,
+            175,
+            206,
+            170
+          ],
+          "empty_ms": [
+            126,
+            96,
+            128,
+            128,
+            97,
+            98,
+            98
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 128,
+          "merge_both": false,
+          "calls_per_batch": 1024,
+          "real_ms": [
+            135,
+            166,
+            136,
+            135,
+            136,
+            164,
+            136
+          ],
+          "empty_ms": [
+            3,
+            3,
+            3,
+            3,
+            3,
+            3,
+            3
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 1024,
+          "merge_both": false,
+          "calls_per_batch": 128,
+          "real_ms": [
+            128,
+            131,
+            159,
+            130,
+            128,
+            126,
+            159
+          ],
+          "empty_ms": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "max_single_ms": 2
+        },
+        {
+          "free_predecessors": 2559,
+          "merge_both": false,
+          "calls_per_batch": 64,
+          "real_ms": [
+            162,
+            189,
+            161,
+            159,
+            187,
+            159,
+            157
+          ],
+          "empty_ms": [
+            0,
+            1,
+            1,
+            0,
+            0,
+            0,
+            0
+          ],
+          "max_single_ms": 33
+        },
+        {
+          "free_predecessors": 2558,
+          "merge_both": true,
+          "calls_per_batch": 64,
+          "real_ms": [
+            161,
+            192,
+            160,
+            162,
+            192,
+            162,
+            160
+          ],
+          "empty_ms": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "max_single_ms": 32
+        }
+      ]
+    },
+    {
+      "installation": 4,
+      "allocator": "first-fit",
+      "mixed_op_allocation_failures": 6568,
+      "mixed_cycles_recovered": 12,
+      "final_single_allocation_bytes": 40948,
+      "trials": [
+        {
+          "free_predecessors": 0,
+          "merge_both": false,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            158,
+            124,
+            156,
+            128,
+            156,
+            125,
+            125
+          ],
+          "empty_ms": [
+            98,
+            95,
+            96,
+            99,
+            95,
+            96,
+            95
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 128,
+          "merge_both": false,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            159,
+            124,
+            157,
+            130,
+            128,
+            155,
+            124
+          ],
+          "empty_ms": [
+            96,
+            96,
+            98,
+            98,
+            98,
+            95,
+            96
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 1024,
+          "merge_both": false,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            124,
+            158,
+            128,
+            159,
+            126,
+            157,
+            127
+          ],
+          "empty_ms": [
+            95,
+            95,
+            97,
+            98,
+            98,
+            96,
+            96
+          ],
+          "max_single_ms": 1
+        },
+        {
+          "free_predecessors": 2559,
+          "merge_both": false,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            128,
+            157,
+            126,
+            157,
+            124,
+            155,
+            127
+          ],
+          "empty_ms": [
+            98,
+            97,
+            97,
+            96,
+            95,
+            96,
+            96
+          ],
+          "max_single_ms": 0
+        },
+        {
+          "free_predecessors": 2558,
+          "merge_both": true,
+          "calls_per_batch": 32768,
+          "real_ms": [
+            127,
+            157,
+            129,
+            155,
+            124,
+            124,
+            126
+          ],
+          "empty_ms": [
+            98,
+            96,
+            96,
+            98,
+            99,
+            126,
+            97
+          ],
+          "max_single_ms": 1
+        }
+      ]
+    }
+  ]
+}

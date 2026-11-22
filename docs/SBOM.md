@@ -6,11 +6,15 @@ Flight Control uses each device's running firmware digest to look up advisories 
 
 `tools/fw-push.py` generates one CycloneDX 1.6 JSON document per OCI index. Its root package URL includes the index digest reported in `status.os.imageDigest`. Components include a package URL, license and CPE when known.
 
-| | From |
+| Component | Version taken from |
 |---|---|
-| the agent (this repository, at its commit), cJSON, WAMR | cJSON's header, `third_party/fetch-wamr.sh` |
-| ESP-IDF, its mbedTLS and managed components | SDK version from the application binary’s `esp_app_desc_t.idf_ver`, checked against `port/espidf/dependencies.lock.<chip>`. The lock supplies managed component versions. `MBEDTLS_IN_ESP_IDF` maps SDK releases to mbedTLS versions. |
-| Zephyr, its modules: mbedTLS, TF-PSA-Crypto, MCUboot, littlefs, picolibc, zcbor, and each board's HALs | the Zephyr tree (`third_party/zephyr-ws`): the modules' own version files, else the revision Zephyr's manifest names |
+| The agent | This repository, at its commit |
+| cJSON | cJSON's header |
+| WAMR | `third_party/fetch-wamr.sh` |
+| ESP-IDF | The application binary’s `esp_app_desc_t.idf_ver`, checked against `port/espidf/dependencies.lock.<chip>` |
+| ESP-IDF managed components | `port/espidf/dependencies.lock.<chip>` |
+| mbedTLS in ESP-IDF | `MBEDTLS_IN_ESP_IDF`, which maps SDK releases to mbedTLS versions |
+| Zephyr and its modules: mbedTLS, TF-PSA-Crypto, MCUboot, littlefs, picolibc, zcbor and each board's HALs | The Zephyr tree (`third_party/zephyr-ws`): the modules' own version files, else the revision Zephyr's manifest names |
 
 One SBOM covers every image in the release. Publish from the checkout and dependency trees used for the build. Before writing to the registry, `fw-push.py` checks each selected ESP-IDF image against its chip’s lock and resolves the Zephyr modules for each selected board. If an SDK version differs, rebuild the image or publish from its original checkout.
 
@@ -30,7 +34,7 @@ Flight Control 1.4 reads the vulnerabilities from Trustify (Helm values `vulnera
 TRUSTIFY_URL=http://127.0.0.1:8095 tools/fw-push.py ...
 ```
 
-Every 15 minutes Flight Control looks up reported digests in Trustify and stores matching advisories. The device already reports the digest.
+Flight Control looks up reported digests in Trustify and stores matching advisories, every 15 minutes by default (`vulnerabilityReporting.syncInterval`). `tools/trustify/up.sh` sets the interval to one minute. The device already reports the digest.
 
 ![The security overview on a device's page](img/vulnerabilities-device.png)
 ![A vulnerability in the Security overview, with the release and the fleet it affects](img/vulnerabilities-cve.png)
@@ -39,7 +43,9 @@ The device view groups findings by severity. The security overview lists affecte
 
 ## What was verified with a test advisory
 
-On kind with Flight Control 1.4.0 and Trustify 0.4.12, the server found all three Zephyr release SBOMs by digest. A synthetic OSV advisory for mbedTLS 4.1.1 appeared in device, fleet and organization views within a minute. Trustify required a CVE alias. Withdrawing the advisory exposed [a server reconciliation limit](FLIGHTCTL-LIMITATIONS.md#14-a-withdrawn-advisory-stays-on-the-devices).
+On kind with Flight Control 1.4.0 and Trustify 0.4.12, the server found all three Zephyr release SBOMs by digest. A synthetic OSV advisory for mbedTLS 4.1.1 appeared in device, fleet and organization views within a minute. Trustify required a CVE alias. Withdrawing the advisory exposed [a server reconciliation limit](FLIGHTCTL-LIMITATIONS.md#13-a-withdrawn-advisory-stays-on-the-devices). The withdrawn advisory remained after two syncs and disappeared from the device's list only after it moved to another release.
+
+`tools/trustify/up.sh` installed Trustify 0.4.12 when these checks ran. It installs 0.4.21 now.
 
 Trustify 0.4.12's stock CVE and OSV importers did not associate C-library advisories with the firmware SBOMs, even with the full `cve-from-2024` feed. The NVD import below supplies the missing package associations.
 

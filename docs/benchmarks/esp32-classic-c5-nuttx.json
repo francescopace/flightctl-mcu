@@ -1,0 +1,91 @@
+{
+  "date": "2026-11-22",
+  "agent": "0.9.6",
+  "os": "NuttX 13.1.0",
+  "runtime": "WAMR 2.4.6",
+  "transport": "Flight Control over Wi-Fi",
+  "boards": {
+    "ESP32 rev. 1.0": {
+      "cpu_mhz": 240,
+      "firmware_sha256": "ddf87ad18851a3f7596433831cd1fd187bc0cddaed24f315d9a487696c09cb14",
+      "firmware_bytes": 1324692,
+      "boot_id": "a503c28e-5640-467d-9d60-ee286ee841dc",
+      "device_id": "j7b499dd6pvrum90pfbeumcecl25438arekbmq41hi8cs3n4ra1g",
+      "coremark": {
+        "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/coremark:v0.9.5-wasm3",
+        "iterations_per_second": [
+          15.363,
+          15.305,
+          15.381
+        ],
+        "median": 15.363
+      },
+      "richards": {
+        "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/richards:v0.9.5",
+        "iterations_per_batch": 10,
+        "batch_ms": [
+          11291,
+          11320,
+          11209
+        ],
+        "median_ms_per_iteration": 1129.1
+      },
+      "deltablue": {
+        "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/deltablue:v0.9.5",
+        "iterations_per_batch": 10,
+        "batch_ms": [
+          12072,
+          12093,
+          12001
+        ],
+        "median_ms_per_iteration": 1207.2
+      },
+      "separate_deltablue_console_probe": {
+        "reply": "live-classic-a503c28e",
+        "while_running": true,
+        "elapsed_seconds": 0.323
+      }
+    },
+    "ESP32-C5 Mini": {
+      "cpu_mhz": 160,
+      "firmware_sha256": "967b8df85f5053dac5ac90539946a4f27f63ba6e74071a3278704718723c9ab9",
+      "firmware_bytes": 1578108,
+      "boot_id": "8929e084-3834-4d95-9de0-a3121f78d694",
+      "device_id": "9jsl65h4rt65mgbrhdm3bjqq0h41leck63tqt3dr7fma7ko7ehog",
+      "coremark": {
+        "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/coremark:v0.9.5-wasm3",
+        "iterations_per_second": [
+          15.94,
+          15.897,
+          15.922
+        ],
+        "median": 15.922
+      },
+      "richards": {
+        "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/richards:v0.9.5",
+        "iterations_per_batch": 10,
+        "batch_ms": [
+          11586,
+          11592,
+          11560
+        ],
+        "median_ms_per_iteration": 1158.6
+      },
+      "deltablue": {
+        "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/deltablue:v0.9.5",
+        "iterations_per_batch": 10,
+        "batch_ms": [
+          9620,
+          9677,
+          9648
+        ],
+        "median_ms_per_iteration": 964.8
+      },
+      "separate_deltablue_console_probe": {
+        "reply": "live-c5-8929e084",
+        "while_running": true,
+        "elapsed_seconds": 0.505
+      }
+    }
+  }
+}

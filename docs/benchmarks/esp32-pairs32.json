@@ -1,0 +1,325 @@
+{
+  "board": "ESP32 classic, 240 MHz",
+  "esp_idf": "6.1.1",
+  "wamr": "2.4.6",
+  "project_commit": "aa0490da84e2a2ae676ad8c17cdb81e540f908a7",
+  "firmware": {
+    "standard": {
+      "image_bytes": 1180864,
+      "image_sha256": "b3856c39106706d98e1c757160c68a0ecc47c04f6496139fd08fab05a3f45c9a",
+      "sdkconfig_sha256": "8167fabdf9bfb6cd254377d9aab0d8b8602afa30372ff3c018b97e559a5f5e54",
+      "handler_slots": 256,
+      "pair_handlers": 0,
+      "interpreter_bytes": 23075,
+      "manifest_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b"
+    },
+    "pairs": {
+      "image_bytes": 1184592,
+      "image_sha256": "904051db5c2472d7e86bc7bddaaac201a6ea9bd925dbbb97fe3c92396707a4bd",
+      "sdkconfig_sha256": "8167fabdf9bfb6cd254377d9aab0d8b8602afa30372ff3c018b97e559a5f5e54",
+      "handler_slots": 291,
+      "pair_handlers": 35,
+      "interpreter_bytes": 26188,
+      "manifest_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033"
+    }
+  },
+  "modules": {
+    "coremark": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4",
+    "richards": "sha256:1e593cf56e230fe60a6e39c1dc3c412e59bc5badd082ca93b205434ba76839fe",
+    "execute": "sha256:84ab50e06d08edb2863998a9057969d16a2b3958755e96d8f6b91cf8db11df54"
+  },
+  "protocol": "Three fresh installations per workload and firmware, split 2+1 across two boots of each variant. Four OTA boots in standard, pairs, standard, pairs order. One module at a time, telemetry export off. The standard variant uses the stock 32-bit fast-interpreter dispatch with the common firmware integration patches. The pairs variant preserves the 32-bit records and inserts direct jumps for 35 adjacent opcode combinations, using the regular scalar handlers and instruction metering. Richards and DeltaBlue return the median of three batches of ten iterations, divided by ten here. For DeltaBlue only the execute phase contributes to the score. CoreMark is the 64 KiB wasm3 catalog module.",
+  "results": {
+    "coremark": {
+      "standard": {
+        "samples": [
+          14.877,
+          14.78,
+          14.786
+        ],
+        "median": 14.786,
+        "min": 14.78,
+        "max": 14.877
+      },
+      "pairs": {
+        "samples": [
+          15.813,
+          15.741,
+          15.752
+        ],
+        "median": 15.752,
+        "min": 15.741,
+        "max": 15.813
+      },
+      "unit": "iterations/s",
+      "change_percent": 6.533
+    },
+    "richards": {
+      "standard": {
+        "samples": [
+          1283.0,
+          1283.7,
+          1274.0
+        ],
+        "median": 1283.0,
+        "min": 1274.0,
+        "max": 1283.7
+      },
+      "pairs": {
+        "samples": [
+          1212.9,
+          1222.3,
+          1224.2
+        ],
+        "median": 1222.3,
+        "min": 1212.9,
+        "max": 1224.2
+      },
+      "unit": "ms/iteration",
+      "change_percent": -4.731
+    },
+    "execute": {
+      "standard": {
+        "samples": [
+          321.3,
+          336.7,
+          330.9
+        ],
+        "median": 330.9,
+        "min": 321.3,
+        "max": 336.7
+      },
+      "pairs": {
+        "samples": [
+          322.0,
+          325.2,
+          321.0
+        ],
+        "median": 322.0,
+        "min": 321.0,
+        "max": 325.2
+      },
+      "unit": "ms/iteration",
+      "change_percent": -2.69
+    }
+  },
+  "observations": [
+    {
+      "mode": "standard",
+      "boot": "21c10d3e-3bba-4c3e-9fb7-0d4ce0382371",
+      "block": 1,
+      "install": 0,
+      "workload": "coremark",
+      "module": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4",
+      "returned": 14.877,
+      "score": 14.877,
+      "firmware_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b",
+      "module_manifest_digest": "sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+    },
+    {
+      "mode": "standard",
+      "boot": "21c10d3e-3bba-4c3e-9fb7-0d4ce0382371",
+      "block": 1,
+      "install": 0,
+      "workload": "richards",
+      "module": "sha256:1e593cf56e230fe60a6e39c1dc3c412e59bc5badd082ca93b205434ba76839fe",
+      "returned": 12830.0,
+      "score": 1283.0,
+      "firmware_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b",
+      "module_manifest_digest": "sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+    },
+    {
+      "mode": "standard",
+      "boot": "21c10d3e-3bba-4c3e-9fb7-0d4ce0382371",
+      "block": 1,
+      "install": 0,
+      "workload": "execute",
+      "module": "sha256:84ab50e06d08edb2863998a9057969d16a2b3958755e96d8f6b91cf8db11df54",
+      "returned": 3213.0,
+      "score": 321.3,
+      "firmware_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b",
+      "module_manifest_digest": "sha256:ec8272cd941d0890d0c9f527cd73a1bde4d4becb9e17e494aa0f3e8b24299c15"
+    },
+    {
+      "mode": "standard",
+      "boot": "21c10d3e-3bba-4c3e-9fb7-0d4ce0382371",
+      "block": 1,
+      "install": 1,
+      "workload": "execute",
+      "module": "sha256:84ab50e06d08edb2863998a9057969d16a2b3958755e96d8f6b91cf8db11df54",
+      "returned": 3367.0,
+      "score": 336.7,
+      "firmware_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b",
+      "module_manifest_digest": "sha256:ec8272cd941d0890d0c9f527cd73a1bde4d4becb9e17e494aa0f3e8b24299c15"
+    },
+    {
+      "mode": "standard",
+      "boot": "21c10d3e-3bba-4c3e-9fb7-0d4ce0382371",
+      "block": 1,
+      "install": 1,
+      "workload": "richards",
+      "module": "sha256:1e593cf56e230fe60a6e39c1dc3c412e59bc5badd082ca93b205434ba76839fe",
+      "returned": 12837.0,
+      "score": 1283.7,
+      "firmware_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b",
+      "module_manifest_digest": "sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+    },
+    {
+      "mode": "standard",
+      "boot": "21c10d3e-3bba-4c3e-9fb7-0d4ce0382371",
+      "block": 1,
+      "install": 1,
+      "workload": "coremark",
+      "module": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4",
+      "returned": 14.78,
+      "score": 14.78,
+      "firmware_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b",
+      "module_manifest_digest": "sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+    },
+    {
+      "mode": "pairs",
+      "boot": "7e0e778c-2ac2-4dc5-8c66-bcaea4497905",
+      "block": 2,
+      "install": 0,
+      "workload": "coremark",
+      "module": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4",
+      "returned": 15.813,
+      "score": 15.813,
+      "firmware_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033",
+      "module_manifest_digest": "sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+    },
+    {
+      "mode": "pairs",
+      "boot": "7e0e778c-2ac2-4dc5-8c66-bcaea4497905",
+      "block": 2,
+      "install": 0,
+      "workload": "richards",
+      "module": "sha256:1e593cf56e230fe60a6e39c1dc3c412e59bc5badd082ca93b205434ba76839fe",
+      "returned": 12129.0,
+      "score": 1212.9,
+      "firmware_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033",
+      "module_manifest_digest": "sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+    },
+    {
+      "mode": "pairs",
+      "boot": "7e0e778c-2ac2-4dc5-8c66-bcaea4497905",
+      "block": 2,
+      "install": 0,
+      "workload": "execute",
+      "module": "sha256:84ab50e06d08edb2863998a9057969d16a2b3958755e96d8f6b91cf8db11df54",
+      "returned": 3220.0,
+      "score": 322.0,
+      "firmware_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033",
+      "module_manifest_digest": "sha256:ec8272cd941d0890d0c9f527cd73a1bde4d4becb9e17e494aa0f3e8b24299c15"
+    },
+    {
+      "mode": "pairs",
+      "boot": "7e0e778c-2ac2-4dc5-8c66-bcaea4497905",
+      "block": 2,
+      "install": 1,
+      "workload": "execute",
+      "module": "sha256:84ab50e06d08edb2863998a9057969d16a2b3958755e96d8f6b91cf8db11df54",
+      "returned": 3252.0,
+      "score": 325.2,
+      "firmware_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033",
+      "module_manifest_digest": "sha256:ec8272cd941d0890d0c9f527cd73a1bde4d4becb9e17e494aa0f3e8b24299c15"
+    },
+    {
+      "mode": "pairs",
+      "boot": "7e0e778c-2ac2-4dc5-8c66-bcaea4497905",
+      "block": 2,
+      "install": 1,
+      "workload": "richards",
+      "module": "sha256:1e593cf56e230fe60a6e39c1dc3c412e59bc5badd082ca93b205434ba76839fe",
+      "returned": 12223.0,
+      "score": 1222.3,
+      "firmware_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033",
+      "module_manifest_digest": "sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+    },
+    {
+      "mode": "pairs",
+      "boot": "7e0e778c-2ac2-4dc5-8c66-bcaea4497905",
+      "block": 2,
+      "install": 1,
+      "workload": "coremark",
+      "module": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4",
+      "returned": 15.741,
+      "score": 15.741,
+      "firmware_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033",
+      "module_manifest_digest": "sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+    },
+    {
+      "mode": "standard",
+      "boot": "029badc8-9855-405a-b2b3-fd751be08054",
+      "block": 3,
+      "install": 0,
+      "workload": "coremark",
+      "module": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4",
+      "returned": 14.786,
+      "score": 14.786,
+      "firmware_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b",
+      "module_manifest_digest": "sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+    },
+    {
+      "mode": "standard",
+      "boot": "029badc8-9855-405a-b2b3-fd751be08054",
+      "block": 3,
+      "install": 0,
+      "workload": "richards",
+      "module": "sha256:1e593cf56e230fe60a6e39c1dc3c412e59bc5badd082ca93b205434ba76839fe",
+      "returned": 12740.0,
+      "score": 1274.0,
+      "firmware_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b",
+      "module_manifest_digest": "sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+    },
+    {
+      "mode": "standard",
+      "boot": "029badc8-9855-405a-b2b3-fd751be08054",
+      "block": 3,
+      "install": 0,
+      "workload": "execute",
+      "module": "sha256:84ab50e06d08edb2863998a9057969d16a2b3958755e96d8f6b91cf8db11df54",
+      "returned": 3309.0,
+      "score": 330.9,
+      "firmware_digest": "sha256:1051ea15f206362de2fe1c22fb273035b73c129cc7bdd746e979e24c7831854b",
+      "module_manifest_digest": "sha256:ec8272cd941d0890d0c9f527cd73a1bde4d4becb9e17e494aa0f3e8b24299c15"
+    },
+    {
+      "mode": "pairs",
+      "boot": "b5da52d2-39f7-4d14-81c8-7841f1ad757b",
+      "block": 4,
+      "install": 0,
+      "workload": "coremark",
+      "module": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4",
+      "returned": 15.752,
+      "score": 15.752,
+      "firmware_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033",
+      "module_manifest_digest": "sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+    },
+    {
+      "mode": "pairs",
+      "boot": "b5da52d2-39f7-4d14-81c8-7841f1ad757b",
+      "block": 4,
+      "install": 0,
+      "workload": "richards",
+      "module": "sha256:1e593cf56e230fe60a6e39c1dc3c412e59bc5badd082ca93b205434ba76839fe",
+      "returned": 12242.0,
+      "score": 1224.2,
+      "firmware_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033",
+      "module_manifest_digest": "sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+    },
+    {
+      "mode": "pairs",
+      "boot": "b5da52d2-39f7-4d14-81c8-7841f1ad757b",
+      "block": 4,
+      "install": 0,
+      "workload": "execute",
+      "module": "sha256:84ab50e06d08edb2863998a9057969d16a2b3958755e96d8f6b91cf8db11df54",
+      "returned": 3210.0,
+      "score": 321.0,
+      "firmware_digest": "sha256:3374fb93d10360e5e19c8168c82a1ff5947efb78b4207d4cdbffabc91a92f033",
+      "module_manifest_digest": "sha256:ec8272cd941d0890d0c9f527cd73a1bde4d4becb9e17e494aa0f3e8b24299c15"
+    }
+  ],
+  "patch_sha256": "fb97c449ed9ff084bbc670f543051d566996aa1bf1131309619d895951a197fc"
+}

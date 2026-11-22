@@ -1,6 +1,6 @@
 # Firmware updates as deltas
 
-Publish a delta to reduce the download for devices on a known release. Keep the full image in the same signed index so every device has an update path. [Measured download sizes](RESULTS.md#firmware-deltas)
+Publish a delta to reduce the download for devices on a known release. Keep the full image in the same signed index so every device has an update path. [Measured download sizes](#what-was-verified)
 
 ## Publishing a release with deltas
 
@@ -30,8 +30,15 @@ Older firmware reads the first layer, which holds the full image. The index sign
 ## On the device
 
 1. With the [OCI public key provisioned](SECURITY.md#two-signing-keys), verify the release signature. For each candidate delta, hash the first `from-size` bytes of the running slot and compare the digest with `from`.
-2. If a delta matches, stream it into the decoder. Read unchanged bytes from the running slot and write the rebuilt image to the inactive slot. Decoder state, a 4 KB window and 2 KB of read-ahead use about 7 KB of RAM.
+2. If a delta matches, stream it into the decoder. Read unchanged bytes from the running slot and write the rebuilt image to the inactive slot.
 3. Check the rebuilt image against the signed full-image SHA-256 before committing the slot. Normal signature, security variant, anti-rollback and boot confirmation checks still apply.
+
+Decoder state, a window and read-ahead use about 7 KB of RAM.
+
+| Decoder buffer | Size (KiB) |
+|---|---:|
+| Window | 4 |
+| Read-ahead | 2 |
 
 Read `status.os.lastDelta.outcome` after an update.
 
@@ -44,11 +51,12 @@ Read `status.os.lastDelta.outcome` after an update.
 If the device rejects the rebuilt image at commit, downloading it whole would give the same result. The agent reports the error without another pull.
 
 ![status.os.lastDelta in a device's YAML](img/delta-applied.png)
+
 Flash encryption allows the decoder to read the running image in clear. With Secure Boot, the patch reconstructs the signed binary byte for byte.
 
 ## A delta is not trusted until the end
 
-The decoder processes bytes before the final digest is available. It bounds reads to the source image, writes to the expected output size and rejects decompression windows over 4 KB.
+The decoder processes bytes before the final digest is available. It bounds reads to the source image, writes to the expected output size and rejects decompression windows over 4 KiB.
 
 ## Other ports
 
@@ -56,9 +64,33 @@ The decoder is in the core. A port only has to read its running image: `fc_port_
 
 ## What was verified
 
-On the ESP-IDF S3, a 511 KB delta from a debug build to a release build took 13 s. On the Zephyr S3, a 19 KB delta between successive builds took 8 s and was 2.2% of the full image. [Delta sizes across all six boards](RESULTS.md#firmware-deltas)
+A dash means no value is given.
+
+| Board | Change | Delta (KB) | Share of the full image (%) | Time (s) |
+|---|---|---:|---:|---:|
+| ESP-IDF S3 | Debug build to release build | 511 | — | 13 |
+| Zephyr S3 | Successive builds | 19 | 2.2 | 8 |
+
+Smallest and largest delta over several boards. All six boards retained their identities.
+
+| Boards | Change | Smallest delta (B) | Largest delta (B) | Smallest share of the full image (%) | Largest share of the full image (%) |
+|---|---|---:|---:|---:|---:|
+| All six boards | Signed delta update | 10,816 | 14,114 | 1.03 | 1.04 |
+| Other ESP-IDF deltas on ESP32, C5, C6 and S3 | Fixes | — | — | 2 | 3 |
+| Other ESP-IDF deltas on ESP32, C5, C6 and S3 | Larger changes | — | — | 12 | 15 |
 
 Unit tests cover truncated, corrupted and mismatched deltas and full-image fallback. The emulator checks both delta and full updates. [Test suite](TESTING.md#end-to-end-tests)
+
+### Fleet update timings
+
+Physical boards on a local network. Rollouts include scheduling and reboot. Both rollbacks restored the signed stable image with a 30 s confirmation window.
+
+| Operation | Boards | Time (s) |
+|---|---|---:|
+| Firmware and dependent app rollout | The four ESP-IDF boards other than the canary | 53 |
+| Firmware and dependent app rollout | Zephyr S3, scheduled independently | 50 |
+| Fleet change to confirmed rollback | S3 Mini | 66.7 |
+| Fleet change to confirmed rollback | Zephyr S3 | 118.8 |
 
 ## Limits
 

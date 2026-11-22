@@ -1,0 +1,52 @@
+{
+  "Raspberry Pi Pico 2 W": {
+    "cpu_mhz": 150,
+    "firmware_bin_sha256": "08ec82114d0717a20f63eb5da4e590e448f8cb42ffe5096792e90644096917db",
+    "boot_id": "3f82600a-0020-410a-95ba-6dd656d68470",
+    "coremark_iterations_per_second": [
+      17.651,
+      17.639,
+      17.65
+    ],
+    "richards_ms_per_ten_iterations": 10218,
+    "deltablue_ms_per_ten_iterations": 10226
+  },
+  "ST NUCLEO-F767ZI": {
+    "cpu_mhz": 216,
+    "firmware_bin_sha256": "81307ebc61ff51fe23f4c67318371a82a9c65a1ae56218e649c38939bec16203",
+    "boot_id": "f4f232b4-339d-44d7-a141-8a2b1050fb27",
+    "coremark_iterations_per_second": [
+      23.493,
+      23.489,
+      23.489
+    ],
+    "richards_ms_per_ten_iterations": 7510,
+    "deltablue_ms_per_ten_iterations": 6330
+  },
+  "Nordic nRF7002-DK": {
+    "cpu_mhz": 128,
+    "instruction_cache_enabled": true,
+    "nuttx_version": "13.1.0",
+    "firmware_bin_sha256": "73d4858f759d9c305ff84794ec782418bd7f132130c035bae22c67fa5e7e2a27",
+    "network_core_bin_sha256": "aad04126bd5c028a90ef1ed1613992a712e4bd6ced2d76e33368f56a3dca512a",
+    "transport": "IPv4 over J-Link UART (SLIP)",
+    "boot_id": "6d2d918d-b627-4fff-a820-180d5f42c876",
+    "coremark_iterations_per_second": [
+      9.355,
+      8.83,
+      8.824
+    ],
+    "richards_ms_per_ten_iterations": 20119,
+    "deltablue_ms_per_ten_iterations": 17091,
+    "richards_batches_ms": [
+      20175,
+      20064,
+      20119
+    ],
+    "deltablue_batches_ms": [
+      17126,
+      17091,
+      17011
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 # Dependencies
 
-Build and test versions checked on 18 November 2026. For containers following a release series, the tables include the tested image version.
+Build and test versions checked on 18 November 2026, the NuttX port and the Zephyr modules on 22 November 2026. For containers following a release series, the tables include the tested image version.
 
 ## Release support
 
@@ -10,9 +10,9 @@ The 1.0 development builds use Flight Control 1.4.0 and ESP-IDF 6.1.1. From 1.0 
 
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|
-| [mbedTLS](https://github.com/Mbed-TLS/mbedtls) | 4.1.1 | supplied by ESP-IDF and Zephyr, checked in `core/include/fc_crypto.h` on every port and in `CMakeLists.txt` for host builds | Host and both SDKs use TF-PSA-Crypto 1.1.1. |
+| [mbedTLS](https://github.com/Mbed-TLS/mbedtls) | 4.1.1 | supplied by ESP-IDF and Zephyr, fetched as a release archive for NuttX, checked in `core/include/fc_crypto.h` on every port and in `CMakeLists.txt` for host builds | Host and both SDKs use TF-PSA-Crypto 1.1.1. |
 | [cJSON](https://github.com/DaveGamble/cJSON) | 1.7.19 | a copy in `third_party/cjson`, unmodified | On every port, ESP-IDF 6 included (it no longer has its own). |
-| [WAMR](https://github.com/wasm-micro-runtime/wasm-micro-runtime) | 2.4.6 | `WAMR_TAG` in `third_party/fetch-wamr.sh` | Fetched and patched at build time. Fast interpreter with instruction metering and tail calls. ESP-IDF and 32-bit Zephyr MCU builds use [compact dispatch](RESULTS.md#coremark). AOT, JIT, WASI, SIMD and reference types are disabled. [App libc](APPS.md#the-c-library) |
+| [WAMR](https://github.com/wasm-micro-runtime/wasm-micro-runtime) | 2.4.6 | `WAMR_TAG` in `third_party/fetch-wamr.sh` | Fetched and patched at build time. Fast interpreter with instruction metering and tail calls. ESP-IDF, NuttX and 32-bit Zephyr MCU builds use [compact dispatch](WAMR.md#interpreter-dispatch). AOT, JIT, WASI, SIMD and reference types are disabled. [App libc](APPS.md#the-c-library) |
 
 The core implements HTTP, MQTT, OTLP encoding, field provisioning and the firmware delta decoder.
 
@@ -36,18 +36,54 @@ The core implements HTTP, MQTT, OTLP encoding, field provisioning and the firmwa
 
 ## Zephyr port
 
+For the Pico 2 W, setting `BOARD=rpi_pico2/rp2350a/m33_0/w/mcuboot` (or `rpi_pico2/rp2350a/m33_0/w` for the standalone build) when fetching Zephyr adds the Raspberry Pi and Infineon HAL modules. The SDK setup fetches the CYW43439 Wi-Fi firmware named by the Infineon module. The Zephyr fetch script patches the GPIO driver to send both the pin mask and the output value required by the chip’s `gpioout` command. [Pico 2 W setup](ZEPHYR.md#on-a-raspberry-pi-pico-2-w)
+
+For the Nordic DK, set `BOARD=nrf7002dk/nrf5340/cpuapp` for both fetch scripts. This selects Nordic’s HAL, Wi-Fi driver and firmware, the WPA supplicant and the OpenAMP and libmetal modules for inter-core communication. [Nordic DK setup](ZEPHYR.md#on-a-nordic-nrf7002-dk)
+
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|
-| [Zephyr](https://github.com/zephyrproject-rtos/zephyr) | 4.5.0 | `third_party/fetch-zephyr.sh` (tag, commit and `ZEPHYR_MODULES`) | Only the modules the firmware needs (mbedTLS 4.1.1, TF-PSA-Crypto 1.1.1, MCUboot 2.5.0, Espressif's HAL, picolibc, littlefs 2.11 (API version), zcbor, CMSIS and CMSIS 6), at the revisions Zephyr's own `west.yml` names: the project has no manifest of its own. |
-| [picolibc](https://github.com/picolibc/picolibc) | 1.8.10 (Zephyr module) | `port/zephyr/prj.conf` | The C library, with `CONFIG_PICOLIBC_IO_FLOAT=y`: the apps' `printf` and `snprintf` format each conversion with it, and `%f` needs it. |
+| [Zephyr](https://github.com/zephyrproject-rtos/zephyr) | 4.5.0 | `third_party/fetch-zephyr.sh` (tag, commit and `ZEPHYR_MODULES`) | Only the modules the firmware needs, listed below, at the revisions Zephyr's own `west.yml` names: the project has no manifest of its own. |
 | Zephyr SDK | 1.0.1 | `third_party/fetch-zephyr-sdk.sh` | The ARM and Xtensa (ESP32-S3) toolchains, for the builds for boards only. The same script fetches the ESP32-S3's binary WiFi firmware, at the version its HAL module names. |
 | Zephyr's build image | `ci-base` 0.30.0 | `port/zephyr/build.sh`, `port/zephyr/run.sh`, the fetch scripts, the workflows | Also the container of the host and fuzzing jobs: it has clang, lld and ninja. |
+| [gvproxy](https://github.com/containers/gvisor-tap-vsock) | 0.9.0 | Not pinned by a script. The install command in [the Nucleo setup](ZEPHYR.md#on-an-st-nucleo-f767zi) names it. | Host-side network for the ST-LINK and J-Link serial bridges, on Zephyr and NuttX. `port/zephyr/stlink-network.py` uses its default addresses. |
+
+Zephyr modules for every board. A revision is the one `west.yml` names in Zephyr 4.5.0.
+
+| Zephyr module | Version | Notes |
+|---|---|---|
+| mbedTLS | 4.1.1 | |
+| TF-PSA-Crypto | 1.1.1 | |
+| MCUboot | 2.5.0 | Its `scripts/imgtool.py` signs the Zephyr images. |
+| Espressif HAL (`hal_espressif`) | revision `cc81db00` | Names the version of the ESP32-S3's binary WiFi firmware. |
+| [picolibc](https://github.com/picolibc/picolibc) | 1.8.10 | The C library, with `CONFIG_PICOLIBC_IO_FLOAT=y` in `port/zephyr/prj.conf`: the apps' `printf` and `snprintf` format each conversion with it, and `%f` needs it. |
+| littlefs | 2.11 (API version) | |
+| zcbor | 0.9.1 | |
+| CMSIS | revision `512cc7e8` | |
+| CMSIS 6 | revision `1c1840af` | |
+
+## NuttX port
+
+[Build and provisioning](NUTTX.md#build-and-provisioning)
+
+| Dependency | Version | Set in | Notes |
+|---|---|---|---|
+| [Apache NuttX](https://github.com/apache/nuttx) and [nuttx-apps](https://github.com/apache/nuttx-apps) | 13.1.0 (tag `nuttx-13.1.0`) | `port/nuttx/build.sh` | Every board except the Pico 2 W. The build compares the checkout with the tag and applies the patches in `port/nuttx/`. One starts the NTP exchange after DHCP without requiring a gateway ping. NuttX fetches the board HAL and LittleFS at the revisions it names. |
+| Apache NuttX and nuttx-apps for the Pico 2 W | commits `d50b7688` and `7196658d` | `port/nuttx/build.sh` | The build compares the checkouts with the full commit hashes. |
+| mbedTLS | 4.1.1 | `port/nuttx/build.sh` | Release archive, checked against its SHA-256 digest. |
+| Espressif Xtensa toolchain | the one in `espressif/idf:v6.0.3` | Not pinned by a script. The image the S3 builds ran in. | The RISC-V builds use the Espressif `riscv32-esp-elf-` toolchain when it is on PATH. |
+| Espressif HAL for the C5 (`esp-hal-3rdparty`) | revision `b90b1837` | `ESP_HAL_3RDPARTY_VERSION` in `port/nuttx/build.sh` | Patched from `port/nuttx/c5/`. |
+| MCUboot for the S3 | the revision NuttX 13.1.0 names | `make bootloader` in `port/nuttx/build.sh` with `OTA=1` | `port/nuttx/mcuboot-build.patch` changes how NuttX builds the bootloader, not MCUboot itself. |
+| CYW43439 firmware for the Pico 2 W | `w43439A0_7_95_49_00_combined.h` at cyw43-driver `055d6427` | `port/nuttx/build-pico2w.sh` | Checked against its SHA-256 digest. |
+| Arm GNU toolchain (`arm-none-eabi-gcc`) | the build host's | Not pinned by a script. | Pico 2 W, NUCLEO-F767ZI and nRF7002-DK. |
+| imgtool | 2.2.0 | Not pinned by a script. Install it in the build environment. | Signs the MCUboot images in `port/nuttx/build.sh` with `OTA=1` and in `port/nuttx/sign-arm.sh`. |
+
+The serial bridges for the NUCLEO-F767ZI and nRF7002-DK use gvproxy, listed under the [Zephyr port](#zephyr-port).
 
 ## Tested against
 
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|
-| [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.0 | `tools/kind/up.sh`, `FLIGHTCTL_VERSION` in the workflow | The fleet maps only stable device fields to labels. [Label sync](FLIGHTCTL-LIMITATIONS.md#12-a-change-in-the-status-is-a-label-event) |
+| [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.0 | `tools/kind/up.sh`, `FLIGHTCTL_VERSION` in the workflow | The fleet maps only stable device fields to labels. [Label sync](FLIGHTCTL-LIMITATIONS.md#11-a-change-in-the-status-is-a-label-event) |
 | Envoy Gateway | 1.2.8 | `tools/kind/up.sh` | Patch release in the 1.2 series used by Flight Control 1.4.0’s installation guide. |
 | [esp-emulator](https://github.com/espressif/esp-emulator) | 1.2.0 | `ESP_EMU_VERSION` in `ci.yml` and `e2e.yml` | The emulator and its virtual peripherals are checked against the release's SHA-256 sums. |
 | OCI registry | `registry:3` | `tools/registry/up.sh` | The tested image reports Distribution 3.1.2. |
@@ -80,3 +116,5 @@ In the firmware, as each release's SBOM lists them ([SBOM.md](SBOM.md)):
 - [mbedTLS](https://github.com/Mbed-TLS/mbedtls) and TF-PSA-Crypto: Apache 2.0 or GPL 2.0 or later, at your choice; from ESP-IDF, Zephyr or the pinned host build;
 - [ESP-IDF](https://github.com/espressif/esp-idf): Apache 2.0;
 - [Zephyr](https://github.com/zephyrproject-rtos/zephyr), MCUboot and zcbor: Apache 2.0; littlefs and picolibc: BSD 3-Clause; the ESP32-S3's binary WiFi firmware: Apache 2.0 (`zephyr/blobs/license.txt` in Espressif's HAL module).
+
+The nRF7002-DK build embeds Nordic’s Wi-Fi firmware. Its license permits use with Nordic integrated circuits and covers software updates for products using those chips. J-Link is a separate host tool for USB programming. Distributing the SEGGER library in a tool bundle requires prior written authorization. [Nordic firmware license](https://github.com/zephyrproject-rtos/nrf_wifi/blob/fc0872109ec4c006d32843a202b129db33cf16b9/zephyr/LICENSE.txt) · [SEGGER terms](https://www.segger.com/products/debug-probes/j-link/tools/terms-of-use/)

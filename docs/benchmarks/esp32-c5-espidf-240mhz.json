@@ -1,0 +1,48 @@
+{
+  "board": "ESP32-C5 Mini (4 MiB)",
+  "os": "ESP-IDF 6.1.1",
+  "agent": "0.9.6",
+  "runtime": "WAMR 2.4.6",
+  "date": "2026-11-22",
+  "transport": "Flight Control over Wi-Fi",
+  "cpu_mhz": 240,
+  "clock_source": "Matched release sdkconfig: CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240, CONFIG_PM_ENABLE disabled",
+  "app_partition_sha256": "12c12406d99a07617888ad11cb1005a63b13b306812b2bbde239155486dcabb0",
+  "app_partition_image_bytes": 1365616,
+  "device_id": "qg6de7edri9le9jfm3q7pi1mk6n5kh17aspto9li6opb3hmpokv0",
+  "boot_id": "8713042e-79fb-495a-a3ea-16fb09e6c567",
+  "coremark": {
+    "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/coremark:v0.9.5-wasm3",
+    "iterations_per_second": [
+      24.309,
+      24.351,
+      24.347
+    ],
+    "median": 24.347
+  },
+  "richards": {
+    "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/richards:v0.9.5",
+    "iterations_per_batch": 10,
+    "batch_ms": [
+      8872,
+      8869,
+      8830
+    ],
+    "median_ms_per_iteration": 886.9
+  },
+  "deltablue": {
+    "image": "registry.192.168.1.22.nip.io:5443/flightctl-mcu/deltablue:v0.9.5",
+    "iterations_per_batch": 10,
+    "batch_ms": [
+      6592,
+      6609,
+      6601
+    ],
+    "median_ms_per_iteration": 660.1
+  },
+  "separate_deltablue_console_probe": {
+    "reply": "live-c5-8713042e",
+    "while_running": true,
+    "elapsed_seconds": 0.26
+  }
+}

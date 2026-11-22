@@ -1,0 +1,5931 @@
+{
+  "date": "2026-11-21",
+  "firmware": "v0.9.4",
+  "firmware_manifest": "sha256:094ae96ea7a975b83badbfae7bd930fc5b4210a33fdf7f20a033bce603388e4f",
+  "methods": {
+    "design": "Each workload pair ran on the same physical board and boot. Three boards started the main pass with the v0.9.4 SDK and three with the RC. Entries marked follow-up are paired on a subsequent boot, RC first. Earlier observations are retained when available. Every arm started with an empty device. Catalog apps and standalone workloads were installed by manifest digest.",
+    "runtime_bench": "Three batches of ten iterations per allocator per board. The program validates its outputs and reports the median batch duration. Divide by ten for ms per iteration.",
+    "controls": "Identical signed probes, seven measured batches after two warmups. Divide milliseconds by 32 for the neural model, otherwise 256.",
+    "coremark": "Iterations per second. Three independent installs for each fitting size. Stop for that size on contiguous allocation failure.",
+    "mqtt": "48 successful QoS 1 round trips over TLS per board per arm. qos1_us are microseconds.",
+    "memory": "Console free RAM before app load in empty, and while running in pair and blink. Runtime status counters are cached firmware readings in bytes and may predate an app transition. The C5 TinyGo follow-up uses the startup log instead, which samples heap immediately after instantiation and rounds down to whole KiB.",
+    "fragmentation": "Classic ESP32. One fresh install per allocator. 24,576 mixed operations, 12 whole-arena checks, five fixed free-list depths and 256 single-call samples per depth. Elapsed milliseconds include scheduling."
+  },
+  "artifacts": {
+    "stable": {
+      "alarm": {
+        "repo": "alarm",
+        "requested": "v0.9.4",
+        "manifest": "sha256:f14ae60cd7390873904f9e2a0a6d4d092e7e1d03d9495ec9426c971dff5577ab",
+        "wasm": "sha256:cf6695ee90561f65debdfd1f9a179412c9e60951cc6adf9760397dc87eace3a9"
+      },
+      "battery": {
+        "repo": "battery",
+        "requested": "v0.9.4",
+        "manifest": "sha256:a66925cceac4903c1b36548d01e3f63db895e891d4a115c1faeec9974fe17d1d",
+        "wasm": "sha256:161b24fdf1d9394a279bcf9fa8bdfe569e45a318495e53afb16efdd82bb4dd47"
+      },
+      "hwcheck": {
+        "repo": "hwcheck",
+        "requested": "v0.9.4",
+        "manifest": "sha256:b31663aed9ac5a6121144578f4fefe83b5f4c67d27aa83701b73c2b235cf9e33",
+        "wasm": "sha256:03ef41ca2b2711c7439da3b7d95ae8fbf19faaa7eb0e41a4b75df89df44dc987"
+      },
+      "libccheck": {
+        "repo": "libccheck",
+        "requested": "v0.9.4",
+        "manifest": "sha256:364ab5dda9e43b6631d1a456b16b7700c788a13fc177442b76d8197628c51f72",
+        "wasm": "sha256:138ad6b43110af9a287b2bf5e934385cf196214ea78796b5ee9dc20078d0f26d"
+      },
+      "localalarm": {
+        "repo": "localalarm",
+        "requested": "v0.9.4",
+        "manifest": "sha256:ae39bb600b6ead8a29186b33993af899fd2ef03539c6daaf6e7b9e8b4043612a",
+        "wasm": "sha256:71813140c606203e09651437b78d44f3dc929061a1b6b4bbc67aebc2ba3d81d6"
+      },
+      "mqttdemo": {
+        "repo": "mqttdemo",
+        "requested": "v0.9.4",
+        "manifest": "sha256:0b522d8bfa9b36047207fe6cc2c25ddd6776defd771ad67385ba5ec3ff77c2ea",
+        "wasm": "sha256:7e53a85337c9c60efeb9a4e29aa1356ea53f866882d76025f88924cfeeeed470"
+      },
+      "sampler": {
+        "repo": "sampler",
+        "requested": "v0.9.4",
+        "manifest": "sha256:a41420894bbdaebb2d92a6598d48f5de06e9446fdd012bcdf87160522f9aa1df",
+        "wasm": "sha256:86575f6f61017a43d284d310c8fe9fcd70f3ae598fd1ab37023c46603673e74e"
+      },
+      "tinyml": {
+        "repo": "tinyml",
+        "requested": "v0.9.4",
+        "manifest": "sha256:cedbee96f18e7fdc527dddb2093a5976bc2a9927f6da5414f675c61885fb6c6b",
+        "wasm": "sha256:b63434ad8c02d72a3e4465570c9182292018be466beea1488ea16e8f8b8348ca"
+      },
+      "trend": {
+        "repo": "trend",
+        "requested": "v0.9.4",
+        "manifest": "sha256:61423ee69f853048475b1524e8fc5709dcf5dc7e34f37e0fff5ae065b2fafe45",
+        "wasm": "sha256:7238818e30c5b4864770c5c27eb9e72cc0607893ef673ae3d45cc93e4daba5fb"
+      },
+      "deltablue": {
+        "repo": "deltablue",
+        "requested": "sha256:517d89f530b95ba15f44e4c5a8d4770c8df3ddd721a2abd82b250a6b11b1fb52",
+        "manifest": "sha256:517d89f530b95ba15f44e4c5a8d4770c8df3ddd721a2abd82b250a6b11b1fb52",
+        "wasm": "sha256:ec4a7cacbc9462753645841a21221629760e71b66b5c4b047a83f8bf9f3dc896"
+      },
+      "richards": {
+        "repo": "richards",
+        "requested": "sha256:903fea65c1d23135f438482c45ecc06e50e9cf69eaceb023c7ca704a84c6f0e8",
+        "manifest": "sha256:903fea65c1d23135f438482c45ecc06e50e9cf69eaceb023c7ca704a84c6f0e8",
+        "wasm": "sha256:4caf0d874775df7a728b6c1239e5a3743ec56573d69e97ba00cd612b546fa753"
+      },
+      "tinymlp-neural": {
+        "repo": "tinyml",
+        "requested": "v0.9.4-neural",
+        "manifest": "sha256:49df90e3bc8aea6978ae8b1b9d7f905fc399629b4325fe602b417439907d0938",
+        "wasm": "sha256:730fc8169d45ddeb9d7cc40d3b87585dfc1a1ab709edb82150f90328b0950be1"
+      },
+      "arduino-rust": {
+        "repo": "arduino",
+        "requested": "v0.9.4-rust",
+        "manifest": "sha256:2af03197e1013df41b40d2a61863f71fa10f79bad10d00b93b5ca31952aeea08",
+        "wasm": "sha256:247b2d4449acfe3f1d82107b9abb93c73fcc6b6ac4283d012097b12d6df5101d"
+      },
+      "arduino-cpp": {
+        "repo": "arduino",
+        "requested": "v0.9.4-cpp",
+        "manifest": "sha256:b3cf138c2817e4045e268d403906b6cca1bcfaf6d2bbff465981cc7ba4e86d92",
+        "wasm": "sha256:01773158b1a55c99930923151d7c3ac62ee712ff6cbe6283eb71c009e0fb48de"
+      },
+      "arduino-assemblyscript": {
+        "repo": "arduino",
+        "requested": "v0.9.4-assemblyscript",
+        "manifest": "sha256:d99ef9f51abb230ec37601874fff6f0e7069f2faab0ca48acf41065feb0d0f87",
+        "wasm": "sha256:c655dae2a733080a9055c8c8a09342156ee14717da0eb3c9fcbbb3c11deecfef"
+      },
+      "arduino-tinygo": {
+        "repo": "arduino",
+        "requested": "v0.9.4-tinygo",
+        "manifest": "sha256:130b6e39b4050f6286a597def0486f61b6bda48c61ac302cd2a25894343dcc52",
+        "wasm": "sha256:8c1d7d14a03ddbe09eb1511868a16498b3331a5ccef21e3519324901b92c41be"
+      },
+      "coremark-wasm3": {
+        "repo": "coremark",
+        "requested": "v0.9.4-wasm3",
+        "manifest": "sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b",
+        "wasm": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4"
+      },
+      "coremark-wasm-coremark": {
+        "repo": "coremark",
+        "requested": "v0.9.4-wasm-coremark",
+        "manifest": "sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79",
+        "wasm": "sha256:054c0e85e211761087f33372cb5415eab09989842813c2d6dee13c316ccc754b"
+      },
+      "fragmentation": {
+        "repo": "fragmentation",
+        "requested": "sha256:e9d6949437eadca402cd979f63a965318a03ea653745ef2a9b1e9ab023c9cebf",
+        "manifest": "sha256:e9d6949437eadca402cd979f63a965318a03ea653745ef2a9b1e9ab023c9cebf",
+        "wasm": "sha256:17420c5f193b036b7702adaaa3d14b6791b2797d0df65d4eb559e5d1179d3f79"
+      }
+    },
+    "rc": {
+      "alarm": {
+        "repo": "alarm",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:0019a49be58c16193ed9940fe5e826af1bf84dfbd4e7294395ca7cda711dcb0b",
+        "wasm": "sha256:cf6695ee90561f65debdfd1f9a179412c9e60951cc6adf9760397dc87eace3a9"
+      },
+      "battery": {
+        "repo": "battery",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:b7e293f74781140962473de6d4fadd1b6fccd7acc93eaebc6eaaeba942ff2e6d",
+        "wasm": "sha256:161b24fdf1d9394a279bcf9fa8bdfe569e45a318495e53afb16efdd82bb4dd47"
+      },
+      "hwcheck": {
+        "repo": "hwcheck",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:143a6dbc62b4b4d663d4a25face9ed5f5a7a3978bf99df83f45970c1b99b3f2f",
+        "wasm": "sha256:03ef41ca2b2711c7439da3b7d95ae8fbf19faaa7eb0e41a4b75df89df44dc987"
+      },
+      "libccheck": {
+        "repo": "libccheck",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:19492fcd78d3d63116c6460d975c716cd72d0b5908a57af4d3a43ba0c2019371",
+        "wasm": "sha256:138ad6b43110af9a287b2bf5e934385cf196214ea78796b5ee9dc20078d0f26d"
+      },
+      "localalarm": {
+        "repo": "localalarm",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:d895c72e67af4f63a2cee051c8fecd716dbc18a35076b0680545fc4b91ae781f",
+        "wasm": "sha256:71813140c606203e09651437b78d44f3dc929061a1b6b4bbc67aebc2ba3d81d6"
+      },
+      "mqttdemo": {
+        "repo": "mqttdemo",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:1827d0643daec34ebf03cc5fa76b634745196eacec4ee32e3f8618af93ebebd4",
+        "wasm": "sha256:7e53a85337c9c60efeb9a4e29aa1356ea53f866882d76025f88924cfeeeed470"
+      },
+      "sampler": {
+        "repo": "sampler",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:d3ef999151db52396c8f676a937302da788c98186f7e5069c448c953d3bb65e3",
+        "wasm": "sha256:86575f6f61017a43d284d310c8fe9fcd70f3ae598fd1ab37023c46603673e74e"
+      },
+      "tinyml": {
+        "repo": "tinyml",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:7ba4eb277386113f9efc2186236872dc3ad81330b5d7b7b2aade319913ae9633",
+        "wasm": "sha256:b63434ad8c02d72a3e4465570c9182292018be466beea1488ea16e8f8b8348ca"
+      },
+      "trend": {
+        "repo": "trend",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:ce01572a3ab9958ee500654ddb2827ef26f43ffa01becd5e4019bfe02873c3c7",
+        "wasm": "sha256:7238818e30c5b4864770c5c27eb9e72cc0607893ef673ae3d45cc93e4daba5fb"
+      },
+      "deltablue": {
+        "repo": "deltablue",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:2d48ad8a63e8cfeba22c717722b6a9e5bb263a6db2b298aca4ea7dbdb62feb12",
+        "wasm": "sha256:f9ba1aba424c79da09e25b5599c9855e590f3201065c970d0c081935cb3e00c2"
+      },
+      "richards": {
+        "repo": "richards",
+        "requested": "v0.9.5-rc.1",
+        "manifest": "sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a",
+        "wasm": "sha256:1e593cf56e230fe60a6e39c1dc3c412e59bc5badd082ca93b205434ba76839fe"
+      },
+      "tinymlp-neural": {
+        "repo": "tinyml",
+        "requested": "v0.9.5-rc.1-neural",
+        "manifest": "sha256:cf460a324a814e1f8b214af24c3eb47ca518b8869621ba1844ae4971155f460b",
+        "wasm": "sha256:730fc8169d45ddeb9d7cc40d3b87585dfc1a1ab709edb82150f90328b0950be1"
+      },
+      "arduino-rust": {
+        "repo": "arduino",
+        "requested": "v0.9.5-rc.1-rust",
+        "manifest": "sha256:5222aad9c14bd3cd2f38c8310dcfcae852543fcc6d165438b4c95f6a4f9399b4",
+        "wasm": "sha256:247b2d4449acfe3f1d82107b9abb93c73fcc6b6ac4283d012097b12d6df5101d"
+      },
+      "arduino-cpp": {
+        "repo": "arduino",
+        "requested": "v0.9.5-rc.1-cpp",
+        "manifest": "sha256:15285956d2d08dfaf3b704293db3a951f5cc369cc85326ef65dd9c33b4ccf52c",
+        "wasm": "sha256:01773158b1a55c99930923151d7c3ac62ee712ff6cbe6283eb71c009e0fb48de"
+      },
+      "arduino-assemblyscript": {
+        "repo": "arduino",
+        "requested": "v0.9.5-rc.1-assemblyscript",
+        "manifest": "sha256:9f764d18cf451658fe1d607fdbe50a6e9b8dbd081d80d855da598185a8e97ea0",
+        "wasm": "sha256:c655dae2a733080a9055c8c8a09342156ee14717da0eb3c9fcbbb3c11deecfef"
+      },
+      "arduino-tinygo": {
+        "repo": "arduino",
+        "requested": "v0.9.5-rc.1-tinygo",
+        "manifest": "sha256:faa8842057e086dd082ce115cbcadfd599138a18ea94c2e3bc50011470af9ebe",
+        "wasm": "sha256:8c1d7d14a03ddbe09eb1511868a16498b3331a5ccef21e3519324901b92c41be"
+      },
+      "coremark-wasm3": {
+        "repo": "coremark",
+        "requested": "v0.9.5-rc.1-wasm3",
+        "manifest": "sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45",
+        "wasm": "sha256:1a4abcbf5f98089668d620aae935d53409d9f2bb5e685433f6d13f01de69cce4"
+      },
+      "coremark-wasm-coremark": {
+        "repo": "coremark",
+        "requested": "v0.9.5-rc.1-wasm-coremark",
+        "manifest": "sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9",
+        "wasm": "sha256:054c0e85e211761087f33372cb5415eab09989842813c2d6dee13c316ccc754b"
+      },
+      "fragmentation": {
+        "repo": "fragmentation",
+        "requested": "sha256:e14c23236869088d1924ff50ab6c4a7ff4324c3bd0a65173086c3e7c0c5ff648",
+        "manifest": "sha256:e14c23236869088d1924ff50ab6c4a7ff4324c3bd0a65173086c3e7c0c5ff648",
+        "wasm": "sha256:51a471257933b37be3c4768465208cfbf86f6b34597bc324dadb2d4e2b3fb2c8"
+      }
+    }
+  },
+  "boards": {
+    "esp32": {
+      "first_arm": "stable",
+      "same_boot_per_paired_workload": true,
+      "restarted_for_follow_up": true,
+      "final_fleet": "Fleet/idf-lab",
+      "final_application": "alarm:v0.9.5-rc.1",
+      "summary": {
+        "stable": {
+          "delta": 3412.0,
+          "rich": 966.0,
+          "core64": 18.957,
+          "core128": null,
+          "mqtt": 124.2655,
+          "pair_used": 39844
+        },
+        "rc": {
+          "delta": 904.8,
+          "rich": 962.5,
+          "core64": 18.88,
+          "core128": null,
+          "mqtt": 125.4365,
+          "pair_used": 38032
+        }
+      },
+      "observations": {
+        "stable": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 112068
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 34120"
+            },
+            "refs": [
+              "deltablue@sha256:517d89f530b95ba15f44e4c5a8d4770c8df3ddd721a2abd82b250a6b11b1fb52"
+            ],
+            "ms_per_iteration": 3412.0,
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            },
+            "batches_ms": [
+              34178,
+              34117,
+              34120
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 9660"
+            },
+            "refs": [
+              "richards@sha256:903fea65c1d23135f438482c45ecc06e50e9cf69eaceb023c7ca704a84c6f0e8"
+            ],
+            "ms_per_iteration": 966.0,
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            },
+            "batches_ms": [
+              9627,
+              9660,
+              9672
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 19 20 19 19 19 19 19 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.07421875,
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 27 29 27 27 27 29 27 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 0.84375,
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench no sensor"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 125 107 103 102 104 111 106 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.4140625,
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:364ab5dda9e43b6631d1a456b16b7700c788a13fc177442b76d8197628c51f72"
+            ],
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "no temperature sensor on this chip"
+            },
+            "refs": [
+              "alarm@sha256:f14ae60cd7390873904f9e2a0a6d4d092e7e1d03d9495ec9426c971dff5577ab"
+            ],
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:a66925cceac4903c1b36548d01e3f63db895e891d4a115c1faeec9974fe17d1d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "no temperature sensor on this chip"
+            },
+            "refs": [
+              "trend@sha256:61423ee69f853048475b1524e8fc5709dcf5dc7e34f37e0fff5ae065b2fafe45"
+            ],
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "no temperature sensor on this chip"
+            },
+            "refs": [
+              "tinyml@sha256:cedbee96f18e7fdc527dddb2093a5976bc2a9927f6da5414f675c61885fb6c6b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "no temperature sensor on this chip"
+            },
+            "refs": [
+              "tinyml@sha256:49df90e3bc8aea6978ae8b1b9d7f905fc399629b4325fe602b417439907d0938"
+            ],
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "waiting for sample",
+              "sampler": "sensor unavailable"
+            },
+            "refs": [
+              "localalarm@sha256:ae39bb600b6ead8a29186b33993af899fd2ef03539c6daaf6e7b9e8b4043612a",
+              "sampler@sha256:a41420894bbdaebb2d92a6598d48f5de06e9446fdd012bcdf87160522f9aa1df"
+            ],
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            },
+            "free_bytes": 72224
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c 0 spi 0:0 uart 7/0 adc 142 pwm 0"
+            },
+            "refs": [
+              "hwcheck@sha256:b31663aed9ac5a6121144578f4fefe83b5f4c67d27aa83701b73c2b235cf9e33"
+            ],
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:2af03197e1013df41b40d2a61863f71fa10f79bad10d00b93b5ca31952aeea08"
+            ],
+            "status_heap": {
+              "memFreeBytes": 152664,
+              "memInternalFreeBytes": 96660,
+              "memInternalLargestBlock": 34816
+            },
+            "free_bytes": 40012,
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "blinkrust": "Running"
+              },
+              "status_heap": {
+                "memFreeBytes": 112392,
+                "memInternalFreeBytes": 147416,
+                "memInternalLargestBlock": 102400
+              },
+              "free_bytes": 31376
+            },
+            "boot_group": "follow-up"
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:b3cf138c2817e4045e268d403906b6cca1bcfaf6d2bbff465981cc7ba4e86d92"
+            ],
+            "status_heap": {
+              "memFreeBytes": 55324,
+              "memInternalFreeBytes": 90356,
+              "memInternalLargestBlock": 47104
+            },
+            "free_bytes": 40384,
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "blinkcpp": "Running"
+              },
+              "status_heap": {
+                "memFreeBytes": 112392,
+                "memInternalFreeBytes": 147416,
+                "memInternalLargestBlock": 102400
+              },
+              "free_bytes": 31128
+            },
+            "boot_group": "follow-up"
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:d99ef9f51abb230ec37601874fff6f0e7069f2faab0ca48acf41065feb0d0f87"
+            ],
+            "status_heap": {
+              "memFreeBytes": 55324,
+              "memInternalFreeBytes": 90356,
+              "memInternalLargestBlock": 47104
+            },
+            "free_bytes": 32896,
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "blinkassemblyscript": "Running"
+              },
+              "status_heap": {
+                "memFreeBytes": 112392,
+                "memInternalFreeBytes": 147416,
+                "memInternalLargestBlock": 102400
+              },
+              "free_bytes": 23484
+            },
+            "boot_group": "follow-up"
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:130b6e39b4050f6286a597def0486f61b6bda48c61ac302cd2a25894343dcc52"
+            ],
+            "status_heap": {
+              "memFreeBytes": 55324,
+              "memInternalFreeBytes": 90356,
+              "memInternalLargestBlock": 47104
+            },
+            "free_bytes": 26544,
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "blinktinygo": "Running"
+              },
+              "status_heap": {
+                "memFreeBytes": 112392,
+                "memInternalFreeBytes": 147416,
+                "memInternalLargestBlock": 102400
+              },
+              "free_bytes": 17456
+            },
+            "boot_group": "follow-up"
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:0b522d8bfa9b36047207fe6cc2c25ddd6776defd771ad67385ba5ec3ff77c2ea"
+            ],
+            "qos1_us": [
+              111515,
+              133416,
+              191683,
+              93539,
+              100537,
+              107575,
+              122265,
+              103439,
+              133140,
+              193311,
+              86061,
+              139435,
+              130220,
+              192466,
+              81847,
+              85121,
+              128867,
+              125912,
+              153234,
+              110033,
+              91912,
+              133395,
+              148984,
+              118105,
+              112967,
+              153528,
+              117083,
+              107455,
+              142420,
+              136251,
+              113321,
+              135809,
+              124942,
+              127237,
+              118701,
+              118434,
+              115334,
+              145731,
+              123589,
+              135114,
+              125883,
+              118252,
+              135068,
+              143519,
+              106634,
+              132620,
+              114740,
+              122390
+            ],
+            "median_ms": 124.2655,
+            "max_ms": 193.311,
+            "status_heap": {
+              "memFreeBytes": 112392,
+              "memInternalFreeBytes": 147416,
+              "memInternalLargestBlock": 102400
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 18.977"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 18.977,
+            "status_heap": {
+              "memFreeBytes": 55324,
+              "memInternalFreeBytes": 90356,
+              "memInternalLargestBlock": 47104
+            },
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "cm641": "run() returned 19.029"
+              },
+              "iter_per_second": 19.029,
+              "status_heap": {
+                "memFreeBytes": 112392,
+                "memInternalFreeBytes": 147416,
+                "memInternalLargestBlock": 102400
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 18.957"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 18.957,
+            "status_heap": {
+              "memFreeBytes": 55324,
+              "memInternalFreeBytes": 90356,
+              "memInternalLargestBlock": 47104
+            },
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "cm642": "run() returned 18.881"
+              },
+              "iter_per_second": 18.881,
+              "status_heap": {
+                "memFreeBytes": 29596,
+                "memInternalFreeBytes": 64616,
+                "memInternalLargestBlock": 34816
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 18.862"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 18.862,
+            "status_heap": {
+              "memFreeBytes": 55324,
+              "memInternalFreeBytes": 90356,
+              "memInternalLargestBlock": 47104
+            },
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "cm643": "run() returned 18.919"
+              },
+              "iter_per_second": 18.919,
+              "status_heap": {
+                "memFreeBytes": 29596,
+                "memInternalFreeBytes": 64616,
+                "memInternalLargestBlock": 34816
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core128-1": {
+            "result": "device limit/error",
+            "states": {
+              "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 72 KB)"
+            }
+          },
+          "fragmentation": {
+            "result": "observed",
+            "states": {
+              "frag-stable": "run() returned 40948"
+            },
+            "refs": [
+              "fragmentation@sha256:e9d6949437eadca402cd979f63a965318a03ea653745ef2a9b1e9ab023c9cebf"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            },
+            "fragmentation_log": [
+              "FRAG churn ops=24576 recovered=12 failures=6568",
+              "FRAG case 0 0 n=32768 max=1",
+              "FRAG real 127 127 124 125 127 124 125",
+              "FRAG ctrl 99 126 96 95 125 95 125",
+              "FRAG case 128 0 n=32768 max=1",
+              "FRAG real 130 125 124 124 126 127 155",
+              "FRAG ctrl 124 96 126 95 126 98 98",
+              "FRAG case 1024 0 n=32768 max=1",
+              "FRAG real 127 127 157 126 155 128 160",
+              "FRAG ctrl 125 98 98 97 98 96 96",
+              "FRAG case 2559 0 n=32768 max=1",
+              "FRAG real 155 124 156 125 158 127 157",
+              "FRAG ctrl 95 95 96 99 97 98 97",
+              "FRAG case 2558 1 n=32768 max=1",
+              "FRAG real 159 127 157 124 124 158 128",
+              "FRAG ctrl 97 98 99 96 96 97 98",
+              "FRAG done capacity=40948 blocks=5118"
+            ]
+          }
+        },
+        "rc": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 110208
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 9048"
+            },
+            "refs": [
+              "deltablue@sha256:2d48ad8a63e8cfeba22c717722b6a9e5bb263a6db2b298aca4ea7dbdb62feb12"
+            ],
+            "ms_per_iteration": 904.8,
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            },
+            "batches_ms": [
+              9048,
+              9084,
+              9005
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 9625"
+            },
+            "refs": [
+              "richards@sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+            ],
+            "ms_per_iteration": 962.5,
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            },
+            "batches_ms": [
+              9625,
+              9623,
+              9631
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 19 19 19 19 19 19 19 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.07421875,
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 27 28 27 27 27 29 27 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 0.84375,
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench no sensor"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 131 118 109 109 110 116 108 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.4296875,
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:19492fcd78d3d63116c6460d975c716cd72d0b5908a57af4d3a43ba0c2019371"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "no temperature sensor on this chip"
+            },
+            "refs": [
+              "alarm@sha256:0019a49be58c16193ed9940fe5e826af1bf84dfbd4e7294395ca7cda711dcb0b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:b7e293f74781140962473de6d4fadd1b6fccd7acc93eaebc6eaaeba942ff2e6d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "no temperature sensor on this chip"
+            },
+            "refs": [
+              "trend@sha256:ce01572a3ab9958ee500654ddb2827ef26f43ffa01becd5e4019bfe02873c3c7"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "no temperature sensor on this chip"
+            },
+            "refs": [
+              "tinyml@sha256:7ba4eb277386113f9efc2186236872dc3ad81330b5d7b7b2aade319913ae9633"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "no temperature sensor on this chip"
+            },
+            "refs": [
+              "tinyml@sha256:cf460a324a814e1f8b214af24c3eb47ca518b8869621ba1844ae4971155f460b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "waiting for sample",
+              "sampler": "sensor unavailable"
+            },
+            "refs": [
+              "localalarm@sha256:d895c72e67af4f63a2cee051c8fecd716dbc18a35076b0680545fc4b91ae781f",
+              "sampler@sha256:d3ef999151db52396c8f676a937302da788c98186f7e5069c448c953d3bb65e3"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            },
+            "free_bytes": 72176
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c 0 spi 0:0 uart 7/0 adc 142 pwm 0"
+            },
+            "refs": [
+              "hwcheck@sha256:143a6dbc62b4b4d663d4a25face9ed5f5a7a3978bf99df83f45970c1b99b3f2f"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:5222aad9c14bd3cd2f38c8310dcfcae852543fcc6d165438b4c95f6a4f9399b4"
+            ],
+            "status_heap": {
+              "memFreeBytes": 152664,
+              "memInternalFreeBytes": 96660,
+              "memInternalLargestBlock": 34816
+            },
+            "free_bytes": 40884,
+            "first_boot_observation": {
+              "result": "device limit/error",
+              "states": {
+                "blinkrust": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+              },
+              "recheck": {
+                "result": "device limit/error",
+                "states": {
+                  "blinkrust": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+                },
+                "empty_internal_largest": [
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816"
+                ]
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:15285956d2d08dfaf3b704293db3a951f5cc369cc85326ef65dd9c33b4ccf52c"
+            ],
+            "status_heap": {
+              "memFreeBytes": 152664,
+              "memInternalFreeBytes": 96660,
+              "memInternalLargestBlock": 34816
+            },
+            "free_bytes": 40648,
+            "first_boot_observation": {
+              "result": "device limit/error",
+              "states": {
+                "blinkcpp": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+              },
+              "recheck": {
+                "result": "device limit/error",
+                "states": {
+                  "blinkcpp": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+                },
+                "empty_internal_largest": [
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816"
+                ]
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:9f764d18cf451658fe1d607fdbe50a6e9b8dbd081d80d855da598185a8e97ea0"
+            ],
+            "status_heap": {
+              "memFreeBytes": 152664,
+              "memInternalFreeBytes": 96660,
+              "memInternalLargestBlock": 34816
+            },
+            "free_bytes": 33096,
+            "first_boot_observation": {
+              "result": "device limit/error",
+              "states": {
+                "blinkassemblyscript": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+              },
+              "recheck": {
+                "result": "device limit/error",
+                "states": {
+                  "blinkassemblyscript": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+                },
+                "empty_internal_largest": [
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816"
+                ]
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:faa8842057e086dd082ce115cbcadfd599138a18ea94c2e3bc50011470af9ebe"
+            ],
+            "status_heap": {
+              "memFreeBytes": 152664,
+              "memInternalFreeBytes": 96660,
+              "memInternalLargestBlock": 34816
+            },
+            "free_bytes": 26828,
+            "first_boot_observation": {
+              "result": "device limit/error",
+              "states": {
+                "blinktinygo": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+              },
+              "recheck": {
+                "result": "device limit/error",
+                "states": {
+                  "blinktinygo": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+                },
+                "empty_internal_largest": [
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816"
+                ]
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:1827d0643daec34ebf03cc5fa76b634745196eacec4ee32e3f8618af93ebebd4"
+            ],
+            "qos1_us": [
+              124957,
+              130153,
+              123777,
+              137587,
+              116152,
+              127864,
+              81778,
+              177357,
+              120942,
+              152454,
+              105103,
+              124324,
+              122523,
+              131134,
+              125238,
+              126698,
+              136246,
+              120600,
+              75154,
+              153503,
+              148531,
+              113214,
+              183298,
+              76955,
+              121916,
+              110575,
+              149960,
+              136920,
+              115808,
+              128371,
+              126812,
+              244781,
+              187541,
+              175222,
+              86330,
+              174540,
+              156219,
+              108075,
+              82319,
+              188703,
+              122023,
+              119367,
+              109406,
+              75435,
+              174613,
+              140713,
+              122215,
+              125635
+            ],
+            "median_ms": 125.4365,
+            "max_ms": 244.781,
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 18.908"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 18.908,
+            "status_heap": {
+              "memFreeBytes": 152664,
+              "memInternalFreeBytes": 96660,
+              "memInternalLargestBlock": 34816
+            },
+            "first_boot_observation": {
+              "result": "device limit/error",
+              "states": {
+                "cm641": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+              },
+              "recheck": {
+                "result": "device limit/error",
+                "states": {
+                  "cm641": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+                },
+                "empty_internal_largest": [
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816"
+                ]
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 18.866"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 18.866,
+            "status_heap": {
+              "memFreeBytes": 152664,
+              "memInternalFreeBytes": 96660,
+              "memInternalLargestBlock": 34816
+            },
+            "first_boot_observation": {
+              "result": "device limit/error",
+              "states": {
+                "cm642": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+              },
+              "recheck": {
+                "result": "device limit/error",
+                "states": {
+                  "cm642": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+                },
+                "empty_internal_largest": [
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816"
+                ]
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 18.880"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 18.88,
+            "status_heap": {
+              "memFreeBytes": 152664,
+              "memInternalFreeBytes": 96660,
+              "memInternalLargestBlock": 34816
+            },
+            "first_boot_observation": {
+              "result": "device limit/error",
+              "states": {
+                "cm643": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+              },
+              "recheck": {
+                "result": "device limit/error",
+                "states": {
+                  "cm643": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+                },
+                "empty_internal_largest": [
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816",
+                  "34816"
+                ]
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core128-1": {
+            "result": "device limit/error",
+            "states": {
+              "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+            }
+          },
+          "fragmentation": {
+            "result": "observed",
+            "states": {
+              "frag-rc": "run() returned 40948"
+            },
+            "refs": [
+              "fragmentation@sha256:e14c23236869088d1924ff50ab6c4a7ff4324c3bd0a65173086c3e7c0c5ff648"
+            ],
+            "status_heap": {
+              "memFreeBytes": 29596,
+              "memInternalFreeBytes": 64616,
+              "memInternalLargestBlock": 34816
+            },
+            "fragmentation_log": [
+              "FRAG churn ops=24576 recovered=12 failures=6496",
+              "FRAG case 0 0 n=16384 max=1",
+              "FRAG real 85 85 84 118 86 87 115",
+              "FRAG ctrl 51 48 48 48 49 49 49",
+              "FRAG case 128 0 n=1024 max=1",
+              "FRAG real 133 163 135 132 162 132 133",
+              "FRAG ctrl 3 3 3 3 3 3 3",
+              "FRAG case 1024 0 n=128 max=2",
+              "FRAG real 128 156 126 126 126 157 129",
+              "FRAG ctrl 0 0 1 1 0 0 0",
+              "FRAG case 2559 0 n=64 max=33",
+              "FRAG real 157 188 158 160 189 158 157",
+              "FRAG ctrl 1 0 0 0 0 1 0",
+              "FRAG case 2558 1 n=64 max=33",
+              "FRAG real 156 188 159 159 188 159 157",
+              "FRAG ctrl 1 0 0 0 0 0 0",
+              "FRAG done capacity=40948 blocks=5118"
+            ]
+          }
+        }
+      },
+      "stable_on_stressed_boot": {
+        "blink-rust": {
+          "result": "device limit/error",
+          "states": {
+            "blinkrust": "WASM module instantiate failed: allocate linear memory failed (largest free block 52 KB)"
+          }
+        }
+      }
+    },
+    "esp32c3": {
+      "first_arm": "rc",
+      "same_boot_per_paired_workload": true,
+      "restarted_for_follow_up": false,
+      "final_fleet": "Fleet/idf-lab",
+      "final_application": "alarm:v0.9.5-rc.1",
+      "summary": {
+        "stable": {
+          "delta": 4333.1,
+          "rich": 1142.6,
+          "core64": 15.279,
+          "core128": null,
+          "mqtt": 124.1255,
+          "pair_used": 39960
+        },
+        "rc": {
+          "delta": 1207.7,
+          "rich": 1145.0,
+          "core64": 15.246,
+          "core128": null,
+          "mqtt": 125.402,
+          "pair_used": 40176
+        }
+      },
+      "observations": {
+        "stable": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 133988
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 43331"
+            },
+            "refs": [
+              "deltablue@sha256:517d89f530b95ba15f44e4c5a8d4770c8df3ddd721a2abd82b250a6b11b1fb52"
+            ],
+            "ms_per_iteration": 4333.1,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "batches_ms": [
+              43361,
+              43331,
+              43292
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 11426"
+            },
+            "refs": [
+              "richards@sha256:903fea65c1d23135f438482c45ecc06e50e9cf69eaceb023c7ca704a84c6f0e8"
+            ],
+            "ms_per_iteration": 1142.6,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "batches_ms": [
+              11384,
+              11499,
+              11426
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 47 47 47 47 47 55 53 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.18359375,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 132 151 146 132 139 152 139 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 4.34375,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 39 76 52 33 31 77 88 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.203125,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 33 23 23 23 23 23 14 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.08984375,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:364ab5dda9e43b6631d1a456b16b7700c788a13fc177442b76d8197628c51f72"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:f14ae60cd7390873904f9e2a0a6d4d092e7e1d03d9495ec9426c971dff5577ab"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:a66925cceac4903c1b36548d01e3f63db895e891d4a115c1faeec9974fe17d1d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (51.7 C)"
+            },
+            "refs": [
+              "trend@sha256:61423ee69f853048475b1524e8fc5709dcf5dc7e34f37e0fff5ae065b2fafe45"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (47.7 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cedbee96f18e7fdc527dddb2093a5976bc2a9927f6da5414f675c61885fb6c6b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 100% (47.7 C)"
+            },
+            "refs": [
+              "tinyml@sha256:49df90e3bc8aea6978ae8b1b9d7f905fc399629b4325fe602b417439907d0938"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:ae39bb600b6ead8a29186b33993af899fd2ef03539c6daaf6e7b9e8b4043612a",
+              "sampler@sha256:a41420894bbdaebb2d92a6598d48f5de06e9446fdd012bcdf87160522f9aa1df"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 94028
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c -2 spi -2 uart -2 adc -2 pwm -2"
+            },
+            "refs": [
+              "hwcheck@sha256:b31663aed9ac5a6121144578f4fefe83b5f4c67d27aa83701b73c2b235cf9e33"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:2af03197e1013df41b40d2a61863f71fa10f79bad10d00b93b5ca31952aeea08"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 53952
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:b3cf138c2817e4045e268d403906b6cca1bcfaf6d2bbff465981cc7ba4e86d92"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 51760
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:d99ef9f51abb230ec37601874fff6f0e7069f2faab0ca48acf41065feb0d0f87"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 44456
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:130b6e39b4050f6286a597def0486f61b6bda48c61ac302cd2a25894343dcc52"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 36352
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:0b522d8bfa9b36047207fe6cc2c25ddd6776defd771ad67385ba5ec3ff77c2ea"
+            ],
+            "qos1_us": [
+              119081,
+              122473,
+              152891,
+              136645,
+              97274,
+              134204,
+              130767,
+              123476,
+              168807,
+              79195,
+              124775,
+              110129,
+              179220,
+              263344,
+              115948,
+              276408,
+              79125,
+              84747,
+              158350,
+              116080,
+              114375,
+              145520,
+              158674,
+              137052,
+              122918,
+              102845,
+              147860,
+              114714,
+              146261,
+              131601,
+              88710,
+              140923,
+              119009,
+              122820,
+              116180,
+              141180,
+              95571,
+              105278,
+              180848,
+              121323,
+              127346,
+              97715,
+              154928,
+              115960,
+              133421,
+              127268,
+              110298,
+              152433
+            ],
+            "median_ms": 124.1255,
+            "max_ms": 276.408,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 15.215"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 15.215,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 15.279"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 15.279,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 15.330"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 15.33,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "core128-1": {
+            "result": "device limit/error",
+            "states": {
+              "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 80 KB)"
+            }
+          }
+        },
+        "rc": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 132472
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 12077"
+            },
+            "refs": [
+              "deltablue@sha256:2d48ad8a63e8cfeba22c717722b6a9e5bb263a6db2b298aca4ea7dbdb62feb12"
+            ],
+            "ms_per_iteration": 1207.7,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "batches_ms": [
+              12008,
+              12133,
+              12077
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 11450"
+            },
+            "refs": [
+              "richards@sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+            ],
+            "ms_per_iteration": 1145.0,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "batches_ms": [
+              11453,
+              11450,
+              11425
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 47 47 47 47 47 47 51 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.18359375,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 123 142 154 143 165 163 158 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 4.8125,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 107 99 19 62 145 61 43 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.2421875,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 21 23 23 23 23 32 23 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.08984375,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:19492fcd78d3d63116c6460d975c716cd72d0b5908a57af4d3a43ba0c2019371"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:0019a49be58c16193ed9940fe5e826af1bf84dfbd4e7294395ca7cda711dcb0b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:b7e293f74781140962473de6d4fadd1b6fccd7acc93eaebc6eaaeba942ff2e6d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (51.7 C)"
+            },
+            "refs": [
+              "trend@sha256:ce01572a3ab9958ee500654ddb2827ef26f43ffa01becd5e4019bfe02873c3c7"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (48.7 C)"
+            },
+            "refs": [
+              "tinyml@sha256:7ba4eb277386113f9efc2186236872dc3ad81330b5d7b7b2aade319913ae9633"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 59% (47.7 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cf460a324a814e1f8b214af24c3eb47ca518b8869621ba1844ae4971155f460b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:d895c72e67af4f63a2cee051c8fecd716dbc18a35076b0680545fc4b91ae781f",
+              "sampler@sha256:d3ef999151db52396c8f676a937302da788c98186f7e5069c448c953d3bb65e3"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 92296
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c -2 spi -2 uart -2 adc -2 pwm -2"
+            },
+            "refs": [
+              "hwcheck@sha256:143a6dbc62b4b4d663d4a25face9ed5f5a7a3978bf99df83f45970c1b99b3f2f"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:5222aad9c14bd3cd2f38c8310dcfcae852543fcc6d165438b4c95f6a4f9399b4"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 52280
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:15285956d2d08dfaf3b704293db3a951f5cc369cc85326ef65dd9c33b4ccf52c"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 51744
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:9f764d18cf451658fe1d607fdbe50a6e9b8dbd081d80d855da598185a8e97ea0"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 44464
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:faa8842057e086dd082ce115cbcadfd599138a18ea94c2e3bc50011470af9ebe"
+            ],
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            },
+            "free_bytes": 33336
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:1827d0643daec34ebf03cc5fa76b634745196eacec4ee32e3f8618af93ebebd4"
+            ],
+            "qos1_us": [
+              149759,
+              115614,
+              148655,
+              125072,
+              115512,
+              138170,
+              125415,
+              112255,
+              70154,
+              126525,
+              193892,
+              135519,
+              125389,
+              123689,
+              115166,
+              108882,
+              148338,
+              117001,
+              138736,
+              128958,
+              74930,
+              186738,
+              115677,
+              1174027,
+              128026,
+              121536,
+              117315,
+              107659,
+              182311,
+              91172,
+              140870,
+              119882,
+              118630,
+              129079,
+              159155,
+              83662,
+              111498,
+              136850,
+              129755,
+              133356,
+              135395,
+              73599,
+              86581,
+              188303,
+              158541,
+              106334,
+              144788,
+              121446
+            ],
+            "median_ms": 125.402,
+            "max_ms": 1174.027,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 15.287"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 15.287,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 15.246"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 15.246,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 15.233"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 15.233,
+            "status_heap": {
+              "memFreeBytes": 126080,
+              "memInternalFreeBytes": 124368,
+              "memInternalLargestBlock": 90112
+            }
+          },
+          "core128-1": {
+            "result": "device limit/error",
+            "states": {
+              "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 80 KB)"
+            }
+          }
+        }
+      }
+    },
+    "esp32c5": {
+      "first_arm": "stable",
+      "same_boot_per_paired_workload": true,
+      "restarted_for_follow_up": true,
+      "final_fleet": "Fleet/idf-lab",
+      "final_application": "alarm:v0.9.5-rc.1",
+      "summary": {
+        "stable": {
+          "delta": 2624.2,
+          "rich": 734.2,
+          "core64": 24.544,
+          "core128": null,
+          "mqtt": 127.2415,
+          "pair_used": 37384
+        },
+        "rc": {
+          "delta": 671.4,
+          "rich": 731.5,
+          "core64": 24.542,
+          "core128": null,
+          "mqtt": 124.9325,
+          "pair_used": 37576
+        }
+      },
+      "observations": {
+        "stable": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 107156
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 26242"
+            },
+            "refs": [
+              "deltablue@sha256:517d89f530b95ba15f44e4c5a8d4770c8df3ddd721a2abd82b250a6b11b1fb52"
+            ],
+            "ms_per_iteration": 2624.2,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "batches_ms": [
+              26242,
+              26225,
+              26245
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 7342"
+            },
+            "refs": [
+              "richards@sha256:903fea65c1d23135f438482c45ecc06e50e9cf69eaceb023c7ca704a84c6f0e8"
+            ],
+            "ms_per_iteration": 734.2,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "batches_ms": [
+              7351,
+              7342,
+              7323
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 27 38 23 17 17 17 17 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.06640625,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 55 65 77 56 46 36 36 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 1.71875,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 51 48 19 12 20 16 13 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.07421875,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 11 9 10 14 11 9 8 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.0390625,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:364ab5dda9e43b6631d1a456b16b7700c788a13fc177442b76d8197628c51f72"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:f14ae60cd7390873904f9e2a0a6d4d092e7e1d03d9495ec9426c971dff5577ab"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:a66925cceac4903c1b36548d01e3f63db895e891d4a115c1faeec9974fe17d1d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (31.1 C)"
+            },
+            "refs": [
+              "trend@sha256:61423ee69f853048475b1524e8fc5709dcf5dc7e34f37e0fff5ae065b2fafe45"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (29.1 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cedbee96f18e7fdc527dddb2093a5976bc2a9927f6da5414f675c61885fb6c6b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 99% (29.1 C)"
+            },
+            "refs": [
+              "tinyml@sha256:49df90e3bc8aea6978ae8b1b9d7f905fc399629b4325fe602b417439907d0938"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:ae39bb600b6ead8a29186b33993af899fd2ef03539c6daaf6e7b9e8b4043612a",
+              "sampler@sha256:a41420894bbdaebb2d92a6598d48f5de06e9446fdd012bcdf87160522f9aa1df"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "free_bytes": 69772
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c 0 spi 0:0 uart 7/0 adc 991 pwm 0"
+            },
+            "refs": [
+              "hwcheck@sha256:b31663aed9ac5a6121144578f4fefe83b5f4c67d27aa83701b73c2b235cf9e33"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:2af03197e1013df41b40d2a61863f71fa10f79bad10d00b93b5ca31952aeea08"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "free_bytes": 28992
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:b3cf138c2817e4045e268d403906b6cca1bcfaf6d2bbff465981cc7ba4e86d92"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "free_bytes": 25568
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:d99ef9f51abb230ec37601874fff6f0e7069f2faab0ca48acf41065feb0d0f87"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "free_bytes": 19248
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:130b6e39b4050f6286a597def0486f61b6bda48c61ac302cd2a25894343dcc52"
+            ],
+            "status_heap": {
+              "memFreeBytes": 26252,
+              "memInternalFreeBytes": 24492,
+              "memInternalLargestBlock": 7680
+            },
+            "console_note": "Console not opened during the repeat after loss of C5 connectivity with this workload.",
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "blinktinygo": "Running"
+              },
+              "status_heap": {
+                "memFreeBytes": 101032,
+                "memInternalFreeBytes": 99328,
+                "memInternalLargestBlock": 77824
+              },
+              "free_bytes": 13268
+            },
+            "boot_group": "follow-up"
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:0b522d8bfa9b36047207fe6cc2c25ddd6776defd771ad67385ba5ec3ff77c2ea"
+            ],
+            "qos1_us": [
+              125536,
+              100597,
+              157137,
+              116906,
+              128043,
+              127208,
+              124965,
+              127275,
+              138372,
+              115977,
+              137034,
+              109287,
+              376833,
+              139524,
+              130479,
+              126601,
+              136060,
+              128218,
+              118022,
+              103595,
+              145586,
+              135045,
+              271721,
+              196359,
+              142040,
+              87392,
+              142020,
+              713370,
+              90063,
+              90586,
+              96757,
+              105724,
+              95305,
+              189358,
+              121149,
+              117657,
+              104354,
+              145590,
+              126617,
+              131309,
+              122037,
+              129491,
+              138373,
+              95735,
+              150800,
+              120905,
+              125232,
+              130011
+            ],
+            "median_ms": 127.2415,
+            "max_ms": 713.37,
+            "status_heap": {
+              "memFreeBytes": 132408,
+              "memInternalFreeBytes": 130672,
+              "memInternalLargestBlock": 98304
+            },
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "mqttdemo": "online"
+              },
+              "qos1_us": [
+                92158,
+                184076,
+                145315,
+                118458,
+                225083,
+                144059,
+                182389,
+                188167,
+                159762,
+                102554,
+                67386,
+                98506,
+                187205,
+                179352,
+                125817,
+                140436,
+                125666,
+                177429,
+                60043,
+                125596,
+                119931,
+                89310,
+                75120,
+                89960,
+                123127,
+                68583,
+                98557,
+                188155,
+                138712,
+                124598,
+                126340,
+                137527,
+                128630,
+                128311,
+                97182,
+                144837,
+                115386,
+                66471,
+                95258,
+                189609,
+                179540,
+                89502,
+                160974,
+                104008,
+                145598,
+                119479,
+                135550,
+                139843
+              ],
+              "median_ms": 126.0785,
+              "max_ms": 225.083,
+              "status_heap": {
+                "memFreeBytes": 101032,
+                "memInternalFreeBytes": 99328,
+                "memInternalLargestBlock": 77824
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 24.544"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 24.544,
+            "status_heap": {
+              "memFreeBytes": 132408,
+              "memInternalFreeBytes": 130672,
+              "memInternalLargestBlock": 98304
+            },
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "cm641": "run() returned 24.345"
+              },
+              "iter_per_second": 24.345,
+              "status_heap": {
+                "memFreeBytes": 101032,
+                "memInternalFreeBytes": 99328,
+                "memInternalLargestBlock": 77824
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 24.478"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 24.478,
+            "status_heap": {
+              "memFreeBytes": 26252,
+              "memInternalFreeBytes": 24492,
+              "memInternalLargestBlock": 7680
+            },
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "cm642": "run() returned 22.051"
+              },
+              "iter_per_second": 22.051,
+              "status_heap": {
+                "memFreeBytes": 101032,
+                "memInternalFreeBytes": 99328,
+                "memInternalLargestBlock": 77824
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 24.576"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 24.576,
+            "status_heap": {
+              "memFreeBytes": 26252,
+              "memInternalFreeBytes": 24492,
+              "memInternalLargestBlock": 7680
+            },
+            "first_boot_observation": {
+              "result": "observed",
+              "states": {
+                "cm643": "run() returned 22.005"
+              },
+              "iter_per_second": 22.005,
+              "status_heap": {
+                "memFreeBytes": 101032,
+                "memInternalFreeBytes": 99328,
+                "memInternalLargestBlock": 77824
+              }
+            },
+            "boot_group": "follow-up"
+          },
+          "core128-1": {
+            "result": "device limit/error",
+            "states": {
+              "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 76 KB)"
+            },
+            "first_boot_observation": {
+              "result": "device limit/error",
+              "states": {
+                "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 68 KB)"
+              }
+            },
+            "boot_group": "follow-up"
+          }
+        },
+        "rc": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 107068
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 6714"
+            },
+            "refs": [
+              "deltablue@sha256:2d48ad8a63e8cfeba22c717722b6a9e5bb263a6db2b298aca4ea7dbdb62feb12"
+            ],
+            "ms_per_iteration": 671.4,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "batches_ms": [
+              6664,
+              6780,
+              6714
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 7315"
+            },
+            "refs": [
+              "richards@sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+            ],
+            "ms_per_iteration": 731.5,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "batches_ms": [
+              7315,
+              7361,
+              7295
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 27 37 17 17 17 17 17 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.06640625,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 48 92 81 63 38 36 36 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 1.5,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 45 36 12 12 32 26 13 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.1015625,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 9 9 9 8 9 8 8 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.03515625,
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:19492fcd78d3d63116c6460d975c716cd72d0b5908a57af4d3a43ba0c2019371"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:0019a49be58c16193ed9940fe5e826af1bf84dfbd4e7294395ca7cda711dcb0b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:b7e293f74781140962473de6d4fadd1b6fccd7acc93eaebc6eaaeba942ff2e6d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (31.1 C)"
+            },
+            "refs": [
+              "trend@sha256:ce01572a3ab9958ee500654ddb2827ef26f43ffa01becd5e4019bfe02873c3c7"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (29.1 C)"
+            },
+            "refs": [
+              "tinyml@sha256:7ba4eb277386113f9efc2186236872dc3ad81330b5d7b7b2aade319913ae9633"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 99% (29.1 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cf460a324a814e1f8b214af24c3eb47ca518b8869621ba1844ae4971155f460b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:d895c72e67af4f63a2cee051c8fecd716dbc18a35076b0680545fc4b91ae781f",
+              "sampler@sha256:d3ef999151db52396c8f676a937302da788c98186f7e5069c448c953d3bb65e3"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "free_bytes": 69492
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c 0 spi 0:0 uart 7/0 adc 787 pwm 0"
+            },
+            "refs": [
+              "hwcheck@sha256:143a6dbc62b4b4d663d4a25face9ed5f5a7a3978bf99df83f45970c1b99b3f2f"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:5222aad9c14bd3cd2f38c8310dcfcae852543fcc6d165438b4c95f6a4f9399b4"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "free_bytes": 24916
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:15285956d2d08dfaf3b704293db3a951f5cc369cc85326ef65dd9c33b4ccf52c"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "free_bytes": 28508
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:9f764d18cf451658fe1d607fdbe50a6e9b8dbd081d80d855da598185a8e97ea0"
+            ],
+            "status_heap": {
+              "memFreeBytes": 101032,
+              "memInternalFreeBytes": 99328,
+              "memInternalLargestBlock": 77824
+            },
+            "free_bytes": 17840
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:1827d0643daec34ebf03cc5fa76b634745196eacec4ee32e3f8618af93ebebd4"
+            ],
+            "qos1_us": [
+              122814,
+              125556,
+              139604,
+              125125,
+              116789,
+              66999,
+              121047,
+              185172,
+              128237,
+              132883,
+              117158,
+              124611,
+              136716,
+              124414,
+              117200,
+              129001,
+              127217,
+              83513,
+              180719,
+              120364,
+              121509,
+              102762,
+              151432,
+              110425,
+              139137,
+              122715,
+              130658,
+              109395,
+              126525,
+              66529,
+              189032,
+              124812,
+              130256,
+              122644,
+              131964,
+              121198,
+              125053,
+              129257,
+              129562,
+              124466,
+              124283,
+              70513,
+              202050,
+              105382,
+              131790,
+              125523,
+              124623,
+              128473
+            ],
+            "median_ms": 124.9325,
+            "max_ms": 202.05,
+            "status_heap": {
+              "memFreeBytes": 132408,
+              "memInternalFreeBytes": 130672,
+              "memInternalLargestBlock": 98304
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 24.586"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 24.586,
+            "status_heap": {
+              "memFreeBytes": 132408,
+              "memInternalFreeBytes": 130672,
+              "memInternalLargestBlock": 98304
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 24.542"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 24.542,
+            "status_heap": {
+              "memFreeBytes": 132408,
+              "memInternalFreeBytes": 130672,
+              "memInternalLargestBlock": 98304
+            },
+            "boot_group": "follow-up"
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 24.476"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 24.476,
+            "status_heap": {
+              "memFreeBytes": 132408,
+              "memInternalFreeBytes": 130672,
+              "memInternalLargestBlock": 98304
+            },
+            "boot_group": "follow-up"
+          },
+          "core128-1": {
+            "result": "device limit/error",
+            "states": {
+              "cm1281": "WASM module instantiate failed: allocate linear memory failed (largest free block 50 KB)"
+            },
+            "boot_group": "follow-up"
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:faa8842057e086dd082ce115cbcadfd599138a18ea94c2e3bc50011470af9ebe"
+            ],
+            "status_heap": {
+              "memFreeBytes": 132408,
+              "memInternalFreeBytes": 130672,
+              "memInternalLargestBlock": 98304
+            },
+            "console_note": "Console not opened during the repeat after loss of C5 connectivity with this workload.",
+            "boot_group": "follow-up"
+          }
+        }
+      },
+      "tinygo_post_instantiation_free_KiB": {
+        "rc": 46,
+        "stable": 46
+      },
+      "interruption": "During the initial RC TinyGo run the last device report said Running. The device stopped reporting for more than five minutes. Restoring management connectivity required a matched-USB reset. The original RC run did not yield a console heap reading. The repeat exercised TinyGo without opening its remote console."
+    },
+    "esp32c6": {
+      "first_arm": "rc",
+      "same_boot_per_paired_workload": true,
+      "restarted_for_follow_up": false,
+      "final_fleet": "Fleet/idf-lab",
+      "final_application": "alarm:v0.9.5-rc.1",
+      "summary": {
+        "stable": {
+          "delta": 4240.0,
+          "rich": 1232.8,
+          "core64": 14.603,
+          "core128": 18.6,
+          "mqtt": 127.668,
+          "pair_used": 39148
+        },
+        "rc": {
+          "delta": 1038.5,
+          "rich": 1226.8,
+          "core64": 14.595,
+          "core128": 18.612,
+          "mqtt": 124.3515,
+          "pair_used": 37288
+        }
+      },
+      "observations": {
+        "stable": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 202824
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 42400"
+            },
+            "refs": [
+              "deltablue@sha256:517d89f530b95ba15f44e4c5a8d4770c8df3ddd721a2abd82b250a6b11b1fb52"
+            ],
+            "ms_per_iteration": 4240.0,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "batches_ms": [
+              42371,
+              42400,
+              42402
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 12328"
+            },
+            "refs": [
+              "richards@sha256:903fea65c1d23135f438482c45ecc06e50e9cf69eaceb023c7ca704a84c6f0e8"
+            ],
+            "ms_per_iteration": 1232.8,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "batches_ms": [
+              12297,
+              12343,
+              12328
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 46 48 40 36 28 26 26 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.140625,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 52 51 51 51 51 53 51 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 1.59375,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 128 93 44 44 58 15 24 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.171875,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 13 13 13 15 13 25 16 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.05078125,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:364ab5dda9e43b6631d1a456b16b7700c788a13fc177442b76d8197628c51f72"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:f14ae60cd7390873904f9e2a0a6d4d092e7e1d03d9495ec9426c971dff5577ab"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:a66925cceac4903c1b36548d01e3f63db895e891d4a115c1faeec9974fe17d1d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (31.7 C)"
+            },
+            "refs": [
+              "trend@sha256:61423ee69f853048475b1524e8fc5709dcf5dc7e34f37e0fff5ae065b2fafe45"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (30.7 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cedbee96f18e7fdc527dddb2093a5976bc2a9927f6da5414f675c61885fb6c6b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 100% (29.7 C)"
+            },
+            "refs": [
+              "tinyml@sha256:49df90e3bc8aea6978ae8b1b9d7f905fc399629b4325fe602b417439907d0938"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:ae39bb600b6ead8a29186b33993af899fd2ef03539c6daaf6e7b9e8b4043612a",
+              "sampler@sha256:a41420894bbdaebb2d92a6598d48f5de06e9446fdd012bcdf87160522f9aa1df"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 163676
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c 0 spi 0:0 uart 7/0 adc 535 pwm 0"
+            },
+            "refs": [
+              "hwcheck@sha256:b31663aed9ac5a6121144578f4fefe83b5f4c67d27aa83701b73c2b235cf9e33"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:2af03197e1013df41b40d2a61863f71fa10f79bad10d00b93b5ca31952aeea08"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 122824
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:b3cf138c2817e4045e268d403906b6cca1bcfaf6d2bbff465981cc7ba4e86d92"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 122568
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:d99ef9f51abb230ec37601874fff6f0e7069f2faab0ca48acf41065feb0d0f87"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 112980
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:130b6e39b4050f6286a597def0486f61b6bda48c61ac302cd2a25894343dcc52"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 108968
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:0b522d8bfa9b36047207fe6cc2c25ddd6776defd771ad67385ba5ec3ff77c2ea"
+            ],
+            "qos1_us": [
+              118031,
+              134316,
+              167722,
+              84069,
+              136852,
+              122674,
+              62323,
+              165146,
+              148046,
+              114616,
+              127725,
+              134848,
+              125134,
+              135180,
+              90022,
+              160549,
+              106715,
+              149714,
+              119178,
+              89290,
+              188409,
+              115519,
+              154108,
+              129431,
+              118426,
+              135777,
+              128759,
+              125003,
+              137300,
+              120713,
+              79870,
+              168276,
+              129309,
+              115369,
+              134556,
+              172506,
+              96533,
+              127611,
+              126971,
+              118967,
+              107935,
+              147237,
+              129272,
+              122365,
+              146870,
+              67029,
+              176362,
+              85272
+            ],
+            "median_ms": 127.668,
+            "max_ms": 188.409,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 14.605"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 14.605,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 14.603"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 14.603,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 14.563"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 14.563,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core128-1": {
+            "result": "observed",
+            "states": {
+              "cm1281": "run() returned 18.600"
+            },
+            "refs": [
+              "coremark@sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79"
+            ],
+            "iter_per_second": 18.6,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core128-2": {
+            "result": "observed",
+            "states": {
+              "cm1282": "run() returned 18.614"
+            },
+            "refs": [
+              "coremark@sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79"
+            ],
+            "iter_per_second": 18.614,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core128-3": {
+            "result": "observed",
+            "states": {
+              "cm1283": "run() returned 18.513"
+            },
+            "refs": [
+              "coremark@sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79"
+            ],
+            "iter_per_second": 18.513,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          }
+        },
+        "rc": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 202800
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 10385"
+            },
+            "refs": [
+              "deltablue@sha256:2d48ad8a63e8cfeba22c717722b6a9e5bb263a6db2b298aca4ea7dbdb62feb12"
+            ],
+            "ms_per_iteration": 1038.5,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "batches_ms": [
+              10352,
+              10385,
+              10407
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 12268"
+            },
+            "refs": [
+              "richards@sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+            ],
+            "ms_per_iteration": 1226.8,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "batches_ms": [
+              12264,
+              12306,
+              12268
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 47 47 40 34 27 27 26 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.1328125,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 109 113 106 96 118 74 70 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 3.3125,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 44 26 75 46 66 36 14 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.171875,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 27 22 25 13 14 13 13 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.0546875,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:19492fcd78d3d63116c6460d975c716cd72d0b5908a57af4d3a43ba0c2019371"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:0019a49be58c16193ed9940fe5e826af1bf84dfbd4e7294395ca7cda711dcb0b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:b7e293f74781140962473de6d4fadd1b6fccd7acc93eaebc6eaaeba942ff2e6d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (31.7 C)"
+            },
+            "refs": [
+              "trend@sha256:ce01572a3ab9958ee500654ddb2827ef26f43ffa01becd5e4019bfe02873c3c7"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (29.7 C)"
+            },
+            "refs": [
+              "tinyml@sha256:7ba4eb277386113f9efc2186236872dc3ad81330b5d7b7b2aade319913ae9633"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 99% (29.7 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cf460a324a814e1f8b214af24c3eb47ca518b8869621ba1844ae4971155f460b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:d895c72e67af4f63a2cee051c8fecd716dbc18a35076b0680545fc4b91ae781f",
+              "sampler@sha256:d3ef999151db52396c8f676a937302da788c98186f7e5069c448c953d3bb65e3"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 165512
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c 0 spi 0:0 uart 7/0 adc 892 pwm 0"
+            },
+            "refs": [
+              "hwcheck@sha256:143a6dbc62b4b4d663d4a25face9ed5f5a7a3978bf99df83f45970c1b99b3f2f"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:5222aad9c14bd3cd2f38c8310dcfcae852543fcc6d165438b4c95f6a4f9399b4"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 122588
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:15285956d2d08dfaf3b704293db3a951f5cc369cc85326ef65dd9c33b4ccf52c"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 122532
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:9f764d18cf451658fe1d607fdbe50a6e9b8dbd081d80d855da598185a8e97ea0"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 115044
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:faa8842057e086dd082ce115cbcadfd599138a18ea94c2e3bc50011470af9ebe"
+            ],
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            },
+            "free_bytes": 108968
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:1827d0643daec34ebf03cc5fa76b634745196eacec4ee32e3f8618af93ebebd4"
+            ],
+            "qos1_us": [
+              135807,
+              137768,
+              119816,
+              125201,
+              99446,
+              161616,
+              107089,
+              88499,
+              175944,
+              84304,
+              190679,
+              121037,
+              125808,
+              96890,
+              89774,
+              175493,
+              113716,
+              328936,
+              116420,
+              187966,
+              139569,
+              125059,
+              148764,
+              120409,
+              107797,
+              91844,
+              130164,
+              95721,
+              156228,
+              108981,
+              146039,
+              113450,
+              137934,
+              121572,
+              107295,
+              144117,
+              97970,
+              159348,
+              116689,
+              136519,
+              115579,
+              89496,
+              186692,
+              123644,
+              62184,
+              169728,
+              126766,
+              134513
+            ],
+            "median_ms": 124.3515,
+            "max_ms": 328.936,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 14.533"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 14.533,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 14.603"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 14.603,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 14.595"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 14.595,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core128-1": {
+            "result": "observed",
+            "states": {
+              "cm1281": "run() returned 18.612"
+            },
+            "refs": [
+              "coremark@sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9"
+            ],
+            "iter_per_second": 18.612,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core128-2": {
+            "result": "observed",
+            "states": {
+              "cm1282": "run() returned 18.623"
+            },
+            "refs": [
+              "coremark@sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9"
+            ],
+            "iter_per_second": 18.623,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          },
+          "core128-3": {
+            "result": "observed",
+            "states": {
+              "cm1283": "run() returned 18.553"
+            },
+            "refs": [
+              "coremark@sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9"
+            ],
+            "iter_per_second": 18.553,
+            "status_heap": {
+              "memFreeBytes": 196952,
+              "memInternalFreeBytes": 195252,
+              "memInternalLargestBlock": 143360
+            }
+          }
+        }
+      }
+    },
+    "esp32s3": {
+      "first_arm": "stable",
+      "same_boot_per_paired_workload": true,
+      "restarted_for_follow_up": false,
+      "final_fleet": "Fleet/idf-lab",
+      "final_application": "alarm:v0.9.5-rc.1",
+      "summary": {
+        "stable": {
+          "delta": 2864.3,
+          "rich": 791.9,
+          "core64": 22.882,
+          "core128": 28.908,
+          "mqtt": 123.7585,
+          "pair_used": 39440
+        },
+        "rc": {
+          "delta": 854.3,
+          "rich": 789.9,
+          "core64": 22.871,
+          "core128": 28.939,
+          "mqtt": 126.624,
+          "pair_used": 37404
+        }
+      },
+      "observations": {
+        "stable": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 2247552
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 28643"
+            },
+            "refs": [
+              "deltablue@sha256:517d89f530b95ba15f44e4c5a8d4770c8df3ddd721a2abd82b250a6b11b1fb52"
+            ],
+            "ms_per_iteration": 2864.3,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "batches_ms": [
+              28698,
+              28622,
+              28643
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 7919"
+            },
+            "refs": [
+              "richards@sha256:903fea65c1d23135f438482c45ecc06e50e9cf69eaceb023c7ca704a84c6f0e8"
+            ],
+            "ms_per_iteration": 791.9,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "batches_ms": [
+              7919,
+              7904,
+              7940
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 19 15 15 15 15 15 15 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.05859375,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 60 55 61 60 50 44 60 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 1.875,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 37 63 57 61 39 142 37 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.22265625,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 33 31 21 20 17 32 31 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.12109375,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:364ab5dda9e43b6631d1a456b16b7700c788a13fc177442b76d8197628c51f72"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:f14ae60cd7390873904f9e2a0a6d4d092e7e1d03d9495ec9426c971dff5577ab"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:a66925cceac4903c1b36548d01e3f63db895e891d4a115c1faeec9974fe17d1d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (48.4 C)"
+            },
+            "refs": [
+              "trend@sha256:61423ee69f853048475b1524e8fc5709dcf5dc7e34f37e0fff5ae065b2fafe45"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (46.4 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cedbee96f18e7fdc527dddb2093a5976bc2a9927f6da5414f675c61885fb6c6b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 100% (45.4 C)"
+            },
+            "refs": [
+              "tinyml@sha256:49df90e3bc8aea6978ae8b1b9d7f905fc399629b4325fe602b417439907d0938"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:ae39bb600b6ead8a29186b33993af899fd2ef03539c6daaf6e7b9e8b4043612a",
+              "sampler@sha256:a41420894bbdaebb2d92a6598d48f5de06e9446fdd012bcdf87160522f9aa1df"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2208112
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c 0 spi 0:0 uart 7/0 adc 151 pwm 0"
+            },
+            "refs": [
+              "hwcheck@sha256:b31663aed9ac5a6121144578f4fefe83b5f4c67d27aa83701b73c2b235cf9e33"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:2af03197e1013df41b40d2a61863f71fa10f79bad10d00b93b5ca31952aeea08"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2165568
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:b3cf138c2817e4045e268d403906b6cca1bcfaf6d2bbff465981cc7ba4e86d92"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2165300
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:d99ef9f51abb230ec37601874fff6f0e7069f2faab0ca48acf41065feb0d0f87"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2157696
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:130b6e39b4050f6286a597def0486f61b6bda48c61ac302cd2a25894343dcc52"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2151592
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:0b522d8bfa9b36047207fe6cc2c25ddd6776defd771ad67385ba5ec3ff77c2ea"
+            ],
+            "qos1_us": [
+              66817,
+              135571,
+              188342,
+              171128,
+              72935,
+              109497,
+              155077,
+              113766,
+              132882,
+              178139,
+              74376,
+              139882,
+              71045,
+              96601,
+              189938,
+              143402,
+              113526,
+              167233,
+              125174,
+              122880,
+              125246,
+              114041,
+              120439,
+              104696,
+              115456,
+              128123,
+              68228,
+              155749,
+              210871,
+              68992,
+              130791,
+              109502,
+              141058,
+              123952,
+              123385,
+              137108,
+              128292,
+              114418,
+              77595,
+              101236,
+              189427,
+              136062,
+              128137,
+              123565,
+              139203,
+              123537,
+              122864,
+              106669
+            ],
+            "median_ms": 123.7585,
+            "max_ms": 210.871,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 22.889"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 22.889,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 22.882"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 22.882,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 22.819"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 22.819,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core128-1": {
+            "result": "observed",
+            "states": {
+              "cm1281": "run() returned 28.862"
+            },
+            "refs": [
+              "coremark@sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79"
+            ],
+            "iter_per_second": 28.862,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core128-2": {
+            "result": "observed",
+            "states": {
+              "cm1282": "run() returned 28.998"
+            },
+            "refs": [
+              "coremark@sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79"
+            ],
+            "iter_per_second": 28.998,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core128-3": {
+            "result": "observed",
+            "states": {
+              "cm1283": "run() returned 28.908"
+            },
+            "refs": [
+              "coremark@sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79"
+            ],
+            "iter_per_second": 28.908,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          }
+        },
+        "rc": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 2245644
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 8543"
+            },
+            "refs": [
+              "deltablue@sha256:2d48ad8a63e8cfeba22c717722b6a9e5bb263a6db2b298aca4ea7dbdb62feb12"
+            ],
+            "ms_per_iteration": 854.3,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "batches_ms": [
+              8543,
+              8565,
+              8524
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 7899"
+            },
+            "refs": [
+              "richards@sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+            ],
+            "ms_per_iteration": 789.9,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "batches_ms": [
+              7899,
+              7930,
+              7874
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 42 44 43 31 38 35 35 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.1484375,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 25 23 23 23 23 25 24 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 0.71875,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 29 14 14 284 46 40 77 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.15625,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 20 20 17 17 17 20 20 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.078125,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:19492fcd78d3d63116c6460d975c716cd72d0b5908a57af4d3a43ba0c2019371"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:0019a49be58c16193ed9940fe5e826af1bf84dfbd4e7294395ca7cda711dcb0b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:b7e293f74781140962473de6d4fadd1b6fccd7acc93eaebc6eaaeba942ff2e6d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (50.4 C)"
+            },
+            "refs": [
+              "trend@sha256:ce01572a3ab9958ee500654ddb2827ef26f43ffa01becd5e4019bfe02873c3c7"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (46.4 C)"
+            },
+            "refs": [
+              "tinyml@sha256:7ba4eb277386113f9efc2186236872dc3ad81330b5d7b7b2aade319913ae9633"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 100% (46.4 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cf460a324a814e1f8b214af24c3eb47ca518b8869621ba1844ae4971155f460b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:d895c72e67af4f63a2cee051c8fecd716dbc18a35076b0680545fc4b91ae781f",
+              "sampler@sha256:d3ef999151db52396c8f676a937302da788c98186f7e5069c448c953d3bb65e3"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2208240
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c 0 spi 0:0 uart 7/0 adc 94 pwm 0"
+            },
+            "refs": [
+              "hwcheck@sha256:143a6dbc62b4b4d663d4a25face9ed5f5a7a3978bf99df83f45970c1b99b3f2f"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:5222aad9c14bd3cd2f38c8310dcfcae852543fcc6d165438b4c95f6a4f9399b4"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2167452
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:15285956d2d08dfaf3b704293db3a951f5cc369cc85326ef65dd9c33b4ccf52c"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2165404
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:9f764d18cf451658fe1d607fdbe50a6e9b8dbd081d80d855da598185a8e97ea0"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2157892
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:faa8842057e086dd082ce115cbcadfd599138a18ea94c2e3bc50011470af9ebe"
+            ],
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            },
+            "free_bytes": 2153616
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:1827d0643daec34ebf03cc5fa76b634745196eacec4ee32e3f8618af93ebebd4"
+            ],
+            "qos1_us": [
+              126975,
+              137411,
+              122949,
+              118453,
+              127131,
+              111427,
+              150385,
+              111005,
+              134787,
+              134648,
+              155484,
+              126778,
+              102246,
+              131210,
+              92492,
+              144998,
+              130589,
+              124092,
+              123940,
+              175514,
+              83350,
+              146634,
+              87012,
+              117626,
+              126630,
+              126383,
+              135691,
+              115664,
+              123110,
+              107278,
+              153203,
+              113522,
+              133260,
+              126879,
+              129921,
+              135389,
+              121130,
+              120976,
+              110394,
+              148480,
+              116241,
+              138157,
+              126618,
+              122677,
+              136366,
+              135397,
+              112632,
+              108188
+            ],
+            "median_ms": 126.624,
+            "max_ms": 175.514,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 22.918"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 22.918,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 22.871"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 22.871,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 22.821"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 22.821,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core128-1": {
+            "result": "observed",
+            "states": {
+              "cm1281": "run() returned 28.952"
+            },
+            "refs": [
+              "coremark@sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9"
+            ],
+            "iter_per_second": 28.952,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core128-2": {
+            "result": "observed",
+            "states": {
+              "cm1282": "run() returned 28.939"
+            },
+            "refs": [
+              "coremark@sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9"
+            ],
+            "iter_per_second": 28.939,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          },
+          "core128-3": {
+            "result": "observed",
+            "states": {
+              "cm1283": "run() returned 28.821"
+            },
+            "refs": [
+              "coremark@sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9"
+            ],
+            "iter_per_second": 28.821,
+            "status_heap": {
+              "memFreeBytes": 2239808,
+              "memInternalFreeBytes": 143880,
+              "memInternalLargestBlock": 71680
+            }
+          }
+        }
+      }
+    },
+    "zephyr": {
+      "first_arm": "rc",
+      "same_boot_per_paired_workload": true,
+      "restarted_for_follow_up": false,
+      "final_fleet": "Fleet/zephyr-lab",
+      "final_application": "alarm:v0.9.5-rc.1",
+      "summary": {
+        "stable": {
+          "delta": 3397.2,
+          "rich": 851.5,
+          "core64": 20.447,
+          "core128": 25.623,
+          "mqtt": 186.3695,
+          "pair_used": 19668
+        },
+        "rc": {
+          "delta": 941.9,
+          "rich": 851.4,
+          "core64": 20.412,
+          "core128": 25.634,
+          "mqtt": 180.3415,
+          "pair_used": 19644
+        }
+      },
+      "observations": {
+        "stable": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 86556
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 33972"
+            },
+            "refs": [
+              "deltablue@sha256:517d89f530b95ba15f44e4c5a8d4770c8df3ddd721a2abd82b250a6b11b1fb52"
+            ],
+            "ms_per_iteration": 3397.2,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "batches_ms": [
+              33972,
+              34108,
+              33853
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 8515"
+            },
+            "refs": [
+              "richards@sha256:903fea65c1d23135f438482c45ecc06e50e9cf69eaceb023c7ca704a84c6f0e8"
+            ],
+            "ms_per_iteration": 851.5,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "batches_ms": [
+              8515,
+              8527,
+              8514
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 18 18 18 18 19 18 18 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.0703125,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 28 28 27 48 48 48 48 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 1.5,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 11 11 14 12 14 15 11 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.046875,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 10 10 10 10 11 10 10 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.0390625,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:364ab5dda9e43b6631d1a456b16b7700c788a13fc177442b76d8197628c51f72"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:f14ae60cd7390873904f9e2a0a6d4d092e7e1d03d9495ec9426c971dff5577ab"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:a66925cceac4903c1b36548d01e3f63db895e891d4a115c1faeec9974fe17d1d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (31.3 C)"
+            },
+            "refs": [
+              "trend@sha256:61423ee69f853048475b1524e8fc5709dcf5dc7e34f37e0fff5ae065b2fafe45"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (34.5 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cedbee96f18e7fdc527dddb2093a5976bc2a9927f6da5414f675c61885fb6c6b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 90% (40.4 C)"
+            },
+            "refs": [
+              "tinyml@sha256:49df90e3bc8aea6978ae8b1b9d7f905fc399629b4325fe602b417439907d0938"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:ae39bb600b6ead8a29186b33993af899fd2ef03539c6daaf6e7b9e8b4043612a",
+              "sampler@sha256:a41420894bbdaebb2d92a6598d48f5de06e9446fdd012bcdf87160522f9aa1df"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 66888
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c -2 spi -2 uart -2 adc -2 pwm -2"
+            },
+            "refs": [
+              "hwcheck@sha256:b31663aed9ac5a6121144578f4fefe83b5f4c67d27aa83701b73c2b235cf9e33"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:2af03197e1013df41b40d2a61863f71fa10f79bad10d00b93b5ca31952aeea08"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 80684
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:b3cf138c2817e4045e268d403906b6cca1bcfaf6d2bbff465981cc7ba4e86d92"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 80408
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:d99ef9f51abb230ec37601874fff6f0e7069f2faab0ca48acf41065feb0d0f87"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 73532
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:130b6e39b4050f6286a597def0486f61b6bda48c61ac302cd2a25894343dcc52"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 67620
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:0b522d8bfa9b36047207fe6cc2c25ddd6776defd771ad67385ba5ec3ff77c2ea"
+            ],
+            "qos1_us": [
+              183060,
+              181914,
+              183020,
+              182921,
+              85126,
+              82785,
+              84047,
+              181674,
+              287286,
+              188122,
+              181356,
+              184203,
+              86313,
+              180449,
+              283977,
+              83515,
+              106036,
+              257987,
+              1006164,
+              426064,
+              248014,
+              82631,
+              85162,
+              75880,
+              185615,
+              387939,
+              187124,
+              81395,
+              293027,
+              279420,
+              90742,
+              390894,
+              385547,
+              184911,
+              185119,
+              284529,
+              84275,
+              281874,
+              189624,
+              191730,
+              275960,
+              902036,
+              281011,
+              286652,
+              187436,
+              76830,
+              288235,
+              284281
+            ],
+            "median_ms": 186.3695,
+            "max_ms": 1006.164,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 20.453"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 20.453,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 20.447"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 20.447,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 20.429"
+            },
+            "refs": [
+              "coremark@sha256:b6168a06b711e25ccc070f1784b1e79b06c97f92d6fa3bd2932e01fd3be5523b"
+            ],
+            "iter_per_second": 20.429,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core128-1": {
+            "result": "observed",
+            "states": {
+              "cm1281": "run() returned 25.623"
+            },
+            "refs": [
+              "coremark@sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79"
+            ],
+            "iter_per_second": 25.623,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core128-2": {
+            "result": "observed",
+            "states": {
+              "cm1282": "run() returned 25.667"
+            },
+            "refs": [
+              "coremark@sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79"
+            ],
+            "iter_per_second": 25.667,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core128-3": {
+            "result": "observed",
+            "states": {
+              "cm1283": "run() returned 25.607"
+            },
+            "refs": [
+              "coremark@sha256:ac24514d9891a173cc2306052f942a701323fcdbf0d730167f92024577de3e79"
+            ],
+            "iter_per_second": 25.607,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          }
+        },
+        "rc": {
+          "empty": {
+            "result": "observed",
+            "free_bytes": 86552
+          },
+          "deltablue": {
+            "result": "observed",
+            "states": {
+              "deltablue": "run() returned 9419"
+            },
+            "refs": [
+              "deltablue@sha256:2d48ad8a63e8cfeba22c717722b6a9e5bb263a6db2b298aca4ea7dbdb62feb12"
+            ],
+            "ms_per_iteration": 941.9,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "batches_ms": [
+              9389,
+              9419,
+              9499
+            ]
+          },
+          "richards": {
+            "result": "observed",
+            "states": {
+              "richards": "run() returned 8514"
+            },
+            "refs": [
+              "richards@sha256:95abd3ae7db2049a8e4e629588fe8a9bdbe6c095187a7ec3e883960993f2e87a"
+            ],
+            "ms_per_iteration": 851.4,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "batches_ms": [
+              8486,
+              8527,
+              8514
+            ]
+          },
+          "forest256": {
+            "result": "observed",
+            "states": {
+              "cbforest256": "bench 18 18 18 18 18 18 18 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:8bbdddd4771739e6ec5f2f18a0ca03edd7687cff165239e26d2d962eff2889d8"
+            ],
+            "ms_per_operation": 0.0703125,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "mlp": {
+            "result": "observed",
+            "states": {
+              "cbmlp": "bench 48 49 49 49 49 49 49 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:3f12d3e00483b3376f09a6d950475fa8ff6e51cc146d6626331960f29f190861"
+            ],
+            "ms_per_operation": 1.53125,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "trend256": {
+            "result": "observed",
+            "states": {
+              "cbtrend256": "bench 11 12 15 11 13 11 12 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:5d1ddbbad94909794ce12ea4ed306cb147a658b870734719377f8580ed55d63a"
+            ],
+            "ms_per_operation": 0.046875,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "battery256": {
+            "result": "observed",
+            "states": {
+              "cbbattery256": "bench 10 10 10 11 10 10 10 bad=0"
+            },
+            "refs": [
+              "catalogbench@sha256:efb752c68211edc0d7aa399cae8bc5558998f2a818bd7edebfd1a4edd63e0da4"
+            ],
+            "ms_per_operation": 0.0390625,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "libccheck": {
+            "result": "observed",
+            "states": {
+              "libccheck": "copied 7 -42 255 ff 3.14 xyz 0 A bad=0"
+            },
+            "refs": [
+              "libccheck@sha256:19492fcd78d3d63116c6460d975c716cd72d0b5908a57af4d3a43ba0c2019371"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "alarm": {
+            "result": "observed",
+            "states": {
+              "alarm": "alarm (blinking blue)"
+            },
+            "refs": [
+              "alarm@sha256:0019a49be58c16193ed9940fe5e826af1bf84dfbd4e7294395ca7cda711dcb0b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "battery": {
+            "result": "observed",
+            "states": {
+              "battery": "battery unavailable"
+            },
+            "refs": [
+              "battery@sha256:b7e293f74781140962473de6d4fadd1b6fccd7acc93eaebc6eaaeba942ff2e6d"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "trend": {
+            "result": "observed",
+            "states": {
+              "trend": "steady (40.1 C)"
+            },
+            "refs": [
+              "trend@sha256:ce01572a3ab9958ee500654ddb2827ef26f43ffa01becd5e4019bfe02873c3c7"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "tinyml": {
+            "result": "observed",
+            "states": {
+              "tinyml": "steady (32.9 C)"
+            },
+            "refs": [
+              "tinyml@sha256:7ba4eb277386113f9efc2186236872dc3ad81330b5d7b7b2aade319913ae9633"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "tinymlp": {
+            "result": "observed",
+            "states": {
+              "tinymlp": "steady 90% (33.5 C)"
+            },
+            "refs": [
+              "tinyml@sha256:cf460a324a814e1f8b214af24c3eb47ca518b8869621ba1844ae4971155f460b"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "pair": {
+            "result": "observed",
+            "states": {
+              "localalarm": "alarm",
+              "sampler": "queued and sent locally"
+            },
+            "refs": [
+              "localalarm@sha256:d895c72e67af4f63a2cee051c8fecd716dbc18a35076b0680545fc4b91ae781f",
+              "sampler@sha256:d3ef999151db52396c8f676a937302da788c98186f7e5069c448c953d3bb65e3"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 66908
+          },
+          "hwcheck": {
+            "result": "observed",
+            "states": {
+              "hwcheck": "i2c -2 spi -2 uart -2 adc -2 pwm -2"
+            },
+            "refs": [
+              "hwcheck@sha256:143a6dbc62b4b4d663d4a25face9ed5f5a7a3978bf99df83f45970c1b99b3f2f"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "blink-rust": {
+            "result": "observed",
+            "states": {
+              "blinkrust": "Running"
+            },
+            "refs": [
+              "arduino@sha256:5222aad9c14bd3cd2f38c8310dcfcae852543fcc6d165438b4c95f6a4f9399b4"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 80688
+          },
+          "blink-cpp": {
+            "result": "observed",
+            "states": {
+              "blinkcpp": "Running"
+            },
+            "refs": [
+              "arduino@sha256:15285956d2d08dfaf3b704293db3a951f5cc369cc85326ef65dd9c33b4ccf52c"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 80400
+          },
+          "blink-assemblyscript": {
+            "result": "observed",
+            "states": {
+              "blinkassemblyscript": "Running"
+            },
+            "refs": [
+              "arduino@sha256:9f764d18cf451658fe1d607fdbe50a6e9b8dbd081d80d855da598185a8e97ea0"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 73524
+          },
+          "blink-tinygo": {
+            "result": "observed",
+            "states": {
+              "blinktinygo": "Running"
+            },
+            "refs": [
+              "arduino@sha256:faa8842057e086dd082ce115cbcadfd599138a18ea94c2e3bc50011470af9ebe"
+            ],
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            },
+            "free_bytes": 67596
+          },
+          "mqttdemo": {
+            "result": "observed",
+            "states": {
+              "mqttdemo": "online"
+            },
+            "refs": [
+              "mqttdemo@sha256:1827d0643daec34ebf03cc5fa76b634745196eacec4ee32e3f8618af93ebebd4"
+            ],
+            "qos1_us": [
+              182260,
+              184317,
+              184479,
+              98864,
+              168236,
+              80398,
+              285782,
+              187123,
+              92607,
+              177256,
+              188000,
+              177993,
+              85038,
+              286232,
+              181141,
+              182288,
+              309634,
+              161692,
+              182168,
+              188257,
+              179551,
+              82340,
+              183904,
+              181392,
+              184797,
+              83539,
+              191474,
+              179505,
+              181132,
+              187871,
+              183334,
+              83836,
+              84690,
+              125100,
+              139573,
+              187461,
+              81006,
+              323867,
+              146200,
+              181963,
+              181837,
+              182061,
+              87429,
+              176130,
+              85802,
+              82449,
+              87255,
+              176924
+            ],
+            "median_ms": 180.3415,
+            "max_ms": 323.867,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core64-1": {
+            "result": "observed",
+            "states": {
+              "cm641": "run() returned 20.387"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 20.387,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core64-2": {
+            "result": "observed",
+            "states": {
+              "cm642": "run() returned 20.426"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 20.426,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core64-3": {
+            "result": "observed",
+            "states": {
+              "cm643": "run() returned 20.412"
+            },
+            "refs": [
+              "coremark@sha256:726d12ad7428bd49d7111759d47189ffe62571f8cca4ba7ecc2018c7177bff45"
+            ],
+            "iter_per_second": 20.412,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core128-1": {
+            "result": "observed",
+            "states": {
+              "cm1281": "run() returned 25.654"
+            },
+            "refs": [
+              "coremark@sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9"
+            ],
+            "iter_per_second": 25.654,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core128-2": {
+            "result": "observed",
+            "states": {
+              "cm1282": "run() returned 25.634"
+            },
+            "refs": [
+              "coremark@sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9"
+            ],
+            "iter_per_second": 25.634,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          },
+          "core128-3": {
+            "result": "observed",
+            "states": {
+              "cm1283": "run() returned 25.631"
+            },
+            "refs": [
+              "coremark@sha256:0ba23fdcc8453ba2c405c4c6f68eec94e5258d64d977a4409f9800ffc1df16a9"
+            ],
+            "iter_per_second": 25.631,
+            "status_heap": {
+              "memFreeBytes": 72848,
+              "memInternalLargestBlock": 58956
+            }
+          }
+        }
+      }
+    }
+  },
+  "summary": {
+    "speedup_range": [
+      3.352803464825003,
+      4.0828117477130474
+    ],
+    "richards_change_pct": [
+      -0.36231884057971175,
+      0.2100472606336501,
+      -0.3677472078452815,
+      -0.4866969500324503,
+      -0.25255714105316684,
+      -0.011743981209633159
+    ],
+    "coremark_change_pct": [
+      -0.4061824128290481,
+      -0.2159827213822907,
+      -0.008148631029980535,
+      -0.05478326371293196,
+      0.0645161290322438,
+      -0.04807272091601478,
+      0.1072367510723593,
+      -0.1711742553919926,
+      0.042930179916478295
+    ],
+    "delta_batch_separation": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "mqtt_delta_ms": [
+      1.1709999999999923,
+      1.2764999999999986,
+      -2.3089999999999975,
+      -3.316500000000005,
+      2.8654999999999973,
+      -6.027999999999992
+    ],
+    "pair_ram_delta_B": [
+      -1812,
+      216,
+      192,
+      -1860,
+      -2036,
+      -24
+    ],
+    "fragmentation": {
+      "stable": [
+        {
+          "free_predecessors": 0,
+          "merge_both": false,
+          "median_net_us": 0.8544921875,
+          "largest_single_ms": 1
+        },
+        {
+          "free_predecessors": 128,
+          "merge_both": false,
+          "median_net_us": 0.885009765625,
+          "largest_single_ms": 1
+        },
+        {
+          "free_predecessors": 1024,
+          "merge_both": false,
+          "median_net_us": 0.9765625,
+          "largest_single_ms": 1
+        },
+        {
+          "free_predecessors": 2559,
+          "merge_both": false,
+          "median_net_us": 1.8310546875,
+          "largest_single_ms": 1
+        },
+        {
+          "free_predecessors": 2558,
+          "merge_both": true,
+          "median_net_us": 0.91552734375,
+          "largest_single_ms": 1
+        }
+      ],
+      "rc": [
+        {
+          "free_predecessors": 0,
+          "merge_both": false,
+          "median_net_us": 2.25830078125,
+          "largest_single_ms": 1
+        },
+        {
+          "free_predecessors": 128,
+          "merge_both": false,
+          "median_net_us": 126.953125,
+          "largest_single_ms": 1
+        },
+        {
+          "free_predecessors": 1024,
+          "merge_both": false,
+          "median_net_us": 1000.0,
+          "largest_single_ms": 2
+        },
+        {
+          "free_predecessors": 2559,
+          "merge_both": false,
+          "median_net_us": 2468.75,
+          "largest_single_ms": 33
+        },
+        {
+          "free_predecessors": 2558,
+          "merge_both": true,
+          "median_net_us": 2484.375,
+          "largest_single_ms": 33
+        }
+      ]
+    }
+  }
+}
