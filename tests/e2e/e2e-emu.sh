@@ -480,6 +480,8 @@ if [[ "$ROLLBACK" == 1 ]]; then
   apply_fleet "broken.$TAG" "v2.$TAG"
   wait_for 480 "back in the confirmed release slot, update reported as failed" \
     "ci.get('firmwareVersion', '').endswith('-release') and ci.get('bootSlot') == 'ota_1' and 'rolled back' in upd.get('info', '')"
+  reason=$(custom resetReason)
+  [[ "$reason" == software ]] || fail "rollback rebooted with resetReason=$reason, expected software"
   # The broken build has no delta: it came whole.
   wait_for 30 "an image without a delta came whole" \
     "(st.get('os') or {}).get('lastDelta', {}).get('outcome') == 'NotUsed'"

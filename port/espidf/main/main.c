@@ -10,7 +10,6 @@
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_app_desc.h"
-#include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "esp_mac.h"
 #include "esp_wifi.h"
@@ -20,6 +19,7 @@
 #include "hw.h"
 #include "cJSON.h"
 #include "fc_agent.h"
+#include "fc_port.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -456,12 +456,14 @@ static const char **parse_labels(const char *spec)
 
 static void ota_guard(void *arg)
 {
-    esp_ota_img_states_t st;
-    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) == ESP_OK &&
-        st == ESP_OTA_IMG_PENDING_VERIFY) {
+    vTaskDelay(pdMS_TO_TICKS(OTA_GUARD_S * 1000ULL));
+    if (fc_port_ota_pending_verify()) {
         ESP_LOGE(TAG, "new firmware not confirmed after %d s: rolling back", OTA_GUARD_S);
-        esp_ota_mark_app_invalid_rollback_and_reboot();
+        /* The bootloader rolls back a pending image on reset. If confirmation
+         * raced the deadline, it keeps the now-valid image. */
+        fc_port_reboot();
     }
+    vTaskDelete(NULL);
 }
 
 /* Independent of the agent threads: an unchanged local sample completes the
@@ -487,15 +489,15 @@ static void start_status_watchdog(void)
 
 static void start_ota_guard(void)
 {
-    esp_ota_img_states_t st;
-    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) != ESP_OK ||
-        st != ESP_OTA_IMG_PENDING_VERIFY) {
+    if (!fc_port_ota_pending_verify()) {
         return;
     }
-    const esp_timer_create_args_t args = {.callback = ota_guard, .name = "ota_guard"};
-    esp_timer_handle_t t;
-    if (esp_timer_create(&args, &t) == ESP_OK) {
-        esp_timer_start_once(t, (uint64_t)OTA_GUARD_S * 1000000);
+    /* WiFi shutdown and flash operations must not run on esp_timer's stack.
+     * Reserve the guard before WiFi and apps can consume the trial's heap. */
+    if (xTaskCreate(ota_guard, "ota_guard", 4096, NULL, CONFIG_PTHREAD_TASK_PRIO_DEFAULT, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "cannot start OTA guard: rolling back");
+        fc_port_reboot();
+        return;
     }
     ESP_LOGW(TAG, "firmware %s pending verification", esp_app_get_description()->version);
 }
