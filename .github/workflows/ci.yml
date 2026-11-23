@@ -100,7 +100,7 @@ jobs:
   # Every chip, uploaded for the e2e workflow (and kept 90 days): plain and
   # secure for the chips it emulates (secure: Secure Boot v2 + flash and NVS
   # encryption, unsigned: see port/espidf/build-ci.sh).
-  firmware:
+  esp-idf:
     name: firmware (${{ matrix.target }}${{ matrix.profile != 'plain' && format(', {0}', matrix.profile) || '' }})
     runs-on: ubuntu-latest
     container: espressif/idf:v6.1.1
@@ -145,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [esp32s3-n16r8, nucleo-f767zi]
+        board: [esp32s3-n4r2, esp32s3-n8r8, esp32s3-n16r8, nucleo-f767zi-eth, nrf7002dk, pico2w]
     env:
       BOARD: ${{ matrix.board }}
     steps:
@@ -154,7 +154,7 @@ jobs:
         shell: bash
         run: |
           packages=(kconfig-frontends genromfs xxd)
-          if [[ "$BOARD" == nucleo-f767zi ]]; then
+          if [[ "$BOARD" != esp32s3-* ]]; then
             packages+=(gcc-arm-none-eabi)
           fi
           apt-get update
@@ -165,115 +165,143 @@ jobs:
           . "$IDF_PATH/export.sh" >/dev/null
           python -m pip install imgtool==2.2.0
           export NUTTX_WORK="$PWD/build/nuttx-ci"
-          if [[ "$BOARD" == esp32s3-n16r8 ]]; then
+          images="$NUTTX_WORK/nuttx"
+          artifact="$PWD/build/nuttx-artifact"
+          mkdir -p "$artifact"
+          if [[ "$BOARD" == esp32s3-* ]]; then
             OTA=1 port/nuttx/build.sh
-            test -s "$NUTTX_WORK/nuttx/mcuboot-esp32s3.bin"
-            test -s "$NUTTX_WORK/nuttx/nuttx-ota.bin"
+            test -s "$images/mcuboot-esp32s3.bin"
+            test -s "$images/nuttx-ota.bin"
+            cp "$images"/{mcuboot-esp32s3.bin,nuttx-ota.bin} "$artifact/"
           else
             port/nuttx/build.sh
-            export MCUBOOT_SIGNING_KEY="$RUNNER_TEMP/nucleo-ci.pem"
+            export MCUBOOT_SIGNING_KEY="$RUNNER_TEMP/$BOARD-ci.pem"
             imgtool keygen -k "$MCUBOOT_SIGNING_KEY" -t ecdsa-p256
-            port/nuttx/sign-arm.sh "$BOARD" "$NUTTX_WORK/nuttx/nuttx.bin"
-            imgtool verify -k "$MCUBOOT_SIGNING_KEY" "$NUTTX_WORK/nuttx/nuttx.ota.bin"
+            port/nuttx/sign-arm.sh "$BOARD" "$images/nuttx.bin"
+            imgtool verify -k "$MCUBOOT_SIGNING_KEY" "$images/nuttx.ota.bin"
+            mkdir -p "$artifact/ci-signed"
+            cp "$images"/{nuttx.ota.bin,nuttx.confirmed.bin} "$artifact/ci-signed/"
           fi
+          cp "$images/nuttx.bin" "$artifact/"
+          cp "$images/nuttx" "$artifact/nuttx.elf"
+      - name: Build the nRF5340 network core
+        if: matrix.board == 'nrf7002dk'
+        shell: bash
+        run: |
+          export NUTTX_WORK="$PWD/build/nuttx-ci-net"
+          BOARD=nrf7002dk-net port/nuttx/build.sh
+          mkdir -p build/nuttx-artifact/network-core
+          cp "$NUTTX_WORK/nuttx/nuttx.bin" build/nuttx-artifact/network-core/
+          cp "$NUTTX_WORK/nuttx/nuttx" build/nuttx-artifact/network-core/nuttx.elf
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware-nuttx-${{ matrix.board }}
+          path: build/nuttx-artifact/
+          if-no-files-found: error
+          retention-days: 90
 
   zephyr:
-    name: Zephyr (native_sim)
+    name: Zephyr (${{ matrix.label || format('{0}, MCUboot', matrix.profile) }})
     runs-on: ubuntu-latest
-    # Zephyr's own build image: west, CMake, the host compiler native_sim uses.
     container: ghcr.io/zephyrproject-rtos/ci-base:v0.30.0
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { profile: native_sim, board: native_sim/native/64, label: native_sim, artifact: zephyr-native-sim }
+          - { profile: qemu, board: mps2/an385, sdk: arm, label: 'mps2/an385, Arm Cortex-M3 on Ethernet', artifact: zephyr-mps2-an385 }
+          - { profile: esp32s3, board: esp32s3_devkitc/esp32s3/procpu, sdk: xtensa, label: 'ESP32-S3, with MCUboot' }
+          - { profile: nucleo-f767zi-eth, board: nucleo_f767zi, sdk: arm }
+          - { profile: nrf7002dk, board: nrf7002dk/nrf5340/cpuapp, sdk: arm }
+          - { profile: pico2w, board: rpi_pico2/rp2350a/m33_0/w/mcuboot, sdk: arm }
+    env:
+      BOARD: ${{ matrix.board }}
+      PROFILE: ${{ matrix.profile }}
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory '*'
       - run: third_party/fetch-wamr.sh
-      # The Zephyr tree (about 900 MB) changes only with the pinned version.
-      - uses: actions/cache@v6
+      # Only native_sim saves the common tree. Each board fetches its extra HALs.
+      - uses: actions/cache/restore@v6
+        id: workspace
         with:
           path: third_party/zephyr-ws
           key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh', 'third_party/patches/zephyr-*.patch') }}
       - run: third_party/fetch-zephyr.sh
-      - name: build
-        run: port/zephyr/build.sh
-      # The port's hardware for apps on native_sim's emulated drivers.
-      - name: app hardware (GPIO, ADC, PWM, I2C, SPI, UART)
-        run: tests/zephyr-hw.sh
-      # The apps' C library with Zephyr's picolibc.
-      - name: apps' C library
-        run: tests/zephyr-apps.sh
-      - uses: actions/upload-artifact@v7
-        with:
-          name: zephyr-native-sim
-          path: port/zephyr/build-native_sim_native_64/zephyr/zephyr.exe
-
-  zephyr-qemu:
-    name: Zephyr (mps2/an385, Arm Cortex-M3 on Ethernet)
-    runs-on: ubuntu-latest
-    container: ghcr.io/zephyrproject-rtos/ci-base:v0.30.0
-    steps:
-      - uses: actions/checkout@v7
-      - run: git config --global --add safe.directory '*'
-      - run: third_party/fetch-wamr.sh
-      - uses: actions/cache@v6
+      - uses: actions/cache/save@v6
+        if: matrix.profile == 'native_sim' && steps.workspace.outputs.cache-hit != 'true'
         with:
           path: third_party/zephyr-ws
-          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh', 'third_party/patches/zephyr-*.patch') }}
-      - run: third_party/fetch-zephyr.sh
-      # The Arm toolchain alone (about 2 GB), kept between runs.
+          key: ${{ steps.workspace.outputs.cache-primary-key }}
       - uses: actions/cache@v6
+        if: matrix.sdk
         with:
           path: third_party/zephyr-sdk
-          key: zephyr-sdk-arm-${{ hashFiles('third_party/fetch-zephyr-sdk.sh') }}
-      - run: ZEPHYR_SDK_TOOLCHAINS=arm-zephyr-eabi third_party/fetch-zephyr-sdk.sh
-      - name: build
-        run: BOARD=mps2/an385 port/zephyr/build.sh
-      # The apps' C library on the Cortex-M3, in QEMU: %f through WAMR's
-      # invokeNative for Thumb, and the stack of the app's 8 KB thread.
-      - name: apps' C library
+          key: zephyr-sdk-${{ matrix.sdk }}-${{ hashFiles('third_party/fetch-zephyr-sdk.sh') }}
+      - name: Fetch toolchain and WiFi firmware
+        if: matrix.sdk
+        env:
+          ZEPHYR_SDK_TOOLCHAINS: ${{ matrix.sdk == 'xtensa' && 'xtensa-espressif_esp32s3_zephyr-elf' || 'arm-zephyr-eabi' }}
+        run: third_party/fetch-zephyr-sdk.sh
+      - name: Build firmware
+        env:
+          BUILD_DIR: build-ci
         run: |
-          apt-get update && apt-get install -y qemu-system-arm
-          BOARD=mps2/an385 tests/zephyr-apps.sh
-      - uses: actions/upload-artifact@v7
-        with:
-          name: zephyr-mps2-an385
-          path: port/zephyr/build-mps2_an385/zephyr/zephyr.bin
-
-  zephyr-esp32s3:
-    name: Zephyr (ESP32-S3, with MCUboot)
-    runs-on: ubuntu-latest
-    container: ghcr.io/zephyrproject-rtos/ci-base:v0.30.0
-    steps:
-      - uses: actions/checkout@v7
-      - run: git config --global --add safe.directory '*'
-      - run: third_party/fetch-wamr.sh
-      - uses: actions/cache@v6
-        with:
-          path: third_party/zephyr-ws
-          key: zephyr-ws-${{ hashFiles('third_party/fetch-zephyr.sh', 'third_party/patches/zephyr-*.patch') }}
-      - run: third_party/fetch-zephyr.sh
-      # The Xtensa toolchain alone, kept between runs; the script also fetches
-      # Espressif's WiFi blobs into the Zephyr tree.
-      - uses: actions/cache@v6
-        with:
-          path: third_party/zephyr-sdk
-          key: zephyr-sdk-xtensa-${{ hashFiles('third_party/fetch-zephyr-sdk.sh') }}
-      - run: ZEPHYR_SDK_TOOLCHAINS=xtensa-espressif_esp32s3_zephyr-elf third_party/fetch-zephyr-sdk.sh
-      # Signed with a key made for this run: the build is checked, not released.
-      - name: build
-        run: BOARD=esp32s3_devkitc/esp32s3/procpu BUILD_DIR=build-esp32s3 port/zephyr/build.sh
+          if [ "$PROFILE" = pico2w ]; then
+            port/zephyr/build.sh -- -Dzephyr_SNIPPET=cdc-acm-console
+          else
+            port/zephyr/build.sh
+          fi
+      - name: App hardware (GPIO, ADC, PWM, I2C, SPI, UART)
+        if: matrix.profile == 'native_sim'
+        run: tests/zephyr-hw.sh
+      - name: Install QEMU
+        if: matrix.profile == 'qemu'
+        run: apt-get update && apt-get install -y qemu-system-arm
+      - name: Apps' C library
+        if: matrix.profile == 'native_sim' || matrix.profile == 'qemu'
+        run: tests/zephyr-apps.sh
       - name: WASM GPIO by devicetree name and fleet alias
+        if: matrix.profile == 'esp32s3'
         shell: bash
         run: |
           root="$PWD"
           cd third_party/zephyr-ws
           export ZEPHYR_SDK_INSTALL_DIR="$root/third_party/zephyr-sdk"
-          west build -b esp32s3_devkitc/esp32s3/procpu -d "$root/build/button-s3" "$root/tests/zephyr-apps"
+          west build -b "$BOARD" -d "$root/build/button-s3" "$root/tests/zephyr-apps"
           cd "$root"
           tests/espidf-hw/run-ci.sh zephyr build/button-s3/zephyr/zephyr.bin
+      - name: Collect build artifacts
+        shell: bash
+        run: |
+          artifact="$PWD/build/zephyr-artifact"
+          mkdir -p "$artifact"
+          cd port/zephyr/build-ci
+          case "$PROFILE" in
+            native_sim) cp zephyr/zephyr.exe "$artifact/" ;;
+            qemu) cp zephyr/zephyr.bin "$artifact/" ;;
+            esp32s3)
+              cp --parents mcuboot/zephyr/zephyr.bin zephyr/zephyr/zephyr.{bin,signed.bin,elf} "$artifact/"
+              ;;
+            *)
+              cp --parents mcuboot/zephyr/zephyr.{bin,hex} \
+                zephyr/zephyr/zephyr.{bin,elf,signed.bin,signed.confirmed.bin,signed.confirmed.hex} "$artifact/"
+              if [[ "$PROFILE" == nrf7002dk ]]; then
+                cp --parents hci_ipc/zephyr/zephyr.{hex,elf} "$artifact/"
+              fi
+              ;;
+          esac
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact || format('firmware-zephyr-{0}', matrix.profile) }}
+          path: build/zephyr-artifact/
+          if-no-files-found: error
+          retention-days: 90
 
   # The end-to-end tests on this run's builds: skipped on the first attempt,
   # run by re-running this job once everything else has passed.
   e2e:
-    needs: [build, tests, firmware, nuttx, zephyr, zephyr-qemu, zephyr-esp32s3]
+    needs: [build, tests, esp-idf, nuttx, zephyr]
     if: github.run_attempt > 1
     permissions:
       contents: read

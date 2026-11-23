@@ -1,8 +1,20 @@
 # Tests and CI
 
-[CI](../.github/workflows/ci.yml) builds the host agent, ESP-IDF firmware, Zephyr and NuttX targets, and example WASM apps on pull requests and code pushes to `main`. The NuttX jobs build the ESP32-S3 N16R8 with MCUboot and the NUCLEO-F767ZI with the ST-LINK network profile. Firmware artifacts contain no credentials. The CI secure builds require [signing](SECURITY.md#signing-a-ci-build). Artifacts are retained for 90 days.
+[CI](../.github/workflows/ci.yml) builds the host agent, ESP-IDF firmware, Zephyr and NuttX targets, and example WASM apps on pull requests and code pushes to `main`. Both RTOS builds cover the NUCLEO-F767ZI over RJ45, both nRF5340 cores on the Nordic nRF7002-DK, and the Raspberry Pi Pico 2 W with MCUboot. Firmware artifacts contain no credentials. The CI secure builds require [signing](SECURITY.md#signing-a-ci-build). Artifacts are retained for 90 days.
 
 The [end-to-end workflow](../.github/workflows/e2e.yml) uses those artifacts and builds its own broken rollback and crash-test images. It runs nightly on the latest successful CI commit unless that commit already passed. To run it manually, select a CI run in Actions or rerun that run's `e2e` job.
+
+Each NuttX artifact includes the matching `nuttx.elf` for decoding backtraces.
+
+| CI artifact | Firmware files |
+|---|---|
+| `firmware-nuttx-esp32s3-n4r2`, `firmware-nuttx-esp32s3-n8r8`, `firmware-nuttx-esp32s3-n16r8` | Choose the artifact for your module. `mcuboot-esp32s3.bin` is the bootloader, `nuttx.bin` is the confirmed image for the primary slot, and `nuttx-ota.bin` is the compact OTA image. [ESP32-S3 installation](NUTTX.md#firmware-ota-with-mcuboot) |
+| `firmware-nuttx-nucleo-f767zi-eth` (RJ45), `firmware-nuttx-pico2w` | Sign `nuttx.bin` with the key trusted by the board. The OTA and confirmed images in `ci-signed/` use the temporary key from that CI run. [Arm image signing](NUTTX.md#signed-firmware-updates-on-arm) |
+| `firmware-nuttx-nrf7002dk` | Sign the application core’s `nuttx.bin` with the board’s MCUboot key for OTA or direct installation. The images in `ci-signed/` use the temporary CI key. Install `network-core/nuttx.bin` separately over J-Link. Its matching ELF is in the same directory. [Nordic firmware updates](NUTTX.md#signed-firmware-updates-on-arm) |
+
+The corresponding Zephyr artifacts are `firmware-zephyr-nucleo-f767zi-eth`, `firmware-zephyr-nrf7002dk` and `firmware-zephyr-pico2w`. Each contains MCUboot and application images signed for that run’s bootloader, plus the unsigned application binary and its ELF. The Nordic artifact also includes the network core image and ELF under `hci_ipc/zephyr/`. The archives preserve the paths in the [Zephyr installation guide](ZEPHYR.md).
+
+For the ESP32-S3, `firmware-zephyr-esp32s3` contains MCUboot, the unsigned and signed application binaries and the matching ELF. The ESP-IDF artifacts are `firmware-esp32s3` and `firmware-esp32s3-secure`.
 
 ## NuttX release checks on hardware
 
