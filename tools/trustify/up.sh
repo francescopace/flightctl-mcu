@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Trustify for the lab's Flight Control on kind, and Flight Control's
 # vulnerability reporting pointed at it (docs/SBOM.md).
-#  - Trustify 0.4.21, the API Flight Control 1.4.0's client is generated from
+#  - Trustify 0.4.21, the API Flight Control 1.4.1's client is generated from
 #    (internal/trustify/v2/openapi.yaml): 0.5 and later moved it to /api/v3.
 #    Its "PM mode" binary, with an embedded PostgreSQL, checked against the
 #    sha256 GitHub gives for the release asset; in a container on kind's Docker
@@ -13,7 +13,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 VERSION="${TRUSTIFY_VERSION:-0.4.21}"
-FC_VERSION="${FC_VERSION:-1.4.0}"
+FC_VERSION="${FC_VERSION:-1.4.1}"
 case "$(uname -m)" in arm64|aarch64) ARCH=aarch64 ;; *) ARCH=x86_64 ;; esac
 NAME="trustd-pm-$VERSION-$ARCH-unknown-linux-gnu"
 DL="$ROOT/build/trustify-dl"

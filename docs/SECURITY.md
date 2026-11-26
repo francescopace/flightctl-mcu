@@ -110,7 +110,7 @@ With `CONFIG_FC_DEVICE_KEY_ECDSA`, the agent generates a P-256 key and CSR on fi
 
 ### Other chips: the DS peripheral, off for now
 
-S3, C3 and C6 have an RSA-only DS peripheral. Flight Control 1.4.0 cannot approve that enrollment, so `CONFIG_FC_DEVICE_KEY_DS` is disabled and secure builds keep an ECDSA key in encrypted storage. [RSA enrollment blocker](FLIGHTCTL-LIMITATIONS.md#upstream-blockers-for-agent-v100)
+S3, C3 and C6 have an RSA-only DS peripheral. Flight Control 1.4.1 cannot approve that enrollment, so `CONFIG_FC_DEVICE_KEY_DS` is disabled and secure builds keep an ECDSA key in encrypted storage. [RSA enrollment blocker](FLIGHTCTL-LIMITATIONS.md#upstream-blockers-for-agent-v100)
 
 With a compatible CA and DS enabled, the agent generates an RSA-3072 key and CSR. It burns a random HMAC key into a protected eFuse block, encrypts the RSA parameters with `esp_ds_encrypt_params`, wipes the plaintext key and verifies a test signature. With a compatible server the device reports `deviceKey: "ds"` and uses RSA-PSS for TLS. Its name derives from the hash of the RSA modulus.
 

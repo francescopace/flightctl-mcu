@@ -42,7 +42,7 @@ Both output formats contain the enrollment key and any provisioned Wi-Fi passwor
 
    The tool reports `signing key yes` and `written into` with the image path.
 
-Choose a certificate lifetime that covers production and the longest expected offline interval before enrollment or re-enrollment. Use an allow list to approve devices. A leaked credential can submit requests until expiry on Flight Control 1.4.0. [Revocation limits](FLIGHTCTL-LIMITATIONS.md#upstream-blockers-for-agent-v100)
+Choose a certificate lifetime that covers production and the longest expected offline interval before enrollment or re-enrollment. Use an allow list to approve devices. A leaked credential can submit requests until expiry on Flight Control 1.4.1. [Revocation limits](FLIGHTCTL-LIMITATIONS.md#upstream-blockers-for-agent-v100)
 
 ![Pending enrollment request](img/enrollment-pending.png)
 <img src="img/enrollment-approve.png" alt="Reviewing device labels before approval" width="420">

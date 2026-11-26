@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 source ../local-ip.sh
 
 HOST_IP="${1:-$(local_ip)}"
-FC_VERSION="${FC_VERSION:-1.4.0}"
+FC_VERSION="${FC_VERSION:-1.4.1}"
 FC_NAMESPACE=flightctl
 FC_BASE_DOMAIN="${HOST_IP}.nip.io"
 

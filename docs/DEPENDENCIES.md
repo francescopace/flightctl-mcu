@@ -1,10 +1,12 @@
 # Dependencies
 
-Build and test versions checked on 18 November 2026, the NuttX port and the Zephyr modules on 22 November 2026. For containers following a release series, the tables include the tested image version.
+Build and test versions were checked on 18 November 2026, the NuttX port and Zephyr modules on 22 November, and Flight Control on 25 November. For containers following a release series, the tables include the tested image version.
 
 ## Release support
 
-The 1.0 development builds use Flight Control 1.4.0 and ESP-IDF 6.1.1. From 1.0 onward, consult this page in the release you deploy for its verified pair. Compatibility lasts until the next agent release. Fixes target the current release.
+The 1.0 development builds use Flight Control 1.4.1 and ESP-IDF 6.1.1. From 1.0 onward, consult this page in the release you deploy for its verified pair. Compatibility lasts until the next agent release. Fixes target the current release.
+
+The [end-to-end tests](TESTING.md#end-to-end-tests) passed on the host and emulated devices. The plain ESP32-C5 renewed its two-minute management certificate and reported status after the original certificate expired.
 
 ## In the core, on every port
 
@@ -83,15 +85,15 @@ The serial bridges for the NUCLEO-F767ZI and nRF7002-DK use gvproxy, listed unde
 
 | Dependency | Version | Set in | Notes |
 |---|---|---|---|
-| [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.0 | `tools/kind/up.sh`, `FLIGHTCTL_VERSION` in the workflow | The fleet maps only stable device fields to labels. [Label sync](FLIGHTCTL-LIMITATIONS.md#11-a-change-in-the-status-is-a-label-event) |
-| Envoy Gateway | 1.2.8 | `tools/kind/up.sh` | Patch release in the 1.2 series used by Flight Control 1.4.0’s installation guide. |
+| [Flight Control](https://github.com/flightctl/flightctl) (service and CLI) | 1.4.1 | `FC_VERSION` in `tools/kind/up.sh` and `tools/trustify/up.sh`, `FLIGHTCTL_VERSION` in the E2E workflow | The fleet maps only stable device fields to labels. [Label sync](FLIGHTCTL-LIMITATIONS.md#11-a-change-in-the-status-is-a-label-event) |
+| Envoy Gateway | 1.2.8 | `tools/kind/up.sh` | Routes device and CLI traffic to Flight Control in the kind end-to-end tests. |
 | [esp-emulator](https://github.com/espressif/esp-emulator) | 1.2.0 | `ESP_EMU_VERSION` in `ci.yml` and `e2e.yml` | The emulator and its virtual peripherals are checked against the release's SHA-256 sums. |
 | OCI registry | `registry:3` | `tools/registry/up.sh` | The tested image reports Distribution 3.1.2. |
 | kubectl image for Flight Control's Helm jobs | `alpine/k8s` 1.37.2 | `tools/kind/cluster-cli/Containerfile` | On arm64 machines only, where `origin-cli` has no image. |
 | MQTT broker: [mosquitto](https://github.com/eclipse-mosquitto/mosquitto) | `eclipse-mosquitto:2.1.4-alpine` | `tests/mqtt-broker.sh`, `tools/mqtt/up.sh` | Plain and TLS, with a password ([APPS.md](APPS.md#mqtt)). |
 | Registry with token authentication: [docker_auth](https://github.com/cesanta/docker_auth) | `cesanta/docker_auth:1.14.0`, with `registry:3` and `nginx:1.30-alpine` | `tests/registry-bearer.sh` | The tested nginx image reports 1.30.7. [Registry setup](REGISTRY.md) |
 | [Quay](https://github.com/quay/quay) | `quay.io/projectquay/quay:3.18.3` (multi-architecture image) | `QUAY_IMAGE` in `tests/registry-bearer.sh` | `QUAY=1` tests a robot account against Quay, using `postgres:18-alpine` (18.7) and `redis:8-alpine` (8.10.3). |
-| [Trustify](https://github.com/guacsec/trustify) | 0.4.21 | `TRUSTIFY_VERSION` in `tools/trustify/up.sh` | Flight Control 1.4.0 reads the v2 API from the Trustify 0.4 series ([SBOM.md](SBOM.md#in-flight-control)). Its release binary, checked against the sha256 GitHub gives, in an `ubuntu:24.04` image. The bundled PostgreSQL links to ICU 74 and libxml2.so.2. |
+| [Trustify](https://github.com/guacsec/trustify) | 0.4.21 | `TRUSTIFY_VERSION` in `tools/trustify/up.sh` | Flight Control 1.4.1 reads the v2 API from the Trustify 0.4 series ([SBOM.md](SBOM.md#in-flight-control)). Its release binary, checked against the sha256 GitHub gives, in an `ubuntu:24.04` image. The bundled PostgreSQL links to ICU 74 and libxml2.so.2. |
 | Git server for the fleet from Git | `alpine:3.24` | `tests/e2e/e2e.sh` | |
 
 No Prometheus server is needed: `tests/e2e/e2e.sh` reads the metrics from the Telemetry Gateway's own Prometheus endpoint.

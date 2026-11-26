@@ -1,18 +1,18 @@
 # Flight Control: limitations found
 
-These findings cover Flight Control 1.4.0.
+These findings were recorded against Flight Control 1.4.0. The blocker table also covers 1.4.1.
 
 ---
 
 ## Upstream blockers for agent v1.0.0
 
-Upstream status on 21 November 2026. RSA enrollment is the only remaining blocker for v1.0.0. Fixed means merged into `main`.
+Flight Control 1.4.1 lacks all three fixes. As of 25 November 2026, RSA enrollment is the only one still awaiting merge into `main`. [Changes from 1.4.0 to 1.4.1](https://github.com/flightctl/flightctl/compare/v1.4.0...v1.4.1)
 
-| Requirement | Status | Target Flight Control release | Upstream |
+| Requirement | Status on `main` | Target Flight Control release | Upstream |
 | --- | --- | --- | --- |
-| 1. Revoke an enrollment certificate | Fixed | 1.5 | [PR #3817](https://github.com/flightctl/flightctl/pull/3817) |
+| 1. Revoke an enrollment certificate | Merged | 1.5 | [PR #3817](https://github.com/flightctl/flightctl/pull/3817) |
 | 2. Enroll with an RSA device key | Pending merge | Unconfirmed | [PR #3940](https://github.com/flightctl/flightctl/pull/3940) |
-| 3. Deploy a fleet OS image from the catalog | Fixed | 1.5 | [PR #3937](https://github.com/flightctl/flightctl/pull/3937) |
+| 3. Deploy a fleet OS image from the catalog | Merged | 1.5 | [PR #3937](https://github.com/flightctl/flightctl/pull/3937) |
 
 ---
 

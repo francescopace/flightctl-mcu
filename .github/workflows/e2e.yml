@@ -37,7 +37,7 @@ permissions:
 cache-mode: read
 
 env:
-  FLIGHTCTL_VERSION: v1.4.0
+  FLIGHTCTL_VERSION: v1.4.1
   ESP_EMU_VERSION: 1.2.0
 
 jobs:
